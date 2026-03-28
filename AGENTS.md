@@ -38,7 +38,6 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 ├── AGENTS.md                          # This file — developer documentation
 ├── REVIEW-LATER.md                    # Items to revisit
 ├── SESSION-LOG.md                     # Subagent session tracking
-├── project-plan.jsx                   # Original plan (React component)
 ├── project-plan.md                    # Plan converted to Markdown
 ├── prek.toml                          # Pre-commit hooks config (prek)
 ├── biome.json                         # Biome 2 lint/format config
@@ -149,62 +148,46 @@ npm run test:watch       # Vitest watch mode
 npm run test:coverage    # Vitest with v8 coverage
 
 # Backend (source cargo env first: . "$HOME/.cargo/env")
-cd src-tauri && cargo check    # Type check Rust
-cd src-tauri && cargo test     # Run Rust tests (262 tests)
+cd src-tauri && cargo test     # Run Rust tests (385 tests)
 cd src-tauri && cargo fmt --check  # Rust formatting
 cd src-tauri && cargo clippy -- -D warnings  # Lint Rust
-cargo sqlx prepare             # Update .sqlx/ offline cache
-
-# Benchmarks (criterion)
-cd src-tauri && cargo bench              # Run all benchmarks
-cd src-tauri && cargo bench --bench hash_bench       # hash only
-cd src-tauri && cargo bench --bench op_log_bench     # op_log only
-cd src-tauri && cargo bench --bench cache_bench      # cache only
-cd src-tauri && cargo bench --bench pagination_bench # pagination only
-cd src-tauri && cargo bench --bench soft_delete_bench # soft_delete only
-cd src-tauri && cargo check --benches    # Verify benchmarks compile
 
 # Full Tauri app
 cargo tauri dev          # Dev mode with hot reload
 cargo tauri build        # Production build
 
-# Pre-commit hooks
+# Pre-commit hooks (this IS the verification — see Tooling Rules below)
 prek run --all-files     # Run all hooks on entire repo
 prek run                 # Run hooks on staged files only
-prek install             # (Re)install git hooks
 ```
 
 ## Pre-commit Hooks (prek)
 
-Config: `prek.toml`. Installed via `prek install`. Runs on every `git commit`.
+Config: `prek.toml`. Installed via `prek install`. Runs on every `git commit`. **Hooks are file-type-aware** — Rust hooks only run when `.rs` files are staged, frontend hooks only when `.ts/.tsx` files are staged.
 
-| Hook | What it checks |
-|------|---------------|
-| trailing-whitespace | No trailing whitespace (auto-fixes) |
-| end-of-file-fixer | Files end with newline (auto-fixes) |
-| check-yaml | YAML syntax |
-| check-toml | TOML syntax |
-| check-json | JSON syntax (excludes tsconfig JSONC files) |
-| check-merge-conflict | No conflict markers |
-| check-added-large-files | No files > 500KB |
-| no-commit-to-branch | Block direct push to main (pre-push stage) |
-| biome-check | Biome lint + format for JS/TS/JSON |
-| tsc | TypeScript type checking |
-| vitest | Run frontend tests |
-| cargo-fmt | Rust formatting check |
-| cargo-clippy | Rust linting (warnings = errors, dead_code allowed) |
-| cargo-test | Rust tests |
-| cargo-deny | Security advisories, license compliance, banned crates, sources |
-| cargo-machete | Unused dependency detection |
+| Hook | What it checks | Triggers on |
+|------|---------------|-------------|
+| trailing-whitespace | No trailing whitespace (auto-fixes) | all files |
+| end-of-file-fixer | Files end with newline (auto-fixes) | all files |
+| check-yaml | YAML syntax | .yml/.yaml |
+| check-toml | TOML syntax | .toml |
+| check-json | JSON syntax (excludes tsconfig JSONC) | .json |
+| check-merge-conflict | No conflict markers | all files |
+| check-added-large-files | No files > 500KB | all files |
+| no-commit-to-branch | Block direct push to main | pre-push only |
+| biome-check | Biome lint + format | .js/.ts/.tsx/.json |
+| tsc | TypeScript type checking | .ts/.tsx |
+| vitest | Run frontend tests | .ts/.tsx |
+| cargo-fmt | Rust formatting check | .rs |
+| cargo-clippy | Rust linting (warnings = errors) | .rs |
+| cargo-test | Rust tests | .rs |
+| cargo-deny | Security advisories, licenses | Cargo.toml/lock only |
+| cargo-machete | Unused dependency detection | Cargo.toml/lock only |
 
-## CI Gates (Phase 1)
+## CI Gates
 
-- `cargo test`
-- `cargo fmt --check`
-- `cargo clippy -- -D warnings`
-- `biome check`
-- `tsc -b --noEmit`
-- `vitest run`
+- `cargo test` + `cargo fmt --check` + `cargo clippy -- -D warnings`
+- `biome check` + `tsc -b --noEmit` + `vitest run`
 - `cargo sqlx prepare --check` (offline cache must not be stale)
 
 ## Key Architectural Rules
@@ -220,130 +203,144 @@ Config: `prek.toml`. Installed via `prek install`. Runs on every `git commit`.
 
 ---
 
-## Subagent Orchestration Workflow
+## Tooling Efficiency Rules
 
-This project is built using a subagent-driven workflow with **git worktrees** for parallel execution.
+These rules exist to avoid redundant work. Follow them strictly.
+
+### prek hooks ARE the verification
+
+**Do NOT manually run the full check suite before committing.** Just `git add` + `git commit`. prek hooks run all relevant checks automatically and are file-type-aware (Rust hooks skip if no `.rs` files staged, etc.). If hooks fail, fix and retry.
+
+The only time to run checks manually is **during development iteration** on a specific change — and then run only the single relevant check:
+- Editing Rust? → `cd src-tauri && cargo test` (or `cargo test specific_test_name` for faster feedback)
+- Editing TS? → `npx vitest run`
+- Never run clippy/fmt/biome manually before committing — hooks handle it
+
+### Compilation cost awareness
+
+Measured timings (incremental, no code changes):
+
+| Command | Time | Notes |
+|---------|------|-------|
+| `cargo fmt --check` | 0.1s | No compilation |
+| `cargo test` | 1.2s | 385 tests in 0.8s |
+| `cargo clippy` | 2.0s | Separate analysis pass |
+| `biome check` | 0.2s | |
+| `tsc -b --noEmit` | 1.0s | |
+| `vitest run` | 1.0s | |
+| `cargo tarpaulin` | ~60s | Full instrumented rebuild — expensive |
+
+Cold compile (first build in a worktree): **~15s**. This is the cost of each worktree subagent.
+
+Rules:
+- **One `cargo test` during development, hooks do the rest at commit time**
+- **Use `cargo test module::tests::specific_test` during iteration**, full suite only at commit
+- **Never run tarpaulin unless specifically working on coverage**
+- **Skip `cargo check --benches` unless bench files changed**
+- **Frontend checks are irrelevant when only Rust changed** (and vice versa) — don't run them
+
+### Subagent verification
+
+Build subagents should verify **only their own work compiles and tests pass**:
+- `cargo test` (or just the relevant module tests)
+
+They should NOT run clippy, fmt, biome, or the full prek suite. The orchestrator runs prek once after merging all subagent results. This avoids each subagent paying the full verification tax independently.
+
+Review subagents that make fixes should run `cargo test` to verify their changes. Clippy/fmt issues get caught at commit time.
+
+---
+
+## Subagent Workflow
 
 ### The Cycle
 
 ```
-1. PLAN    — Identify next tasks from project-plan.md, group by domain
-2. LOG     — Update SESSION-LOG.md with "LAUNCHING" entries
-3. WORKTREE — Create git worktrees for parallel subagents (one per group)
-4. BUILD   — Launch subagents in parallel, each in its own worktree
-5. MERGE   — Collect results, resolve any conflicts in main worktree
-6. REVIEW  — Run review subagent(s) to audit + improve the code
-7. VERIFY  — Confirm builds pass (cargo check, npm lint, npm test, prek run)
-8. DOCS    — Update AGENTS.md with new modules/commands/structure
-9. COMMIT  — git add + commit with conventional commit message
-10. LOG    — Update SESSION-LOG.md with "COMPLETED" entry + results
-11. REPEAT — Next task batch
+1. PLAN     — Pick tasks from project-plan.md, group by domain
+2. BUILD    — Launch subagent(s), with worktrees only if parallel + multi-file
+3. REVIEW   — Launch review subagent for each build subagent
+4. MERGE    — Copy changed files back to main worktree
+5. COMMIT   — git add + commit (prek hooks verify everything)
+6. LOG      — Update SESSION-LOG.md with results
 ```
 
-### Parallel Execution with Git Worktrees
+### Task Status
 
-Subagents can run in parallel when they touch **non-overlapping files**. Each parallel subagent gets its own git worktree so it has an independent working directory and build cache.
+Tasks tracked in project-plan.md and SESSION-LOG.md use these statuses:
 
-```bash
-# Create worktrees (from main repo)
-git worktree add /tmp/wt-group1 -b work/group1 HEAD
-git worktree add /tmp/wt-group2 -b work/group2 HEAD
-# ... one per parallel subagent group
+| Status | Meaning |
+|--------|---------|
+| `[BUILT]` | Code written by build subagent, not yet reviewed |
+| `[REVIEWED]` | Reviewed by a separate review subagent |
 
-# After subagents complete, merge results back
-cd /home/javier/dev/org-mode-for-the-rest-of-us
-# Copy changed files from each worktree (or cherry-pick commits)
+Everything in Phase 1 has been built and reviewed.
 
-# Clean up worktrees
-git worktree remove /tmp/wt-group1
-git worktree remove /tmp/wt-group2
-git branch -d work/group1 work/group2
-```
+### When to use worktrees
 
-**When to parallelize:**
-- Test sweeps across different modules (each subagent edits different .rs files)
-- Independent features (e.g., benchmarks + integration tests)
-- Review + documentation tasks
+Use worktrees when **all three** conditions are met:
+1. Two or more subagents running in parallel
+2. Each touches different files (no overlap)
+3. Each involves 3+ file changes (enough work to justify the ~15s cold-compile cost)
 
-**When NOT to parallelize:**
-- Tasks that modify the same files (Cargo.toml, lib.rs)
-- Tasks with ordering dependencies (schema migration before queries)
-- Single-file changes (overhead of worktree > benefit)
+**Skip worktrees** for: sequential work, single-file edits, direct orchestrator edits, review-only subagents (they can work in the main tree if nothing else is writing).
+
+### Subagent sizing
+
+Prefer **fewer, larger subagents** over many small ones. Each subagent pays fixed overhead (context loading, cold compile in worktree). A subagent that creates 3 related files is better than 3 subagents creating 1 file each.
+
+Guideline: a build subagent should do **2-5 related tasks** in one domain. If a task is a 1-line change, batch it with other changes or do it directly as the orchestrator.
+
+### Subagent prompts
+
+Keep prompts **minimal**. Subagents can read AGENTS.md and source files themselves. Include only:
+1. Working directory path
+2. `. "$HOME/.cargo/env"` reminder (for Rust subagents)
+3. Which files to create/modify and what to implement
+4. Relevant ADR numbers (not full excerpts — say "see ADR-07 in ADR.md")
+5. What NOT to modify
+6. Verification: `cd src-tauri && cargo test`
+
+For review subagents:
+1. Which files to review (with paths)
+2. What to check for (specific concerns, not generic checklists)
+3. Fix directly, verify with `cargo test`
+
+**Do NOT include** in prompts: full file contents (subagent can read them), full ADR text, environment table, tool versions, long checklists.
 
 ### Files that track state
 
 | File | Purpose | When to update |
 |------|---------|---------------|
-| `SESSION-LOG.md` | Chronological log of every subagent launch and result | Before and after every subagent |
-| `REVIEW-LATER.md` | Deferred items, tech debt, known issues to revisit | Whenever a fix is deferred, a known limitation is found, or a review flags something for later |
-| `AGENTS.md` | Developer docs: env, structure, commands, modules | After every subagent cycle that changes project structure |
-| `project-plan.md` | Master task list with all phases and task IDs | Update status after each wave/batch completes |
-| `ADR.md` | Architecture decisions (20 ADRs) | Reference only (source of truth for all design decisions) |
-
-### Subagent rules
-
-- **Parallel when possible** — use git worktrees to run subagents concurrently on non-overlapping files
-- **Every build subagent gets a review subagent** — the reviewer audits against ADRs and fixes issues
-- **Commit after each review cycle** — atomic commits per logical unit of work
-- **prek hooks validate on commit** — all hooks must pass
-- **Source Rust env** — every subagent that touches Rust must run `. "$HOME/.cargo/env"` first
-- **Never modify tracking files from subagents** — only the orchestrator updates SESSION-LOG.md, AGENTS.md, etc.
-- **Worktree cleanup** — always remove worktrees and temporary branches after merging results
+| `SESSION-LOG.md` | Log of subagent activity and results | After each subagent completes (one entry per subagent) |
+| `REVIEW-LATER.md` | Deferred items, tech debt, known issues | When a fix is deferred or a limitation is found |
+| `AGENTS.md` | Developer docs (this file) | When project structure, modules, or workflow changes |
+| `project-plan.md` | Master task list with phases and task IDs | When task status changes |
+| `ADR.md` | Architecture decisions (20 ADRs) | Reference only |
 
 ### REVIEW-LATER.md Policy
 
-**Every deferred item MUST go in `REVIEW-LATER.md`** — this is the single source of truth for tech debt, known limitations, and items flagged during review that aren't worth fixing immediately.
+Every deferred item goes in `REVIEW-LATER.md`. Entry format:
 
-When to add an entry:
-- A code review flags an issue that's deferred to a later phase
-- A Tier 2+ finding is acknowledged but not fixed now
-- A TODO is added to source code — the corresponding REVIEW-LATER entry provides context
-- An architectural limitation is discovered during implementation
-- A test gap is acknowledged but too expensive to close now
-
-Entry format:
 ```markdown
 ## [date] <title>
 - **Source:** <review session, task ID, or module>
-- **Issue:** <what the problem is and why it matters>
+- **Issue:** <what and why>
 - **Priority:** low / medium / high
-- **Phase:** <when to address — e.g., Phase 2, Phase 4, before ship>
+- **Phase:** <when to address>
 - **Resolved:** no
 ```
 
-When resolved, update the entry:
-```markdown
-- **Resolved:** yes — [commit hash] <brief note>
-```
-
-### Subagent prompt template
-
-When launching a build subagent, include:
-1. Working directory and Rust crate path
-2. Environment notes (cargo env sourcing, tool versions)
-3. Current state of relevant files (Cargo.toml, lib.rs module list, etc.)
-4. Exact task IDs and descriptions from project-plan.md
-5. Relevant ADR excerpts
-6. What NOT to modify
-7. Verification steps
-
-When launching a review subagent, include:
-1. Full content of all files the build subagent created/modified
-2. ADR requirements to check against
-3. Specific review checklist
-4. Known issues to investigate
-5. Instructions to fix directly and verify builds pass
+When resolved: `- **Resolved:** yes — [commit hash] <note>`
 
 ---
 
-## Phase 1 Progress
+## Phase 1 Progress — COMPLETE [REVIEWED]
 
-### Wave 1: Scaffold — DONE
+### Wave 1: Scaffold
 - [x] p1-t1: Tauri 2.0 workspace init
 - [x] p1-t2: Vite + React 18 frontend
 - [x] p1-t3: Biome config
 
-### Wave 2: Foundation — DONE
+### Wave 2: Foundation
 - [x] p1-t4: GitHub Actions CI
 - [x] p1-t5: Device UUID
 - [x] p1-t6: sqlx bootstrap (CRITICAL)
@@ -353,7 +350,7 @@ When launching a review subagent, include:
 - [x] p1-t10: ULID utility
 - [x] p1-t30: Vitest config
 
-### Wave 3: Core logic — DONE
+### Wave 3: Core logic
 - [x] p1-t11: Op log writer (CRITICAL)
 - [x] p1-t12: blake3 hash
 - [x] p1-t13: Op payload serde structs
@@ -368,7 +365,7 @@ When launching a review subagent, include:
 - [x] p1-t22: Pagination — cursor-based (CRITICAL)
 - [x] p1-t23: Soft-delete cascade
 
-### Wave 4: Commands + Tests — DONE
+### Wave 4: Commands + Tests
 - [x] p1-t24: Tauri command: create_block
 - [x] p1-t25: Tauri command: edit_block
 - [x] p1-t26: Tauri command: delete_block / restore_block / purge_block
