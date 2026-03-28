@@ -7,7 +7,9 @@ mod hash;
 mod materializer;
 mod op;
 mod op_log;
+mod pagination;
 mod recovery;
+mod soft_delete;
 mod ulid;
 
 use device::DeviceId;
