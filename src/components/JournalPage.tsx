@@ -149,19 +149,19 @@ export function JournalPage({ onBlockClick: _onBlockClick }: JournalPageProps): 
     <div className="space-y-4">
       {/* Date navigation */}
       <div className="flex items-center justify-between">
-        <Button variant="outline" size="sm" onClick={goToPrevDay}>
+        <Button variant="outline" onClick={goToPrevDay}>
           <ChevronLeft className="h-4 w-4" />
           Prev
         </Button>
         <div className="flex items-center gap-2">
           <span className="text-base font-medium">{formatDateDisplay(date)}</span>
           {!isToday && (
-            <Button variant="ghost" size="xs" onClick={goToToday}>
+            <Button variant="ghost" size="sm" onClick={goToToday}>
               Today
             </Button>
           )}
         </div>
-        <Button variant="outline" size="sm" onClick={goToNextDay}>
+        <Button variant="outline" onClick={goToNextDay}>
           Next
           <ChevronRight className="h-4 w-4" />
         </Button>
