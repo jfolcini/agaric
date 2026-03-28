@@ -1,0 +1,7 @@
+---
+source: src/op.rs
+expression: json
+---
+block_id: B1
+key: priority
+op_type: delete_property

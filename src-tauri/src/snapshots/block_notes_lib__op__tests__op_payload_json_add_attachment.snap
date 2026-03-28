@@ -1,0 +1,11 @@
+---
+source: src/op.rs
+expression: json
+---
+attachment_id: A1
+block_id: B1
+filename: photo.png
+fs_path: /tmp/photo.png
+mime_type: image/png
+op_type: add_attachment
+size_bytes: 1024

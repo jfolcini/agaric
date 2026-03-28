@@ -1,0 +1,8 @@
+---
+source: src/op.rs
+expression: json
+---
+block_id: B1
+new_parent_id: P2
+new_position: 3
+op_type: move_block

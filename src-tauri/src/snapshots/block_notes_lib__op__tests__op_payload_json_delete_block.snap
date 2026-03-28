@@ -1,0 +1,7 @@
+---
+source: src/op.rs
+expression: json
+---
+block_id: B1
+cascade: true
+op_type: delete_block

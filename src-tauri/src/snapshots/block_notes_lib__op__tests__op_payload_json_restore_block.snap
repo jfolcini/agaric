@@ -1,0 +1,7 @@
+---
+source: src/op.rs
+expression: json
+---
+block_id: B1
+deleted_at_ref: ref-1
+op_type: restore_block

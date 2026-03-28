@@ -24,9 +24,13 @@ chrono = { version = "0.4.44", features = ["serde"] }
 tokio = { version = "1", features = ["sync"] }
 regex = "1"
 base64 = "0.22.1"
+specta = { version = "=2.0.0-rc.22", features = ["derive"] }
+specta-typescript = "0.0.9"
+tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }
+insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 tempfile = "3.27.0"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 

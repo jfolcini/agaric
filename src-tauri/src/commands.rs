@@ -10,6 +10,7 @@
 
 use chrono::Utc;
 use serde::Serialize;
+use specta::Type;
 use sqlx::SqlitePool;
 use tauri::State;
 
@@ -30,7 +31,7 @@ use crate::ulid::BlockId;
 // Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct BlockResponse {
     pub id: String,
     pub block_type: String,
@@ -40,33 +41,33 @@ pub struct BlockResponse {
     pub deleted_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct DeleteResponse {
     pub block_id: String,
     pub deleted_at: String,
     pub descendants_affected: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct RestoreResponse {
     pub block_id: String,
     pub restored_count: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct PurgeResponse {
     pub block_id: String,
     pub purged_count: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct MoveResponse {
     pub block_id: String,
     pub new_parent_id: Option<String>,
     pub new_position: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Type)]
 pub struct TagResponse {
     pub block_id: String,
     pub tag_id: String,
@@ -683,6 +684,7 @@ pub async fn remove_tag_inner(
 
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
+#[specta::specta]
 pub async fn create_block(
     pool: State<'_, SqlitePool>,
     device_id: State<'_, DeviceId>,
@@ -706,6 +708,7 @@ pub async fn create_block(
 
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
+#[specta::specta]
 pub async fn edit_block(
     pool: State<'_, SqlitePool>,
     device_id: State<'_, DeviceId>,
@@ -718,6 +721,7 @@ pub async fn edit_block(
 
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
+#[specta::specta]
 pub async fn delete_block(
     pool: State<'_, SqlitePool>,
     device_id: State<'_, DeviceId>,
@@ -729,6 +733,7 @@ pub async fn delete_block(
 
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
+#[specta::specta]
 pub async fn restore_block(
     pool: State<'_, SqlitePool>,
     device_id: State<'_, DeviceId>,
@@ -741,6 +746,7 @@ pub async fn restore_block(
 
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
+#[specta::specta]
 pub async fn purge_block(
     pool: State<'_, SqlitePool>,
     device_id: State<'_, DeviceId>,
@@ -752,6 +758,7 @@ pub async fn purge_block(
 
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
+#[specta::specta]
 pub async fn move_block(
     pool: State<'_, SqlitePool>,
     device_id: State<'_, DeviceId>,
@@ -773,6 +780,7 @@ pub async fn move_block(
 
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
+#[specta::specta]
 #[allow(clippy::too_many_arguments)]
 pub async fn list_blocks(
     pool: State<'_, SqlitePool>,
@@ -799,6 +807,7 @@ pub async fn list_blocks(
 
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
+#[specta::specta]
 pub async fn get_block(
     pool: State<'_, SqlitePool>,
     block_id: String,
@@ -808,6 +817,7 @@ pub async fn get_block(
 
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
+#[specta::specta]
 pub async fn add_tag(
     pool: State<'_, SqlitePool>,
     device_id: State<'_, DeviceId>,
@@ -820,6 +830,7 @@ pub async fn add_tag(
 
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
+#[specta::specta]
 pub async fn remove_tag(
     pool: State<'_, SqlitePool>,
     device_id: State<'_, DeviceId>,
@@ -2146,5 +2157,69 @@ mod tests {
             err.to_string().contains("tag association"),
             "error message should mention tag association"
         );
+    }
+
+    // ======================================================================
+    // insta snapshot tests — command responses
+    // ======================================================================
+
+    /// Snapshot a BlockResponse from create_block_inner.
+    /// Redacts `id` (ULID is non-deterministic).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn snapshot_create_block_response() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "snapshot test content".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        insta::assert_yaml_snapshot!(resp, {
+            ".id" => "[ULID]",
+        });
+    }
+
+    /// Snapshot a DeleteResponse from delete_block_inner.
+    /// Redacts `deleted_at` (wall-clock timestamp).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn snapshot_delete_block_response() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Use direct insert to avoid materializer contention
+        insert_block(&pool, "SNAP_DEL", "content", "doomed", None, Some(1)).await;
+
+        let resp = delete_block_inner(&pool, DEV, &mat, "SNAP_DEL".into())
+            .await
+            .unwrap();
+
+        insta::assert_yaml_snapshot!(resp, {
+            ".deleted_at" => "[TIMESTAMP]",
+        });
+    }
+
+    /// Snapshot a PageResponse from list_blocks_inner.
+    /// Redacts `id` fields since they are ULIDs.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn snapshot_list_blocks_response() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert deterministic blocks
+        insert_block(&pool, "SNAP_BLK1", "content", "first", None, Some(1)).await;
+        insert_block(&pool, "SNAP_BLK2", "page", "second", None, Some(2)).await;
+
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, Some(10))
+            .await
+            .unwrap();
+
+        insta::assert_yaml_snapshot!(resp);
     }
 }

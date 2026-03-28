@@ -1,0 +1,6 @@
+---
+source: src/op.rs
+expression: json
+---
+block_id: B1
+op_type: purge_block

@@ -33,6 +33,7 @@ ignore = [
     { id = "RUSTSEC-2025-0081", reason = "Tauri transitive dep: unic-char-property" },
     { id = "RUSTSEC-2025-0098", reason = "Tauri transitive dep: unic-ucd-version" },
     { id = "RUSTSEC-2025-0100", reason = "Tauri transitive dep: unic-ucd-ident" },
+    { id = "RUSTSEC-2024-0436", reason = "Tauri transitive dep: paste (via serde_with, specta)" },
 ]
 
 # ── Licenses ────────────────────────────────────────────────────────────────

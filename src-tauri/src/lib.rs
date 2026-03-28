@@ -18,12 +18,104 @@ mod command_integration_tests;
 #[cfg(test)]
 mod integration_tests;
 
+#[cfg(test)]
+mod specta_tests {
+    use tauri_specta::{collect_commands, Builder};
+
+    /// Build the tauri-specta [`Builder`] with every registered command.
+    ///
+    /// Shared between the export test and (potentially) runtime setup so the
+    /// command list stays in sync.
+    fn specta_builder() -> Builder {
+        Builder::<tauri::Wry>::new().commands(collect_commands![
+            crate::commands::create_block,
+            crate::commands::edit_block,
+            crate::commands::delete_block,
+            crate::commands::restore_block,
+            crate::commands::purge_block,
+            crate::commands::move_block,
+            crate::commands::list_blocks,
+            crate::commands::get_block,
+            crate::commands::add_tag,
+            crate::commands::remove_tag,
+        ])
+    }
+
+    /// Verify the generated TypeScript bindings match the committed file.
+    ///
+    /// Writes to a temp file and compares against `src/lib/bindings.ts`.
+    /// To regenerate: `cargo test -p block-notes-lib -- specta_tests --ignored`
+    #[test]
+    fn ts_bindings_up_to_date() {
+        let builder = specta_builder();
+        let tmp = std::env::temp_dir().join("blocknotes_bindings_check.ts");
+        builder
+            .export(
+                specta_typescript::Typescript::default()
+                    .bigint(specta_typescript::BigIntExportBehavior::Number),
+                &tmp,
+            )
+            .expect("Failed to export TypeScript bindings to temp file");
+
+        let generated = std::fs::read_to_string(&tmp).expect("read generated");
+        let committed_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/lib/bindings.ts");
+        let committed = std::fs::read_to_string(&committed_path)
+            .expect("read committed bindings.ts — run the ignored regenerate test first");
+
+        // Normalize trailing whitespace so trailing-whitespace hooks don't cause spurious diffs
+        let norm = |s: &str| -> String {
+            s.lines()
+                .map(|l| l.trim_end())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        assert_eq!(
+            norm(&generated),
+            norm(&committed),
+            "TypeScript bindings are stale — regenerate with: \
+             cd src-tauri && cargo test -p block-notes-lib -- specta_tests --ignored"
+        );
+    }
+
+    /// Regenerate `src/lib/bindings.ts` from the current Rust types.
+    ///
+    /// Run manually: `cd src-tauri && cargo test -p block-notes-lib -- specta_tests --ignored`
+    #[test]
+    #[ignore]
+    fn regenerate_ts_bindings() {
+        let builder = specta_builder();
+        builder
+            .export(
+                specta_typescript::Typescript::default()
+                    .bigint(specta_typescript::BigIntExportBehavior::Number),
+                "../src/lib/bindings.ts",
+            )
+            .expect("Failed to export TypeScript bindings");
+    }
+}
+
 #[cfg(not(tarpaulin_include))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use device::DeviceId;
     use materializer::Materializer;
     use tauri::Manager;
+    use tauri_specta::{collect_commands, Builder};
+
+    let builder = Builder::<tauri::Wry>::new().commands(collect_commands![
+        commands::create_block,
+        commands::edit_block,
+        commands::delete_block,
+        commands::restore_block,
+        commands::purge_block,
+        commands::move_block,
+        commands::list_blocks,
+        commands::get_block,
+        commands::add_tag,
+        commands::remove_tag,
+    ]);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -60,18 +152,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::create_block,
-            commands::edit_block,
-            commands::delete_block,
-            commands::restore_block,
-            commands::purge_block,
-            commands::move_block,
-            commands::list_blocks,
-            commands::get_block,
-            commands::add_tag,
-            commands::remove_tag,
-        ])
+        .invoke_handler(builder.invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

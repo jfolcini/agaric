@@ -37,7 +37,7 @@ const NULL_POSITION_SENTINEL: i64 = i64::MAX;
 // ---------------------------------------------------------------------------
 
 /// Row returned by paginated block queries.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 pub struct BlockRow {
     pub id: String,
     pub block_type: String,
@@ -75,8 +75,8 @@ pub struct PageRequest {
 /// Paginated response.
 ///
 /// `total_count` is intentionally omitted — see module docs.
-#[derive(Debug, Clone, Serialize)]
-pub struct PageResponse<T> {
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PageResponse<T: specta::Type> {
     pub items: Vec<T>,
     pub next_cursor: Option<String>,
     pub has_more: bool,
@@ -126,7 +126,7 @@ impl PageRequest {
 /// The extra row is used solely to detect `has_more`; it is trimmed before
 /// returning.  `cursor_from_last` constructs the cursor from the last item on
 /// the page.
-fn build_page_response<T>(
+fn build_page_response<T: specta::Type>(
     mut rows: Vec<T>,
     limit: i64,
     cursor_from_last: impl FnOnce(&T) -> Cursor,
@@ -1314,5 +1314,70 @@ mod tests {
         assert!(!r3.has_more);
         assert!(r3.next_cursor.is_none());
         assert_eq!(r3.items[0].id, "BLOCK005");
+    }
+
+    // ====================================================================
+    // insta snapshot tests — BlockRow and PageResponse
+    // ====================================================================
+
+    /// Snapshot a PageResponse<BlockRow> from list_children.
+    /// All data is deterministic (manually inserted IDs/content).
+    #[tokio::test]
+    async fn snapshot_page_response_list_children() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "SNAP_PAR", "page", "parent page", None, Some(0)).await;
+        insert_block(
+            &pool,
+            "SNAP_CH1",
+            "content",
+            "first child",
+            Some("SNAP_PAR"),
+            Some(1),
+        )
+        .await;
+        insert_block(
+            &pool,
+            "SNAP_CH2",
+            "content",
+            "second child",
+            Some("SNAP_PAR"),
+            Some(2),
+        )
+        .await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_children(&pool, Some("SNAP_PAR"), &page).await.unwrap();
+
+        insta::assert_yaml_snapshot!(resp);
+    }
+
+    /// Snapshot a PageResponse<BlockRow> with pagination (has_more = true).
+    #[tokio::test]
+    async fn snapshot_page_response_with_cursor() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "SNAP_PAR2", "page", "parent", None, Some(0)).await;
+        for i in 1..=3_i64 {
+            let id = format!("SNAP_C{i:02}");
+            insert_block(
+                &pool,
+                &id,
+                "content",
+                &format!("child {i}"),
+                Some("SNAP_PAR2"),
+                Some(i),
+            )
+            .await;
+        }
+
+        let page = PageRequest::new(None, Some(2)).unwrap();
+        let resp = list_children(&pool, Some("SNAP_PAR2"), &page)
+            .await
+            .unwrap();
+
+        insta::assert_yaml_snapshot!(resp, {
+            ".next_cursor" => "[CURSOR]",
+        });
     }
 }

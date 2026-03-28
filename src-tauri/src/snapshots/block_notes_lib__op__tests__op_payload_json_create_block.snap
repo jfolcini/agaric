@@ -1,0 +1,10 @@
+---
+source: src/op.rs
+expression: json
+---
+block_id: B1
+block_type: content
+content: hello
+op_type: create_block
+parent_id: P1
+position: 0

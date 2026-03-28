@@ -1,0 +1,11 @@
+---
+source: src/op.rs
+expression: json
+---
+block_id: B1
+key: priority
+op_type: set_property
+value_date: ~
+value_num: 1
+value_ref: ~
+value_text: high

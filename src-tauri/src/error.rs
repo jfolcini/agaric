@@ -1,6 +1,17 @@
 use serde::Serialize;
 use thiserror::Error;
 
+/// Helper struct matching the `{ kind, message }` JSON shape that [`AppError`]
+/// serialises to.  Used solely so specta can derive the TypeScript type for
+/// `AppError` — the real serialisation is still handled by the manual
+/// `Serialize` impl below.
+#[derive(specta::Type)]
+#[specta(rename = "AppError")]
+struct AppErrorSchema {
+    kind: String,
+    message: String,
+}
+
 /// Application-level error type covering all expected failure modes.
 ///
 /// Implements `Serialize` so it can be used directly as the error type in
@@ -61,6 +72,18 @@ impl Serialize for AppError {
         state.serialize_field("kind", kind)?;
         state.serialize_field("message", &self.to_string())?;
         state.end()
+    }
+}
+
+/// Forward specta's type introspection to [`AppErrorSchema`] so that the
+/// generated TypeScript type matches the `{ kind, message }` JSON shape
+/// produced by the manual `Serialize` impl above.
+impl specta::Type for AppError {
+    fn inline(
+        type_map: &mut specta::TypeCollection,
+        generics: specta::Generics,
+    ) -> specta::DataType {
+        AppErrorSchema::inline(type_map, generics)
     }
 }
 

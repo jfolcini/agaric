@@ -746,6 +746,21 @@ mod tests {
     // 10. Additional edge cases
     // -----------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------
+    // 11. insta snapshot tests — OpPayload JSON serialization
+    // -----------------------------------------------------------------------
+
+    /// Snapshot the JSON serialization of every OpPayload variant.
+    /// These are fully deterministic (no timestamps, no ULIDs).
+    #[test]
+    fn snapshot_all_payload_json_serialization() {
+        for payload in all_test_payloads() {
+            let tag = payload.op_type_str();
+            let json: serde_json::Value = serde_json::to_value(&payload).unwrap();
+            insta::assert_yaml_snapshot!(format!("op_payload_json_{tag}"), json);
+        }
+    }
+
     #[test]
     fn move_block_to_root_serializes_null_parent() {
         let payload = OpPayload::MoveBlock(MoveBlockPayload {

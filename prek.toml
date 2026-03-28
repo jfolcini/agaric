@@ -23,6 +23,7 @@ name = "biome check"
 entry = "npx biome check"
 language = "system"
 types_or = ["javascript", "jsx", "ts", "tsx", "json"]
+exclude = "src/lib/bindings\\.ts$"
 pass_filenames = true
 
 # TypeScript type checking

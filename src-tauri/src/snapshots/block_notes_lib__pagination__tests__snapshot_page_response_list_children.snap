@@ -1,0 +1,23 @@
+---
+source: src/pagination.rs
+expression: resp
+---
+items:
+  - id: SNAP_CH1
+    block_type: content
+    content: first child
+    parent_id: SNAP_PAR
+    position: 1
+    deleted_at: ~
+    archived_at: ~
+    is_conflict: false
+  - id: SNAP_CH2
+    block_type: content
+    content: second child
+    parent_id: SNAP_PAR
+    position: 2
+    deleted_at: ~
+    archived_at: ~
+    is_conflict: false
+next_cursor: ~
+has_more: false

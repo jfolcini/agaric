@@ -766,4 +766,48 @@ mod tests {
             "payload column must contain block_id field"
         );
     }
+
+    // ── insta snapshot tests ───────────────────────────────────────────
+
+    /// Snapshot an OpRecord after appending a create_block op.
+    /// Redacts hash (blake3 is content-dependent but includes device_id/seq
+    /// which are deterministic — however we redact to keep snapshots stable
+    /// if the hash algorithm or input format ever changes).
+    #[tokio::test]
+    async fn snapshot_op_record_after_create_block() {
+        let (pool, _dir) = test_pool().await;
+
+        let record = append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            make_create_payload("BLK-SNAP"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        insta::assert_yaml_snapshot!(record, {
+            ".hash" => "[HASH]",
+        });
+    }
+
+    /// Snapshot `get_ops_since` result after appending multiple ops.
+    #[tokio::test]
+    async fn snapshot_get_ops_since_multiple() {
+        let (pool, _dir) = test_pool().await;
+
+        // Append 3 ops
+        for i in 1..=3 {
+            let payload = make_create_payload(&format!("BLK-MS{i:02}"));
+            append_local_op_at(&pool, TEST_DEVICE, payload, FIXED_TS.into())
+                .await
+                .unwrap();
+        }
+
+        let ops = get_ops_since(&pool, TEST_DEVICE, 0).await.unwrap();
+
+        insta::assert_yaml_snapshot!(ops, {
+            "[].hash" => "[HASH]",
+        });
+    }
 }

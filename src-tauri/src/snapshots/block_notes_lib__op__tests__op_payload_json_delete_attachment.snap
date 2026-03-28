@@ -1,0 +1,6 @@
+---
+source: src/op.rs
+expression: json
+---
+attachment_id: A1
+op_type: delete_attachment
