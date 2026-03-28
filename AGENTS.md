@@ -16,6 +16,9 @@
 | Git | 2.43.0 | /usr/bin/git |
 | Biome | 2.4.9 | node_modules/@biomejs/biome |
 | Vitest | (latest) | node_modules/.bin/vitest |
+| cargo-deny | 0.19.0 | ~/.cargo/bin/cargo-deny |
+| cargo-machete | 0.9.1 | ~/.cargo/bin/cargo-machete |
+| cargo-tarpaulin | (latest) | ~/.cargo/bin/cargo-tarpaulin |
 
 ### Tauri 2.0 System Dependencies (confirmed installed)
 
@@ -188,6 +191,8 @@ Config: `prek.toml`. Installed via `prek install`. Runs on every `git commit`.
 | cargo-fmt | Rust formatting check |
 | cargo-clippy | Rust linting (warnings = errors, dead_code allowed) |
 | cargo-test | Rust tests |
+| cargo-deny | Security advisories, license compliance, banned crates, sources |
+| cargo-machete | Unused dependency detection |
 
 ## CI Gates (Phase 1)
 
@@ -214,21 +219,53 @@ Config: `prek.toml`. Installed via `prek install`. Runs on every `git commit`.
 
 ## Subagent Orchestration Workflow
 
-This project is built using a subagent-driven workflow. Each unit of work follows this cycle:
+This project is built using a subagent-driven workflow with **git worktrees** for parallel execution.
 
 ### The Cycle
 
 ```
-1. PLAN    — Identify next tasks from project-plan.md
-2. LOG     — Update SESSION-LOG.md with "LAUNCHING" entry
-3. BUILD   — Run subagent to implement the tasks
-4. REVIEW  — Run review subagent to audit + improve the code
-5. VERIFY  — Confirm builds pass (cargo check, npm lint, npm test, prek run)
-6. DOCS    — Update AGENTS.md with new modules/commands/structure
-7. COMMIT  — git add + commit with conventional commit message
-8. LOG     — Update SESSION-LOG.md with "COMPLETED" entry + results
-9. REPEAT  — Next task batch
+1. PLAN    — Identify next tasks from project-plan.md, group by domain
+2. LOG     — Update SESSION-LOG.md with "LAUNCHING" entries
+3. WORKTREE — Create git worktrees for parallel subagents (one per group)
+4. BUILD   — Launch subagents in parallel, each in its own worktree
+5. MERGE   — Collect results, resolve any conflicts in main worktree
+6. REVIEW  — Run review subagent(s) to audit + improve the code
+7. VERIFY  — Confirm builds pass (cargo check, npm lint, npm test, prek run)
+8. DOCS    — Update AGENTS.md with new modules/commands/structure
+9. COMMIT  — git add + commit with conventional commit message
+10. LOG    — Update SESSION-LOG.md with "COMPLETED" entry + results
+11. REPEAT — Next task batch
 ```
+
+### Parallel Execution with Git Worktrees
+
+Subagents can run in parallel when they touch **non-overlapping files**. Each parallel subagent gets its own git worktree so it has an independent working directory and build cache.
+
+```bash
+# Create worktrees (from main repo)
+git worktree add /tmp/wt-group1 -b work/group1 HEAD
+git worktree add /tmp/wt-group2 -b work/group2 HEAD
+# ... one per parallel subagent group
+
+# After subagents complete, merge results back
+cd /home/javier/dev/org-mode-for-the-rest-of-us
+# Copy changed files from each worktree (or cherry-pick commits)
+
+# Clean up worktrees
+git worktree remove /tmp/wt-group1
+git worktree remove /tmp/wt-group2
+git branch -d work/group1 work/group2
+```
+
+**When to parallelize:**
+- Test sweeps across different modules (each subagent edits different .rs files)
+- Independent features (e.g., benchmarks + integration tests)
+- Review + documentation tasks
+
+**When NOT to parallelize:**
+- Tasks that modify the same files (Cargo.toml, lib.rs)
+- Tasks with ordering dependencies (schema migration before queries)
+- Single-file changes (overhead of worktree > benefit)
 
 ### Files that track state
 
@@ -237,17 +274,18 @@ This project is built using a subagent-driven workflow. Each unit of work follow
 | `SESSION-LOG.md` | Chronological log of every subagent launch and result | Before and after every subagent |
 | `REVIEW-LATER.md` | Items that need revisiting in future phases | When something is deferred or flagged |
 | `AGENTS.md` | Developer docs: env, structure, commands, modules | After every subagent cycle that changes project structure |
-| `project-plan.md` | Master task list with all phases and task IDs | Reference only (do not modify task definitions) |
+| `project-plan.md` | Master task list with all phases and task IDs | Update status after each wave/batch completes |
 | `ADR.md` | Architecture decisions (20 ADRs) | Reference only (source of truth for all design decisions) |
 
 ### Subagent rules
 
-- **One subagent at a time** — sequential, not parallel (allows review between each)
+- **Parallel when possible** — use git worktrees to run subagents concurrently on non-overlapping files
 - **Every build subagent gets a review subagent** — the reviewer audits against ADRs and fixes issues
 - **Commit after each review cycle** — atomic commits per logical unit of work
-- **prek hooks validate on commit** — all 13 hooks must pass
+- **prek hooks validate on commit** — all hooks must pass
 - **Source Rust env** — every subagent that touches Rust must run `. "$HOME/.cargo/env"` first
 - **Never modify tracking files from subagents** — only the orchestrator updates SESSION-LOG.md, AGENTS.md, etc.
+- **Worktree cleanup** — always remove worktrees and temporary branches after merging results
 
 ### Subagent prompt template
 

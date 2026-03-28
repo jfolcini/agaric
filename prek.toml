@@ -79,3 +79,25 @@ entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo test'"
 language = "system"
 pass_filenames = false
 types = ["rust"]
+
+# Rust: cargo-deny (advisories + licenses + bans + sources)
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "cargo-deny"
+name = "cargo deny"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo deny check'"
+language = "system"
+pass_filenames = false
+types = ["toml"]
+
+# Rust: cargo-machete (unused dependency detection)
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "cargo-machete"
+name = "cargo machete"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo machete'"
+language = "system"
+pass_filenames = false
+types = ["toml"]

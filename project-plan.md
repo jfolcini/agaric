@@ -35,64 +35,64 @@ These tasks block everything downstream. Ship them before moving on.
 
 ### Repo & Tooling
 
-| ID | Task | Tags | Critical | Notes |
-|----|------|------|----------|-------|
-| p1-t1 | Init Tauri 2.0 workspace | infra | | Cargo workspace with src-tauri + frontend packages. Commit the skeleton before any logic. |
-| p1-t2 | Vite + React 18 frontend scaffold | infra, frontend | | vite.config.ts with path aliases, strict TS config. |
-| p1-t3 | Biome — non-negotiable day one | dx | **YES** | biome.json, lint + format scripts, pre-commit hook. Retrofitting later = whole-repo churn. |
-| p1-t4 | GitHub Actions CI skeleton | infra, dx | | cargo test, cargo fmt --check, biome check, cargo sqlx prepare --check. Gates open immediately. |
-| p1-t5 | Device UUID generation + persistence | backend | | UUID v4 on first launch, stored in config file outside the DB. Never regenerated. |
+| ID | Task | Tags | Critical | Status | Notes |
+|----|------|------|----------|--------|-------|
+| p1-t1 | Init Tauri 2.0 workspace | infra | | Done | Cargo workspace with src-tauri + frontend packages. Commit the skeleton before any logic. |
+| p1-t2 | Vite + React 18 frontend scaffold | infra, frontend | | Done | vite.config.ts with path aliases, strict TS config. |
+| p1-t3 | Biome — non-negotiable day one | dx | **YES** | Done | biome.json, lint + format scripts, pre-commit hook. Retrofitting later = whole-repo churn. |
+| p1-t4 | GitHub Actions CI skeleton | infra, dx | | Done | cargo test, cargo fmt --check, biome check, cargo sqlx prepare --check. Gates open immediately. |
+| p1-t5 | Device UUID generation + persistence | backend | | Done | UUID v4 on first launch, stored in config file outside the DB. Never regenerated. |
 
 ### Database & Schema
 
-| ID | Task | Tags | Critical | Notes |
-|----|------|------|----------|-------|
-| p1-t6 | sqlx + sqlx-cli bootstrap | backend, dx | **YES** | DATABASE_URL env, sqlx::Pool, WAL mode pragma, single write connection. Read pool from Phase 1. |
-| p1-t7 | 0001_initial.sql migration | backend | **YES** | Full schema: blocks, block_tags, block_properties, block_links, attachments, op_log, block_drafts, log_snapshots, peer_refs, all cache tables. All indexes. One migration, correctly ordered. |
-| p1-t8 | .sqlx offline cache + CI check | dx, infra | | cargo sqlx prepare committed. CI gate active immediately — stale cache = build failure. |
-| p1-t9 | thiserror + anyhow error types | backend | | AppError enum covering DB, IO, parse, ULID errors. Consistent Tauri command error serialisation. |
-| p1-t10 | ULID generation utility (Rust) | backend | | Newtype wrapper. ulid crate. Used for all IDs from day one. |
+| ID | Task | Tags | Critical | Status | Notes |
+|----|------|------|----------|--------|-------|
+| p1-t6 | sqlx + sqlx-cli bootstrap | backend, dx | **YES** | Done | DATABASE_URL env, sqlx::Pool, WAL mode pragma, single write connection. Read pool from Phase 1. |
+| p1-t7 | 0001_initial.sql migration | backend | **YES** | Done | Full schema: blocks, block_tags, block_properties, block_links, attachments, op_log, block_drafts, log_snapshots, peer_refs, all cache tables. All indexes. One migration, correctly ordered. |
+| p1-t8 | .sqlx offline cache + CI check | dx, infra | | Done | cargo sqlx prepare committed. CI gate active immediately — stale cache = build failure. |
+| p1-t9 | thiserror + anyhow error types | backend | | Done | AppError enum covering DB, IO, parse, ULID errors. Consistent Tauri command error serialisation. |
+| p1-t10 | ULID generation utility (Rust) | backend | | Done | Newtype wrapper. ulid crate. Used for all IDs from day one. |
 
 ### Op Log Core
 
-| ID | Task | Tags | Critical | Notes |
-|----|------|------|----------|-------|
-| p1-t11 | Op log writer — local ops | backend | **YES** | Composite PK (device_id, seq). seq via MAX+1 serialised on write conn. parent_seqs written as null or single-entry array from day one — no migration needed at Phase 4. |
-| p1-t12 | blake3 hash computation | backend | | Hash fn: blake3(device_id \|\| seq \|\| parent_seqs_canonical \|\| op_type \|\| payload_canonical). parent_seqs sorted lexicographically for determinism. |
-| p1-t13 | Op payload types — serde structs | backend | | Rust structs for all op_type payloads (ADR-07). Exhaustive match — no catch-all arms. |
-| p1-t14 | Block draft writer (2s autosave) | backend | | INSERT OR REPLACE into block_drafts. Tauri command. Delete on flush. |
-| p1-t15 | Crash recovery at boot | backend | **YES** | Delete pending log_snapshots. Walk block_drafts, compare to op_log created_at, emit synthetic edit_block ops. Log warning per recovered draft. |
+| ID | Task | Tags | Critical | Status | Notes |
+|----|------|------|----------|--------|-------|
+| p1-t11 | Op log writer — local ops | backend | **YES** | Done | Composite PK (device_id, seq). seq via MAX+1 serialised on write conn. parent_seqs written as null or single-entry array from day one — no migration needed at Phase 4. |
+| p1-t12 | blake3 hash computation | backend | | Done | Hash fn: blake3(device_id \|\| seq \|\| parent_seqs_canonical \|\| op_type \|\| payload_canonical). parent_seqs sorted lexicographically for determinism. |
+| p1-t13 | Op payload types — serde structs | backend | | Done | Rust structs for all op_type payloads (ADR-07). Exhaustive match — no catch-all arms. |
+| p1-t14 | Block draft writer (2s autosave) | backend | | Done | INSERT OR REPLACE into block_drafts. Tauri command. Delete on flush. |
+| p1-t15 | Crash recovery at boot | backend | **YES** | Done | Delete pending log_snapshots. Walk block_drafts, compare to op_log created_at, emit synthetic edit_block ops. Log warning per recovered draft. |
 
 ### Materializer Skeleton
 
-| ID | Task | Tags | Critical | Notes |
-|----|------|------|----------|-------|
-| p1-t16 | Foreground queue (tokio mpsc) | backend | **YES** | Viewport block reads. Low-latency. Single write conn serialises materializer ops. |
-| p1-t17 | Background queue | backend | | tags_cache, pages_cache, agenda_cache, block_links index, FTS5 bootstrap. Stale-while-revalidate from day one — never block on cold boot. |
-| p1-t18 | tags_cache rebuild trigger + query | backend | | LEFT JOIN from blocks to capture zero-usage tags. Staleness threshold: 5s. Used for #[ulid] autocomplete. |
-| p1-t19 | pages_cache rebuild trigger + query | backend | | Rebuild on create/delete/restore/edit of page blocks. 5s threshold. |
-| p1-t20 | agenda_cache materializer | backend | | Triggers: set_property (value_date), add_tag / remove_tag (date/YYYY-MM-DD pattern). Full recompute, 2s threshold. |
-| p1-t21 | block_links index materializer | backend | | Trigger: edit_block. Parse [[ULID]] via regex. Diff against prior index. Delete removed, insert new. Pure read cache — drop+rebuild always safe. |
-| p1-t22 | Pagination — cursor-based on ALL list queries | backend | **YES** | Zero exceptions. Enforced from Phase 1. Offset pagination is banned. Cursor/keyset only. |
-| p1-t23 | Soft-delete cascade (recursive CTE) | backend | | delete_block with cascade:true. Single op covers subtree. Materializer walks descendants and sets deleted_at to same timestamp. |
+| ID | Task | Tags | Critical | Status | Notes |
+|----|------|------|----------|--------|-------|
+| p1-t16 | Foreground queue (tokio mpsc) | backend | **YES** | Done | Viewport block reads. Low-latency. Single write conn serialises materializer ops. |
+| p1-t17 | Background queue | backend | | Done | tags_cache, pages_cache, agenda_cache, block_links index, FTS5 bootstrap. Stale-while-revalidate from day one — never block on cold boot. |
+| p1-t18 | tags_cache rebuild trigger + query | backend | | Done | LEFT JOIN from blocks to capture zero-usage tags. Staleness threshold: 5s. Used for #[ulid] autocomplete. |
+| p1-t19 | pages_cache rebuild trigger + query | backend | | Done | Rebuild on create/delete/restore/edit of page blocks. 5s threshold. |
+| p1-t20 | agenda_cache materializer | backend | | Done | Triggers: set_property (value_date), add_tag / remove_tag (date/YYYY-MM-DD pattern). Full recompute, 2s threshold. |
+| p1-t21 | block_links index materializer | backend | | Done | Trigger: edit_block. Parse [[ULID]] via regex. Diff against prior index. Delete removed, insert new. Pure read cache — drop+rebuild always safe. |
+| p1-t22 | Pagination — cursor-based on ALL list queries | backend | **YES** | Done | Zero exceptions. Enforced from Phase 1. Offset pagination is banned. Cursor/keyset only. |
+| p1-t23 | Soft-delete cascade (recursive CTE) | backend | | Done | delete_block with cascade:true. Single op covers subtree. Materializer walks descendants and sets deleted_at to same timestamp. |
 
 ### Tauri Commands (minimal set)
 
-| ID | Task | Tags | Critical | Notes |
-|----|------|------|----------|-------|
-| p1-t24 | Tauri command: create_block | backend | | Writes create_block op. Returns new block. Validates parent_id exists if provided. |
-| p1-t25 | Tauri command: edit_block | backend | | Writes edit_block op with to_text + prev_edit. Triggers materializer. |
-| p1-t26 | Tauri command: delete_block / restore_block / purge_block | backend | | cascade:true always. restore checks deleted_at_ref timestamp matching. |
-| p1-t27 | Tauri command: list_blocks (paginated) | backend | | Keyset pagination. Accepts parent_id filter, block_type filter, deleted_at IS NULL by default. |
-| p1-t28 | Boot state machine (Zustand) | frontend | | States: booting → recovering → ready \| error. Blocks UI during crash recovery. No skeleton flash on clean boot. |
+| ID | Task | Tags | Critical | Status | Notes |
+|----|------|------|----------|--------|-------|
+| p1-t24 | Tauri command: create_block | backend | | Done | Writes create_block op. Returns new block. Validates parent_id exists if provided. |
+| p1-t25 | Tauri command: edit_block | backend | | Done | Writes edit_block op with to_text + prev_edit. Triggers materializer. |
+| p1-t26 | Tauri command: delete_block / restore_block / purge_block | backend | | Done | cascade:true always. restore checks deleted_at_ref timestamp matching. |
+| p1-t27 | Tauri command: list_blocks (paginated) | backend | | Done | Keyset pagination. Accepts parent_id filter, block_type filter, deleted_at IS NULL by default. |
+| p1-t28 | Boot state machine (Zustand) | frontend | | Done | States: booting → recovering → ready \| error. Blocks UI during crash recovery. No skeleton flash on clean boot. |
 
 ### Testing & CI
 
-| ID | Task | Tags | Critical | Notes |
-|----|------|------|----------|-------|
-| p1-t29 | cargo test suite for op log + materializer | testing | **YES** | Test: op ordering, hash chains, crash recovery simulation, cascade delete, position compaction. |
-| p1-t30 | Vitest project config | dx, testing | | jsdom environment, coverage with v8. Path aliases mirrored from vite.config. |
-| p1-t31 | sqlx compile-time query validation in CI | dx, infra | | All query! macros validated at compile time. Offline cache keeps CI fast without a live DB. |
+| ID | Task | Tags | Critical | Status | Notes |
+|----|------|------|----------|--------|-------|
+| p1-t29 | cargo test suite for op log + materializer | testing | **YES** | Done | Test: op ordering, hash chains, crash recovery simulation, cascade delete, position compaction. |
+| p1-t30 | Vitest project config | dx, testing | | Done | jsdom environment, coverage with v8. Path aliases mirrored from vite.config. |
+| p1-t31 | sqlx compile-time query validation in CI | dx, infra | | Done | All query! macros validated at compile time. Offline cache keeps CI fast without a live DB. |
 
 ---
 
