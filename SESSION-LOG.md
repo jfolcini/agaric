@@ -126,6 +126,12 @@
   - 34 tests total, all pass. prek all green.
 - **Files created:** src-tauri/src/materializer.rs
 - **Files modified:** src-tauri/{Cargo.toml,src/lib.rs,src/error.rs}
+- **Commit:** 6b8b85e
+
+#### [13:15] Subagent G: Cache Materializers — LAUNCHING
+- **Task IDs:** p1-t18 (tags_cache), p1-t19 (pages_cache), p1-t20 (agenda_cache), p1-t21 (block_links)
+- **Status:** launched
+- **What it does:** Implements the 4 background cache rebuild functions that replace the materializer stubs
 
 ---
 

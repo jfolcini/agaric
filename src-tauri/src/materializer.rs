@@ -19,6 +19,7 @@
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 
+use crate::cache;
 use crate::error::AppError;
 use crate::op_log::OpRecord;
 
@@ -233,32 +234,15 @@ async fn handle_foreground_task(
     }
 }
 
-async fn handle_background_task(
-    _pool: &SqlitePool,
-    task: &MaterializeTask,
-) -> Result<(), AppError> {
+async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Result<(), AppError> {
     match task {
-        MaterializeTask::RebuildTagsCache => {
-            eprintln!("[materializer:bg] Rebuilding tags_cache (stub)");
-            Ok(())
-        }
-        MaterializeTask::RebuildPagesCache => {
-            eprintln!("[materializer:bg] Rebuilding pages_cache (stub)");
-            Ok(())
-        }
-        MaterializeTask::RebuildAgendaCache => {
-            eprintln!("[materializer:bg] Rebuilding agenda_cache (stub)");
-            Ok(())
-        }
+        MaterializeTask::RebuildTagsCache => cache::rebuild_tags_cache(pool).await,
+        MaterializeTask::RebuildPagesCache => cache::rebuild_pages_cache(pool).await,
+        MaterializeTask::RebuildAgendaCache => cache::rebuild_agenda_cache(pool).await,
         MaterializeTask::ReindexBlockLinks { ref block_id } => {
-            eprintln!(
-                "[materializer:bg] Reindexing block_links for {} (stub)",
-                block_id
-            );
-            Ok(())
+            cache::reindex_block_links(pool, block_id).await
         }
         MaterializeTask::ApplyOp(ref record) => {
-            // ApplyOp shouldn't be in background queue but handle gracefully
             eprintln!(
                 "[materializer:bg] Unexpected ApplyOp in background queue: seq={}",
                 record.seq
