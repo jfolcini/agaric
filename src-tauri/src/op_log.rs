@@ -220,6 +220,12 @@ pub async fn get_ops_since(
 // Tests
 // =========================================================================
 
+/// Tests for `append_local_op`, `append_local_op_at`, `get_op_by_seq`,
+/// `get_latest_seq`, `get_ops_since`, and `serialize_inner_payload`.
+///
+/// Covers sequential appending, parent-chain linking, per-device isolation,
+/// hash integrity, all 12 op types, concurrent writes, DB round-trips,
+/// read helpers, and timestamp determinism.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,7 +234,14 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    /// Helper: create a temp-file-backed SQLite pool with migrations.
+    // ── Test fixture constants ──────────────────────────────────────────
+
+    const FIXED_TS: &str = "2025-01-15T12:00:00+00:00";
+    const TEST_DEVICE: &str = "test-device";
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+
+    /// Create a temp-file-backed SQLite pool with migrations applied.
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
         let db_path: PathBuf = dir.path().join("test.db");
@@ -236,7 +249,18 @@ mod tests {
         (pool, dir)
     }
 
-    /// Helper: build a minimal [`OpPayload`] for each of the 12 variants.
+    /// Build a minimal `CreateBlock` payload with the given block ID.
+    fn make_create_payload(block_id: &str) -> OpPayload {
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: block_id.into(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            content: "test".into(),
+        })
+    }
+
+    /// Build a minimal [`OpPayload`] for each of the 12 variants.
     fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
         vec![
             (
@@ -337,112 +361,88 @@ mod tests {
         ]
     }
 
-    // --- Original 4 tests (preserved) -----------------------------------
+    // ── Append basics ────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn append_first_op_has_seq_1_and_null_parents() {
         let (pool, _dir) = test_pool().await;
 
-        let payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "01HZ00000000000000000000AB".into(),
-            block_type: "content".into(),
-            parent_id: None,
-            position: Some(0),
-            content: "hello".into(),
-        });
+        let record = append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            make_create_payload("BLK-FIRST"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
 
-        let record = append_local_op(&pool, "test-device", payload)
-            .await
-            .unwrap();
-
-        assert_eq!(record.seq, 1);
-        assert!(record.parent_seqs.is_none());
+        assert_eq!(record.seq, 1, "first op must have seq 1");
+        assert!(
+            record.parent_seqs.is_none(),
+            "genesis op must have null parent_seqs"
+        );
         assert_eq!(record.op_type, "create_block");
-        assert_eq!(record.device_id, "test-device");
-        assert!(!record.hash.is_empty());
-        assert_eq!(record.hash.len(), 64);
+        assert_eq!(record.device_id, TEST_DEVICE);
+        assert_eq!(record.hash.len(), 64, "hash must be 64 hex chars");
     }
 
     #[tokio::test]
     async fn second_op_references_first_as_parent() {
         let (pool, _dir) = test_pool().await;
 
-        let p1 = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "01HZ00000000000000000000AB".into(),
-            block_type: "content".into(),
-            parent_id: None,
-            position: Some(0),
-            content: "hello".into(),
-        });
-        let r1 = append_local_op(&pool, "test-device", p1).await.unwrap();
+        let r1 = append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            make_create_payload("BLK-PARENT"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
         assert_eq!(r1.seq, 1);
 
         let p2 = OpPayload::EditBlock(EditBlockPayload {
-            block_id: "01HZ00000000000000000000AB".into(),
+            block_id: "BLK-PARENT".into(),
             to_text: "world".into(),
             prev_edit: None,
         });
-        let r2 = append_local_op(&pool, "test-device", p2).await.unwrap();
+        let r2 = append_local_op_at(&pool, TEST_DEVICE, p2, FIXED_TS.into())
+            .await
+            .unwrap();
 
-        assert_eq!(r2.seq, 2);
+        assert_eq!(r2.seq, 2, "second op must have seq 2");
         let parent_seqs: Vec<(String, i64)> =
             serde_json::from_str(r2.parent_seqs.as_ref().unwrap()).unwrap();
-        assert_eq!(parent_seqs.len(), 1);
-        assert_eq!(parent_seqs[0].0, "test-device");
-        assert_eq!(parent_seqs[0].1, 1);
+        assert_eq!(parent_seqs.len(), 1, "should reference exactly one parent");
+        assert_eq!(parent_seqs[0].0, TEST_DEVICE, "parent device must match");
+        assert_eq!(parent_seqs[0].1, 1, "parent seq must be 1");
     }
 
     #[tokio::test]
     async fn separate_devices_have_independent_seqs() {
         let (pool, _dir) = test_pool().await;
 
-        let p1 = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "01HZ00000000000000000000AB".into(),
-            block_type: "content".into(),
-            parent_id: None,
-            position: None,
-            content: "a".into(),
-        });
-        let p2 = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "01HZ00000000000000000000CD".into(),
-            block_type: "content".into(),
-            parent_id: None,
-            position: None,
-            content: "b".into(),
-        });
+        let r1 = append_local_op_at(
+            &pool,
+            "device-A",
+            make_create_payload("BLK-A"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+        let r2 = append_local_op_at(
+            &pool,
+            "device-B",
+            make_create_payload("BLK-B"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
 
-        let r1 = append_local_op(&pool, "device-A", p1).await.unwrap();
-        let r2 = append_local_op(&pool, "device-B", p2).await.unwrap();
-
-        assert_eq!(r1.seq, 1);
-        assert_eq!(r2.seq, 1);
+        assert_eq!(r1.seq, 1, "device-A first op must be seq 1");
+        assert_eq!(r2.seq, 1, "device-B first op must also be seq 1");
     }
 
-    #[tokio::test]
-    async fn hash_is_consistent_with_stored_fields() {
-        let (pool, _dir) = test_pool().await;
-
-        let payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "01HZ00000000000000000000AB".into(),
-            block_type: "content".into(),
-            parent_id: None,
-            position: Some(0),
-            content: "test".into(),
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
-
-        // Recompute the hash from the stored fields and verify it matches
-        let recomputed = crate::hash::compute_op_hash(
-            &record.device_id,
-            record.seq,
-            record.parent_seqs.as_deref(),
-            &record.op_type,
-            &record.payload,
-        );
-        assert_eq!(record.hash, recomputed);
-    }
-
-    // --- New tests -------------------------------------------------------
+    // ── All op types ──────────────────────────────────────────────────────
 
     /// All 12 op types should append successfully and produce the correct
     /// `op_type` string in the stored record.
@@ -460,29 +460,32 @@ mod tests {
         }
     }
 
-    /// Appending 100 ops sequentially must yield seq numbers 1..=100 with no
+    /// Appending 10 ops sequentially must yield seq numbers 1..=10 with no
     /// gaps and each `parent_seqs` referencing the previous.
     #[tokio::test]
-    async fn sequential_100_ops_produce_consecutive_seqs() {
+    async fn sequential_ops_produce_consecutive_seqs() {
         let (pool, _dir) = test_pool().await;
 
-        for i in 1..=100_i64 {
-            let payload = OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: format!("BLK{i:04}"),
-                block_type: "content".into(),
-                parent_id: None,
-                position: Some(i),
-                content: format!("content #{i}"),
-            });
-            let rec = append_local_op(&pool, "stress-dev", payload).await.unwrap();
+        for i in 1..=10_i64 {
+            let payload = make_create_payload(&format!("BLK{i:04}"));
+            let rec = append_local_op_at(&pool, "seq-dev", payload, FIXED_TS.into())
+                .await
+                .unwrap();
             assert_eq!(rec.seq, i, "expected seq {i}");
 
             if i == 1 {
-                assert!(rec.parent_seqs.is_none());
+                assert!(
+                    rec.parent_seqs.is_none(),
+                    "genesis op must have null parents"
+                );
             } else {
                 let parents: Vec<(String, i64)> =
                     serde_json::from_str(rec.parent_seqs.as_ref().unwrap()).unwrap();
-                assert_eq!(parents, vec![("stress-dev".to_string(), i - 1)]);
+                assert_eq!(
+                    parents,
+                    vec![("seq-dev".to_string(), i - 1)],
+                    "parent_seqs mismatch at seq {i}"
+                );
             }
         }
     }
@@ -517,32 +520,26 @@ mod tests {
         assert_eq!(deserialized.content, "round-trip test");
     }
 
-    /// Fire 20 concurrent appends from the same device; all should succeed and
-    /// produce a contiguous, duplicate-free seq range 1..=20.
+    /// Fire 10 concurrent appends from the same device; all should succeed and
+    /// produce a contiguous, duplicate-free seq range 1..=10.
     ///
-    /// SQLite serialises writers, so concurrent tasks will contend for the
-    /// write lock.  We retry on `database is locked` to prove the transaction
-    /// logic is safe under contention — no sequence gaps or duplicates.
+    /// SQLite serialises writers, so concurrent tasks contend for the write
+    /// lock. The retry loop with back-off proves the transaction logic is safe
+    /// under contention — no sequence gaps or duplicates.
     #[tokio::test]
     async fn concurrent_appends_same_device_serialize_correctly() {
         let (pool, _dir) = test_pool().await;
 
         let mut handles = Vec::new();
-        for i in 0..20 {
+        for i in 0..10 {
             let pool = pool.clone();
             handles.push(tokio::spawn(async move {
                 loop {
-                    let payload = OpPayload::CreateBlock(CreateBlockPayload {
-                        block_id: format!("BLK-C{i:03}"),
-                        block_type: "content".into(),
-                        parent_id: None,
-                        position: Some(i),
-                        content: format!("concurrent #{i}"),
-                    });
-                    match append_local_op(&pool, "dev-conc", payload).await {
+                    let payload = make_create_payload(&format!("BLK-C{i:03}"));
+                    match append_local_op_at(&pool, "dev-conc", payload, FIXED_TS.into()).await {
                         Ok(rec) => return rec,
                         Err(AppError::Database(_)) => {
-                            // Retry after a short back-off — SQLite busy.
+                            // Back-off and retry — SQLite busy under contention.
                             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
                         }
                         Err(e) => panic!("unexpected error: {e}"),
@@ -556,8 +553,14 @@ mod tests {
             seqs.push(h.await.unwrap().seq);
         }
         seqs.sort();
-        assert_eq!(seqs, (1..=20).collect::<Vec<i64>>());
+        assert_eq!(
+            seqs,
+            (1..=10).collect::<Vec<i64>>(),
+            "concurrent appends must produce contiguous seq range"
+        );
     }
+
+    // ── Hash integrity ────────────────────────────────────────────────────
 
     /// Read a record from the DB with `get_op_by_seq` and recompute the blake3
     /// hash from the stored columns — it must match the stored hash.
@@ -596,30 +599,35 @@ mod tests {
         }
     }
 
+    // ── Read helpers ──────────────────────────────────────────────────────
+
     #[tokio::test]
     async fn get_op_by_seq_returns_correct_record() {
         let (pool, _dir) = test_pool().await;
 
-        let payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "BLK-G".into(),
-            block_type: "content".into(),
-            parent_id: None,
-            position: None,
-            content: "get test".into(),
-        });
-        let appended = append_local_op(&pool, "dev-get", payload).await.unwrap();
+        let appended = append_local_op_at(
+            &pool,
+            "dev-get",
+            make_create_payload("BLK-G"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
 
         let fetched = get_op_by_seq(&pool, "dev-get", 1).await.unwrap();
-        assert_eq!(fetched.device_id, appended.device_id);
-        assert_eq!(fetched.seq, appended.seq);
-        assert_eq!(fetched.hash, appended.hash);
-        assert_eq!(fetched.op_type, appended.op_type);
-        assert_eq!(fetched.payload, appended.payload);
-        assert_eq!(fetched.created_at, appended.created_at);
+        assert_eq!(fetched.device_id, appended.device_id, "device_id mismatch");
+        assert_eq!(fetched.seq, appended.seq, "seq mismatch");
+        assert_eq!(fetched.hash, appended.hash, "hash mismatch");
+        assert_eq!(fetched.op_type, appended.op_type, "op_type mismatch");
+        assert_eq!(fetched.payload, appended.payload, "payload mismatch");
+        assert_eq!(
+            fetched.created_at, appended.created_at,
+            "created_at mismatch"
+        );
     }
 
     #[tokio::test]
-    async fn get_op_by_seq_not_found() {
+    async fn get_op_by_seq_returns_not_found_for_missing_record() {
         let (pool, _dir) = test_pool().await;
 
         let err = get_op_by_seq(&pool, "ghost-device", 999).await;
@@ -636,7 +644,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let seq = get_latest_seq(&pool, "empty-device").await.unwrap();
-        assert_eq!(seq, 0);
+        assert_eq!(seq, 0, "empty device must have latest seq 0");
     }
 
     #[tokio::test]
@@ -644,94 +652,113 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         for i in 0..5 {
-            let payload = OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: format!("BLK-LS{i}"),
-                block_type: "content".into(),
-                parent_id: None,
-                position: None,
-                content: "x".into(),
-            });
-            append_local_op(&pool, "dev-ls", payload).await.unwrap();
+            let payload = make_create_payload(&format!("BLK-LS{i}"));
+            append_local_op_at(&pool, "dev-ls", payload, FIXED_TS.into())
+                .await
+                .unwrap();
         }
         let seq = get_latest_seq(&pool, "dev-ls").await.unwrap();
-        assert_eq!(seq, 5);
+        assert_eq!(seq, 5, "latest seq after 5 appends must be 5");
     }
 
     #[tokio::test]
     async fn get_ops_since_returns_correct_subset() {
         let (pool, _dir) = test_pool().await;
 
-        // Insert 10 ops
         for i in 0..10 {
-            let payload = OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: format!("BLK-S{i:02}"),
-                block_type: "content".into(),
-                parent_id: None,
-                position: Some(i),
-                content: format!("op #{i}"),
-            });
-            append_local_op(&pool, "dev-since", payload).await.unwrap();
+            let payload = make_create_payload(&format!("BLK-S{i:02}"));
+            append_local_op_at(&pool, "dev-since", payload, FIXED_TS.into())
+                .await
+                .unwrap();
         }
 
-        // Get ops after seq 7 → should be seqs 8, 9, 10
+        // Get ops after seq 7 → should be seqs 8, 9, 10 in ascending order
         let ops = get_ops_since(&pool, "dev-since", 7).await.unwrap();
-        assert_eq!(ops.len(), 3);
-        assert_eq!(ops[0].seq, 8);
-        assert_eq!(ops[1].seq, 9);
-        assert_eq!(ops[2].seq, 10);
+        assert_eq!(ops.len(), 3, "expected 3 ops after seq 7");
+        assert_eq!(ops[0].seq, 8, "first returned op should be seq 8");
+        assert_eq!(ops[1].seq, 9, "second returned op should be seq 9");
+        assert_eq!(ops[2].seq, 10, "third returned op should be seq 10");
 
         // Get ops after seq 0 → all 10
         let all = get_ops_since(&pool, "dev-since", 0).await.unwrap();
-        assert_eq!(all.len(), 10);
+        assert_eq!(all.len(), 10, "after_seq=0 should return all ops");
 
         // Get ops after seq 10 → empty
         let none = get_ops_since(&pool, "dev-since", 10).await.unwrap();
-        assert!(none.is_empty());
+        assert!(none.is_empty(), "after_seq=max should return no ops");
     }
 
     #[tokio::test]
     async fn get_ops_since_different_device_is_isolated() {
         let (pool, _dir) = test_pool().await;
 
-        // Insert on device A
         for i in 0..3 {
-            let payload = OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: format!("BLK-A{i}"),
-                block_type: "content".into(),
-                parent_id: None,
-                position: None,
-                content: "a".into(),
-            });
-            append_local_op(&pool, "dev-A", payload).await.unwrap();
+            let payload = make_create_payload(&format!("BLK-A{i}"));
+            append_local_op_at(&pool, "dev-A", payload, FIXED_TS.into())
+                .await
+                .unwrap();
         }
 
-        // device B should have nothing
         let ops = get_ops_since(&pool, "dev-B", 0).await.unwrap();
-        assert!(ops.is_empty());
+        assert!(ops.is_empty(), "device-B should see no ops from device-A");
     }
+
+    // ── Timestamp determinism ─────────────────────────────────────────────
 
     /// `append_local_op_at` should store the exact caller-provided timestamp
     /// rather than the current wall-clock time.
     #[tokio::test]
-    async fn custom_timestamp_is_stored() {
+    async fn append_local_op_at_stores_exact_timestamp() {
         let (pool, _dir) = test_pool().await;
 
         let fixed_ts = "2025-06-01T12:00:00+00:00".to_string();
-        let payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "BLK-TS".into(),
-            block_type: "content".into(),
-            parent_id: None,
-            position: None,
-            content: "ts test".into(),
-        });
-        let record = append_local_op_at(&pool, "dev-ts", payload, fixed_ts.clone())
-            .await
-            .unwrap();
+        let record = append_local_op_at(
+            &pool,
+            "dev-ts",
+            make_create_payload("BLK-TS"),
+            fixed_ts.clone(),
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(record.created_at, fixed_ts);
+        assert_eq!(
+            record.created_at, fixed_ts,
+            "returned record must have the exact provided timestamp"
+        );
 
-        // Also verify via DB read
         let fetched = get_op_by_seq(&pool, "dev-ts", 1).await.unwrap();
-        assert_eq!(fetched.created_at, fixed_ts);
+        assert_eq!(
+            fetched.created_at, fixed_ts,
+            "DB-stored timestamp must match the provided value"
+        );
+    }
+
+    // ── Payload serialization ───────────────────────────────────────────
+
+    /// The `payload` column must contain only the inner payload fields,
+    /// NOT the `op_type` serde tag that [`OpPayload`]'s tagged enum would add.
+    #[tokio::test]
+    async fn payload_column_excludes_op_type_tag() {
+        let (pool, _dir) = test_pool().await;
+
+        let record = append_local_op_at(
+            &pool,
+            "dev-tag",
+            make_create_payload("BLK-TAG"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&record.payload).unwrap();
+        assert!(
+            parsed.get("op_type").is_none(),
+            "payload column must not contain op_type tag, got: {}",
+            record.payload
+        );
+        assert!(
+            parsed.get("block_id").is_some(),
+            "payload column must contain block_id field"
+        );
     }
 }

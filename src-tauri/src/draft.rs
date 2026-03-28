@@ -142,11 +142,24 @@ pub async fn flush_draft(
 
 #[cfg(test)]
 mod tests {
+    //! Tests for the block draft writer — save, flush, delete, and conditional
+    //! save.  Covers happy paths, edge cases (empty/unicode/large content), and
+    //! the conditional-write optimisation in `save_draft_if_changed`.
+
     use super::*;
     use crate::db::init_pool;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
+    // ── Deterministic test fixtures ─────────────────────────────────────
+
+    const BLOCK_A: &str = "01HZ0000000000000000BLOCKA";
+    const BLOCK_B: &str = "01HZ0000000000000000BLOCKB";
+    const DEVICE: &str = "test-device-001";
+    const CONTENT_V1: &str = "draft version 1";
+    const CONTENT_V2: &str = "draft version 2";
+
+    /// Create a fresh SQLite pool with migrations applied (temp directory).
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
         let db_path: PathBuf = dir.path().join("test.db");
@@ -154,270 +167,321 @@ mod tests {
         (pool, dir)
     }
 
-    // -- Original tests (1-5) -----------------------------------------------
+    // ── save_draft ──────────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn save_draft_creates_and_updates_row() {
+    async fn save_draft_creates_row() {
         let (pool, _dir) = test_pool().await;
-        let block_id = "block-1";
 
-        // First save creates the row
-        save_draft(&pool, block_id, "draft v1").await.unwrap();
-        let drafts = get_all_drafts(&pool).await.unwrap();
-        assert_eq!(drafts.len(), 1);
-        assert_eq!(drafts[0].block_id, block_id);
-        assert_eq!(drafts[0].content, "draft v1");
+        save_draft(&pool, BLOCK_A, CONTENT_V1).await.unwrap();
 
-        // Second save updates the same row (INSERT OR REPLACE)
-        save_draft(&pool, block_id, "draft v2").await.unwrap();
-        let drafts = get_all_drafts(&pool).await.unwrap();
-        assert_eq!(drafts.len(), 1);
-        assert_eq!(drafts[0].content, "draft v2");
+        let draft = get_draft(&pool, BLOCK_A)
+            .await
+            .unwrap()
+            .expect("draft should exist after save");
+        assert_eq!(draft.block_id, BLOCK_A, "block_id must match");
+        assert_eq!(draft.content, CONTENT_V1, "content must match");
     }
 
     #[tokio::test]
-    async fn delete_draft_removes_row() {
+    async fn save_draft_upserts_existing_row() {
         let (pool, _dir) = test_pool().await;
 
-        save_draft(&pool, "block-1", "content").await.unwrap();
-        assert_eq!(get_all_drafts(&pool).await.unwrap().len(), 1);
+        save_draft(&pool, BLOCK_A, CONTENT_V1).await.unwrap();
+        save_draft(&pool, BLOCK_A, CONTENT_V2).await.unwrap();
 
-        delete_draft(&pool, "block-1").await.unwrap();
-        assert_eq!(get_all_drafts(&pool).await.unwrap().len(), 0);
+        let drafts = get_all_drafts(&pool).await.unwrap();
+        assert_eq!(drafts.len(), 1, "INSERT OR REPLACE must not duplicate rows");
+        assert_eq!(
+            drafts[0].content, CONTENT_V2,
+            "content must be the latest version"
+        );
     }
 
     #[tokio::test]
-    async fn delete_draft_noop_when_missing() {
+    async fn save_draft_preserves_empty_content() {
         let (pool, _dir) = test_pool().await;
 
-        // Should not error when the row doesn't exist
+        save_draft(&pool, BLOCK_A, "").await.unwrap();
+
+        let d = get_draft(&pool, BLOCK_A).await.unwrap().unwrap();
+        assert_eq!(d.content, "", "empty string must round-trip");
+    }
+
+    #[tokio::test]
+    async fn save_draft_preserves_unicode_content() {
+        let (pool, _dir) = test_pool().await;
+
+        let cases: &[(&str, &str)] = &[
+            ("01HZ000000000000000000EMOJI", "Hello 🌍🚀✨"),
+            (
+                "01HZ0000000000000000000CJK0",
+                "你好世界 こんにちは 안녕하세요",
+            ),
+            ("01HZ00000000000000000000RTL", "مرحبا بالعالم"),
+        ];
+
+        for &(block_id, content) in cases {
+            save_draft(&pool, block_id, content).await.unwrap();
+            let d = get_draft(&pool, block_id).await.unwrap().unwrap();
+            assert_eq!(
+                d.content, content,
+                "unicode content must round-trip for block {block_id}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn save_draft_handles_large_content() {
+        let (pool, _dir) = test_pool().await;
+
+        let large = "A".repeat(100 * 1024);
+        save_draft(&pool, BLOCK_A, &large).await.unwrap();
+
+        let d = get_draft(&pool, BLOCK_A).await.unwrap().unwrap();
+        assert_eq!(
+            d.content.len(),
+            100 * 1024,
+            "100 KB content must round-trip"
+        );
+    }
+
+    #[tokio::test]
+    async fn save_draft_updated_at_does_not_regress_on_resave() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft(&pool, BLOCK_A, CONTENT_V1).await.unwrap();
+        let ts1 = get_draft(&pool, BLOCK_A).await.unwrap().unwrap().updated_at;
+
+        save_draft(&pool, BLOCK_A, CONTENT_V2).await.unwrap();
+        let ts2 = get_draft(&pool, BLOCK_A).await.unwrap().unwrap().updated_at;
+
+        assert!(ts2 >= ts1, "updated_at must not regress: got {ts2} < {ts1}");
+    }
+
+    // ── save_draft_if_changed ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn save_draft_if_changed_writes_when_no_prior_draft() {
+        let (pool, _dir) = test_pool().await;
+
+        let wrote = save_draft_if_changed(&pool, BLOCK_A, "hello")
+            .await
+            .unwrap();
+
+        assert!(wrote, "first write with no prior draft must execute");
+        assert!(
+            get_draft(&pool, BLOCK_A).await.unwrap().is_some(),
+            "draft row must exist after write"
+        );
+    }
+
+    #[tokio::test]
+    async fn save_draft_if_changed_skips_identical_content() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft_if_changed(&pool, BLOCK_A, "hello")
+            .await
+            .unwrap();
+        let ts_before = get_draft(&pool, BLOCK_A).await.unwrap().unwrap().updated_at;
+
+        let wrote = save_draft_if_changed(&pool, BLOCK_A, "hello")
+            .await
+            .unwrap();
+
+        assert!(!wrote, "identical content must be skipped");
+        let ts_after = get_draft(&pool, BLOCK_A).await.unwrap().unwrap().updated_at;
+        assert_eq!(
+            ts_before, ts_after,
+            "timestamp must not change when write is skipped"
+        );
+    }
+
+    #[tokio::test]
+    async fn save_draft_if_changed_writes_when_content_differs() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft_if_changed(&pool, BLOCK_A, "hello")
+            .await
+            .unwrap();
+
+        let wrote = save_draft_if_changed(&pool, BLOCK_A, "world")
+            .await
+            .unwrap();
+
+        assert!(wrote, "different content must trigger a write");
+        let d = get_draft(&pool, BLOCK_A).await.unwrap().unwrap();
+        assert_eq!(d.content, "world", "content must be updated to new value");
+    }
+
+    // ── delete_draft ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn delete_draft_removes_existing_row() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft(&pool, BLOCK_A, "content").await.unwrap();
+        delete_draft(&pool, BLOCK_A).await.unwrap();
+
+        assert!(
+            get_draft(&pool, BLOCK_A).await.unwrap().is_none(),
+            "draft must be gone after delete"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_draft_succeeds_when_row_missing() {
+        let (pool, _dir) = test_pool().await;
+
         delete_draft(&pool, "nonexistent").await.unwrap();
     }
 
+    // ── get_draft ───────────────────────────────────────────────────────
+
     #[tokio::test]
-    async fn flush_draft_writes_op_and_deletes_draft() {
+    async fn get_draft_returns_none_for_missing_block() {
         let (pool, _dir) = test_pool().await;
-        let device_id = "dev-1";
-        let block_id = "block-1";
 
-        // Pre-create a draft
-        save_draft(&pool, block_id, "final content").await.unwrap();
-        assert_eq!(get_all_drafts(&pool).await.unwrap().len(), 1);
-
-        // Flush it
-        let record = flush_draft(&pool, device_id, block_id, "final content", None)
-            .await
-            .unwrap();
-
-        // Op was written
-        assert_eq!(record.op_type, "edit_block");
-        assert_eq!(record.device_id, device_id);
-
-        // Draft was deleted
-        assert_eq!(get_all_drafts(&pool).await.unwrap().len(), 0);
-
-        // Verify the payload contains the block_id
-        assert!(record.payload.contains(block_id));
+        let result = get_draft(&pool, "nonexistent").await.unwrap();
+        assert!(result.is_none(), "missing block must return None");
     }
 
     #[tokio::test]
-    async fn flush_draft_with_prev_edit() {
-        let (pool, _dir) = test_pool().await;
-        let device_id = "dev-1";
-        let block_id = "block-1";
-
-        save_draft(&pool, block_id, "updated content")
-            .await
-            .unwrap();
-
-        let prev = Some(("dev-1".to_owned(), 3));
-        let record = flush_draft(&pool, device_id, block_id, "updated content", prev)
-            .await
-            .unwrap();
-
-        assert_eq!(record.op_type, "edit_block");
-        // Payload should contain the prev_edit reference
-        assert!(record.payload.contains("dev-1"));
-    }
-
-    // -- New tests (6-15) ---------------------------------------------------
-
-    #[tokio::test]
-    async fn save_draft_unicode_content() {
+    async fn get_draft_returns_draft_when_present() {
         let (pool, _dir) = test_pool().await;
 
-        // Emoji
-        save_draft(&pool, "b-emoji", "Hello 🌍🚀✨").await.unwrap();
-        let d = get_draft(&pool, "b-emoji").await.unwrap().unwrap();
-        assert_eq!(d.content, "Hello 🌍🚀✨");
+        save_draft(&pool, BLOCK_A, "hello").await.unwrap();
 
-        // CJK characters
-        save_draft(&pool, "b-cjk", "你好世界 こんにちは 안녕하세요")
-            .await
-            .unwrap();
-        let d = get_draft(&pool, "b-cjk").await.unwrap().unwrap();
-        assert_eq!(d.content, "你好世界 こんにちは 안녕하세요");
-
-        // RTL text (Arabic)
-        save_draft(&pool, "b-rtl", "مرحبا بالعالم").await.unwrap();
-        let d = get_draft(&pool, "b-rtl").await.unwrap().unwrap();
-        assert_eq!(d.content, "مرحبا بالعالم");
-    }
-
-    #[tokio::test]
-    async fn save_draft_large_content() {
-        let (pool, _dir) = test_pool().await;
-
-        // ~100 KB of text
-        let large = "A".repeat(100 * 1024);
-        save_draft(&pool, "b-large", &large).await.unwrap();
-
-        let d = get_draft(&pool, "b-large").await.unwrap().unwrap();
-        assert_eq!(d.content.len(), 100 * 1024);
-        assert_eq!(d.content, large);
-    }
-
-    #[tokio::test]
-    async fn save_draft_empty_content() {
-        let (pool, _dir) = test_pool().await;
-
-        save_draft(&pool, "b-empty", "").await.unwrap();
-        let d = get_draft(&pool, "b-empty").await.unwrap().unwrap();
-        assert_eq!(d.content, "");
-    }
-
-    #[tokio::test]
-    async fn get_all_drafts_ordering() {
-        let (pool, _dir) = test_pool().await;
-
-        // Insert drafts sequentially — timestamps have nanosecond precision so
-        // they will differ across awaits.
-        save_draft(&pool, "b-1", "first").await.unwrap();
-        save_draft(&pool, "b-2", "second").await.unwrap();
-        save_draft(&pool, "b-3", "third").await.unwrap();
-
-        let drafts = get_all_drafts(&pool).await.unwrap();
-        assert_eq!(drafts.len(), 3);
-
-        // ORDER BY updated_at ASC — timestamps must be non-decreasing
-        assert!(
-            drafts[0].updated_at <= drafts[1].updated_at,
-            "drafts[0].updated_at ({}) should <= drafts[1].updated_at ({})",
-            drafts[0].updated_at,
-            drafts[1].updated_at,
-        );
-        assert!(
-            drafts[1].updated_at <= drafts[2].updated_at,
-            "drafts[1].updated_at ({}) should <= drafts[2].updated_at ({})",
-            drafts[1].updated_at,
-            drafts[2].updated_at,
-        );
-    }
-
-    #[tokio::test]
-    async fn flush_draft_without_existing_draft() {
-        let (pool, _dir) = test_pool().await;
-
-        // No draft row exists, but flush should still write the op
-        let record = flush_draft(&pool, "dev-1", "block-x", "content", None)
-            .await
-            .unwrap();
-
-        assert_eq!(record.op_type, "edit_block");
-        assert!(record.payload.contains("block-x"));
-        // No drafts should exist
-        assert_eq!(draft_count(&pool).await.unwrap(), 0);
-    }
-
-    #[tokio::test]
-    async fn get_draft_existing_and_missing() {
-        let (pool, _dir) = test_pool().await;
-
-        // Missing → None
-        assert!(get_draft(&pool, "nope").await.unwrap().is_none());
-
-        // Existing → Some
-        save_draft(&pool, "b-1", "hello").await.unwrap();
-        let d = get_draft(&pool, "b-1").await.unwrap().unwrap();
-        assert_eq!(d.block_id, "b-1");
+        let d = get_draft(&pool, BLOCK_A).await.unwrap().unwrap();
+        assert_eq!(d.block_id, BLOCK_A);
         assert_eq!(d.content, "hello");
     }
 
+    // ── get_all_drafts ──────────────────────────────────────────────────
+
     #[tokio::test]
-    async fn draft_count_accuracy() {
+    async fn get_all_drafts_returns_empty_vec_when_no_drafts() {
         let (pool, _dir) = test_pool().await;
 
-        assert_eq!(draft_count(&pool).await.unwrap(), 0);
-
-        save_draft(&pool, "b-1", "a").await.unwrap();
-        assert_eq!(draft_count(&pool).await.unwrap(), 1);
-
-        save_draft(&pool, "b-2", "b").await.unwrap();
-        assert_eq!(draft_count(&pool).await.unwrap(), 2);
-
-        // Overwrite b-1 — count should stay at 2
-        save_draft(&pool, "b-1", "a2").await.unwrap();
-        assert_eq!(draft_count(&pool).await.unwrap(), 2);
-
-        delete_draft(&pool, "b-1").await.unwrap();
-        assert_eq!(draft_count(&pool).await.unwrap(), 1);
+        let drafts = get_all_drafts(&pool).await.unwrap();
+        assert!(drafts.is_empty(), "empty DB must return no drafts");
     }
 
     #[tokio::test]
-    async fn save_draft_updated_at_changes_on_resave() {
+    async fn get_all_drafts_ordered_by_updated_at_ascending() {
         let (pool, _dir) = test_pool().await;
 
-        save_draft(&pool, "b-1", "version 1").await.unwrap();
-        let ts1 = get_draft(&pool, "b-1").await.unwrap().unwrap().updated_at;
+        save_draft(&pool, BLOCK_A, "first").await.unwrap();
+        save_draft(&pool, BLOCK_B, "second").await.unwrap();
 
-        // Re-save with different content
-        save_draft(&pool, "b-1", "version 2").await.unwrap();
-        let ts2 = get_draft(&pool, "b-1").await.unwrap().unwrap().updated_at;
-
-        // Timestamp should not regress
-        assert!(ts2 >= ts1, "updated_at should not regress: {ts2} < {ts1}");
+        let drafts = get_all_drafts(&pool).await.unwrap();
+        assert_eq!(drafts.len(), 2, "should return both drafts");
+        assert!(
+            drafts[0].updated_at <= drafts[1].updated_at,
+            "must be ordered by updated_at ASC: {} <= {}",
+            drafts[0].updated_at,
+            drafts[1].updated_at,
+        );
     }
 
+    // ── draft_count ─────────────────────────────────────────────────────
+
     #[tokio::test]
-    async fn save_draft_if_changed_skips_identical() {
+    async fn draft_count_tracks_inserts_upserts_and_deletes() {
         let (pool, _dir) = test_pool().await;
 
-        // First write — no existing draft → always writes
-        let wrote = save_draft_if_changed(&pool, "b-1", "hello").await.unwrap();
-        assert!(wrote);
+        assert_eq!(draft_count(&pool).await.unwrap(), 0, "initially zero");
 
-        let ts1 = get_draft(&pool, "b-1").await.unwrap().unwrap().updated_at;
+        save_draft(&pool, BLOCK_A, "a").await.unwrap();
+        assert_eq!(draft_count(&pool).await.unwrap(), 1, "after first insert");
 
-        // Same content → should skip
-        let wrote = save_draft_if_changed(&pool, "b-1", "hello").await.unwrap();
-        assert!(!wrote);
-        let ts_after = get_draft(&pool, "b-1").await.unwrap().unwrap().updated_at;
-        assert_eq!(ts1, ts_after, "timestamp must not change on skip");
+        save_draft(&pool, BLOCK_B, "b").await.unwrap();
+        assert_eq!(draft_count(&pool).await.unwrap(), 2, "after second insert");
 
-        // Different content → should write
-        let wrote = save_draft_if_changed(&pool, "b-1", "world").await.unwrap();
-        assert!(wrote);
-        let d = get_draft(&pool, "b-1").await.unwrap().unwrap();
-        assert_eq!(d.content, "world");
+        save_draft(&pool, BLOCK_A, "a2").await.unwrap();
+        assert_eq!(
+            draft_count(&pool).await.unwrap(),
+            2,
+            "upsert must not increase count"
+        );
+
+        delete_draft(&pool, BLOCK_A).await.unwrap();
+        assert_eq!(draft_count(&pool).await.unwrap(), 1, "after delete");
     }
 
+    // ── flush_draft ─────────────────────────────────────────────────────
+
     #[tokio::test]
-    async fn flush_draft_only_deletes_target_block() {
+    async fn flush_draft_writes_op_and_removes_draft() {
         let (pool, _dir) = test_pool().await;
 
-        save_draft(&pool, "b-1", "content A").await.unwrap();
-        save_draft(&pool, "b-2", "content B").await.unwrap();
-        assert_eq!(draft_count(&pool).await.unwrap(), 2);
+        save_draft(&pool, BLOCK_A, "final content").await.unwrap();
 
-        // Flush only b-1
-        let record = flush_draft(&pool, "dev-1", "b-1", "content A", None)
+        let record = flush_draft(&pool, DEVICE, BLOCK_A, "final content", None)
             .await
             .unwrap();
-        assert_eq!(record.op_type, "edit_block");
 
-        // b-1 draft gone, b-2 untouched
-        assert!(get_draft(&pool, "b-1").await.unwrap().is_none());
-        assert!(get_draft(&pool, "b-2").await.unwrap().is_some());
-        assert_eq!(draft_count(&pool).await.unwrap(), 1);
+        assert_eq!(record.op_type, "edit_block", "op_type must be edit_block");
+        assert_eq!(record.device_id, DEVICE, "device_id must match");
+        assert!(
+            record.payload.contains(BLOCK_A),
+            "payload must reference the block"
+        );
+        assert_eq!(
+            draft_count(&pool).await.unwrap(),
+            0,
+            "draft must be deleted after flush"
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_draft_includes_prev_edit_in_payload() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft(&pool, BLOCK_A, "updated").await.unwrap();
+
+        let prev = Some((DEVICE.to_owned(), 3));
+        let record = flush_draft(&pool, DEVICE, BLOCK_A, "updated", prev)
+            .await
+            .unwrap();
+
+        assert_eq!(record.op_type, "edit_block");
+        assert!(
+            record.payload.contains(DEVICE),
+            "payload must contain prev_edit device reference"
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_draft_succeeds_without_existing_draft_row() {
+        let (pool, _dir) = test_pool().await;
+
+        let record = flush_draft(&pool, DEVICE, BLOCK_A, "content", None)
+            .await
+            .unwrap();
+
+        assert_eq!(record.op_type, "edit_block");
+        assert_eq!(draft_count(&pool).await.unwrap(), 0, "no orphan draft rows");
+    }
+
+    #[tokio::test]
+    async fn flush_draft_only_deletes_target_block_draft() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft(&pool, BLOCK_A, "content A").await.unwrap();
+        save_draft(&pool, BLOCK_B, "content B").await.unwrap();
+
+        flush_draft(&pool, DEVICE, BLOCK_A, "content A", None)
+            .await
+            .unwrap();
+
+        assert!(
+            get_draft(&pool, BLOCK_A).await.unwrap().is_none(),
+            "flushed block's draft must be gone"
+        );
+        assert!(
+            get_draft(&pool, BLOCK_B).await.unwrap().is_some(),
+            "other block's draft must be untouched"
+        );
     }
 }

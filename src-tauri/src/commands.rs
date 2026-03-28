@@ -506,6 +506,13 @@ pub async fn get_block(
 
 #[cfg(test)]
 mod tests {
+    //! Integration-style tests for command handlers.
+    //!
+    //! Each test uses a temporary SQLite database with full migrations.
+    //! The Materializer is created for commands that require it; sleeps
+    //! between operations allow background cache tasks to settle and avoid
+    //! write-lock contention.
+
     use super::*;
     use crate::db::init_pool;
     use crate::materializer::Materializer;
@@ -513,7 +520,14 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    /// Helper: create a SQLite pool backed by a temp file.
+    // -- Deterministic test fixtures --
+
+    const DEV: &str = "test-device-001";
+    const FIXED_TS: &str = "2025-01-01T00:00:00Z";
+
+    // -- Helpers --
+
+    /// Creates a temporary SQLite database with all migrations applied.
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
         let db_path: PathBuf = dir.path().join("test.db");
@@ -521,7 +535,7 @@ mod tests {
         (pool, dir)
     }
 
-    /// Helper: insert a block directly into the blocks table.
+    /// Insert a block directly into the blocks table (bypasses command layer).
     async fn insert_block(
         pool: &SqlitePool,
         id: &str,
@@ -544,14 +558,12 @@ mod tests {
         .unwrap();
     }
 
-    const DEV: &str = "test-device";
-
     // ======================================================================
     // create_block
     // ======================================================================
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn create_block_returns_correct_fields() {
+    async fn create_block_returns_correct_fields_and_persists() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
@@ -567,11 +579,19 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(resp.block_type, "content");
+        assert_eq!(resp.block_type, "content", "block_type should match input");
         assert_eq!(resp.content, Some("hello world".into()));
-        assert!(resp.parent_id.is_none());
+        assert!(resp.parent_id.is_none(), "top-level block has no parent");
         assert_eq!(resp.position, Some(1));
-        assert!(resp.deleted_at.is_none());
+        assert!(resp.deleted_at.is_none(), "new block should not be deleted");
+
+        // Verify persistence in DB via direct query
+        let row = get_block_inner(&pool, resp.id.clone()).await.unwrap();
+        assert_eq!(row.id, resp.id, "DB row should match response ID");
+        assert_eq!(row.block_type, "content");
+        assert_eq!(row.content, Some("hello world".into()));
+        assert_eq!(row.position, Some(1));
+        assert!(row.deleted_at.is_none());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -591,19 +611,26 @@ mod tests {
         .await
         .unwrap();
 
-        // ULID is 26 uppercase Crockford base32 characters
-        assert_eq!(resp.id.len(), 26);
-        assert!(resp.id.chars().all(|c| c.is_ascii_alphanumeric()));
-        // Verify it parses as a valid ULID
-        assert!(BlockId::from_string(&resp.id).is_ok());
+        assert_eq!(
+            resp.id.len(),
+            26,
+            "ULID should be 26 Crockford base32 characters"
+        );
+        assert!(
+            resp.id.chars().all(|c| c.is_ascii_alphanumeric()),
+            "ULID should only contain alphanumeric characters"
+        );
+        assert!(
+            BlockId::from_string(&resp.id).is_ok(),
+            "response ID should parse as a valid ULID"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn create_block_with_valid_parent() {
+    async fn create_block_with_parent_sets_parent_id() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        // Create a parent block first
         let parent = create_block_inner(
             &pool,
             DEV,
@@ -616,7 +643,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Create a child
         let child = create_block_inner(
             &pool,
             DEV,
@@ -629,7 +655,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(child.parent_id, Some(parent.id));
+        assert_eq!(
+            child.parent_id,
+            Some(parent.id),
+            "child.parent_id should match parent's ID"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -643,14 +673,15 @@ mod tests {
             &mat,
             "content".into(),
             "child".into(),
-            Some("NONEXISTENT".into()),
+            Some("NONEXISTENT_PARENT".into()),
             Some(1),
         )
         .await;
 
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, AppError::NotFound(_)));
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "should return NotFound for nonexistent parent"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -658,7 +689,6 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        // Create and delete a parent
         let parent = create_block_inner(
             &pool,
             DEV,
@@ -681,7 +711,6 @@ mod tests {
         // Allow bg cache tasks from delete to settle
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        // Try to create a child under the deleted parent
         let result = create_block_inner(
             &pool,
             DEV,
@@ -693,8 +722,10 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "should return NotFound for deleted parent"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -722,7 +753,101 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(count.0, 1);
+        assert_eq!(count.0, 1, "exactly one create_block op should be logged");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_block_invalid_block_type_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "invalid_type".into(),
+            "hello".into(),
+            None,
+            None,
+        )
+        .await;
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "should return Validation error"
+        );
+        assert!(
+            err.to_string().contains("unknown block_type"),
+            "error message should mention unknown block_type"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_block_all_valid_types_accepted() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        for block_type in &["content", "tag", "page"] {
+            let resp = create_block_inner(
+                &pool,
+                DEV,
+                &mat,
+                block_type.to_string(),
+                format!("test {block_type}"),
+                None,
+                None,
+            )
+            .await;
+
+            assert!(resp.is_ok(), "block_type '{block_type}' should be accepted");
+            assert_eq!(resp.unwrap().block_type, *block_type);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_block_with_empty_content_succeeds() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "".into(), None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.content,
+            Some("".into()),
+            "empty content should be stored as-is"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_block_with_unicode_content_preserves_text() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let unicode_content = "Hello 世界! 🌍 Ñoño café résumé";
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            unicode_content.into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resp.content,
+            Some(unicode_content.into()),
+            "unicode content should be preserved exactly"
+        );
+
+        // Also verify round-trip through DB
+        let row = get_block_inner(&pool, resp.id).await.unwrap();
+        assert_eq!(row.content, Some(unicode_content.into()));
     }
 
     // ======================================================================
@@ -758,11 +883,15 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(row.0, Some("updated".into()));
+        assert_eq!(
+            row.0,
+            Some("updated".into()),
+            "DB content should be updated"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn edit_block_finds_prev_edit_automatically() {
+    async fn edit_block_sequential_edits_chain_prev_edit() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
@@ -812,8 +941,10 @@ mod tests {
 
         let result = edit_block_inner(&pool, DEV, &mat, "NONEXISTENT".into(), "text".into()).await;
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "should return NotFound for nonexistent block"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -839,8 +970,39 @@ mod tests {
 
         let result = edit_block_inner(&pool, DEV, &mat, created.id, "should fail".into()).await;
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "editing a deleted block should return NotFound"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn edit_block_with_unicode_preserves_text() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let created = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "original".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let unicode = "日本語テスト 🎌 über";
+        let edited = edit_block_inner(&pool, DEV, &mat, created.id, unicode.into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            edited.content,
+            Some(unicode.into()),
+            "unicode content should survive edit round-trip"
+        );
     }
 
     // ======================================================================
@@ -880,9 +1042,11 @@ mod tests {
             .await
             .unwrap();
 
-        // Parent + child = 2 affected
-        assert_eq!(resp.descendants_affected, 2);
-        assert!(!resp.deleted_at.is_empty());
+        assert_eq!(resp.descendants_affected, 2, "parent + child = 2 affected");
+        assert!(
+            !resp.deleted_at.is_empty(),
+            "deleted_at timestamp should be set"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -902,15 +1066,27 @@ mod tests {
         .await
         .unwrap();
 
-        // First delete
         delete_block_inner(&pool, DEV, &mat, created.id.clone())
             .await
             .unwrap();
 
-        // Second delete should fail
         let result = delete_block_inner(&pool, DEV, &mat, created.id).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::InvalidOperation(_)));
+        assert!(
+            matches!(result, Err(AppError::InvalidOperation(_))),
+            "second delete should return InvalidOperation"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn delete_block_nonexistent_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = delete_block_inner(&pool, DEV, &mat, "GHOST".into()).await;
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "deleting a nonexistent block should return NotFound"
+        );
     }
 
     // ======================================================================
@@ -939,20 +1115,73 @@ mod tests {
             .await
             .unwrap();
 
-        // Now test restore through the command handler
         let rest_resp = restore_block_inner(&pool, DEV, &mat, "RST_PAR".into(), ts)
             .await
             .unwrap();
 
-        assert_eq!(rest_resp.restored_count, 2);
+        assert_eq!(rest_resp.restored_count, 2, "parent + child restored");
 
-        // Verify parent is no longer deleted
         let row: (Option<String>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
             .bind("RST_PAR")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert!(row.0.is_none());
+        assert!(
+            row.0.is_none(),
+            "parent should no longer be deleted after restore"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_block_not_deleted_returns_invalid_operation() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "ALIVE01", "content", "alive", None, Some(1)).await;
+
+        let result = restore_block_inner(&pool, DEV, &mat, "ALIVE01".into(), FIXED_TS.into()).await;
+
+        assert!(
+            matches!(result, Err(AppError::InvalidOperation(_))),
+            "restoring a non-deleted block should return InvalidOperation"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_block_nonexistent_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = restore_block_inner(&pool, DEV, &mat, "GHOST".into(), FIXED_TS.into()).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "restoring a nonexistent block should return NotFound"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_block_mismatched_deleted_at_returns_invalid_operation() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "MISMATCH1", "content", "test", None, Some(1)).await;
+        let (ts, _) = soft_delete::cascade_soft_delete(&pool, "MISMATCH1")
+            .await
+            .unwrap();
+
+        let wrong_ts = format!("{ts}_wrong");
+        let result = restore_block_inner(&pool, DEV, &mat, "MISMATCH1".into(), wrong_ts).await;
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::InvalidOperation(_)),
+            "mismatched deleted_at should return InvalidOperation"
+        );
+        assert!(
+            err.to_string().contains("deleted_at mismatch"),
+            "error message should mention mismatch"
+        );
     }
 
     // ======================================================================
@@ -960,11 +1189,10 @@ mod tests {
     // ======================================================================
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn purge_block_physically_removes() {
+    async fn purge_block_physically_removes_from_db() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        // Insert block directly to avoid materializer bg contention
         insert_block(&pool, "PURGE1", "content", "doomed", None, Some(1)).await;
 
         // Soft-delete first (purge requires prior soft-delete)
@@ -978,13 +1206,46 @@ mod tests {
 
         assert_eq!(resp.purged_count, 1);
 
-        // Verify block is gone
         let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM blocks WHERE id = ?")
             .bind("PURGE1")
             .fetch_optional(&pool)
             .await
             .unwrap();
-        assert!(exists.is_none());
+        assert!(
+            exists.is_none(),
+            "block should be physically gone after purge"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn purge_block_nonexistent_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = purge_block_inner(&pool, DEV, &mat, "GHOST".into()).await;
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "purging a nonexistent block should return NotFound"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn purge_block_not_deleted_returns_invalid_operation() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "PURGE_ALIVE", "content", "alive", None, Some(1)).await;
+
+        let result = purge_block_inner(&pool, DEV, &mat, "PURGE_ALIVE".into()).await;
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::InvalidOperation(_)),
+            "purging a non-deleted block should return InvalidOperation"
+        );
+        assert!(
+            err.to_string().contains("soft-deleted before purging"),
+            "error message should explain the requirement"
+        );
     }
 
     // ======================================================================
@@ -995,7 +1256,6 @@ mod tests {
     async fn list_blocks_no_filters_returns_top_level() {
         let (pool, _dir) = test_pool().await;
 
-        // Insert top-level blocks directly
         insert_block(&pool, "TOP1", "content", "a", None, Some(1)).await;
         insert_block(&pool, "TOP2", "content", "b", None, Some(2)).await;
         insert_block(&pool, "CHILD1", "content", "c", Some("TOP1"), Some(1)).await;
@@ -1004,8 +1264,11 @@ mod tests {
             .await
             .unwrap();
 
-        // Should only return top-level blocks (parent_id IS NULL)
-        assert_eq!(resp.items.len(), 2);
+        assert_eq!(
+            resp.items.len(),
+            2,
+            "should only return top-level blocks (parent_id IS NULL)"
+        );
         let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
         assert!(ids.contains(&"TOP1"));
         assert!(ids.contains(&"TOP2"));
@@ -1023,7 +1286,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.items.len(), 1);
+        assert_eq!(resp.items.len(), 1, "should filter to page type only");
         assert_eq!(resp.items[0].id, "PAGE1");
     }
 
@@ -1040,7 +1303,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.items.len(), 2);
+        assert_eq!(resp.items.len(), 2, "should return only children of PAR");
         let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
         assert!(ids.contains(&"CH1"));
         assert!(ids.contains(&"CH2"));
@@ -1053,8 +1316,8 @@ mod tests {
         insert_block(&pool, "ALIVE", "content", "alive", None, Some(1)).await;
         insert_block(&pool, "DEAD", "content", "dead", None, Some(2)).await;
 
-        // Soft-delete one block
-        sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'DEAD'")
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = 'DEAD'")
+            .bind(FIXED_TS)
             .execute(&pool)
             .await
             .unwrap();
@@ -1063,8 +1326,30 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(resp.items.len(), 1);
+        assert_eq!(
+            resp.items.len(),
+            1,
+            "trash should contain only deleted blocks"
+        );
         assert_eq!(resp.items[0].id, "DEAD");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_blocks_empty_db_returns_empty_page() {
+        let (pool, _dir) = test_pool().await;
+
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None)
+            .await
+            .unwrap();
+
+        assert!(
+            resp.items.is_empty(),
+            "empty DB should return empty items list"
+        );
+        assert!(
+            resp.next_cursor.is_none(),
+            "empty DB should have no next cursor"
+        );
     }
 
     // ======================================================================
@@ -1088,169 +1373,32 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let result = get_block_inner(&pool, "NOPE".into()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
-    }
-
-    // ======================================================================
-    // Additional edge cases
-    // ======================================================================
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn delete_block_nonexistent_returns_not_found() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        let result = delete_block_inner(&pool, DEV, &mat, "GHOST".into()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "get_block on nonexistent ID should return NotFound"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn purge_block_nonexistent_returns_not_found() {
+    async fn get_block_returns_deleted_block_too() {
         let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
 
-        let result = purge_block_inner(&pool, DEV, &mat, "GHOST".into()).await;
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
-    }
+        insert_block(&pool, "DELBLK", "content", "will be deleted", None, Some(1)).await;
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn restore_block_not_deleted_returns_invalid_operation() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        let created = create_block_inner(
-            &pool,
-            DEV,
-            &mat,
-            "content".into(),
-            "alive".into(),
-            None,
-            Some(1),
-        )
-        .await
-        .unwrap();
-
-        let result =
-            restore_block_inner(&pool, DEV, &mat, created.id, "2025-01-01T00:00:00Z".into()).await;
-
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::InvalidOperation(_)));
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn restore_block_nonexistent_returns_not_found() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        let result = restore_block_inner(
-            &pool,
-            DEV,
-            &mat,
-            "GHOST".into(),
-            "2025-01-01T00:00:00Z".into(),
-        )
-        .await;
-
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn create_block_persists_to_blocks_table() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        let resp = create_block_inner(
-            &pool,
-            DEV,
-            &mat,
-            "page".into(),
-            "persisted".into(),
-            None,
-            Some(5),
-        )
-        .await
-        .unwrap();
-
-        // Verify in DB via direct query
-        let row = get_block_inner(&pool, resp.id.clone()).await.unwrap();
-        assert_eq!(row.id, resp.id);
-        assert_eq!(row.block_type, "page");
-        assert_eq!(row.content, Some("persisted".into()));
-        assert_eq!(row.position, Some(5));
-        assert!(row.deleted_at.is_none());
-    }
-
-    // ======================================================================
-    // create_block — validation
-    // ======================================================================
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn create_block_invalid_block_type_returns_validation_error() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        let result = create_block_inner(
-            &pool,
-            DEV,
-            &mat,
-            "invalid_type".into(),
-            "hello".into(),
-            None,
-            None,
-        )
-        .await;
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, AppError::Validation(_)));
-        assert!(err.to_string().contains("unknown block_type"));
-    }
-
-    // ======================================================================
-    // purge_block — non-deleted block
-    // ======================================================================
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn purge_block_not_deleted_returns_invalid_operation() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        // Insert a non-deleted block directly
-        insert_block(&pool, "PURGE_ALIVE", "content", "alive", None, Some(1)).await;
-
-        let result = purge_block_inner(&pool, DEV, &mat, "PURGE_ALIVE".into()).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, AppError::InvalidOperation(_)));
-        assert!(err.to_string().contains("soft-deleted before purging"));
-    }
-
-    // ======================================================================
-    // restore_block — deleted_at mismatch
-    // ======================================================================
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn restore_block_mismatched_deleted_at_returns_invalid_operation() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        // Insert and soft-delete a block
-        insert_block(&pool, "MISMATCH1", "content", "test", None, Some(1)).await;
-        let (ts, _) = soft_delete::cascade_soft_delete(&pool, "MISMATCH1")
+        // Soft-delete the block
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = 'DELBLK'")
+            .bind(FIXED_TS)
+            .execute(&pool)
             .await
             .unwrap();
 
-        // Use a wrong deleted_at_ref
-        let wrong_ts = format!("{}_wrong", ts);
-        let result = restore_block_inner(&pool, DEV, &mat, "MISMATCH1".into(), wrong_ts).await;
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, AppError::InvalidOperation(_)));
-        assert!(err.to_string().contains("deleted_at mismatch"));
+        // get_block should still return it (unlike list_blocks which excludes deleted)
+        let block = get_block_inner(&pool, "DELBLK".into()).await.unwrap();
+        assert_eq!(block.id, "DELBLK");
+        assert_eq!(
+            block.deleted_at,
+            Some(FIXED_TS.into()),
+            "get_block should return deleted_at for soft-deleted blocks"
+        );
     }
 }

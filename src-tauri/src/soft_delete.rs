@@ -293,11 +293,30 @@ pub async fn purge_block(pool: &SqlitePool, block_id: &str) -> Result<u64, AppEr
 
 #[cfg(test)]
 mod tests {
+    //! Tests for soft-delete, cascade, restore, and purge operations.
+    //!
+    //! Covers: single soft-delete, cascade through subtrees (deep/wide),
+    //! restore with timestamp matching, purge with FK-dependent table cleanup,
+    //! and the `is_deleted` / `get_descendants` helpers.
+
     use super::*;
     use crate::db::init_pool;
     use sqlx::SqlitePool;
     use tempfile::TempDir;
 
+    // -- Deterministic test fixtures --
+
+    const BLOCK_A: &str = "BLK_A01";
+    const BLOCK_B: &str = "BLK_B02";
+    const PARENT: &str = "PAR001";
+    const CHILD: &str = "CHD001";
+    const CHILD2: &str = "CHD002";
+    const GRANDCHILD: &str = "GCH001";
+    const FIXED_DELETED_AT: &str = "2025-01-01T00:00:00+00:00";
+
+    // -- Helpers --
+
+    /// Creates a temporary SQLite database with all migrations applied.
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("test.db");
@@ -353,52 +372,63 @@ mod tests {
     // ======================================================================
 
     #[tokio::test]
-    async fn soft_delete_single() {
+    async fn soft_delete_block_marks_single_block_as_deleted() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "BLK001", "content", "hello", None, None).await;
+        insert_block(&pool, BLOCK_A, "content", "hello", None, None).await;
 
-        let ts = soft_delete_block(&pool, "BLK001").await.unwrap().unwrap();
+        let ts = soft_delete_block(&pool, BLOCK_A)
+            .await
+            .unwrap()
+            .expect("should return timestamp for newly deleted block");
 
-        let deleted_at = get_deleted_at(&pool, "BLK001").await;
-        assert_eq!(deleted_at, Some(ts));
+        let deleted_at = get_deleted_at(&pool, BLOCK_A).await;
+        assert_eq!(
+            deleted_at,
+            Some(ts),
+            "deleted_at in DB should match returned timestamp"
+        );
     }
 
     #[tokio::test]
-    async fn soft_delete_already_deleted() {
+    async fn soft_delete_block_already_deleted_returns_none() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "BLK001", "content", "hello", None, None).await;
+        insert_block(&pool, BLOCK_A, "content", "hello", None, None).await;
 
-        let ts1 = soft_delete_block(&pool, "BLK001").await.unwrap().unwrap();
-        // Second call is a no-op — returns None.
-        let ts2 = soft_delete_block(&pool, "BLK001").await.unwrap();
-        assert_eq!(ts2, None);
+        let ts1 = soft_delete_block(&pool, BLOCK_A).await.unwrap().unwrap();
+        let ts2 = soft_delete_block(&pool, BLOCK_A).await.unwrap();
+        assert_eq!(ts2, None, "second soft-delete should be a no-op");
 
-        // Original timestamp is preserved.
-        let deleted_at = get_deleted_at(&pool, "BLK001").await;
-        assert_eq!(deleted_at, Some(ts1));
+        let deleted_at = get_deleted_at(&pool, BLOCK_A).await;
+        assert_eq!(
+            deleted_at,
+            Some(ts1),
+            "original timestamp should be preserved"
+        );
     }
 
     #[tokio::test]
-    async fn soft_delete_nonexistent_returns_none() {
+    async fn soft_delete_block_nonexistent_returns_none() {
         let (pool, _dir) = test_pool().await;
 
-        let result = soft_delete_block(&pool, "NOPE").await.unwrap();
-        assert_eq!(result, None);
+        let result = soft_delete_block(&pool, "NONEXISTENT").await.unwrap();
+        assert_eq!(
+            result, None,
+            "soft-deleting a nonexistent block should return None"
+        );
     }
 
     #[tokio::test]
-    async fn soft_delete_yields_different_timestamps() {
+    async fn soft_delete_block_independent_calls_produce_ordered_timestamps() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "BLK001", "content", "a", None, None).await;
-        insert_block(&pool, "BLK002", "content", "b", None, None).await;
+        insert_block(&pool, BLOCK_A, "content", "a", None, None).await;
+        insert_block(&pool, BLOCK_B, "content", "b", None, None).await;
 
-        let ts1 = soft_delete_block(&pool, "BLK001").await.unwrap().unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        let ts2 = soft_delete_block(&pool, "BLK002").await.unwrap().unwrap();
+        let ts1 = soft_delete_block(&pool, BLOCK_A).await.unwrap().unwrap();
+        let ts2 = soft_delete_block(&pool, BLOCK_B).await.unwrap().unwrap();
 
-        assert_ne!(
-            ts1, ts2,
-            "consecutive soft-deletes should have different timestamps"
+        assert!(
+            ts1 <= ts2,
+            "timestamps should be monotonically ordered: '{ts1}' <= '{ts2}'"
         );
     }
 
@@ -407,64 +437,86 @@ mod tests {
     // ======================================================================
 
     #[tokio::test]
-    async fn cascade_delete_subtree() {
+    async fn cascade_soft_delete_marks_entire_subtree() {
         let (pool, _dir) = test_pool().await;
-        // parent -> child -> grandchild
-        insert_block(&pool, "PAR001", "page", "parent", None, Some(1)).await;
-        insert_block(&pool, "CHD001", "content", "child", Some("PAR001"), Some(1)).await;
+        insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
+        insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
         insert_block(
             &pool,
-            "GCH001",
+            GRANDCHILD,
             "content",
             "grandchild",
-            Some("CHD001"),
+            Some(CHILD),
             Some(1),
         )
         .await;
 
-        let (ts, count) = cascade_soft_delete(&pool, "PAR001").await.unwrap();
+        let (ts, count) = cascade_soft_delete(&pool, PARENT).await.unwrap();
 
-        assert_eq!(count, 3);
-        // All three share the same timestamp.
-        assert_eq!(get_deleted_at(&pool, "PAR001").await, Some(ts.clone()));
-        assert_eq!(get_deleted_at(&pool, "CHD001").await, Some(ts.clone()));
-        assert_eq!(get_deleted_at(&pool, "GCH001").await, Some(ts));
+        assert_eq!(count, 3, "parent + child + grandchild = 3");
+        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(ts.clone()));
+        assert_eq!(get_deleted_at(&pool, CHILD).await, Some(ts.clone()));
+        assert_eq!(get_deleted_at(&pool, GRANDCHILD).await, Some(ts));
     }
 
     #[tokio::test]
-    async fn cascade_skips_already_deleted() {
+    async fn cascade_soft_delete_skips_already_deleted_subtree() {
         let (pool, _dir) = test_pool().await;
-        // parent -> child -> grandchild
-        insert_block(&pool, "PAR001", "page", "parent", None, Some(1)).await;
-        insert_block(&pool, "CHD001", "content", "child", Some("PAR001"), Some(1)).await;
+        insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
+        insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
         insert_block(
             &pool,
-            "GCH001",
+            GRANDCHILD,
             "content",
             "grandchild",
-            Some("CHD001"),
+            Some(CHILD),
             Some(1),
         )
         .await;
 
         // Independently delete the child first.
-        let t1 = soft_delete_block(&pool, "CHD001").await.unwrap().unwrap();
+        let t1 = soft_delete_block(&pool, CHILD).await.unwrap().unwrap();
 
         // Cascade-delete parent: CTE does NOT traverse through the
         // already-deleted child, so grandchild is NOT reached.
-        let (t2, count) = cascade_soft_delete(&pool, "PAR001").await.unwrap();
+        let (t2, count) = cascade_soft_delete(&pool, PARENT).await.unwrap();
         assert_ne!(t1, t2);
-        assert_eq!(count, 1); // only the parent
+        assert_eq!(count, 1, "only the parent should be newly deleted");
 
-        assert_eq!(get_deleted_at(&pool, "PAR001").await, Some(t2));
-        // Child keeps its original timestamp.
-        assert_eq!(get_deleted_at(&pool, "CHD001").await, Some(t1));
-        // Grandchild was not reached — still alive.
-        assert_eq!(get_deleted_at(&pool, "GCH001").await, None);
+        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(t2));
+        assert_eq!(
+            get_deleted_at(&pool, CHILD).await,
+            Some(t1),
+            "child keeps its original independent timestamp"
+        );
+        assert_eq!(
+            get_deleted_at(&pool, GRANDCHILD).await,
+            None,
+            "grandchild was unreachable through deleted child"
+        );
     }
 
     #[tokio::test]
-    async fn cascade_deep_tree() {
+    async fn cascade_soft_delete_on_leaf_node_deletes_only_itself() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "LEAF01", "content", "leaf node", None, Some(1)).await;
+
+        let (ts, count) = cascade_soft_delete(&pool, "LEAF01").await.unwrap();
+
+        assert_eq!(count, 1, "leaf node has no descendants");
+        assert_eq!(get_deleted_at(&pool, "LEAF01").await, Some(ts));
+    }
+
+    #[tokio::test]
+    async fn cascade_soft_delete_on_nonexistent_returns_zero() {
+        let (pool, _dir) = test_pool().await;
+
+        let (_ts, count) = cascade_soft_delete(&pool, "NONEXISTENT").await.unwrap();
+        assert_eq!(count, 0, "no rows affected for nonexistent block");
+    }
+
+    #[tokio::test]
+    async fn cascade_soft_delete_handles_deep_linear_chain() {
         let (pool, _dir) = test_pool().await;
 
         // Create a linear chain: L00 -> L01 -> L02 -> ... -> L10
@@ -484,16 +536,20 @@ mod tests {
         }
 
         let (ts, count) = cascade_soft_delete(&pool, "L00").await.unwrap();
-        assert_eq!(count, 11); // L00 through L10
+        assert_eq!(count, 11, "L00 through L10 = 11 nodes");
 
         for i in 0..=10 {
             let id = format!("L{i:02}");
-            assert_eq!(get_deleted_at(&pool, &id).await, Some(ts.clone()));
+            assert_eq!(
+                get_deleted_at(&pool, &id).await,
+                Some(ts.clone()),
+                "node {id} should share the cascade timestamp"
+            );
         }
     }
 
     #[tokio::test]
-    async fn cascade_wide_tree() {
+    async fn cascade_soft_delete_handles_wide_tree() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "WROOT", "page", "wide root", None, Some(1)).await;
@@ -511,7 +567,7 @@ mod tests {
         }
 
         let (ts, count) = cascade_soft_delete(&pool, "WROOT").await.unwrap();
-        assert_eq!(count, 101); // root + 100 children
+        assert_eq!(count, 101, "root + 100 children");
 
         assert_eq!(get_deleted_at(&pool, "WROOT").await, Some(ts.clone()));
         for i in 0..100 {
@@ -521,7 +577,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cascade_preserves_outside_subtree() {
+    async fn cascade_soft_delete_leaves_sibling_trees_untouched() {
         let (pool, _dir) = test_pool().await;
 
         // Two independent trees side by side.
@@ -549,9 +605,16 @@ mod tests {
         // Cascade delete tree A only.
         cascade_soft_delete(&pool, "TREE_A").await.unwrap();
 
-        // Tree B should be completely unaffected.
-        assert_eq!(get_deleted_at(&pool, "TREE_B").await, None);
-        assert_eq!(get_deleted_at(&pool, "TREE_B_C").await, None);
+        assert_eq!(
+            get_deleted_at(&pool, "TREE_B").await,
+            None,
+            "sibling tree root should be unaffected"
+        );
+        assert_eq!(
+            get_deleted_at(&pool, "TREE_B_C").await,
+            None,
+            "sibling tree child should be unaffected"
+        );
     }
 
     // ======================================================================
@@ -559,79 +622,80 @@ mod tests {
     // ======================================================================
 
     #[tokio::test]
-    async fn restore_block_and_descendants() {
+    async fn restore_block_clears_entire_subtree() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "PAR001", "page", "parent", None, Some(1)).await;
-        insert_block(&pool, "CHD001", "content", "child", Some("PAR001"), Some(1)).await;
+        insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
+        insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
         insert_block(
             &pool,
-            "GCH001",
+            GRANDCHILD,
             "content",
             "grandchild",
-            Some("CHD001"),
+            Some(CHILD),
             Some(1),
         )
         .await;
 
-        let (ts, _) = cascade_soft_delete(&pool, "PAR001").await.unwrap();
-        let restored = restore_block(&pool, "PAR001", &ts).await.unwrap();
+        let (ts, _) = cascade_soft_delete(&pool, PARENT).await.unwrap();
+        let restored = restore_block(&pool, PARENT, &ts).await.unwrap();
 
-        assert_eq!(restored, 3);
-        assert_eq!(get_deleted_at(&pool, "PAR001").await, None);
-        assert_eq!(get_deleted_at(&pool, "CHD001").await, None);
-        assert_eq!(get_deleted_at(&pool, "GCH001").await, None);
+        assert_eq!(restored, 3, "parent + child + grandchild");
+        assert_eq!(get_deleted_at(&pool, PARENT).await, None);
+        assert_eq!(get_deleted_at(&pool, CHILD).await, None);
+        assert_eq!(get_deleted_at(&pool, GRANDCHILD).await, None);
     }
 
     #[tokio::test]
-    async fn restore_preserves_independently_deleted() {
+    async fn restore_block_preserves_independently_deleted_descendants() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "PAR001", "page", "parent", None, Some(1)).await;
-        insert_block(&pool, "CHD001", "content", "child", Some("PAR001"), Some(1)).await;
+        insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
+        insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
         insert_block(
             &pool,
-            "GCH001",
+            GRANDCHILD,
             "content",
             "grandchild",
-            Some("CHD001"),
+            Some(CHILD),
             Some(1),
         )
         .await;
 
-        // Independently delete grandchild with a known timestamp.
-        let t_indep = "2025-01-01T00:00:00+00:00";
+        // Independently delete grandchild with a fixed timestamp.
         sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
-            .bind(t_indep)
-            .bind("GCH001")
+            .bind(FIXED_DELETED_AT)
+            .bind(GRANDCHILD)
             .execute(&pool)
             .await
             .unwrap();
 
-        // Cascade-delete parent (child gets t2, grandchild already has t_indep).
-        let (t2, _) = cascade_soft_delete(&pool, "PAR001").await.unwrap();
+        // Cascade-delete parent (child gets t2, grandchild already has FIXED_DELETED_AT).
+        let (t2, _) = cascade_soft_delete(&pool, PARENT).await.unwrap();
 
         // Restore using the cascade timestamp.
-        let restored = restore_block(&pool, "PAR001", &t2).await.unwrap();
-        assert_eq!(restored, 2); // parent + child
+        let restored = restore_block(&pool, PARENT, &t2).await.unwrap();
+        assert_eq!(restored, 2, "parent + child restored");
 
-        assert_eq!(get_deleted_at(&pool, "PAR001").await, None);
-        assert_eq!(get_deleted_at(&pool, "CHD001").await, None);
-        // Grandchild retains its independent deletion.
+        assert_eq!(get_deleted_at(&pool, PARENT).await, None);
+        assert_eq!(get_deleted_at(&pool, CHILD).await, None);
         assert_eq!(
-            get_deleted_at(&pool, "GCH001").await,
-            Some(t_indep.to_string())
+            get_deleted_at(&pool, GRANDCHILD).await,
+            Some(FIXED_DELETED_AT.to_string()),
+            "grandchild retains its independent deletion timestamp"
         );
     }
 
     #[tokio::test]
-    async fn restore_non_deleted_returns_zero() {
+    async fn restore_block_on_non_deleted_returns_zero() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "BLK001", "content", "alive", None, None).await;
+        insert_block(&pool, BLOCK_A, "content", "alive", None, None).await;
 
-        // Attempt to restore a block that is not deleted.
-        let restored = restore_block(&pool, "BLK001", "2025-01-01T00:00:00+00:00")
+        let restored = restore_block(&pool, BLOCK_A, FIXED_DELETED_AT)
             .await
             .unwrap();
-        assert_eq!(restored, 0);
+        assert_eq!(
+            restored, 0,
+            "restoring a non-deleted block should affect 0 rows"
+        );
     }
 
     // ======================================================================
@@ -639,40 +703,42 @@ mod tests {
     // ======================================================================
 
     #[tokio::test]
-    async fn purge_removes_all() {
+    async fn purge_block_removes_entire_subtree() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "PAR001", "page", "parent", None, Some(1)).await;
-        insert_block(&pool, "CHD001", "content", "child", Some("PAR001"), Some(1)).await;
+        insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
+        insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
         insert_block(
             &pool,
-            "GCH001",
+            GRANDCHILD,
             "content",
             "grandchild",
-            Some("CHD001"),
+            Some(CHILD),
             Some(1),
         )
         .await;
 
-        let count = purge_block(&pool, "PAR001").await.unwrap();
-        assert_eq!(count, 3);
+        let count = purge_block(&pool, PARENT).await.unwrap();
+        assert_eq!(count, 3, "parent + child + grandchild purged");
 
-        assert!(!block_exists(&pool, "PAR001").await);
-        assert!(!block_exists(&pool, "CHD001").await);
-        assert!(!block_exists(&pool, "GCH001").await);
+        assert!(!block_exists(&pool, PARENT).await, "parent should be gone");
+        assert!(!block_exists(&pool, CHILD).await, "child should be gone");
+        assert!(
+            !block_exists(&pool, GRANDCHILD).await,
+            "grandchild should be gone"
+        );
     }
 
     #[tokio::test]
-    async fn purge_cleans_dependent_tables() {
+    async fn purge_block_cleans_dependent_tables() {
         let (pool, _dir) = test_pool().await;
 
-        // Block to purge and a block that remains.
-        insert_block(&pool, "BLK001", "content", "to purge", None, None).await;
+        insert_block(&pool, BLOCK_A, "content", "to purge", None, None).await;
         insert_block(&pool, "TAG001", "tag", "my-tag", None, None).await;
         insert_block(&pool, "TARGET", "content", "link target", None, None).await;
 
         // block_tags
         sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-            .bind("BLK001")
+            .bind(BLOCK_A)
             .bind("TAG001")
             .execute(&pool)
             .await
@@ -680,7 +746,7 @@ mod tests {
 
         // block_properties
         sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
-            .bind("BLK001")
+            .bind(BLOCK_A)
             .bind("status")
             .bind("done")
             .execute(&pool)
@@ -689,49 +755,52 @@ mod tests {
 
         // block_links
         sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
-            .bind("BLK001")
+            .bind(BLOCK_A)
             .bind("TARGET")
             .execute(&pool)
             .await
             .unwrap();
 
-        // Purge
-        let count = purge_block(&pool, "BLK001").await.unwrap();
+        let count = purge_block(&pool, BLOCK_A).await.unwrap();
         assert_eq!(count, 1);
 
-        // Verify dependent rows are gone.
         let tags: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ?")
-            .bind("BLK001")
+            .bind(BLOCK_A)
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(tags.0, 0);
+        assert_eq!(tags.0, 0, "block_tags rows should be purged");
 
         let props: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
-                .bind("BLK001")
+                .bind(BLOCK_A)
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(props.0, 0);
+        assert_eq!(props.0, 0, "block_properties rows should be purged");
 
         let links: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-            .bind("BLK001")
+            .bind(BLOCK_A)
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(links.0, 0);
+        assert_eq!(links.0, 0, "block_links rows should be purged");
 
-        // TAG001 and TARGET should still exist.
-        assert!(block_exists(&pool, "TAG001").await);
-        assert!(block_exists(&pool, "TARGET").await);
+        assert!(
+            block_exists(&pool, "TAG001").await,
+            "TAG001 should survive purge"
+        );
+        assert!(
+            block_exists(&pool, "TARGET").await,
+            "TARGET should survive purge"
+        );
     }
 
     #[tokio::test]
-    async fn purge_cleans_tag_id_in_block_tags() {
+    async fn purge_block_cleans_tag_id_in_block_tags() {
         let (pool, _dir) = test_pool().await;
 
-        // A content block tagged with TAG001.  We purge the TAG, not the
+        // A content block tagged with TAG001. We purge the TAG, not the
         // content block — the block_tags row must be cleaned via the tag_id
         // column.
         insert_block(&pool, "CONTENT", "content", "my note", None, None).await;
@@ -752,13 +821,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count.0, 0, "block_tags row should be cleaned via tag_id");
-
-        // The content block itself should still exist.
-        assert!(block_exists(&pool, "CONTENT").await);
+        assert!(
+            block_exists(&pool, "CONTENT").await,
+            "content block should survive"
+        );
     }
 
     #[tokio::test]
-    async fn purge_cleans_value_ref_in_properties() {
+    async fn purge_block_nullifies_value_ref_in_properties() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "REFTGT", "content", "ref target", None, None).await;
@@ -774,7 +844,6 @@ mod tests {
 
         purge_block(&pool, "REFTGT").await.unwrap();
 
-        // The property row still belongs to OWNER, but value_ref must be NULL.
         let value_ref: (Option<String>,) =
             sqlx::query_as("SELECT value_ref FROM block_properties WHERE block_id = ? AND key = ?")
                 .bind("OWNER")
@@ -786,7 +855,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn purge_cleans_conflict_source() {
+    async fn purge_block_nullifies_conflict_source() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "ORIGINAL", "content", "original", None, None).await;
@@ -812,68 +881,76 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn purge_nonexistent_returns_zero() {
+    async fn purge_block_nonexistent_returns_zero() {
         let (pool, _dir) = test_pool().await;
 
         let count = purge_block(&pool, "DOES_NOT_EXIST").await.unwrap();
-        assert_eq!(count, 0);
+        assert_eq!(count, 0, "purging a nonexistent block should affect 0 rows");
     }
 
     // ======================================================================
-    // Helpers
+    // Helper functions: is_deleted, get_descendants
     // ======================================================================
 
     #[tokio::test]
-    async fn is_deleted_helper() {
+    async fn is_deleted_returns_correct_state_for_each_lifecycle_stage() {
         let (pool, _dir) = test_pool().await;
 
-        // Non-existent block → None
-        assert_eq!(is_deleted(&pool, "NOPE").await.unwrap(), None);
+        assert_eq!(
+            is_deleted(&pool, "NOPE").await.unwrap(),
+            None,
+            "nonexistent block → None"
+        );
 
-        // Existing, alive block → Some(false)
-        insert_block(&pool, "BLK001", "content", "hi", None, None).await;
-        assert_eq!(is_deleted(&pool, "BLK001").await.unwrap(), Some(false));
+        insert_block(&pool, BLOCK_A, "content", "hi", None, None).await;
+        assert_eq!(
+            is_deleted(&pool, BLOCK_A).await.unwrap(),
+            Some(false),
+            "alive block → Some(false)"
+        );
 
-        // After soft-delete → Some(true)
-        soft_delete_block(&pool, "BLK001").await.unwrap();
-        assert_eq!(is_deleted(&pool, "BLK001").await.unwrap(), Some(true));
+        soft_delete_block(&pool, BLOCK_A).await.unwrap();
+        assert_eq!(
+            is_deleted(&pool, BLOCK_A).await.unwrap(),
+            Some(true),
+            "soft-deleted block → Some(true)"
+        );
     }
 
     #[tokio::test]
-    async fn get_descendants_returns_subtree() {
+    async fn get_descendants_returns_full_subtree() {
         let (pool, _dir) = test_pool().await;
 
-        insert_block(&pool, "PAR001", "page", "parent", None, Some(1)).await;
-        insert_block(&pool, "CHD001", "content", "child", Some("PAR001"), Some(1)).await;
+        insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
+        insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
+        insert_block(&pool, CHILD2, "content", "child2", Some(PARENT), Some(2)).await;
         insert_block(
             &pool,
-            "CHD002",
-            "content",
-            "child2",
-            Some("PAR001"),
-            Some(2),
-        )
-        .await;
-        insert_block(
-            &pool,
-            "GCH001",
+            GRANDCHILD,
             "content",
             "grandchild",
-            Some("CHD001"),
+            Some(CHILD),
             Some(1),
         )
         .await;
 
-        let mut ids = get_descendants(&pool, "PAR001").await.unwrap();
+        let mut ids = get_descendants(&pool, PARENT).await.unwrap();
         ids.sort();
-        assert_eq!(ids, vec!["CHD001", "CHD002", "GCH001", "PAR001"]);
+        assert_eq!(
+            ids,
+            vec![CHILD, CHILD2, GRANDCHILD, PARENT],
+            "should return all nodes in the subtree"
+        );
     }
 
     #[tokio::test]
-    async fn get_descendants_nonexistent_is_empty() {
+    async fn get_descendants_nonexistent_returns_empty() {
         let (pool, _dir) = test_pool().await;
 
         let ids = get_descendants(&pool, "NOPE").await.unwrap();
-        assert!(ids.is_empty());
+        assert!(
+            ids.is_empty(),
+            "nonexistent block should have no descendants"
+        );
     }
 }

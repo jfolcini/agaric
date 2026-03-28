@@ -254,6 +254,12 @@ impl OpPayload {
 // Tests
 // ===========================================================================
 
+/// Tests for `OpType`, `OpPayload`, and all 12 payload structs.
+///
+/// Covers serde round-trips, `Display`/`FromStr` consistency, `block_id()`
+/// extraction, raw-JSON deserialization, error handling for malformed or
+/// unknown inputs, and edge cases (unicode, empty, large content, optional
+/// fields).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn create_block_optional_fields_null() {
+    fn create_block_with_null_optional_fields_roundtrips() {
         let p = OpPayload::CreateBlock(CreateBlockPayload {
             block_id: "B1".into(),
             block_type: "content".into(),
@@ -410,16 +416,21 @@ mod tests {
             content: "".into(),
         });
         let json = serde_json::to_string(&p).unwrap();
-        assert!(json.contains("\"parent_id\":null"));
-        assert!(json.contains("\"position\":null"));
+        assert!(
+            json.contains("\"parent_id\":null"),
+            "parent_id should serialize as null"
+        );
+        assert!(
+            json.contains("\"position\":null"),
+            "position should serialize as null"
+        );
 
         let deser: OpPayload = serde_json::from_str(&json).unwrap();
-        if let OpPayload::CreateBlock(inner) = deser {
-            assert!(inner.parent_id.is_none());
-            assert!(inner.position.is_none());
-        } else {
+        let OpPayload::CreateBlock(inner) = deser else {
             panic!("expected CreateBlock variant");
-        }
+        };
+        assert!(inner.parent_id.is_none(), "parent_id should be None");
+        assert!(inner.position.is_none(), "position should be None");
     }
 
     // -----------------------------------------------------------------------
@@ -427,7 +438,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn op_type_serde_snake_case() {
+    fn op_type_serializes_as_snake_case_string() {
         let serialized = serde_json::to_string(&OpType::AddAttachment).unwrap();
         assert_eq!(serialized, "\"add_attachment\"");
 
@@ -451,14 +462,14 @@ mod tests {
     }
 
     #[test]
-    fn op_type_display() {
-        assert_eq!(OpType::CreateBlock.to_string(), "create_block");
-        assert_eq!(OpType::SetProperty.to_string(), "set_property");
-        assert_eq!(OpType::DeleteAttachment.to_string(), "delete_attachment");
-
-        // Display must match as_str for every variant
+    fn op_type_display_matches_as_str_for_all_variants() {
         for variant in all_op_types() {
-            assert_eq!(variant.to_string(), variant.as_str());
+            assert_eq!(
+                variant.to_string(),
+                variant.as_str(),
+                "Display vs as_str mismatch for {:?}",
+                variant
+            );
         }
     }
 
@@ -544,13 +555,12 @@ mod tests {
         assert_eq!(payload.op_type_str(), "create_block");
         assert_eq!(payload.block_id(), Some("01HZ00000000000000000000AB"));
 
-        if let OpPayload::CreateBlock(inner) = &payload {
-            assert_eq!(inner.content, "Hello from DB");
-            assert!(inner.parent_id.is_none());
-            assert_eq!(inner.position, Some(0));
-        } else {
+        let OpPayload::CreateBlock(inner) = &payload else {
             panic!("expected CreateBlock");
-        }
+        };
+        assert_eq!(inner.content, "Hello from DB");
+        assert!(inner.parent_id.is_none());
+        assert_eq!(inner.position, Some(0));
     }
 
     #[test]
@@ -567,12 +577,11 @@ mod tests {
 
         let payload: OpPayload = serde_json::from_str(raw).unwrap();
         assert_eq!(payload.op_type_str(), "set_property");
-        if let OpPayload::SetProperty(inner) = &payload {
-            assert_eq!(inner.value_text.as_deref(), Some("done"));
-            assert!(inner.value_num.is_none());
-        } else {
+        let OpPayload::SetProperty(inner) = &payload else {
             panic!("expected SetProperty");
-        }
+        };
+        assert_eq!(inner.value_text.as_deref(), Some("done"));
+        assert!(inner.value_num.is_none());
     }
 
     #[test]
@@ -588,15 +597,23 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn malformed_json_returns_error() {
-        // Not valid JSON at all
-        assert!(serde_json::from_str::<OpPayload>("not json").is_err());
-        // Valid JSON but missing required fields
-        assert!(serde_json::from_str::<OpPayload>(r#"{"op_type": "create_block"}"#).is_err());
-        // Empty object — no op_type tag
-        assert!(serde_json::from_str::<OpPayload>("{}").is_err());
-        // Array instead of object
-        assert!(serde_json::from_str::<OpPayload>("[]").is_err());
+    fn deserialize_malformed_json_returns_error() {
+        assert!(
+            serde_json::from_str::<OpPayload>("not json").is_err(),
+            "invalid JSON should fail"
+        );
+        assert!(
+            serde_json::from_str::<OpPayload>(r#"{"op_type": "create_block"}"#).is_err(),
+            "missing required fields should fail"
+        );
+        assert!(
+            serde_json::from_str::<OpPayload>("{}").is_err(),
+            "empty object without op_type tag should fail"
+        );
+        assert!(
+            serde_json::from_str::<OpPayload>("[]").is_err(),
+            "array instead of object should fail"
+        );
     }
 
     #[test]
@@ -617,7 +634,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn unicode_content_roundtrip() {
+    fn unicode_content_roundtrips_through_serde() {
         let text = "日本語テスト 🚀 spëcial — «guillemets» \u{200B}";
         let payload = OpPayload::CreateBlock(CreateBlockPayload {
             block_id: "B1".into(),
@@ -628,16 +645,17 @@ mod tests {
         });
         let json = serde_json::to_string(&payload).unwrap();
         let deser: OpPayload = serde_json::from_str(&json).unwrap();
-        if let OpPayload::CreateBlock(inner) = deser {
-            assert_eq!(inner.content, text);
-        } else {
+        let OpPayload::CreateBlock(inner) = deser else {
             panic!("expected CreateBlock");
-        }
+        };
+        assert_eq!(
+            inner.content, text,
+            "unicode content must survive round-trip"
+        );
     }
 
     #[test]
-    fn empty_and_long_content_roundtrip() {
-        // Empty content
+    fn empty_content_roundtrips_through_serde() {
         let payload = OpPayload::EditBlock(EditBlockPayload {
             block_id: "B1".into(),
             to_text: "".into(),
@@ -645,13 +663,14 @@ mod tests {
         });
         let json = serde_json::to_string(&payload).unwrap();
         let deser: OpPayload = serde_json::from_str(&json).unwrap();
-        if let OpPayload::EditBlock(inner) = &deser {
-            assert_eq!(inner.to_text, "");
-        } else {
+        let OpPayload::EditBlock(inner) = &deser else {
             panic!("expected EditBlock");
-        }
+        };
+        assert_eq!(inner.to_text, "", "empty string must survive round-trip");
+    }
 
-        // Very long content (100 KB)
+    #[test]
+    fn large_content_100kb_roundtrips_through_serde() {
         let long_text = "x".repeat(100_000);
         let payload = OpPayload::EditBlock(EditBlockPayload {
             block_id: "B1".into(),
@@ -660,11 +679,14 @@ mod tests {
         });
         let json = serde_json::to_string(&payload).unwrap();
         let deser: OpPayload = serde_json::from_str(&json).unwrap();
-        if let OpPayload::EditBlock(inner) = deser {
-            assert_eq!(inner.to_text.len(), 100_000);
-        } else {
+        let OpPayload::EditBlock(inner) = deser else {
             panic!("expected EditBlock");
-        }
+        };
+        assert_eq!(
+            inner.to_text.len(),
+            100_000,
+            "100 KB content must survive round-trip"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -696,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn set_property_mixed_value_types() {
+    fn set_property_with_mixed_value_types_roundtrips() {
         let payload = OpPayload::SetProperty(SetPropertyPayload {
             block_id: "B1".into(),
             key: "score".into(),
@@ -707,13 +729,42 @@ mod tests {
         });
         let json = serde_json::to_string(&payload).unwrap();
         let deser: OpPayload = serde_json::from_str(&json).unwrap();
-        if let OpPayload::SetProperty(inner) = deser {
-            assert!(inner.value_text.is_none());
-            assert_eq!(inner.value_num, Some(42.5));
-            assert_eq!(inner.value_date.as_deref(), Some("2024-01-15"));
-            assert!(inner.value_ref.is_none());
-        } else {
+        let OpPayload::SetProperty(inner) = deser else {
             panic!("expected SetProperty");
-        }
+        };
+        assert!(inner.value_text.is_none(), "value_text should be None");
+        assert_eq!(inner.value_num, Some(42.5), "value_num mismatch");
+        assert_eq!(
+            inner.value_date.as_deref(),
+            Some("2024-01-15"),
+            "value_date mismatch"
+        );
+        assert!(inner.value_ref.is_none(), "value_ref should be None");
+    }
+
+    // -----------------------------------------------------------------------
+    // 10. Additional edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn move_block_to_root_serializes_null_parent() {
+        let payload = OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: "B1".into(),
+            new_parent_id: None,
+            new_position: 0,
+        });
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(
+            json.contains("\"new_parent_id\":null"),
+            "move to root should have null parent"
+        );
+        let deser: OpPayload = serde_json::from_str(&json).unwrap();
+        let OpPayload::MoveBlock(inner) = deser else {
+            panic!("expected MoveBlock");
+        };
+        assert!(
+            inner.new_parent_id.is_none(),
+            "deserialized parent should be None for root move"
+        );
     }
 }

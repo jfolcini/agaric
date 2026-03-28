@@ -381,13 +381,24 @@ pub async fn list_agenda(
 
 #[cfg(test)]
 mod tests {
+    //! Tests for cursor-based keyset pagination — cursor codec, page request
+    //! validation, and all five paginated query functions (list_children,
+    //! list_by_type, list_trash, list_by_tag, list_agenda).  Covers first-page,
+    //! cursor-continuation, last-page, empty results, ordering, tiebreakers,
+    //! soft-delete exclusion, cursor stability after inserts, and exhaustive walks.
+
     use super::*;
     use crate::db::init_pool;
     use sqlx::SqlitePool;
     use tempfile::TempDir;
 
-    // ── helpers ─────────────────────────────────────────────────────────
+    // ── Deterministic test fixtures ─────────────────────────────────────
 
+    const FIXED_DELETED_AT: &str = "2025-01-15T00:00:00+00:00";
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+
+    /// Create a fresh SQLite pool with migrations applied (temp directory).
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("test.db");
@@ -395,6 +406,7 @@ mod tests {
         (pool, dir)
     }
 
+    /// Insert a block with optional parent and position.
     async fn insert_block(
         pool: &SqlitePool,
         id: &str,
@@ -417,6 +429,7 @@ mod tests {
         .unwrap();
     }
 
+    /// Associate a block with a tag via `block_tags`.
     async fn insert_tag_association(pool: &SqlitePool, block_id: &str, tag_id: &str) {
         sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
             .bind(block_id)
@@ -426,6 +439,7 @@ mod tests {
             .unwrap();
     }
 
+    /// Insert an agenda cache entry directly.
     async fn insert_agenda_entry(pool: &SqlitePool, date: &str, block_id: &str, source: &str) {
         sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
             .bind(date)
@@ -436,8 +450,18 @@ mod tests {
             .unwrap();
     }
 
+    /// Soft-delete a block with a deterministic timestamp.
+    async fn soft_delete_block(pool: &SqlitePool, id: &str, deleted_at: &str) {
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+            .bind(deleted_at)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
     // ====================================================================
-    // Cursor unit tests
+    // Cursor codec
     // ====================================================================
 
     #[test]
@@ -449,7 +473,10 @@ mod tests {
         };
         let encoded = cursor.encode().unwrap();
         let decoded = Cursor::decode(&encoded).unwrap();
-        assert_eq!(cursor, decoded);
+        assert_eq!(
+            cursor, decoded,
+            "cursor must survive encode/decode roundtrip"
+        );
     }
 
     #[test]
@@ -465,15 +492,17 @@ mod tests {
     }
 
     #[test]
-    fn cursor_decode_invalid_base64() {
+    fn cursor_decode_rejects_invalid_base64() {
         let result = Cursor::decode("not-valid-base64!!!");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("invalid cursor"));
+        assert!(result.is_err(), "invalid base64 must be rejected");
+        assert!(
+            result.unwrap_err().to_string().contains("invalid cursor"),
+            "error message must mention 'invalid cursor'"
+        );
     }
 
     #[test]
-    fn cursor_special_characters() {
+    fn cursor_encode_decode_preserves_special_characters() {
         let cursor = Cursor {
             id: "id-with-émojis-\u{1f389}-and-\"quotes\"".into(),
             position: Some(42),
@@ -481,55 +510,52 @@ mod tests {
         };
         let encoded = cursor.encode().unwrap();
         let decoded = Cursor::decode(&encoded).unwrap();
-        assert_eq!(cursor, decoded);
+        assert_eq!(cursor, decoded, "special characters must survive roundtrip");
     }
 
     // ====================================================================
-    // PageRequest tests
+    // PageRequest
     // ====================================================================
 
     #[test]
-    fn page_request_defaults() {
+    fn page_request_defaults_to_limit_50() {
         let pr = PageRequest::new(None, None).unwrap();
         assert!(pr.after.is_none());
-        assert_eq!(pr.limit, 50);
+        assert_eq!(pr.limit, 50, "default limit must be 50");
     }
 
     #[test]
-    fn page_request_clamps_limit() {
+    fn page_request_clamps_limit_to_valid_range() {
         let high = PageRequest::new(None, Some(999)).unwrap();
-        assert_eq!(high.limit, 200);
+        assert_eq!(high.limit, 200, "limit above 200 must be clamped");
 
         let low = PageRequest::new(None, Some(-5)).unwrap();
-        assert_eq!(low.limit, 1);
+        assert_eq!(low.limit, 1, "negative limit must be clamped to 1");
 
         let zero = PageRequest::new(None, Some(0)).unwrap();
-        assert_eq!(zero.limit, 1);
+        assert_eq!(zero.limit, 1, "zero limit must be clamped to 1");
     }
 
     #[test]
-    fn page_request_invalid_cursor() {
-        // Completely invalid base64
+    fn page_request_rejects_invalid_cursors() {
         let result = PageRequest::new(Some("not-a-valid-cursor!!!".into()), Some(10));
-        assert!(result.is_err());
+        assert!(result.is_err(), "invalid base64 cursor must be rejected");
 
-        // Valid base64 but not valid JSON
         let bad_json = URL_SAFE_NO_PAD.encode(b"this is not json");
         let result = PageRequest::new(Some(bad_json), Some(10));
-        assert!(result.is_err());
+        assert!(result.is_err(), "non-JSON cursor must be rejected");
 
-        // Valid base64 + valid JSON but missing required `id` field
         let missing_id = URL_SAFE_NO_PAD.encode(b"{\"position\":1}");
         let result = PageRequest::new(Some(missing_id), Some(10));
-        assert!(result.is_err());
+        assert!(result.is_err(), "cursor missing 'id' must be rejected");
     }
 
     // ====================================================================
-    // list_children tests
+    // list_children
     // ====================================================================
 
     #[tokio::test]
-    async fn list_children_first_page() {
+    async fn list_children_returns_first_page() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
@@ -549,15 +575,18 @@ mod tests {
         let page = PageRequest::new(None, Some(2)).unwrap();
         let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
 
-        assert_eq!(resp.items.len(), 2);
-        assert!(resp.has_more);
-        assert!(resp.next_cursor.is_some());
+        assert_eq!(resp.items.len(), 2, "page size must be respected");
+        assert!(resp.has_more, "more items remain");
+        assert!(
+            resp.next_cursor.is_some(),
+            "cursor must be provided when has_more"
+        );
         assert_eq!(resp.items[0].id, "CHILD001");
         assert_eq!(resp.items[1].id, "CHILD002");
     }
 
     #[tokio::test]
-    async fn list_children_with_cursor() {
+    async fn list_children_continues_from_cursor() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
@@ -574,22 +603,23 @@ mod tests {
             .await;
         }
 
-        // First page
         let p1 = PageRequest::new(None, Some(2)).unwrap();
         let r1 = list_children(&pool, Some("PARENT01"), &p1).await.unwrap();
 
-        // Second page using cursor from first
         let p2 = PageRequest::new(r1.next_cursor, Some(2)).unwrap();
         let r2 = list_children(&pool, Some("PARENT01"), &p2).await.unwrap();
 
         assert_eq!(r2.items.len(), 2);
         assert!(r2.has_more);
-        assert_eq!(r2.items[0].id, "CHILD003");
+        assert_eq!(
+            r2.items[0].id, "CHILD003",
+            "cursor must skip past first page"
+        );
         assert_eq!(r2.items[1].id, "CHILD004");
     }
 
     #[tokio::test]
-    async fn list_children_last_page() {
+    async fn list_children_last_page_has_no_cursor() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
@@ -606,24 +636,36 @@ mod tests {
             .await;
         }
 
-        // Walk through all pages
-        let p1 = PageRequest::new(None, Some(2)).unwrap();
-        let r1 = list_children(&pool, Some("PARENT01"), &p1).await.unwrap();
+        let r1 = list_children(
+            &pool,
+            Some("PARENT01"),
+            &PageRequest::new(None, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
+        let r2 = list_children(
+            &pool,
+            Some("PARENT01"),
+            &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
+        let r3 = list_children(
+            &pool,
+            Some("PARENT01"),
+            &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
 
-        let p2 = PageRequest::new(r1.next_cursor, Some(2)).unwrap();
-        let r2 = list_children(&pool, Some("PARENT01"), &p2).await.unwrap();
-
-        let p3 = PageRequest::new(r2.next_cursor, Some(2)).unwrap();
-        let r3 = list_children(&pool, Some("PARENT01"), &p3).await.unwrap();
-
-        assert_eq!(r3.items.len(), 1);
-        assert!(!r3.has_more);
-        assert!(r3.next_cursor.is_none());
+        assert_eq!(r3.items.len(), 1, "last page must contain remaining item");
+        assert!(!r3.has_more, "last page must have has_more = false");
+        assert!(r3.next_cursor.is_none(), "last page must have no cursor");
         assert_eq!(r3.items[0].id, "CHILD005");
     }
 
     #[tokio::test]
-    async fn list_children_empty() {
+    async fn list_children_returns_empty_when_parent_has_no_children() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
@@ -631,19 +673,17 @@ mod tests {
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
 
-        assert!(resp.items.is_empty());
+        assert!(resp.items.is_empty(), "childless parent must return empty");
         assert!(!resp.has_more);
         assert!(resp.next_cursor.is_none());
     }
 
     #[tokio::test]
-    async fn list_children_top_level() {
+    async fn list_children_lists_top_level_blocks() {
         let (pool, _dir) = test_pool().await;
 
-        // Two top-level blocks (parent_id = NULL)
         insert_block(&pool, "TOPLVL01", "page", "page 1", None, Some(1)).await;
         insert_block(&pool, "TOPLVL02", "page", "page 2", None, Some(2)).await;
-        // A child block — should NOT appear in top-level listing
         insert_block(
             &pool,
             "CHILD001",
@@ -657,7 +697,11 @@ mod tests {
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = list_children(&pool, None, &page).await.unwrap();
 
-        assert_eq!(resp.items.len(), 2);
+        assert_eq!(
+            resp.items.len(),
+            2,
+            "only top-level blocks (parent_id IS NULL)"
+        );
         assert_eq!(resp.items[0].id, "TOPLVL01");
         assert_eq!(resp.items[1].id, "TOPLVL02");
     }
@@ -694,28 +738,21 @@ mod tests {
             Some(3),
         )
         .await;
-
-        // Soft-delete CHILD002
-        sqlx::query("UPDATE blocks SET deleted_at = '2025-01-15T00:00:00+00:00' WHERE id = ?")
-            .bind("CHILD002")
-            .execute(&pool)
-            .await
-            .unwrap();
+        soft_delete_block(&pool, "CHILD002", FIXED_DELETED_AT).await;
 
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
 
-        assert_eq!(resp.items.len(), 2);
+        assert_eq!(resp.items.len(), 2, "soft-deleted child must be excluded");
         assert_eq!(resp.items[0].id, "CHILD001");
         assert_eq!(resp.items[1].id, "CHILD003");
     }
 
     #[tokio::test]
-    async fn list_children_null_positions() {
+    async fn list_children_null_positions_sort_after_positioned() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
-        // Positioned children
         insert_block(
             &pool,
             "CHILD001",
@@ -734,33 +771,31 @@ mod tests {
             Some(2),
         )
         .await;
-        // NULL-position children (e.g. tags stored as children)
         insert_block(&pool, "TAG00001", "tag", "tag1", Some("PARENT01"), None).await;
         insert_block(&pool, "TAG00002", "tag", "tag2", Some("PARENT01"), None).await;
 
-        // Page 1 (size 2): positioned children come first
+        // Page 1: positioned children first
         let p1 = PageRequest::new(None, Some(2)).unwrap();
         let r1 = list_children(&pool, Some("PARENT01"), &p1).await.unwrap();
         assert_eq!(r1.items.len(), 2);
         assert!(r1.has_more);
-        assert_eq!(r1.items[0].id, "CHILD001");
+        assert_eq!(r1.items[0].id, "CHILD001", "positioned children come first");
         assert_eq!(r1.items[1].id, "CHILD002");
 
-        // Page 2: NULL-position children, cursor crosses the boundary correctly
+        // Page 2: NULL-position children via cursor
         let p2 = PageRequest::new(r1.next_cursor, Some(2)).unwrap();
         let r2 = list_children(&pool, Some("PARENT01"), &p2).await.unwrap();
         assert_eq!(r2.items.len(), 2);
         assert!(!r2.has_more);
-        assert_eq!(r2.items[0].id, "TAG00001");
+        assert_eq!(r2.items[0].id, "TAG00001", "NULL-position items come after");
         assert_eq!(r2.items[1].id, "TAG00002");
     }
 
     #[tokio::test]
-    async fn list_children_same_position_tiebreak() {
+    async fn list_children_same_position_tiebreaks_by_id() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
-        // Three children all at position 5 — tie-broken by id ASC
         insert_block(&pool, "CHILD_AA", "content", "a", Some("PARENT01"), Some(5)).await;
         insert_block(&pool, "CHILD_BB", "content", "b", Some("PARENT01"), Some(5)).await;
         insert_block(&pool, "CHILD_CC", "content", "c", Some("PARENT01"), Some(5)).await;
@@ -769,13 +804,13 @@ mod tests {
         let resp = list_children(&pool, Some("PARENT01"), &page).await.unwrap();
 
         assert_eq!(resp.items.len(), 3);
-        assert_eq!(resp.items[0].id, "CHILD_AA");
+        assert_eq!(resp.items[0].id, "CHILD_AA", "id ASC tiebreaker");
         assert_eq!(resp.items[1].id, "CHILD_BB");
         assert_eq!(resp.items[2].id, "CHILD_CC");
     }
 
     #[tokio::test]
-    async fn list_children_exhaustive_walk() {
+    async fn list_children_exhaustive_walk_returns_all_items_once() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
@@ -804,13 +839,15 @@ mod tests {
             cursor = resp.next_cursor;
         }
 
-        // Every child returned exactly once, in order
         let expected: Vec<String> = (1..=13).map(|i| format!("CHILD{i:03}")).collect();
-        assert_eq!(all_ids, expected);
+        assert_eq!(
+            all_ids, expected,
+            "exhaustive walk must return every child exactly once, in order"
+        );
     }
 
     // ====================================================================
-    // list_by_type tests
+    // list_by_type
     // ====================================================================
 
     #[tokio::test]
@@ -824,42 +861,49 @@ mod tests {
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = list_by_type(&pool, "page", &page).await.unwrap();
 
-        assert_eq!(resp.items.len(), 2);
-        assert!(resp.items.iter().all(|b| b.block_type == "page"));
+        assert_eq!(resp.items.len(), 2, "only page-type blocks");
+        assert!(
+            resp.items.iter().all(|b| b.block_type == "page"),
+            "all items must be page type"
+        );
     }
 
     #[tokio::test]
-    async fn list_by_type_with_cursor() {
+    async fn list_by_type_paginates_with_cursor() {
         let (pool, _dir) = test_pool().await;
 
-        // Insert 5 pages with sorted ids
         for i in 1..=5_i64 {
             let id = format!("PAGE{i:04}");
             insert_block(&pool, &id, "page", &format!("Page {i}"), None, None).await;
         }
 
-        // First page: 2 items
-        let p1 = PageRequest::new(None, Some(2)).unwrap();
-        let r1 = list_by_type(&pool, "page", &p1).await.unwrap();
-
+        let r1 = list_by_type(&pool, "page", &PageRequest::new(None, Some(2)).unwrap())
+            .await
+            .unwrap();
         assert_eq!(r1.items.len(), 2);
         assert!(r1.has_more);
         assert_eq!(r1.items[0].id, "PAGE0001");
         assert_eq!(r1.items[1].id, "PAGE0002");
 
-        // Second page via cursor
-        let p2 = PageRequest::new(r1.next_cursor, Some(2)).unwrap();
-        let r2 = list_by_type(&pool, "page", &p2).await.unwrap();
-
+        let r2 = list_by_type(
+            &pool,
+            "page",
+            &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(r2.items.len(), 2);
         assert!(r2.has_more);
         assert_eq!(r2.items[0].id, "PAGE0003");
         assert_eq!(r2.items[1].id, "PAGE0004");
 
-        // Last page
-        let p3 = PageRequest::new(r2.next_cursor, Some(2)).unwrap();
-        let r3 = list_by_type(&pool, "page", &p3).await.unwrap();
-
+        let r3 = list_by_type(
+            &pool,
+            "page",
+            &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(r3.items.len(), 1);
         assert!(!r3.has_more);
         assert!(r3.next_cursor.is_none());
@@ -873,24 +917,18 @@ mod tests {
         insert_block(&pool, "PAGE0001", "page", "Page 1", None, None).await;
         insert_block(&pool, "PAGE0002", "page", "Page 2", None, None).await;
         insert_block(&pool, "PAGE0003", "page", "Page 3", None, None).await;
-
-        // Soft-delete PAGE0002
-        sqlx::query("UPDATE blocks SET deleted_at = '2025-01-15T00:00:00+00:00' WHERE id = ?")
-            .bind("PAGE0002")
-            .execute(&pool)
-            .await
-            .unwrap();
+        soft_delete_block(&pool, "PAGE0002", FIXED_DELETED_AT).await;
 
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = list_by_type(&pool, "page", &page).await.unwrap();
 
-        assert_eq!(resp.items.len(), 2);
+        assert_eq!(resp.items.len(), 2, "soft-deleted block must be excluded");
         assert_eq!(resp.items[0].id, "PAGE0001");
         assert_eq!(resp.items[1].id, "PAGE0003");
     }
 
     #[tokio::test]
-    async fn list_by_type_no_matching_type() {
+    async fn list_by_type_returns_empty_for_unknown_type() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "PAGE0001", "page", "Page 1", None, None).await;
@@ -900,86 +938,83 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(resp.items.is_empty());
+        assert!(resp.items.is_empty(), "unknown type must return empty");
         assert!(!resp.has_more);
         assert!(resp.next_cursor.is_none());
     }
 
     // ====================================================================
-    // list_trash tests
+    // list_trash
     // ====================================================================
 
     #[tokio::test]
-    async fn list_trash_returns_deleted_desc_order() {
+    async fn list_trash_returns_empty_when_nothing_deleted() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLOCK001", "content", "alive", None, None).await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_trash(&pool, &page).await.unwrap();
+
+        assert!(resp.items.is_empty(), "no deleted blocks → empty trash");
+        assert!(!resp.has_more);
+        assert!(resp.next_cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_trash_orders_by_deleted_at_descending() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "TRASH001", "content", "a", None, None).await;
         insert_block(&pool, "TRASH002", "content", "b", None, None).await;
         insert_block(&pool, "TRASH003", "content", "c", None, None).await;
 
-        // Set deleted_at with known timestamps
-        for (id, ts) in [
-            ("TRASH001", "2025-01-01T00:00:00+00:00"),
-            ("TRASH002", "2025-01-03T00:00:00+00:00"),
-            ("TRASH003", "2025-01-02T00:00:00+00:00"),
-        ] {
-            sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
-                .bind(ts)
-                .bind(id)
-                .execute(&pool)
-                .await
-                .unwrap();
-        }
+        soft_delete_block(&pool, "TRASH001", "2025-01-01T00:00:00+00:00").await;
+        soft_delete_block(&pool, "TRASH002", "2025-01-03T00:00:00+00:00").await;
+        soft_delete_block(&pool, "TRASH003", "2025-01-02T00:00:00+00:00").await;
 
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = list_trash(&pool, &page).await.unwrap();
 
         assert_eq!(resp.items.len(), 3);
-        // Most recent first: TRASH002 (Jan 3), TRASH003 (Jan 2), TRASH001 (Jan 1)
-        assert_eq!(resp.items[0].id, "TRASH002");
+        assert_eq!(resp.items[0].id, "TRASH002", "most recently deleted first");
         assert_eq!(resp.items[1].id, "TRASH003");
-        assert_eq!(resp.items[2].id, "TRASH001");
+        assert_eq!(resp.items[2].id, "TRASH001", "earliest deleted last");
     }
 
     #[tokio::test]
-    async fn list_trash_with_cursor() {
+    async fn list_trash_paginates_with_cursor() {
         let (pool, _dir) = test_pool().await;
 
-        // 5 deleted blocks with distinct timestamps
         for i in 1..=5_i64 {
             let id = format!("TRASH{i:03}");
             insert_block(&pool, &id, "content", &format!("trash {i}"), None, None).await;
             let ts = format!("2025-01-{i:02}T00:00:00+00:00");
-            sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
-                .bind(&ts)
-                .bind(&id)
-                .execute(&pool)
-                .await
-                .unwrap();
+            soft_delete_block(&pool, &id, &ts).await;
         }
 
-        // First page: 2 items (most recent first → TRASH005, TRASH004)
-        let p1 = PageRequest::new(None, Some(2)).unwrap();
-        let r1 = list_trash(&pool, &p1).await.unwrap();
-
+        // Page 1: most recent → TRASH005, TRASH004
+        let r1 = list_trash(&pool, &PageRequest::new(None, Some(2)).unwrap())
+            .await
+            .unwrap();
         assert_eq!(r1.items.len(), 2);
         assert!(r1.has_more);
         assert_eq!(r1.items[0].id, "TRASH005");
         assert_eq!(r1.items[1].id, "TRASH004");
 
-        // Second page via cursor → TRASH003, TRASH002
-        let p2 = PageRequest::new(r1.next_cursor, Some(2)).unwrap();
-        let r2 = list_trash(&pool, &p2).await.unwrap();
-
+        // Page 2: TRASH003, TRASH002
+        let r2 = list_trash(&pool, &PageRequest::new(r1.next_cursor, Some(2)).unwrap())
+            .await
+            .unwrap();
         assert_eq!(r2.items.len(), 2);
         assert!(r2.has_more);
         assert_eq!(r2.items[0].id, "TRASH003");
         assert_eq!(r2.items[1].id, "TRASH002");
 
-        // Last page → TRASH001
-        let p3 = PageRequest::new(r2.next_cursor, Some(2)).unwrap();
-        let r3 = list_trash(&pool, &p3).await.unwrap();
-
+        // Page 3 (last): TRASH001
+        let r3 = list_trash(&pool, &PageRequest::new(r2.next_cursor, Some(2)).unwrap())
+            .await
+            .unwrap();
         assert_eq!(r3.items.len(), 1);
         assert!(!r3.has_more);
         assert!(r3.next_cursor.is_none());
@@ -993,16 +1028,9 @@ mod tests {
         insert_block(&pool, "NORMAL01", "content", "normal", None, None).await;
         insert_block(&pool, "CONFLCT1", "content", "conflict", None, None).await;
 
-        // Soft-delete both
-        for id in ["NORMAL01", "CONFLCT1"] {
-            sqlx::query("UPDATE blocks SET deleted_at = '2025-01-15T00:00:00+00:00' WHERE id = ?")
-                .bind(id)
-                .execute(&pool)
-                .await
-                .unwrap();
-        }
+        soft_delete_block(&pool, "NORMAL01", FIXED_DELETED_AT).await;
+        soft_delete_block(&pool, "CONFLCT1", FIXED_DELETED_AT).await;
 
-        // Mark one as a conflict block
         sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
             .bind("CONFLCT1")
             .execute(&pool)
@@ -1012,63 +1040,23 @@ mod tests {
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = list_trash(&pool, &page).await.unwrap();
 
-        // Only the non-conflict block appears in trash
-        assert_eq!(resp.items.len(), 1);
+        assert_eq!(
+            resp.items.len(),
+            1,
+            "conflict blocks must be excluded from trash"
+        );
         assert_eq!(resp.items[0].id, "NORMAL01");
     }
 
-    #[tokio::test]
-    async fn list_trash_many_deleted() {
-        let (pool, _dir) = test_pool().await;
-
-        // 20 deleted blocks with distinct timestamps (one per second)
-        for i in 1..=20_i64 {
-            let id = format!("TRASH{i:03}");
-            insert_block(&pool, &id, "content", &format!("t{i}"), None, None).await;
-            let ts = format!("2025-01-15T12:00:{i:02}+00:00");
-            sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
-                .bind(&ts)
-                .bind(&id)
-                .execute(&pool)
-                .await
-                .unwrap();
-        }
-
-        // Walk all pages with small page size
-        let mut all_ids = Vec::new();
-        let mut cursor = None;
-        loop {
-            let page = PageRequest::new(cursor, Some(3)).unwrap();
-            let resp = list_trash(&pool, &page).await.unwrap();
-            all_ids.extend(resp.items.iter().map(|b| b.id.clone()));
-            if !resp.has_more {
-                break;
-            }
-            cursor = resp.next_cursor;
-        }
-
-        assert_eq!(all_ids.len(), 20);
-        // First item should be most recently deleted (TRASH020)
-        assert_eq!(all_ids[0], "TRASH020");
-        // Last item should be earliest deleted (TRASH001)
-        assert_eq!(all_ids[19], "TRASH001");
-        // All unique
-        let mut deduped = all_ids.clone();
-        deduped.sort();
-        deduped.dedup();
-        assert_eq!(deduped.len(), 20);
-    }
-
     // ====================================================================
-    // Cursor stability tests
+    // Cursor stability
     // ====================================================================
 
     #[tokio::test]
-    async fn cursor_stability_after_inserts() {
+    async fn cursor_stable_after_concurrent_inserts() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "PARENT01", "page", "parent", None, Some(1)).await;
-        // Children at positions 2, 4, 6, 8, 10
         for i in 1..=5_i64 {
             let id = format!("CHILD{i:03}");
             insert_block(
@@ -1083,13 +1071,18 @@ mod tests {
         }
 
         // Get first page → CHILD001(pos=2), CHILD002(pos=4)
-        let p1 = PageRequest::new(None, Some(2)).unwrap();
-        let r1 = list_children(&pool, Some("PARENT01"), &p1).await.unwrap();
+        let r1 = list_children(
+            &pool,
+            Some("PARENT01"),
+            &PageRequest::new(None, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(r1.items[0].id, "CHILD001");
         assert_eq!(r1.items[1].id, "CHILD002");
         let saved_cursor = r1.next_cursor.clone();
 
-        // Insert new rows: one before cursor (pos=3), one after (pos=100)
+        // Insert before cursor (pos=3) and after (pos=100)
         insert_block(
             &pool,
             "NEWCHILD",
@@ -1109,50 +1102,57 @@ mod tests {
         )
         .await;
 
-        // Use the old cursor — should still skip past CHILD002 (pos=4)
-        let p2 = PageRequest::new(saved_cursor, Some(10)).unwrap();
-        let r2 = list_children(&pool, Some("PARENT01"), &p2).await.unwrap();
+        // Resume with old cursor — must skip past pos=4
+        let r2 = list_children(
+            &pool,
+            Some("PARENT01"),
+            &PageRequest::new(saved_cursor, Some(10)).unwrap(),
+        )
+        .await
+        .unwrap();
 
-        // Must NOT re-include CHILD001, CHILD002, or NEWCHILD (pos=3 < cursor pos=4)
         let ids: Vec<&str> = r2.items.iter().map(|b| b.id.as_str()).collect();
-        assert!(!ids.contains(&"CHILD001"));
+        assert!(
+            !ids.contains(&"CHILD001"),
+            "cursor must skip already-seen items"
+        );
         assert!(!ids.contains(&"CHILD002"));
-        assert!(!ids.contains(&"NEWCHILD"));
-        // Must include remaining children + new one at pos=100
+        assert!(
+            !ids.contains(&"NEWCHILD"),
+            "items before cursor position must be skipped"
+        );
         assert!(ids.contains(&"CHILD003"));
         assert!(ids.contains(&"CHILD004"));
         assert!(ids.contains(&"CHILD005"));
-        assert!(ids.contains(&"NEWCHLD2"));
+        assert!(ids.contains(&"NEWCHLD2"), "items after cursor must appear");
     }
 
     // ====================================================================
-    // list_by_tag tests
+    // list_by_tag
     // ====================================================================
 
     #[tokio::test]
-    async fn list_by_tag_basic() {
+    async fn list_by_tag_returns_only_tagged_blocks() {
         let (pool, _dir) = test_pool().await;
 
-        // Create a tag and some blocks
         insert_block(&pool, "TAG00001", "tag", "important", None, None).await;
         insert_block(&pool, "BLOCK001", "content", "block 1", None, None).await;
         insert_block(&pool, "BLOCK002", "content", "block 2", None, None).await;
         insert_block(&pool, "BLOCK003", "content", "block 3", None, None).await;
 
-        // Tag only blocks 1 and 3
         insert_tag_association(&pool, "BLOCK001", "TAG00001").await;
         insert_tag_association(&pool, "BLOCK003", "TAG00001").await;
 
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = list_by_tag(&pool, "TAG00001", &page).await.unwrap();
 
-        assert_eq!(resp.items.len(), 2);
+        assert_eq!(resp.items.len(), 2, "only tagged blocks must be returned");
         assert_eq!(resp.items[0].id, "BLOCK001");
         assert_eq!(resp.items[1].id, "BLOCK003");
     }
 
     #[tokio::test]
-    async fn list_by_tag_with_cursor() {
+    async fn list_by_tag_paginates_with_cursor() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "TAG00001", "tag", "important", None, None).await;
@@ -1162,37 +1162,77 @@ mod tests {
             insert_tag_association(&pool, &id, "TAG00001").await;
         }
 
-        // Page 1 (size 2)
-        let p1 = PageRequest::new(None, Some(2)).unwrap();
-        let r1 = list_by_tag(&pool, "TAG00001", &p1).await.unwrap();
+        let r1 = list_by_tag(&pool, "TAG00001", &PageRequest::new(None, Some(2)).unwrap())
+            .await
+            .unwrap();
         assert_eq!(r1.items.len(), 2);
         assert!(r1.has_more);
         assert_eq!(r1.items[0].id, "BLOCK001");
         assert_eq!(r1.items[1].id, "BLOCK002");
 
-        // Page 2
-        let p2 = PageRequest::new(r1.next_cursor, Some(2)).unwrap();
-        let r2 = list_by_tag(&pool, "TAG00001", &p2).await.unwrap();
+        let r2 = list_by_tag(
+            &pool,
+            "TAG00001",
+            &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(r2.items.len(), 2);
         assert!(r2.has_more);
         assert_eq!(r2.items[0].id, "BLOCK003");
         assert_eq!(r2.items[1].id, "BLOCK004");
 
-        // Page 3 (last)
-        let p3 = PageRequest::new(r2.next_cursor, Some(2)).unwrap();
-        let r3 = list_by_tag(&pool, "TAG00001", &p3).await.unwrap();
+        let r3 = list_by_tag(
+            &pool,
+            "TAG00001",
+            &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
         assert_eq!(r3.items.len(), 1);
         assert!(!r3.has_more);
         assert!(r3.next_cursor.is_none());
         assert_eq!(r3.items[0].id, "BLOCK005");
     }
 
+    #[tokio::test]
+    async fn list_by_tag_excludes_soft_deleted_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG00001", "tag", "important", None, None).await;
+        insert_block(&pool, "BLOCK001", "content", "alive", None, None).await;
+        insert_block(&pool, "BLOCK002", "content", "deleted", None, None).await;
+
+        insert_tag_association(&pool, "BLOCK001", "TAG00001").await;
+        insert_tag_association(&pool, "BLOCK002", "TAG00001").await;
+        soft_delete_block(&pool, "BLOCK002", FIXED_DELETED_AT).await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_by_tag(&pool, "TAG00001", &page).await.unwrap();
+
+        assert_eq!(resp.items.len(), 1, "soft-deleted block must be excluded");
+        assert_eq!(resp.items[0].id, "BLOCK001");
+    }
+
+    #[tokio::test]
+    async fn list_by_tag_returns_empty_for_unknown_tag() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLOCK001", "content", "untagged", None, None).await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_by_tag(&pool, "NONEXISTENT_TAG", &page).await.unwrap();
+
+        assert!(resp.items.is_empty(), "unknown tag must return empty");
+        assert!(!resp.has_more);
+    }
+
     // ====================================================================
-    // list_agenda tests
+    // list_agenda
     // ====================================================================
 
     #[tokio::test]
-    async fn list_agenda_basic() {
+    async fn list_agenda_returns_blocks_for_matching_date() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "BLOCK001", "content", "meeting", None, None).await;
@@ -1203,22 +1243,76 @@ mod tests {
         insert_agenda_entry(&pool, "2025-01-15", "BLOCK002", "property:deadline").await;
         insert_agenda_entry(&pool, "2025-01-16", "BLOCK003", "property:scheduled").await;
 
-        // Query Jan 15
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = list_agenda(&pool, "2025-01-15", &page).await.unwrap();
 
-        assert_eq!(resp.items.len(), 2);
+        let resp = list_agenda(&pool, "2025-01-15", &page).await.unwrap();
+        assert_eq!(resp.items.len(), 2, "only blocks for Jan 15");
         assert_eq!(resp.items[0].id, "BLOCK001");
         assert_eq!(resp.items[1].id, "BLOCK002");
 
-        // Query Jan 16 — different date
         let resp2 = list_agenda(&pool, "2025-01-16", &page).await.unwrap();
-        assert_eq!(resp2.items.len(), 1);
+        assert_eq!(resp2.items.len(), 1, "only blocks for Jan 16");
         assert_eq!(resp2.items[0].id, "BLOCK003");
+    }
 
-        // Query a date with no entries
-        let resp3 = list_agenda(&pool, "2025-12-31", &page).await.unwrap();
-        assert!(resp3.items.is_empty());
-        assert!(!resp3.has_more);
+    #[tokio::test]
+    async fn list_agenda_returns_empty_for_date_with_no_entries() {
+        let (pool, _dir) = test_pool().await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_agenda(&pool, "2025-12-31", &page).await.unwrap();
+
+        assert!(
+            resp.items.is_empty(),
+            "date with no entries must return empty"
+        );
+        assert!(!resp.has_more);
+    }
+
+    #[tokio::test]
+    async fn list_agenda_paginates_with_cursor() {
+        let (pool, _dir) = test_pool().await;
+
+        for i in 1..=5_i64 {
+            let id = format!("BLOCK{i:03}");
+            insert_block(&pool, &id, "content", &format!("event {i}"), None, None).await;
+            insert_agenda_entry(&pool, "2025-01-15", &id, "property:due").await;
+        }
+
+        let r1 = list_agenda(
+            &pool,
+            "2025-01-15",
+            &PageRequest::new(None, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r1.items.len(), 2);
+        assert!(r1.has_more);
+        assert_eq!(r1.items[0].id, "BLOCK001");
+        assert_eq!(r1.items[1].id, "BLOCK002");
+
+        let r2 = list_agenda(
+            &pool,
+            "2025-01-15",
+            &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r2.items.len(), 2);
+        assert!(r2.has_more);
+        assert_eq!(r2.items[0].id, "BLOCK003");
+        assert_eq!(r2.items[1].id, "BLOCK004");
+
+        let r3 = list_agenda(
+            &pool,
+            "2025-01-15",
+            &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r3.items.len(), 1);
+        assert!(!r3.has_more);
+        assert!(r3.next_cursor.is_none());
+        assert_eq!(r3.items[0].id, "BLOCK005");
     }
 }

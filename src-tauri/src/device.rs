@@ -52,64 +52,131 @@ pub fn get_or_create_device_id(config_path: &Path) -> Result<String, crate::erro
     }
 }
 
+/// Tests for `DeviceId` wrapper and `get_or_create_device_id`: creation,
+/// idempotent reads, UUID normalization, whitespace trimming, corruption
+/// handling, parent-directory creation, and file-content verification.
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// A known valid UUID v4 in canonical lowercase-hyphenated form.
+    const FIXTURE_UUID: &str = "550e8400-e29b-41d4-a716-446655440000";
+    /// Same UUID in compact uppercase (no hyphens) — valid but non-canonical.
+    const FIXTURE_UUID_COMPACT: &str = "550E8400E29B41D4A716446655440000";
+
+    // --- get_or_create_device_id: creation ---
+
     #[test]
-    fn creates_new_uuid_file() {
+    fn creates_new_valid_uuid_file_on_first_call() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("device-id");
+
+        let id = get_or_create_device_id(&path).expect("should create a new device ID");
+
+        assert_eq!(id.len(), 36, "UUID v4 hyphenated form is 36 characters");
+        assert!(
+            Uuid::parse_str(&id).is_ok(),
+            "returned value must be a valid UUID"
+        );
+        assert!(path.exists(), "device-id file should be created on disk");
+    }
+
+    #[test]
+    fn created_file_contains_exact_returned_uuid() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("device-id");
+
         let id = get_or_create_device_id(&path).unwrap();
-        assert_eq!(id.len(), 36); // UUID v4 format
-        assert!(Uuid::parse_str(&id).is_ok());
-        assert!(path.exists());
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+
+        assert_eq!(
+            on_disk, id,
+            "file content should exactly match the returned UUID"
+        );
     }
 
     #[test]
-    fn reads_existing_uuid_file() {
+    fn creates_nested_parent_directories() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("a").join("b").join("c").join("device-id");
+
+        let id = get_or_create_device_id(&path).expect("should create parent dirs and device ID");
+        assert!(
+            Uuid::parse_str(&id).is_ok(),
+            "returned value must be a valid UUID"
+        );
+        assert!(path.exists(), "file should exist in nested directory");
+    }
+
+    // --- get_or_create_device_id: idempotent reads ---
+
+    #[test]
+    fn returns_same_uuid_on_subsequent_calls() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("device-id");
-        let id1 = get_or_create_device_id(&path).unwrap();
-        let id2 = get_or_create_device_id(&path).unwrap();
-        assert_eq!(id1, id2); // idempotent
+
+        let first = get_or_create_device_id(&path).unwrap();
+        let second = get_or_create_device_id(&path).unwrap();
+
+        assert_eq!(first, second, "device ID must be stable across calls");
     }
 
+    // --- get_or_create_device_id: normalization ---
+
     #[test]
-    fn normalizes_uuid_on_read() {
+    fn normalizes_compact_uppercase_uuid_to_canonical_form() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("device-id");
-        // Write uppercase with no hyphens — valid but non-canonical
-        std::fs::write(&path, "550E8400E29B41D4A716446655440000").unwrap();
-        let id = get_or_create_device_id(&path).unwrap();
-        assert_eq!(id, "550e8400-e29b-41d4-a716-446655440000");
+        std::fs::write(&path, FIXTURE_UUID_COMPACT).unwrap();
+
+        let id = get_or_create_device_id(&path).expect("compact UUID should be accepted");
+        assert_eq!(
+            id, FIXTURE_UUID,
+            "should normalize to lowercase hyphenated form"
+        );
     }
 
     #[test]
-    fn rejects_corrupt_file() {
+    fn trims_whitespace_around_uuid_in_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("device-id");
+        std::fs::write(&path, format!("  {FIXTURE_UUID}  \n")).unwrap();
+
+        let id = get_or_create_device_id(&path).expect("whitespace-padded UUID should be accepted");
+        assert_eq!(
+            id, FIXTURE_UUID,
+            "should trim whitespace and return canonical UUID"
+        );
+    }
+
+    // --- get_or_create_device_id: error paths ---
+
+    #[test]
+    fn rejects_corrupt_file_with_invalid_operation_error() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("device-id");
         std::fs::write(&path, "not-a-uuid").unwrap();
-        let err = get_or_create_device_id(&path).unwrap_err();
-        assert!(matches!(err, crate::error::AppError::InvalidOperation(_)));
+
+        let err = get_or_create_device_id(&path).expect_err("corrupt content should fail");
+        assert!(
+            matches!(err, crate::error::AppError::InvalidOperation(_)),
+            "should return InvalidOperation variant, got: {err:?}"
+        );
     }
 
     #[test]
-    fn creates_parent_directories() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("nested").join("deep").join("device-id");
-        let id = get_or_create_device_id(&path).unwrap();
-        assert!(Uuid::parse_str(&id).is_ok());
-    }
-
-    #[test]
-    fn handles_whitespace_in_file() {
+    fn corrupt_file_error_message_includes_file_path() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("device-id");
-        std::fs::write(&path, "  550e8400-e29b-41d4-a716-446655440000  \n").unwrap();
-        let id = get_or_create_device_id(&path).unwrap();
-        assert_eq!(id, "550e8400-e29b-41d4-a716-446655440000");
+        std::fs::write(&path, "garbage").unwrap();
+
+        let err = get_or_create_device_id(&path).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&path.display().to_string()),
+            "error message should include the file path, got: {msg}"
+        );
     }
 
     #[test]
@@ -117,6 +184,51 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("device-id");
         std::fs::write(&path, "").unwrap();
-        assert!(get_or_create_device_id(&path).is_err());
+
+        assert!(
+            get_or_create_device_id(&path).is_err(),
+            "empty file should produce an error"
+        );
+    }
+
+    #[test]
+    fn unicode_content_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("device-id");
+        std::fs::write(&path, "\u{1F4A9}").unwrap();
+
+        let err = get_or_create_device_id(&path).expect_err("unicode content should be rejected");
+        assert!(
+            matches!(err, crate::error::AppError::InvalidOperation(_)),
+            "should return InvalidOperation variant"
+        );
+    }
+
+    // --- DeviceId newtype ---
+
+    #[test]
+    fn device_id_stores_and_exposes_inner_string() {
+        let device = DeviceId(FIXTURE_UUID.to_string());
+        assert_eq!(
+            device.0, FIXTURE_UUID,
+            "DeviceId inner field should hold the UUID string"
+        );
+    }
+
+    #[test]
+    fn device_id_clone_produces_equal_value() {
+        let device = DeviceId(FIXTURE_UUID.to_string());
+        let cloned = device.clone();
+        assert_eq!(device.0, cloned.0, "cloned DeviceId should be equal");
+    }
+
+    #[test]
+    fn device_id_debug_includes_uuid() {
+        let device = DeviceId(FIXTURE_UUID.to_string());
+        let debug = format!("{device:?}");
+        assert!(
+            debug.contains(FIXTURE_UUID),
+            "Debug output should include the UUID, got: {debug}"
+        );
     }
 }

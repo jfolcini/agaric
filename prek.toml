@@ -20,7 +20,7 @@ repo = "local"
 [[repos.hooks]]
 id = "biome-check"
 name = "biome check"
-entry = "npx biome check --no-errors-on-unmatched"
+entry = "npx biome check"
 language = "system"
 types_or = ["javascript", "jsx", "ts", "tsx", "json"]
 pass_filenames = true
@@ -89,7 +89,7 @@ name = "cargo deny"
 entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo deny check'"
 language = "system"
 pass_filenames = false
-types = ["toml"]
+files = "^src-tauri/Cargo\\.(toml|lock)$"
 
 # Rust: cargo-machete (unused dependency detection)
 [[repos]]
@@ -100,4 +100,4 @@ name = "cargo machete"
 entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo machete'"
 language = "system"
 pass_filenames = false
-types = ["toml"]
+files = "^src-tauri/Cargo\\.(toml|lock)$"

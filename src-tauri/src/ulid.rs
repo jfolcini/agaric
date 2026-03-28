@@ -69,88 +69,311 @@ impl From<BlockId> for String {
     }
 }
 
+/// Tests for `BlockId` newtype: construction, parsing, normalization,
+/// trait impls (Display, AsRef, From, Eq, Hash, Default, Serialize/Deserialize),
+/// and the `AttachmentId`/`SnapshotId` type aliases.
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    /// A known-valid ULID in canonical uppercase Crockford base32 (from the ULID spec).
+    const FIXTURE_ULID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    /// Same ULID in lowercase, for normalization tests.
+    const FIXTURE_ULID_LOWER: &str = "01arz3ndektsv4rrffq69g5fav";
+    /// A second distinct valid ULID for inequality/uniqueness tests.
+    const FIXTURE_ULID_OTHER: &str = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
+
+    // --- BlockId::new ---
 
     #[test]
-    fn new_produces_valid_26_char_uppercase() {
+    fn new_produces_26_char_uppercase_crockford_base32() {
         let id = BlockId::new();
         let s = id.as_str();
-        assert_eq!(s.len(), 26);
+        assert_eq!(s.len(), 26, "ULID must be exactly 26 characters");
         assert!(
             s.chars()
                 .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
-            "ULID should be uppercase Crockford base32: got '{s}'"
+            "ULID must be uppercase Crockford base32, got '{s}'"
         );
     }
 
     #[test]
-    fn from_string_valid_lowercase_normalizes_to_uppercase() {
-        let upper = BlockId::new();
-        let lower = upper.as_str().to_lowercase();
-        let parsed = BlockId::from_string(lower).unwrap();
-        assert_eq!(parsed.as_str(), upper.as_str());
+    fn new_produces_unique_ids_on_consecutive_calls() {
+        let a = BlockId::new();
+        let b = BlockId::new();
+        assert_ne!(
+            a, b,
+            "consecutive BlockId::new() calls must produce distinct IDs"
+        );
+    }
+
+    // --- BlockId::from_string: happy paths ---
+
+    #[test]
+    fn from_string_accepts_valid_uppercase_ulid() {
+        let id = BlockId::from_string(FIXTURE_ULID).expect("valid uppercase ULID should parse");
+        assert_eq!(
+            id.as_str(),
+            FIXTURE_ULID,
+            "should preserve canonical uppercase form"
+        );
     }
 
     #[test]
-    fn from_string_invalid_returns_error() {
-        let result = BlockId::from_string("definitely-not-a-ulid");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, crate::error::AppError::Ulid(_)));
+    fn from_string_normalizes_lowercase_to_uppercase() {
+        let id = BlockId::from_string(FIXTURE_ULID_LOWER).expect("lowercase ULID should parse");
+        assert_eq!(
+            id.as_str(),
+            FIXTURE_ULID,
+            "should normalize lowercase to uppercase"
+        );
     }
 
     #[test]
-    fn from_string_empty_returns_error() {
-        let result = BlockId::from_string("");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, crate::error::AppError::Ulid(_)));
+    fn from_string_normalizes_mixed_case_to_uppercase() {
+        let mixed = "01Arz3NdEkTsV4RrFfQ69G5FaV";
+        let id = BlockId::from_string(mixed).expect("mixed-case ULID should parse");
+        assert_eq!(
+            id.as_str(),
+            FIXTURE_ULID,
+            "should normalize mixed case to uppercase"
+        );
     }
 
     #[test]
-    fn display_as_ref_and_from_are_consistent() {
-        let id = BlockId::new();
-        let display = format!("{}", id);
+    fn from_string_accepts_owned_string() {
+        let owned = String::from(FIXTURE_ULID);
+        let id = BlockId::from_string(owned).expect("owned String should be accepted");
+        assert_eq!(id.as_str(), FIXTURE_ULID);
+    }
+
+    // --- BlockId::from_string: error paths ---
+
+    #[test]
+    fn from_string_rejects_empty_input() {
+        let err = BlockId::from_string("").expect_err("empty string is not a valid ULID");
+        assert!(
+            matches!(err, crate::error::AppError::Ulid(_)),
+            "should be Ulid error variant"
+        );
+    }
+
+    #[test]
+    fn from_string_rejects_garbage_input() {
+        let err =
+            BlockId::from_string("definitely-not-a-ulid").expect_err("garbage is not a valid ULID");
+        assert!(
+            matches!(err, crate::error::AppError::Ulid(_)),
+            "should be Ulid error variant"
+        );
+    }
+
+    #[test]
+    fn from_string_rejects_too_short_input() {
+        let err = BlockId::from_string("01ARZ3NDEK").expect_err("10 chars is too short for a ULID");
+        assert!(
+            matches!(err, crate::error::AppError::Ulid(_)),
+            "should be Ulid error variant"
+        );
+    }
+
+    #[test]
+    fn from_string_rejects_too_long_input() {
+        let too_long = format!("{FIXTURE_ULID}X");
+        let err = BlockId::from_string(too_long).expect_err("27 chars is too long for a ULID");
+        assert!(
+            matches!(err, crate::error::AppError::Ulid(_)),
+            "should be Ulid error variant"
+        );
+    }
+
+    #[test]
+    fn from_string_rejects_non_ascii_input() {
+        let err = BlockId::from_string("01ARZ3NDEKTSV4RRFFQ69G5F\u{00FC}")
+            .expect_err("non-ASCII characters should be rejected");
+        assert!(
+            matches!(err, crate::error::AppError::Ulid(_)),
+            "should be Ulid error variant"
+        );
+    }
+
+    #[test]
+    fn from_string_error_message_includes_invalid_input() {
+        let bad_input = "BADINPUT";
+        let err = BlockId::from_string(bad_input).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains(bad_input),
+            "error message should include the rejected input, got: {msg}"
+        );
+    }
+
+    // --- Display ---
+
+    #[test]
+    fn display_returns_inner_ulid_string() {
+        let id = BlockId::from_string(FIXTURE_ULID).unwrap();
+        assert_eq!(
+            format!("{id}"),
+            FIXTURE_ULID,
+            "Display should output the inner ULID"
+        );
+    }
+
+    // --- AsRef<str> ---
+
+    #[test]
+    fn as_ref_returns_inner_str_slice() {
+        let id = BlockId::from_string(FIXTURE_ULID).unwrap();
+        let r: &str = id.as_ref();
+        assert_eq!(r, FIXTURE_ULID, "AsRef<str> should return the inner ULID");
+    }
+
+    // --- as_str / into_string / From<BlockId> for String ---
+
+    #[test]
+    fn as_str_matches_display_and_as_ref() {
+        let id = BlockId::from_string(FIXTURE_ULID).unwrap();
+        let display = format!("{id}");
         let as_ref: &str = id.as_ref();
-        let as_str = id.as_str();
-        assert_eq!(display, as_ref);
-        assert_eq!(display, as_str);
-        let into_string: String = id.into();
-        assert_eq!(display, into_string);
-    }
-
-    #[test]
-    fn serde_roundtrip_preserves_value() {
-        let id = BlockId::new();
-        let json = serde_json::to_string(&id).unwrap();
-        let deserialized: BlockId = serde_json::from_str(&json).unwrap();
-        assert_eq!(id, deserialized);
-    }
-
-    #[test]
-    fn default_produces_valid_ulid() {
-        let id = BlockId::default();
-        assert_eq!(id.as_str().len(), 26);
-        // Verify it round-trips through from_string
-        assert!(BlockId::from_string(id.as_str()).is_ok());
+        assert_eq!(id.as_str(), display, "as_str and Display must agree");
+        assert_eq!(id.as_str(), as_ref, "as_str and AsRef must agree");
     }
 
     #[test]
     fn into_string_consumes_and_returns_inner() {
-        let id = BlockId::new();
-        let s = id.as_str().to_owned();
-        let consumed = id.into_string();
-        assert_eq!(s, consumed);
+        let id = BlockId::from_string(FIXTURE_ULID).unwrap();
+        assert_eq!(
+            id.into_string(),
+            FIXTURE_ULID,
+            "into_string() should return the inner ULID"
+        );
     }
 
     #[test]
-    fn type_aliases_work() {
-        // AttachmentId and SnapshotId are type aliases for BlockId
-        let att: super::AttachmentId = BlockId::new();
-        assert_eq!(att.as_str().len(), 26);
-        let snap: super::SnapshotId = BlockId::new();
-        assert_eq!(snap.as_str().len(), 26);
+    fn from_block_id_into_string_matches_inner() {
+        let id = BlockId::from_string(FIXTURE_ULID).unwrap();
+        let s: String = id.into();
+        assert_eq!(
+            s, FIXTURE_ULID,
+            "From<BlockId> for String should return the inner ULID"
+        );
+    }
+
+    // --- Default ---
+
+    #[test]
+    fn default_produces_valid_parseable_ulid() {
+        let id = BlockId::default();
+        assert_eq!(id.as_str().len(), 26, "default ULID must be 26 chars");
+        BlockId::from_string(id.as_str())
+            .expect("default ULID should round-trip through from_string");
+    }
+
+    // --- PartialEq / Eq ---
+
+    #[test]
+    fn eq_holds_for_identical_ulid_values() {
+        let a = BlockId::from_string(FIXTURE_ULID).unwrap();
+        let b = BlockId::from_string(FIXTURE_ULID).unwrap();
+        assert_eq!(a, b, "BlockIds from the same ULID must be equal");
+    }
+
+    #[test]
+    fn eq_case_normalized_lowercase_equals_uppercase() {
+        let upper = BlockId::from_string(FIXTURE_ULID).unwrap();
+        let lower = BlockId::from_string(FIXTURE_ULID_LOWER).unwrap();
+        assert_eq!(
+            upper, lower,
+            "case-normalized BlockIds from same ULID must be equal"
+        );
+    }
+
+    #[test]
+    fn ne_holds_for_different_ulid_values() {
+        let a = BlockId::from_string(FIXTURE_ULID).unwrap();
+        let b = BlockId::from_string(FIXTURE_ULID_OTHER).unwrap();
+        assert_ne!(a, b, "BlockIds from different ULIDs must not be equal");
+    }
+
+    // --- Hash ---
+
+    #[test]
+    fn hash_is_consistent_for_equal_ids() {
+        let a = BlockId::from_string(FIXTURE_ULID).unwrap();
+        let b = BlockId::from_string(FIXTURE_ULID_LOWER).unwrap();
+        let mut set = HashSet::new();
+        set.insert(a);
+        assert!(
+            !set.insert(b),
+            "inserting an equal BlockId into a HashSet should return false (duplicate)"
+        );
+    }
+
+    #[test]
+    fn hash_set_stores_distinct_ids_separately() {
+        let a = BlockId::from_string(FIXTURE_ULID).unwrap();
+        let b = BlockId::from_string(FIXTURE_ULID_OTHER).unwrap();
+        let mut set = HashSet::new();
+        set.insert(a);
+        set.insert(b);
+        assert_eq!(set.len(), 2, "HashSet should contain both distinct IDs");
+    }
+
+    // --- Serialize / Deserialize ---
+
+    #[test]
+    fn serde_roundtrip_preserves_value() {
+        let id = BlockId::from_string(FIXTURE_ULID).unwrap();
+        let json = serde_json::to_string(&id).expect("BlockId should serialize to JSON");
+        let back: BlockId =
+            serde_json::from_str(&json).expect("BlockId should deserialize from JSON");
+        assert_eq!(id, back, "serde round-trip must preserve the value");
+    }
+
+    #[test]
+    fn serialize_produces_bare_json_string() {
+        let id = BlockId::from_string(FIXTURE_ULID).unwrap();
+        let json = serde_json::to_string(&id).unwrap();
+        let expected = format!("\"{FIXTURE_ULID}\"");
+        assert_eq!(
+            json, expected,
+            "serde(transparent) should emit a bare JSON string"
+        );
+    }
+
+    #[test]
+    fn deserialize_from_json_string_literal() {
+        let json = format!("\"{FIXTURE_ULID}\"");
+        let id: BlockId =
+            serde_json::from_str(&json).expect("should deserialize from a JSON string");
+        assert_eq!(
+            id.as_str(),
+            FIXTURE_ULID,
+            "deserialized value should match fixture"
+        );
+    }
+
+    // --- Type aliases ---
+
+    #[test]
+    fn attachment_id_alias_is_interchangeable_with_block_id() {
+        let att: AttachmentId = BlockId::from_string(FIXTURE_ULID).unwrap();
+        assert_eq!(
+            att.as_str(),
+            FIXTURE_ULID,
+            "AttachmentId is a type alias for BlockId"
+        );
+    }
+
+    #[test]
+    fn snapshot_id_alias_is_interchangeable_with_block_id() {
+        let snap: SnapshotId = BlockId::from_string(FIXTURE_ULID).unwrap();
+        assert_eq!(
+            snap.as_str(),
+            FIXTURE_ULID,
+            "SnapshotId is a type alias for BlockId"
+        );
     }
 }

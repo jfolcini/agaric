@@ -64,80 +64,200 @@ impl Serialize for AppError {
     }
 }
 
+/// Tests for `AppError`: Display output for every variant, Serialize output
+/// (`{ kind, message }` shape for Tauri 2 frontend), and `From` impls.
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Deterministic fixture strings for consistent error messages.
+    const MSG_NOT_FOUND: &str = "block 01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const MSG_ULID: &str = "invalid ULID format";
+    const MSG_VALIDATION: &str = "title must not be empty";
+    const MSG_CHANNEL: &str = "receiver dropped";
+    const MSG_INVALID_OP: &str = "cannot edit deleted block";
+
+    // --- Display output per variant ---
+
     #[test]
-    fn serialize_not_found_error() {
-        let err = AppError::NotFound("test".into());
-        let json = serde_json::to_value(&err).unwrap();
-        assert_eq!(json["kind"], "not_found");
-        assert_eq!(json["message"], "Not found: test");
+    fn display_not_found_prefixes_message() {
+        let err = AppError::NotFound(MSG_NOT_FOUND.into());
+        assert_eq!(
+            err.to_string(),
+            format!("Not found: {MSG_NOT_FOUND}"),
+            "NotFound display should prefix 'Not found: '"
+        );
     }
 
     #[test]
-    fn serialize_all_constructible_variants() {
-        let cases: Vec<(AppError, &str)> = vec![
-            (AppError::Ulid("bad".into()), "ulid"),
-            (AppError::NotFound("x".into()), "not_found"),
-            (AppError::InvalidOperation("y".into()), "invalid_operation"),
-            (AppError::Channel("z".into()), "channel"),
-            (AppError::Validation("v".into()), "validation"),
-            (AppError::Io(std::io::Error::other("io")), "io"),
+    fn display_ulid_prefixes_message() {
+        let err = AppError::Ulid(MSG_ULID.into());
+        assert_eq!(err.to_string(), format!("ULID error: {MSG_ULID}"));
+    }
+
+    #[test]
+    fn display_validation_prefixes_message() {
+        let err = AppError::Validation(MSG_VALIDATION.into());
+        assert_eq!(
+            err.to_string(),
+            format!("Validation error: {MSG_VALIDATION}")
+        );
+    }
+
+    #[test]
+    fn display_invalid_operation_prefixes_message() {
+        let err = AppError::InvalidOperation(MSG_INVALID_OP.into());
+        assert_eq!(
+            err.to_string(),
+            format!("Invalid operation: {MSG_INVALID_OP}")
+        );
+    }
+
+    #[test]
+    fn display_channel_prefixes_message() {
+        let err = AppError::Channel(MSG_CHANNEL.into());
+        assert_eq!(err.to_string(), format!("Channel error: {MSG_CHANNEL}"));
+    }
+
+    #[test]
+    fn display_io_includes_inner_message() {
+        let err = AppError::Io(std::io::Error::other("disk full"));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("disk full"),
+            "IO display should include inner message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn display_json_starts_with_prefix() {
+        let err = AppError::Json(serde_json::from_str::<()>("{bad").unwrap_err());
+        assert!(
+            err.to_string().starts_with("JSON error:"),
+            "JSON display should start with 'JSON error:'"
+        );
+    }
+
+    // --- Serialize: { kind, message } shape for Tauri 2 ---
+
+    #[test]
+    fn serialize_all_string_variants_produce_kind_and_message() {
+        let cases: Vec<(AppError, &str, String)> = vec![
             (
-                AppError::Json(serde_json::from_str::<()>("bad").unwrap_err()),
-                "json",
+                AppError::Ulid(MSG_ULID.into()),
+                "ulid",
+                format!("ULID error: {MSG_ULID}"),
+            ),
+            (
+                AppError::NotFound(MSG_NOT_FOUND.into()),
+                "not_found",
+                format!("Not found: {MSG_NOT_FOUND}"),
+            ),
+            (
+                AppError::InvalidOperation(MSG_INVALID_OP.into()),
+                "invalid_operation",
+                format!("Invalid operation: {MSG_INVALID_OP}"),
+            ),
+            (
+                AppError::Channel(MSG_CHANNEL.into()),
+                "channel",
+                format!("Channel error: {MSG_CHANNEL}"),
+            ),
+            (
+                AppError::Validation(MSG_VALIDATION.into()),
+                "validation",
+                format!("Validation error: {MSG_VALIDATION}"),
             ),
         ];
-        for (err, expected_kind) in cases {
-            let json = serde_json::to_value(&err).unwrap();
-            assert_eq!(json["kind"], expected_kind, "kind mismatch for {}", err);
-            assert!(!json["message"].as_str().unwrap().is_empty());
+        for (err, expected_kind, expected_message) in cases {
+            let json = serde_json::to_value(&err).expect("AppError should serialize");
+            assert_eq!(json["kind"], expected_kind, "kind mismatch for {err}");
+            assert_eq!(
+                json["message"], expected_message,
+                "message mismatch for {err}"
+            );
         }
     }
 
     #[test]
-    fn display_format() {
-        let err = AppError::NotFound("block 'abc'".into());
-        assert_eq!(err.to_string(), "Not found: block 'abc'");
+    fn serialize_io_variant_has_correct_kind() {
+        let err = AppError::Io(std::io::Error::other("disk full"));
+        let json = serde_json::to_value(&err).expect("IO error should serialize");
+        assert_eq!(json["kind"], "io", "IO variant kind should be 'io'");
+        assert!(
+            json["message"].as_str().unwrap_or("").contains("disk full"),
+            "IO message should include inner error"
+        );
     }
 
     #[test]
-    fn display_format_all_variants() {
-        assert_eq!(
-            AppError::Ulid("bad ulid".into()).to_string(),
-            "ULID error: bad ulid"
+    fn serialize_json_variant_has_correct_kind() {
+        let err = AppError::Json(serde_json::from_str::<()>("{bad").unwrap_err());
+        let json = serde_json::to_value(&err).expect("JSON error should serialize");
+        assert_eq!(json["kind"], "json", "JSON variant kind should be 'json'");
+        assert!(
+            !json["message"].as_str().unwrap_or("").is_empty(),
+            "JSON message should not be empty"
         );
-        assert_eq!(
-            AppError::InvalidOperation("nope".into()).to_string(),
-            "Invalid operation: nope"
-        );
-        assert_eq!(
-            AppError::Channel("closed".into()).to_string(),
-            "Channel error: closed"
-        );
-        assert_eq!(
-            AppError::Validation("missing field".into()).to_string(),
-            "Validation error: missing field"
-        );
-        let io_err = AppError::Io(std::io::Error::other("disk full"));
-        assert!(io_err.to_string().contains("disk full"));
-        let json_err = AppError::Json(serde_json::from_str::<()>("bad").unwrap_err());
-        assert!(json_err.to_string().contains("JSON error"));
     }
 
     #[test]
-    fn from_io_error() {
+    fn serialize_produces_exactly_two_fields() {
+        let err = AppError::NotFound("x".into());
+        let json = serde_json::to_value(&err).unwrap();
+        let obj = json
+            .as_object()
+            .expect("serialized error should be a JSON object");
+        assert_eq!(
+            obj.len(),
+            2,
+            "serialized AppError should have exactly 'kind' and 'message'"
+        );
+        assert!(obj.contains_key("kind"), "missing 'kind' field");
+        assert!(obj.contains_key("message"), "missing 'message' field");
+    }
+
+    // --- From impls ---
+
+    #[test]
+    fn from_io_error_produces_io_variant() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
         let app_err: AppError = io_err.into();
-        assert!(matches!(app_err, AppError::Io(_)));
+        assert!(
+            matches!(app_err, AppError::Io(_)),
+            "io::Error should convert to AppError::Io"
+        );
     }
 
     #[test]
-    fn from_serde_json_error() {
-        let json_err = serde_json::from_str::<()>("invalid json").unwrap_err();
+    fn from_serde_json_error_produces_json_variant() {
+        let json_err = serde_json::from_str::<()>("not json").unwrap_err();
         let app_err: AppError = json_err.into();
-        assert!(matches!(app_err, AppError::Json(_)));
+        assert!(
+            matches!(app_err, AppError::Json(_)),
+            "serde_json::Error should convert to AppError::Json"
+        );
+    }
+
+    // --- Debug ---
+
+    #[test]
+    fn debug_output_includes_variant_name() {
+        let err = AppError::NotFound(MSG_NOT_FOUND.into());
+        let debug = format!("{err:?}");
+        assert!(
+            debug.contains("NotFound"),
+            "Debug output should include variant name, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn debug_output_includes_inner_message() {
+        let err = AppError::Validation(MSG_VALIDATION.into());
+        let debug = format!("{err:?}");
+        assert!(
+            debug.contains(MSG_VALIDATION),
+            "Debug output should include inner message, got: {debug}"
+        );
     }
 }

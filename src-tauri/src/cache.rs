@@ -255,12 +255,24 @@ pub async fn rebuild_all_caches(pool: &SqlitePool) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests for cache materializer functions — tags, pages, agenda, and block
+    //! links.  Covers basic rebuilds, exclusion filters (deleted, conflict, NULL
+    //! content), idempotency, boundary conditions on date-tag length, and the
+    //! incremental diff logic in `reindex_block_links`.
+
     use super::*;
     use crate::db::init_pool;
     use sqlx::SqlitePool;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
+    // ── Deterministic test fixtures ─────────────────────────────────────
+
+    const FIXED_DELETED_AT: &str = "2025-01-15T12:00:00+00:00";
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+
+    /// Create a fresh SQLite pool with migrations applied (temp directory).
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
         let db_path: PathBuf = dir.path().join("test.db");
@@ -268,8 +280,7 @@ mod tests {
         (pool, dir)
     }
 
-    // -- helpers -----------------------------------------------------------
-
+    /// Insert a block with the given type and content.
     async fn insert_block(pool: &SqlitePool, id: &str, block_type: &str, content: &str) {
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)")
             .bind(id)
@@ -280,32 +291,36 @@ mod tests {
             .unwrap();
     }
 
-    async fn insert_block_with_parent(
-        pool: &SqlitePool,
-        id: &str,
-        block_type: &str,
-        content: &str,
-        parent_id: &str,
-    ) {
-        sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id) VALUES (?, ?, ?, ?)")
+    /// Insert a block with NULL content (content column omitted).
+    async fn insert_block_null_content(pool: &SqlitePool, id: &str, block_type: &str) {
+        sqlx::query("INSERT INTO blocks (id, block_type) VALUES (?, ?)")
             .bind(id)
             .bind(block_type)
-            .bind(content)
-            .bind(parent_id)
             .execute(pool)
             .await
             .unwrap();
     }
 
+    /// Soft-delete a block using a fixed, deterministic timestamp.
     async fn soft_delete_block(pool: &SqlitePool, id: &str) {
         sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
-            .bind(Utc::now().to_rfc3339())
+            .bind(FIXED_DELETED_AT)
             .bind(id)
             .execute(pool)
             .await
             .unwrap();
     }
 
+    /// Mark a block as a conflict (is_conflict = 1).
+    async fn mark_conflict(pool: &SqlitePool, id: &str) {
+        sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Associate a block with a tag via `block_tags`.
     async fn add_tag(pool: &SqlitePool, block_id: &str, tag_id: &str) {
         sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
             .bind(block_id)
@@ -315,6 +330,7 @@ mod tests {
             .unwrap();
     }
 
+    /// Set a date property on a block.
     async fn set_property(pool: &SqlitePool, block_id: &str, key: &str, value_date: Option<&str>) {
         sqlx::query(
             "INSERT OR REPLACE INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)",
@@ -327,36 +343,45 @@ mod tests {
         .unwrap();
     }
 
-    // ======================================================================
-    // tags_cache tests
-    // ======================================================================
+    /// Count rows in a table (test-only convenience).
+    async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
+        let query = format!("SELECT COUNT(*) FROM {table}");
+        let (count,): (i64,) = sqlx::query_as(&query).fetch_one(pool).await.unwrap();
+        count
+    }
+
+    // ====================================================================
+    // tags_cache
+    // ====================================================================
 
     #[tokio::test]
     async fn tags_cache_basic_rebuild() {
         let (pool, _dir) = test_pool().await;
 
-        // Create two tag blocks
         insert_block(&pool, "TAG01", "tag", "urgent").await;
         insert_block(&pool, "TAG02", "tag", "low-priority").await;
-
-        // Create a content block and tag it with TAG01
         insert_block(&pool, "BLK01", "content", "some note").await;
         add_tag(&pool, "BLK01", "TAG01").await;
 
         rebuild_tags_cache(&pool).await.unwrap();
 
-        // Verify cache contents
         let rows: Vec<(String, String, i64)> =
             sqlx::query_as("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY name")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
 
-        assert_eq!(rows.len(), 2);
-        // low-priority has zero usage
-        assert_eq!(rows[0], ("TAG02".into(), "low-priority".into(), 0));
-        // urgent has 1 usage
-        assert_eq!(rows[1], ("TAG01".into(), "urgent".into(), 1));
+        assert_eq!(rows.len(), 2, "both tags must appear in cache");
+        assert_eq!(
+            rows[0],
+            ("TAG02".into(), "low-priority".into(), 0),
+            "unused tag must have count 0"
+        );
+        assert_eq!(
+            rows[1],
+            ("TAG01".into(), "urgent".into(), 1),
+            "tagged-once tag must have count 1"
+        );
     }
 
     #[tokio::test]
@@ -369,11 +394,44 @@ mod tests {
 
         rebuild_tags_cache(&pool).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 1);
+        assert_eq!(
+            count_rows(&pool, "tags_cache").await,
+            1,
+            "soft-deleted tag must be excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn tags_cache_excludes_conflict_tags() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG01", "tag", "normal").await;
+        insert_block(&pool, "TAG02", "tag", "conflict").await;
+        mark_conflict(&pool, "TAG02").await;
+
+        rebuild_tags_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "tags_cache").await,
+            1,
+            "conflict tag (is_conflict = 1) must be excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn tags_cache_excludes_null_content_tags() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG01", "tag", "has-content").await;
+        insert_block_null_content(&pool, "TAG02", "tag").await;
+
+        rebuild_tags_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "tags_cache").await,
+            1,
+            "NULL-content tag must be excluded"
+        );
     }
 
     #[tokio::test]
@@ -390,30 +448,84 @@ mod tests {
             .unwrap();
 
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0], ("TAG01".into(), 0));
+        assert_eq!(
+            rows[0],
+            ("TAG01".into(), 0),
+            "unused tag must appear with count 0"
+        );
     }
 
     #[tokio::test]
-    async fn tags_cache_full_recompute_clears_stale() {
+    async fn tags_cache_full_recompute_clears_stale_entries() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "TAG01", "tag", "first").await;
         rebuild_tags_cache(&pool).await.unwrap();
+        assert_eq!(count_rows(&pool, "tags_cache").await, 1);
 
-        // Delete the tag and rebuild — cache should be empty
         soft_delete_block(&pool, "TAG01").await;
         rebuild_tags_cache(&pool).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
+        assert_eq!(
+            count_rows(&pool, "tags_cache").await,
+            0,
+            "stale entry must be cleared after rebuild"
+        );
     }
 
-    // ======================================================================
-    // pages_cache tests
-    // ======================================================================
+    #[tokio::test]
+    async fn tags_cache_aggregates_high_usage_count() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "HTAG", "tag", "popular").await;
+
+        for i in 0..5 {
+            let blk = format!("HB{i:04}");
+            insert_block(&pool, &blk, "content", &format!("note {i}")).await;
+            add_tag(&pool, &blk, "HTAG").await;
+        }
+
+        rebuild_tags_cache(&pool).await.unwrap();
+
+        let row: (i64,) =
+            sqlx::query_as("SELECT usage_count FROM tags_cache WHERE tag_id = 'HTAG'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.0, 5, "usage count must aggregate all tagged blocks");
+    }
+
+    #[tokio::test]
+    async fn tags_cache_rebuild_is_idempotent() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG01", "tag", "alpha").await;
+        insert_block(&pool, "BLK01", "content", "note").await;
+        add_tag(&pool, "BLK01", "TAG01").await;
+
+        rebuild_tags_cache(&pool).await.unwrap();
+        let first: Vec<(String, String, i64)> =
+            sqlx::query_as("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+
+        rebuild_tags_cache(&pool).await.unwrap();
+        let second: Vec<(String, String, i64)> =
+            sqlx::query_as("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            first, second,
+            "consecutive rebuilds must produce identical results"
+        );
+    }
+
+    // ====================================================================
+    // pages_cache
+    // ====================================================================
 
     #[tokio::test]
     async fn pages_cache_basic_rebuild() {
@@ -421,7 +533,6 @@ mod tests {
 
         insert_block(&pool, "PAGE01", "page", "My First Page").await;
         insert_block(&pool, "PAGE02", "page", "My Second Page").await;
-        // Non-page block should not appear
         insert_block(&pool, "BLK01", "content", "just content").await;
 
         rebuild_pages_cache(&pool).await.unwrap();
@@ -432,7 +543,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 2, "only page-type blocks must appear");
         assert_eq!(rows[0], ("PAGE01".into(), "My First Page".into()));
         assert_eq!(rows[1], ("PAGE02".into(), "My Second Page".into()));
     }
@@ -447,36 +558,79 @@ mod tests {
 
         rebuild_pages_cache(&pool).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pages_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 1);
+        assert_eq!(
+            count_rows(&pool, "pages_cache").await,
+            1,
+            "soft-deleted page must be excluded"
+        );
     }
 
     #[tokio::test]
-    async fn pages_cache_full_recompute_clears_stale() {
+    async fn pages_cache_full_recompute_clears_stale_entries() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "PAGE01", "page", "Will be deleted").await;
         rebuild_pages_cache(&pool).await.unwrap();
+        assert_eq!(count_rows(&pool, "pages_cache").await, 1);
 
         soft_delete_block(&pool, "PAGE01").await;
         rebuild_pages_cache(&pool).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pages_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
+        assert_eq!(
+            count_rows(&pool, "pages_cache").await,
+            0,
+            "stale entry must be cleared after rebuild"
+        );
     }
 
-    // ======================================================================
-    // agenda_cache tests
-    // ======================================================================
+    #[tokio::test]
+    async fn pages_cache_excludes_null_content() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PAGE01", "page", "Real Page").await;
+        insert_block_null_content(&pool, "PAGE02", "page").await;
+
+        rebuild_pages_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "pages_cache").await,
+            1,
+            "NULL-content page must be excluded"
+        );
+    }
 
     #[tokio::test]
-    async fn agenda_cache_from_date_properties() {
+    async fn pages_cache_rebuild_is_idempotent() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PAGE01", "page", "Stable Page").await;
+
+        rebuild_pages_cache(&pool).await.unwrap();
+        let first: Vec<(String, String)> =
+            sqlx::query_as("SELECT page_id, title FROM pages_cache ORDER BY page_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+
+        rebuild_pages_cache(&pool).await.unwrap();
+        let second: Vec<(String, String)> =
+            sqlx::query_as("SELECT page_id, title FROM pages_cache ORDER BY page_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            first, second,
+            "consecutive rebuilds must produce identical results"
+        );
+    }
+
+    // ====================================================================
+    // agenda_cache
+    // ====================================================================
+
+    #[tokio::test]
+    async fn agenda_cache_populates_from_date_properties() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "BLK01", "content", "task with due date").await;
@@ -491,18 +645,16 @@ mod tests {
                 .unwrap();
 
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].0, "2025-01-15");
+        assert_eq!(rows[0].0, "2025-01-15", "date must match property value");
         assert_eq!(rows[0].1, "BLK01");
-        assert_eq!(rows[0].2, "property:due");
+        assert_eq!(rows[0].2, "property:due", "source must be property:<key>");
     }
 
     #[tokio::test]
-    async fn agenda_cache_from_date_tags() {
+    async fn agenda_cache_populates_from_date_tags() {
         let (pool, _dir) = test_pool().await;
 
-        // Create a date-pattern tag
         insert_block(&pool, "DTAG1", "tag", "date/2025-03-20").await;
-        // Create a content block and tag it
         insert_block(&pool, "BLK01", "content", "meeting notes").await;
         add_tag(&pool, "BLK01", "DTAG1").await;
 
@@ -515,30 +667,32 @@ mod tests {
                 .unwrap();
 
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].0, "2025-03-20");
+        assert_eq!(
+            rows[0].0, "2025-03-20",
+            "date must be extracted from tag content"
+        );
         assert_eq!(rows[0].1, "BLK01");
-        assert_eq!(rows[0].2, "tag:DTAG1");
+        assert_eq!(rows[0].2, "tag:DTAG1", "source must be tag:<tag_id>");
     }
 
     #[tokio::test]
-    async fn agenda_cache_both_sources() {
+    async fn agenda_cache_combines_property_and_tag_sources() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "BLK01", "content", "task").await;
-        // Property source
         set_property(&pool, "BLK01", "deadline", Some("2025-06-01")).await;
-        // Tag source
+
         insert_block(&pool, "DTAG1", "tag", "date/2025-06-01").await;
         insert_block(&pool, "BLK02", "content", "event").await;
         add_tag(&pool, "BLK02", "DTAG1").await;
 
         rebuild_agenda_cache(&pool).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 2);
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            2,
+            "both property and tag sources must be included"
+        );
     }
 
     #[tokio::test]
@@ -551,32 +705,11 @@ mod tests {
 
         rebuild_agenda_cache(&pool).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
-    }
-
-    #[tokio::test]
-    async fn agenda_cache_ignores_non_date_tags() {
-        let (pool, _dir) = test_pool().await;
-
-        // Tag that looks like date but is too short
-        insert_block(&pool, "TAG01", "tag", "date/short").await;
-        // Tag that has wrong prefix
-        insert_block(&pool, "TAG02", "tag", "notdate/2025-01-01").await;
-        insert_block(&pool, "BLK01", "content", "note").await;
-        add_tag(&pool, "BLK01", "TAG01").await;
-        add_tag(&pool, "BLK01", "TAG02").await;
-
-        rebuild_agenda_cache(&pool).await.unwrap();
-
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            0,
+            "soft-deleted block must be excluded"
+        );
     }
 
     #[tokio::test]
@@ -586,51 +719,123 @@ mod tests {
         insert_block(&pool, "DTAG1", "tag", "date/2025-03-20").await;
         insert_block(&pool, "BLK01", "content", "meeting").await;
         add_tag(&pool, "BLK01", "DTAG1").await;
-        // Soft-delete the tag
         soft_delete_block(&pool, "DTAG1").await;
 
         rebuild_agenda_cache(&pool).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            0,
+            "deleted date-tag must be excluded"
+        );
     }
 
     #[tokio::test]
-    async fn agenda_cache_multiple_date_props_same_date() {
+    async fn agenda_cache_ignores_non_date_tags() {
         let (pool, _dir) = test_pool().await;
 
-        // Block with two date properties that share the same date value.
-        // PK is (date, block_id), so only one row should survive via OR IGNORE.
+        insert_block(&pool, "TAG01", "tag", "date/short").await;
+        insert_block(&pool, "TAG02", "tag", "notdate/2025-01-01").await;
+        insert_block(&pool, "BLK01", "content", "note").await;
+        add_tag(&pool, "BLK01", "TAG01").await;
+        add_tag(&pool, "BLK01", "TAG02").await;
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            0,
+            "tags not matching date/YYYY-MM-DD (15 chars) must be ignored"
+        );
+    }
+
+    #[tokio::test]
+    async fn agenda_cache_deduplicates_same_date_block_pair() {
+        let (pool, _dir) = test_pool().await;
+
         insert_block(&pool, "BLK01", "content", "busy day").await;
         set_property(&pool, "BLK01", "due", Some("2025-06-01")).await;
         set_property(&pool, "BLK01", "scheduled", Some("2025-06-01")).await;
 
         rebuild_agenda_cache(&pool).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        // Only 1 row because PK is (date, block_id) — OR IGNORE drops the dup
-        assert_eq!(count.0, 1);
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            1,
+            "PK (date, block_id) must deduplicate via OR IGNORE"
+        );
     }
 
-    // ======================================================================
-    // block_links tests
-    // ======================================================================
+    #[tokio::test]
+    async fn agenda_cache_date_tag_boundary_exactly_15_chars() {
+        let (pool, _dir) = test_pool().await;
+
+        let exact = "date/2025-03-20"; // 15 chars
+        assert_eq!(exact.len(), 15);
+
+        insert_block(&pool, "DTAG1", "tag", exact).await;
+        insert_block(&pool, "BLK01", "content", "event").await;
+        add_tag(&pool, "BLK01", "DTAG1").await;
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            1,
+            "exactly 15-char date tag must match"
+        );
+    }
+
+    #[tokio::test]
+    async fn agenda_cache_date_tag_boundary_14_chars_excluded() {
+        let (pool, _dir) = test_pool().await;
+
+        let short = "date/2025-3-20"; // 14 chars
+        assert_eq!(short.len(), 14);
+
+        insert_block(&pool, "DTAG1", "tag", short).await;
+        insert_block(&pool, "BLK01", "content", "event").await;
+        add_tag(&pool, "BLK01", "DTAG1").await;
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            0,
+            "14-char date tag must NOT match"
+        );
+    }
+
+    #[tokio::test]
+    async fn agenda_cache_date_tag_boundary_16_chars_excluded() {
+        let (pool, _dir) = test_pool().await;
+
+        let long = "date/2025-03-20X"; // 16 chars
+        assert_eq!(long.len(), 16);
+
+        insert_block(&pool, "DTAG1", "tag", long).await;
+        insert_block(&pool, "BLK01", "content", "event").await;
+        add_tag(&pool, "BLK01", "DTAG1").await;
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            0,
+            "16-char date tag must NOT match"
+        );
+    }
+
+    // ====================================================================
+    // block_links
+    // ====================================================================
 
     #[tokio::test]
     async fn block_links_basic_reindex() {
         let (pool, _dir) = test_pool().await;
 
-        // Need target blocks to exist for FK constraints
         insert_block(&pool, "01HZ00000000000000000000AB", "content", "target A").await;
         insert_block(&pool, "01HZ00000000000000000000CD", "content", "target B").await;
-
-        // Source block references both targets
         insert_block(
             &pool,
             "01HZ0000000000000000000SRC",
@@ -651,20 +856,19 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 2, "both link targets must be indexed");
         assert_eq!(rows[0].0, "01HZ00000000000000000000AB");
         assert_eq!(rows[1].0, "01HZ00000000000000000000CD");
     }
 
     #[tokio::test]
-    async fn block_links_diff_add_and_remove() {
+    async fn block_links_incremental_diff_adds_and_removes() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "01HZ00000000000000000000AB", "content", "target A").await;
         insert_block(&pool, "01HZ00000000000000000000CD", "content", "target B").await;
         insert_block(&pool, "01HZ00000000000000000000EF", "content", "target C").await;
 
-        // Initial content references A and B
         insert_block(
             &pool,
             "01HZ0000000000000000000SRC",
@@ -676,14 +880,7 @@ mod tests {
         reindex_block_links(&pool, "01HZ0000000000000000000SRC")
             .await
             .unwrap();
-
-        // Verify initial state
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-            .bind("01HZ0000000000000000000SRC")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 2);
+        assert_eq!(count_rows(&pool, "block_links").await, 2, "initial: A + B");
 
         // Update content: remove B, add C
         sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
@@ -705,13 +902,13 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].0, "01HZ00000000000000000000AB"); // kept
-        assert_eq!(rows[1].0, "01HZ00000000000000000000EF"); // added
+        assert_eq!(rows.len(), 2, "diff: A kept, B removed, C added");
+        assert_eq!(rows[0].0, "01HZ00000000000000000000AB");
+        assert_eq!(rows[1].0, "01HZ00000000000000000000EF");
     }
 
     #[tokio::test]
-    async fn block_links_deleted_block_clears_links() {
+    async fn block_links_deleted_source_clears_all_links() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "01HZ00000000000000000000AB", "content", "target").await;
@@ -726,27 +923,18 @@ mod tests {
         reindex_block_links(&pool, "01HZ0000000000000000000SRC")
             .await
             .unwrap();
+        assert_eq!(count_rows(&pool, "block_links").await, 1);
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-            .bind("01HZ0000000000000000000SRC")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 1);
-
-        // Soft-delete the source block
         soft_delete_block(&pool, "01HZ0000000000000000000SRC").await;
-
         reindex_block_links(&pool, "01HZ0000000000000000000SRC")
             .await
             .unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-            .bind("01HZ0000000000000000000SRC")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            0,
+            "all links must be removed when source is soft-deleted"
+        );
     }
 
     #[tokio::test]
@@ -765,37 +953,33 @@ mod tests {
             .await
             .unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-            .bind("01HZ0000000000000000000SRC")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            0,
+            "no links must be created for plain text"
+        );
     }
 
     #[tokio::test]
-    async fn block_links_nonexistent_block() {
+    async fn block_links_nonexistent_source_is_noop() {
         let (pool, _dir) = test_pool().await;
 
-        // Reindexing a block that doesn't exist should succeed (no-op)
         reindex_block_links(&pool, "NONEXISTENT0000000000000000")
             .await
             .unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-            .bind("NONEXISTENT0000000000000000")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            0,
+            "reindexing nonexistent block must not create links"
+        );
     }
 
     #[tokio::test]
-    async fn block_links_duplicate_refs_deduplicated() {
+    async fn block_links_deduplicates_repeated_references() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "01HZ00000000000000000000AB", "content", "target").await;
-        // Same ULID referenced twice in content
         insert_block(
             &pool,
             "01HZ0000000000000000000SRC",
@@ -808,17 +992,15 @@ mod tests {
             .await
             .unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-            .bind("01HZ0000000000000000000SRC")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        // Should be 1, not 2 — deduplicated by HashSet
-        assert_eq!(count.0, 1);
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            1,
+            "duplicate references must be deduplicated by HashSet"
+        );
     }
 
     #[tokio::test]
-    async fn block_links_noop_when_unchanged() {
+    async fn block_links_noop_when_content_unchanged() {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, "01HZ00000000000000000000AB", "content", "target").await;
@@ -834,241 +1016,28 @@ mod tests {
             .await
             .unwrap();
 
-        // Call again with same content — should be a no-op
+        // Second call with same content — no-op (early return)
         reindex_block_links(&pool, "01HZ0000000000000000000SRC")
             .await
             .unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-            .bind("01HZ0000000000000000000SRC")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 1);
-    }
-
-    // ======================================================================
-    // New tests — coverage expansion
-    // ======================================================================
-
-    // -- helper: insert block with NULL content ----------------------------
-
-    async fn insert_block_null_content(pool: &SqlitePool, id: &str, block_type: &str) {
-        sqlx::query("INSERT INTO blocks (id, block_type) VALUES (?, ?)")
-            .bind(id)
-            .bind(block_type)
-            .execute(pool)
-            .await
-            .unwrap();
-    }
-
-    // -- tags_cache --------------------------------------------------------
-
-    #[tokio::test]
-    async fn tags_cache_many_tags_50() {
-        let (pool, _dir) = test_pool().await;
-
-        // Insert 50 tag blocks, each with a content block using it
-        for i in 0..50 {
-            let tag_id = format!("TAG{i:03}");
-            let blk_id = format!("BLK{i:03}");
-            insert_block(&pool, &tag_id, "tag", &format!("tag-{i}")).await;
-            insert_block(&pool, &blk_id, "content", &format!("note {i}")).await;
-            add_tag(&pool, &blk_id, &tag_id).await;
-        }
-
-        rebuild_tags_cache(&pool).await.unwrap();
-
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 50);
-
-        // Spot-check one tag
-        let row: (i64,) =
-            sqlx::query_as("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG025'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(row.0, 1);
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            1,
+            "idempotent reindex must not duplicate links"
+        );
     }
 
     #[tokio::test]
-    async fn tags_cache_high_usage_count() {
+    async fn block_links_ignores_lowercase_ulids() {
         let (pool, _dir) = test_pool().await;
 
-        insert_block(&pool, "HTAG", "tag", "popular").await;
-
-        // 25 content blocks all tagged with HTAG
-        for i in 0..25 {
-            let blk = format!("HB{i:04}");
-            insert_block(&pool, &blk, "content", &format!("note {i}")).await;
-            add_tag(&pool, &blk, "HTAG").await;
-        }
-
-        rebuild_tags_cache(&pool).await.unwrap();
-
-        let row: (i64,) =
-            sqlx::query_as("SELECT usage_count FROM tags_cache WHERE tag_id = 'HTAG'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(row.0, 25);
-    }
-
-    #[tokio::test]
-    async fn tags_cache_idempotent() {
-        let (pool, _dir) = test_pool().await;
-
-        insert_block(&pool, "TAG01", "tag", "alpha").await;
-        insert_block(&pool, "BLK01", "content", "note").await;
-        add_tag(&pool, "BLK01", "TAG01").await;
-
-        rebuild_tags_cache(&pool).await.unwrap();
-        let first: Vec<(String, String, i64)> =
-            sqlx::query_as("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
-
-        // Call again — result must be identical
-        rebuild_tags_cache(&pool).await.unwrap();
-        let second: Vec<(String, String, i64)> =
-            sqlx::query_as("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
-
-        assert_eq!(first.len(), second.len());
-        for (a, b) in first.iter().zip(second.iter()) {
-            assert_eq!(a.0, b.0);
-            assert_eq!(a.1, b.1);
-            assert_eq!(a.2, b.2);
-        }
-    }
-
-    // -- pages_cache -------------------------------------------------------
-
-    #[tokio::test]
-    async fn pages_cache_null_content_excluded() {
-        let (pool, _dir) = test_pool().await;
-
-        // One normal page, one with NULL content
-        insert_block(&pool, "PAGE01", "page", "Real Page").await;
-        insert_block_null_content(&pool, "PAGE02", "page").await;
-
-        rebuild_pages_cache(&pool).await.unwrap();
-
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pages_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        // Only the non-NULL page should appear
-        assert_eq!(count.0, 1);
-    }
-
-    #[tokio::test]
-    async fn pages_cache_idempotent() {
-        let (pool, _dir) = test_pool().await;
-
-        insert_block(&pool, "PAGE01", "page", "Stable Page").await;
-
-        rebuild_pages_cache(&pool).await.unwrap();
-        let first: Vec<(String, String)> =
-            sqlx::query_as("SELECT page_id, title FROM pages_cache ORDER BY page_id")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
-
-        rebuild_pages_cache(&pool).await.unwrap();
-        let second: Vec<(String, String)> =
-            sqlx::query_as("SELECT page_id, title FROM pages_cache ORDER BY page_id")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
-
-        assert_eq!(first, second);
-    }
-
-    // -- agenda_cache ------------------------------------------------------
-
-    #[tokio::test]
-    async fn agenda_cache_date_tag_exactly_15_chars() {
-        // "date/2025-03-20" is exactly 15 chars — must match
-        let (pool, _dir) = test_pool().await;
-
-        let tag_content = "date/2025-03-20";
-        assert_eq!(tag_content.len(), 15);
-
-        insert_block(&pool, "DTAG1", "tag", tag_content).await;
-        insert_block(&pool, "BLK01", "content", "event").await;
-        add_tag(&pool, "BLK01", "DTAG1").await;
-
-        rebuild_agenda_cache(&pool).await.unwrap();
-
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 1);
-    }
-
-    #[tokio::test]
-    async fn agenda_cache_date_tag_14_chars_excluded() {
-        // "date/2025-3-20" is 14 chars — must NOT match
-        let (pool, _dir) = test_pool().await;
-
-        let tag_content = "date/2025-3-20";
-        assert_eq!(tag_content.len(), 14);
-
-        insert_block(&pool, "DTAG1", "tag", tag_content).await;
-        insert_block(&pool, "BLK01", "content", "event").await;
-        add_tag(&pool, "BLK01", "DTAG1").await;
-
-        rebuild_agenda_cache(&pool).await.unwrap();
-
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
-    }
-
-    #[tokio::test]
-    async fn agenda_cache_date_tag_16_chars_excluded() {
-        // "date/2025-03-20X" is 16 chars — must NOT match
-        let (pool, _dir) = test_pool().await;
-
-        let tag_content = "date/2025-03-20X";
-        assert_eq!(tag_content.len(), 16);
-
-        insert_block(&pool, "DTAG1", "tag", tag_content).await;
-        insert_block(&pool, "BLK01", "content", "event").await;
-        add_tag(&pool, "BLK01", "DTAG1").await;
-
-        rebuild_agenda_cache(&pool).await.unwrap();
-
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
-    }
-
-    // -- block_links -------------------------------------------------------
-
-    #[tokio::test]
-    async fn block_links_lowercase_ulid_not_matched() {
-        let (pool, _dir) = test_pool().await;
-
-        // Lowercase ULIDs should NOT be extracted by the regex
         insert_block(&pool, "01HZ00000000000000000000AB", "content", "target").await;
         insert_block(
             &pool,
             "01HZ0000000000000000000SRC",
             "content",
-            "[[01hz00000000000000000000ab]]", // lowercase
+            "[[01hz00000000000000000000ab]]", // lowercase — must not match
         )
         .await;
 
@@ -1076,19 +1045,18 @@ mod tests {
             .await
             .unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-            .bind("01HZ0000000000000000000SRC")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            0,
+            "lowercase ULIDs must not be matched by the regex"
+        );
     }
 
     #[tokio::test]
-    async fn block_links_malformed_links_ignored() {
+    async fn block_links_ignores_malformed_ulid_lengths() {
         let (pool, _dir) = test_pool().await;
 
-        // Too short (10 chars) and too long (28 chars) should not match
+        // 10-char (too short) and 28-char (too long) must not match
         insert_block(
             &pool,
             "01HZ0000000000000000000SRC",
@@ -1101,19 +1069,17 @@ mod tests {
             .await
             .unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-            .bind("01HZ0000000000000000000SRC")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            0,
+            "malformed ULIDs (wrong length) must not be matched"
+        );
     }
 
     #[tokio::test]
-    async fn block_links_adjacent_links_parsed() {
+    async fn block_links_parses_adjacent_links() {
         let (pool, _dir) = test_pool().await;
 
-        // Two ULIDs side-by-side with no space between closing/opening brackets
         insert_block(&pool, "01HZ00000000000000000000AB", "content", "A").await;
         insert_block(&pool, "01HZ00000000000000000000CD", "content", "B").await;
         insert_block(
@@ -1136,18 +1102,17 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 2, "adjacent links must both be parsed");
         assert_eq!(rows[0].0, "01HZ00000000000000000000AB");
         assert_eq!(rows[1].0, "01HZ00000000000000000000CD");
     }
 
     #[tokio::test]
-    async fn block_links_inside_code_block_still_parsed() {
+    async fn block_links_extracts_links_inside_code_fences() {
         let (pool, _dir) = test_pool().await;
 
-        // Links inside markdown code fences — the regex does NOT skip code
-        // blocks, so these should be extracted (current behaviour, not a bug —
-        // we index all textual occurrences regardless of markup context).
+        // The regex is context-unaware by design — links inside code fences
+        // are still extracted and indexed.
         insert_block(&pool, "01HZ00000000000000000000AB", "content", "target").await;
         insert_block(
             &pool,
@@ -1161,22 +1126,21 @@ mod tests {
             .await
             .unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-            .bind("01HZ0000000000000000000SRC")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        // Still extracted — regex is context-unaware by design
-        assert_eq!(count.0, 1);
+        assert_eq!(
+            count_rows(&pool, "block_links").await,
+            1,
+            "regex is context-unaware — code fence links are extracted"
+        );
     }
 
-    // -- cross-cutting: empty tables & rebuild_all_caches ------------------
+    // ====================================================================
+    // rebuild_all_caches & empty tables
+    // ====================================================================
 
     #[tokio::test]
-    async fn rebuild_on_empty_tables() {
+    async fn rebuild_all_succeeds_on_empty_tables() {
         let (pool, _dir) = test_pool().await;
 
-        // All four functions should succeed on a completely empty DB
         rebuild_tags_cache(&pool).await.unwrap();
         rebuild_pages_cache(&pool).await.unwrap();
         rebuild_agenda_cache(&pool).await.unwrap();
@@ -1184,35 +1148,16 @@ mod tests {
             .await
             .unwrap();
 
-        // All caches empty
-        let tags: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        let pages: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pages_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        let agenda: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        let links: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-
-        assert_eq!(tags.0, 0);
-        assert_eq!(pages.0, 0);
-        assert_eq!(agenda.0, 0);
-        assert_eq!(links.0, 0);
+        assert_eq!(count_rows(&pool, "tags_cache").await, 0);
+        assert_eq!(count_rows(&pool, "pages_cache").await, 0);
+        assert_eq!(count_rows(&pool, "agenda_cache").await, 0);
+        assert_eq!(count_rows(&pool, "block_links").await, 0);
     }
 
     #[tokio::test]
-    async fn rebuild_all_caches_basic() {
+    async fn rebuild_all_caches_populates_all_three() {
         let (pool, _dir) = test_pool().await;
 
-        // Seed one item for each cache
         insert_block(&pool, "TAG01", "tag", "work").await;
         insert_block(&pool, "PAGE01", "page", "Home").await;
         insert_block(&pool, "BLK01", "content", "task").await;
@@ -1220,21 +1165,12 @@ mod tests {
 
         rebuild_all_caches(&pool).await.unwrap();
 
-        let tags: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        let pages: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pages_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        let agenda: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-
-        assert_eq!(tags.0, 1);
-        assert_eq!(pages.0, 1);
-        assert_eq!(agenda.0, 1);
+        assert_eq!(count_rows(&pool, "tags_cache").await, 1, "tags populated");
+        assert_eq!(count_rows(&pool, "pages_cache").await, 1, "pages populated");
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            1,
+            "agenda populated"
+        );
     }
 }

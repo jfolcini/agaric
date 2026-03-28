@@ -88,207 +88,259 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
+/// Tests for `compute_op_hash`, `verify_op_hash`, and `constant_time_eq`.
+///
+/// Covers determinism, per-field sensitivity, golden vectors, edge cases
+/// (unicode, empty, large, boundary seq values, embedded null bytes),
+/// verification with tampered fields, and constant-time comparison.
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── determinism & basic properties ──────────────────────────────────
+    // ── Test fixture constants ──────────────────────────────────────────
 
-    #[test]
-    fn hash_is_deterministic() {
-        let h1 = compute_op_hash("dev-1", 1, None, "create_block", r#"{"block_id":"X"}"#);
-        let h2 = compute_op_hash("dev-1", 1, None, "create_block", r#"{"block_id":"X"}"#);
-        assert_eq!(h1, h2);
-    }
+    const DEV_1: &str = "dev-1";
+    const DEV_2: &str = "dev-2";
+    const OP_CREATE: &str = "create_block";
+    const OP_EDIT: &str = "edit_block";
+    const OP_DELETE: &str = "delete_block";
+    const EMPTY_JSON: &str = "{}";
 
-    #[test]
-    fn hash_is_64_lowercase_hex_chars() {
-        let h = compute_op_hash("dev-1", 1, None, "create_block", "{}");
-        assert_eq!(h.len(), 64, "hash length must be 64");
+    /// Pinned golden hash — detects accidental changes to the hashing scheme.
+    /// Input: `compute_op_hash("device-123", 42, Some(r#"[["dev-1",41]]"#), "edit_block",
+    ///         r#"{"block_id":"AB","to_text":"hello"}"#)`
+    const GOLDEN_HASH: &str = "4ba8948410b19f80a9fd01a3d8820965f72bcef7ceadb798360206e9ec015d3c";
+
+    /// Assert a hash string is a valid 64-char lowercase hex output.
+    fn assert_valid_hash(h: &str, ctx: &str) {
+        assert_eq!(
+            h.len(),
+            64,
+            "{ctx}: hash length must be 64, got {}",
+            h.len()
+        );
         assert!(
             h.chars()
                 .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
-            "hash must be lowercase hex, got: {h}"
+            "{ctx}: hash must be lowercase hex, got: {h}"
         );
     }
 
+    // ── compute_op_hash: determinism & format ───────────────────────────
+
     #[test]
-    fn different_inputs_produce_different_hashes() {
-        let h1 = compute_op_hash("dev-1", 1, None, "create_block", "{}");
-        let h2 = compute_op_hash("dev-1", 2, None, "create_block", "{}");
-        let h3 = compute_op_hash("dev-2", 1, None, "create_block", "{}");
-        assert_ne!(h1, h2);
-        assert_ne!(h1, h3);
+    fn compute_op_hash_is_deterministic() {
+        let h1 = compute_op_hash(DEV_1, 1, None, OP_CREATE, r#"{"block_id":"X"}"#);
+        let h2 = compute_op_hash(DEV_1, 1, None, OP_CREATE, r#"{"block_id":"X"}"#);
+        assert_eq!(h1, h2, "identical inputs must produce identical hashes");
     }
 
     #[test]
-    fn null_parent_seqs_vs_empty_array() {
-        // None (genesis) and Some("[]") must produce different hashes
-        let h_none = compute_op_hash("dev-1", 1, None, "create_block", "{}");
-        let h_empty = compute_op_hash("dev-1", 1, Some("[]"), "create_block", "{}");
-        assert_ne!(h_none, h_empty);
+    fn compute_op_hash_returns_64_lowercase_hex_chars() {
+        let h = compute_op_hash(DEV_1, 1, None, OP_CREATE, EMPTY_JSON);
+        assert_valid_hash(&h, "basic");
+    }
+
+    // ── compute_op_hash: each field affects the hash ────────────────────
+
+    #[test]
+    fn different_device_id_produces_different_hash() {
+        let h1 = compute_op_hash(DEV_1, 1, None, OP_CREATE, EMPTY_JSON);
+        let h2 = compute_op_hash(DEV_2, 1, None, OP_CREATE, EMPTY_JSON);
+        assert_ne!(h1, h2, "different device_id must produce different hashes");
     }
 
     #[test]
-    fn parent_seqs_included_in_hash() {
-        let h1 = compute_op_hash("dev-1", 3, Some(r#"[["dev-1",2]]"#), "edit_block", "{}");
-        let h2 = compute_op_hash("dev-1", 3, Some(r#"[["dev-1",1]]"#), "edit_block", "{}");
-        assert_ne!(h1, h2);
-    }
-
-    // ── golden / known-vector test ─────────────────────────────────────
-
-    #[test]
-    fn golden_known_vector() {
-        // Pre-computed golden value — if the hashing scheme ever changes this
-        // test will catch it.  Regenerate with:
-        //   blake3("device-123\042\0[["dev-1",41]]\0edit_block\0{"block_id":"AB","to_text":"hello"}")
-        let h = compute_op_hash(
-            "device-123",
-            42,
-            Some(r#"[["dev-1",41]]"#),
-            "edit_block",
-            r#"{"block_id":"AB","to_text":"hello"}"#,
-        );
-        // We'll fill the real value after running once.  For now assert format.
-        assert_eq!(h.len(), 64);
-        // Pin the golden value (computed by this implementation):
-        let expected = compute_op_hash(
-            "device-123",
-            42,
-            Some(r#"[["dev-1",41]]"#),
-            "edit_block",
-            r#"{"block_id":"AB","to_text":"hello"}"#,
-        );
-        assert_eq!(h, expected, "golden hash must be stable across runs");
-
-        // Hard-coded golden value (set after first successful run).
-        // To regenerate: run this test, copy the printed hash, paste here.
-        let golden = &GOLDEN_HASH;
-        assert_eq!(
-            h, *golden,
-            "golden hash changed — hashing scheme may have been altered"
-        );
-    }
-
-    /// Hard-coded golden hash for the known-vector test.
-    /// Computed once and pinned to detect accidental hashing-scheme changes.
-    const GOLDEN_HASH: &str = "4ba8948410b19f80a9fd01a3d8820965f72bcef7ceadb798360206e9ec015d3c";
-
-    // ── Unicode & edge cases ───────────────────────────────────────────
-
-    #[test]
-    fn unicode_device_id_and_payload() {
-        let h = compute_op_hash(
-            "日本語デバイス",
-            1,
-            None,
-            "create_block",
-            r#"{"text":"こんにちは世界 🌍"}"#,
-        );
-        assert_eq!(h.len(), 64);
-        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
-
-        // Must be deterministic with unicode
-        let h2 = compute_op_hash(
-            "日本語デバイス",
-            1,
-            None,
-            "create_block",
-            r#"{"text":"こんにちは世界 🌍"}"#,
-        );
-        assert_eq!(h, h2);
-    }
-
-    #[test]
-    fn empty_strings_for_all_fields() {
-        let h = compute_op_hash("", 0, None, "", "");
-        assert_eq!(h.len(), 64);
-        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
-    }
-
-    #[test]
-    fn large_payload_over_1mb() {
-        let big = "x".repeat(1_100_000); // ~1.1 MB
-        let h = compute_op_hash("dev-1", 1, None, "create_block", &big);
-        assert_eq!(h.len(), 64);
-        // Hash must still be deterministic
-        let h2 = compute_op_hash("dev-1", 1, None, "create_block", &big);
-        assert_eq!(h, h2);
-    }
-
-    #[test]
-    fn negative_seq_works() {
-        let h = compute_op_hash("dev-1", -1, None, "create_block", "{}");
-        assert_eq!(h.len(), 64);
-        // Negative and positive must differ
-        let h_pos = compute_op_hash("dev-1", 1, None, "create_block", "{}");
-        assert_ne!(h, h_pos);
+    fn different_seq_produces_different_hash() {
+        let h1 = compute_op_hash(DEV_1, 1, None, OP_CREATE, EMPTY_JSON);
+        let h2 = compute_op_hash(DEV_1, 2, None, OP_CREATE, EMPTY_JSON);
+        assert_ne!(h1, h2, "different seq must produce different hashes");
     }
 
     #[test]
     fn different_op_types_produce_different_hashes() {
-        let h1 = compute_op_hash("dev-1", 1, None, "create_block", "{}");
-        let h2 = compute_op_hash("dev-1", 1, None, "edit_block", "{}");
-        let h3 = compute_op_hash("dev-1", 1, None, "delete_block", "{}");
-        assert_ne!(h1, h2);
-        assert_ne!(h1, h3);
-        assert_ne!(h2, h3);
+        let h1 = compute_op_hash(DEV_1, 1, None, OP_CREATE, EMPTY_JSON);
+        let h2 = compute_op_hash(DEV_1, 1, None, OP_EDIT, EMPTY_JSON);
+        let h3 = compute_op_hash(DEV_1, 1, None, OP_DELETE, EMPTY_JSON);
+        assert_ne!(h1, h2, "create vs edit");
+        assert_ne!(h1, h3, "create vs delete");
+        assert_ne!(h2, h3, "edit vs delete");
+    }
+
+    #[test]
+    fn null_parent_seqs_differs_from_empty_array() {
+        let h_none = compute_op_hash(DEV_1, 1, None, OP_CREATE, EMPTY_JSON);
+        let h_empty = compute_op_hash(DEV_1, 1, Some("[]"), OP_CREATE, EMPTY_JSON);
+        assert_ne!(
+            h_none, h_empty,
+            "None parent_seqs (genesis) must differ from Some(\"[]\")"
+        );
+    }
+
+    #[test]
+    fn different_parent_seqs_produce_different_hashes() {
+        let h1 = compute_op_hash(DEV_1, 3, Some(r#"[["dev-1",2]]"#), OP_EDIT, EMPTY_JSON);
+        let h2 = compute_op_hash(DEV_1, 3, Some(r#"[["dev-1",1]]"#), OP_EDIT, EMPTY_JSON);
+        assert_ne!(
+            h1, h2,
+            "different parent_seqs must produce different hashes"
+        );
+    }
+
+    // ── golden / known-vector ───────────────────────────────────────────
+
+    #[test]
+    fn golden_known_vector_detects_hash_scheme_changes() {
+        let h = compute_op_hash(
+            "device-123",
+            42,
+            Some(r#"[["dev-1",41]]"#),
+            OP_EDIT,
+            r#"{"block_id":"AB","to_text":"hello"}"#,
+        );
+        assert_eq!(
+            h, GOLDEN_HASH,
+            "golden hash changed — hashing scheme may have been altered"
+        );
+    }
+
+    // ── edge cases ──────────────────────────────────────────────────────
+
+    #[test]
+    fn unicode_inputs_produce_valid_hash() {
+        let h = compute_op_hash(
+            "日本語デバイス",
+            1,
+            None,
+            OP_CREATE,
+            r#"{"text":"こんにちは世界 🌍"}"#,
+        );
+        assert_valid_hash(&h, "unicode inputs");
+    }
+
+    #[test]
+    fn empty_inputs_produce_valid_hash() {
+        let h = compute_op_hash("", 0, None, "", "");
+        assert_valid_hash(&h, "all-empty inputs");
+    }
+
+    #[test]
+    fn large_payload_over_1mb_produces_valid_hash() {
+        let big = "x".repeat(1_100_000);
+        let h = compute_op_hash(DEV_1, 1, None, OP_CREATE, &big);
+        assert_valid_hash(&h, "1.1 MB payload");
+    }
+
+    #[test]
+    fn negative_seq_differs_from_positive() {
+        let h_neg = compute_op_hash(DEV_1, -1, None, OP_CREATE, EMPTY_JSON);
+        let h_pos = compute_op_hash(DEV_1, 1, None, OP_CREATE, EMPTY_JSON);
+        assert_ne!(h_neg, h_pos, "negative and positive seq must differ");
+        assert_valid_hash(&h_neg, "negative seq");
+    }
+
+    #[test]
+    fn extreme_seq_values_produce_valid_distinct_hashes() {
+        let h_max = compute_op_hash(DEV_1, i64::MAX, None, OP_CREATE, EMPTY_JSON);
+        let h_min = compute_op_hash(DEV_1, i64::MIN, None, OP_CREATE, EMPTY_JSON);
+        assert_valid_hash(&h_max, "i64::MAX seq");
+        assert_valid_hash(&h_min, "i64::MIN seq");
+        assert_ne!(
+            h_max, h_min,
+            "i64::MAX and i64::MIN must produce different hashes"
+        );
+    }
+
+    #[test]
+    fn payload_with_embedded_null_bytes_is_distinct() {
+        let h1 = compute_op_hash(DEV_1, 1, None, OP_CREATE, "abc\0def");
+        let h2 = compute_op_hash(DEV_1, 1, None, OP_CREATE, "abcdef");
+        assert_valid_hash(&h1, "null-byte payload");
+        assert_ne!(h1, h2, "embedded null byte must affect the hash");
     }
 
     // ── verify_op_hash ─────────────────────────────────────────────────
 
     #[test]
-    fn verify_op_hash_returns_true_for_matching() {
-        let h = compute_op_hash("dev-1", 1, None, "create_block", "{}");
-        assert!(verify_op_hash(&h, "dev-1", 1, None, "create_block", "{}"));
+    fn verify_op_hash_returns_true_for_matching_inputs() {
+        let h = compute_op_hash(DEV_1, 1, None, OP_CREATE, EMPTY_JSON);
+        assert!(
+            verify_op_hash(&h, DEV_1, 1, None, OP_CREATE, EMPTY_JSON),
+            "verify must return true for matching inputs"
+        );
     }
 
     #[test]
-    fn verify_op_hash_returns_false_for_wrong_hash() {
-        assert!(!verify_op_hash(
-            "0000000000000000000000000000000000000000000000000000000000000000",
-            "dev-1",
-            1,
-            None,
-            "create_block",
-            "{}"
-        ));
+    fn verify_op_hash_rejects_wrong_hash() {
+        let zeroes = "0".repeat(64);
+        assert!(
+            !verify_op_hash(&zeroes, DEV_1, 1, None, OP_CREATE, EMPTY_JSON),
+            "verify must return false for an all-zero hash"
+        );
     }
 
     #[test]
-    fn verify_op_hash_returns_false_for_tampered_payload() {
-        let h = compute_op_hash("dev-1", 1, None, "create_block", r#"{"ok":true}"#);
-        // Same hash but different payload → must fail
-        assert!(!verify_op_hash(
-            &h,
-            "dev-1",
-            1,
-            None,
-            "create_block",
-            r#"{"ok":false}"#
-        ));
+    fn verify_op_hash_rejects_tampered_payload() {
+        let h = compute_op_hash(DEV_1, 1, None, OP_CREATE, r#"{"ok":true}"#);
+        assert!(
+            !verify_op_hash(&h, DEV_1, 1, None, OP_CREATE, r#"{"ok":false}"#),
+            "verify must detect tampered payload"
+        );
     }
 
     #[test]
-    fn verify_op_hash_rejects_wrong_length() {
-        assert!(!verify_op_hash(
-            "abc",
-            "dev-1",
-            1,
-            None,
-            "create_block",
-            "{}"
-        ));
+    fn verify_op_hash_rejects_tampered_device_id() {
+        let h = compute_op_hash(DEV_1, 1, None, OP_CREATE, EMPTY_JSON);
+        assert!(
+            !verify_op_hash(&h, DEV_2, 1, None, OP_CREATE, EMPTY_JSON),
+            "verify must detect tampered device_id"
+        );
     }
 
-    // ── constant_time_eq unit tests ────────────────────────────────────
+    #[test]
+    fn verify_op_hash_rejects_tampered_seq() {
+        let h = compute_op_hash(DEV_1, 1, None, OP_CREATE, EMPTY_JSON);
+        assert!(
+            !verify_op_hash(&h, DEV_1, 999, None, OP_CREATE, EMPTY_JSON),
+            "verify must detect tampered seq"
+        );
+    }
 
     #[test]
-    fn constant_time_eq_basics() {
+    fn verify_op_hash_rejects_wrong_length_hash() {
+        assert!(
+            !verify_op_hash("abc", DEV_1, 1, None, OP_CREATE, EMPTY_JSON),
+            "verify must reject hash with wrong length"
+        );
+    }
+
+    #[test]
+    fn verify_op_hash_rejects_empty_hash() {
+        assert!(
+            !verify_op_hash("", DEV_1, 1, None, OP_CREATE, EMPTY_JSON),
+            "verify must reject empty hash string"
+        );
+    }
+
+    // ── constant_time_eq ───────────────────────────────────────────────
+
+    #[test]
+    fn constant_time_eq_equal_slices_returns_true() {
         assert!(constant_time_eq(b"hello", b"hello"));
+    }
+
+    #[test]
+    fn constant_time_eq_different_content_returns_false() {
         assert!(!constant_time_eq(b"hello", b"world"));
+    }
+
+    #[test]
+    fn constant_time_eq_different_lengths_returns_false() {
         assert!(!constant_time_eq(b"hello", b"hell"));
+    }
+
+    #[test]
+    fn constant_time_eq_empty_slices_returns_true() {
         assert!(constant_time_eq(b"", b""));
     }
 }

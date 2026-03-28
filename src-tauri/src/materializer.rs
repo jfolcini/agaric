@@ -488,6 +488,11 @@ async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
 
 #[cfg(test)]
 mod tests {
+    //! Tests for materializer queue coordination, dispatch routing, dedup
+    //! logic, shutdown, and metrics. Pure-logic tests (dedup) use `#[test]`;
+    //! async tests use `#[tokio::test]` with sleeps only where we need to
+    //! observe consumer-side effects (metrics, shutdown).
+
     use super::*;
     use crate::db::init_pool;
     use crate::op::{
@@ -501,7 +506,15 @@ mod tests {
     use std::time::Duration;
     use tempfile::TempDir;
 
-    /// Helper: create a SQLite pool backed by a temp file.
+    // -- Deterministic test fixtures --
+
+    const DEV: &str = "test-device-mat";
+    const FIXED_TS: &str = "2025-01-01T00:00:00Z";
+    const FAKE_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    // -- Helpers --
+
+    /// Creates a temporary SQLite database with all migrations applied.
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
         let db_path: PathBuf = dir.path().join("test.db");
@@ -509,283 +522,459 @@ mod tests {
         (pool, dir)
     }
 
-    // ── construction & clone ────────────────────────────────────────────
+    /// Helper to build a fake OpRecord without touching the DB.
+    fn fake_op_record(op_type: &str, payload: &str) -> OpRecord {
+        OpRecord {
+            device_id: DEV.into(),
+            seq: 1,
+            parent_seqs: None,
+            hash: FAKE_HASH.into(),
+            op_type: op_type.into(),
+            payload: payload.into(),
+            created_at: FIXED_TS.into(),
+        }
+    }
+
+    /// Helper: create op record via DB for tests that need a real sequence.
+    async fn make_op_record(pool: &SqlitePool, payload: OpPayload) -> OpRecord {
+        append_local_op(pool, DEV, payload).await.unwrap()
+    }
+
+    // ======================================================================
+    // Construction & clone
+    // ======================================================================
 
     #[tokio::test]
-    async fn materializer_new_creates_successfully() {
+    async fn new_creates_materializer_with_functional_queues() {
         let (pool, _dir) = test_pool().await;
-        let _mat = Materializer::new(pool);
-        // If we get here without panic the queues were created
+        let mat = Materializer::new(pool);
+
+        // Verify queues accept tasks (smoke test)
+        assert!(
+            mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
+                .is_ok(),
+            "newly created materializer should accept background tasks"
+        );
     }
 
     #[tokio::test]
-    async fn materializer_is_clone() {
+    async fn clone_shares_queues_both_can_enqueue() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool);
         let mat2 = mat.clone();
 
-        // Both clones can enqueue
-        assert!(mat
-            .enqueue_background(MaterializeTask::RebuildTagsCache)
-            .await
-            .is_ok());
-        assert!(mat2
-            .enqueue_background(MaterializeTask::RebuildPagesCache)
-            .await
-            .is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+                .await
+                .is_ok(),
+            "original should enqueue successfully"
+        );
+        assert!(
+            mat2.enqueue_background(MaterializeTask::RebuildPagesCache)
+                .await
+                .is_ok(),
+            "clone should enqueue successfully"
+        );
     }
 
-    // ── dispatch_op coverage (all op types) ─────────────────────────────
+    // ======================================================================
+    // dispatch_op — all op type routing branches
+    // ======================================================================
 
     #[tokio::test]
-    async fn dispatch_op_create_block_page() {
+    async fn dispatch_op_create_block_page_enqueues_pages_cache() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "blk-1".into(),
-            block_type: "page".into(),
-            parent_id: None,
-            position: Some(0),
-            content: "My page".into(),
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "blk-1".into(),
+                block_type: "page".into(),
+                parent_id: None,
+                position: Some(0),
+                content: "My page".into(),
+            }),
+        )
+        .await;
 
-        let result = mat.dispatch_op(&record).await;
-        assert!(result.is_ok());
-
-        // Give the consumer tasks a moment to process
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for create_block(page) should succeed"
+        );
+        // Allow bg consumer to process
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     #[tokio::test]
-    async fn dispatch_op_create_block_tag() {
+    async fn dispatch_op_create_block_tag_enqueues_tags_cache() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "blk-tag".into(),
-            block_type: "tag".into(),
-            parent_id: None,
-            position: None,
-            content: "urgent".into(),
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "blk-tag".into(),
+                block_type: "tag".into(),
+                parent_id: None,
+                position: None,
+                content: "urgent".into(),
+            }),
+        )
+        .await;
 
-        assert!(mat.dispatch_op(&record).await.is_ok());
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for create_block(tag) should succeed"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     #[tokio::test]
-    async fn dispatch_op_edit_block() {
+    async fn dispatch_op_create_block_content_no_extra_bg_tasks() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        // First create a block so the sequence exists
-        let create = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "blk-2".into(),
-            block_type: "content".into(),
-            parent_id: None,
-            position: Some(0),
-            content: "original".into(),
-        });
-        append_local_op(&pool, "dev-1", create).await.unwrap();
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "blk-c".into(),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(0),
+                content: "just content".into(),
+            }),
+        )
+        .await;
 
-        let edit = OpPayload::EditBlock(EditBlockPayload {
-            block_id: "blk-2".into(),
-            to_text: "edited".into(),
-            prev_edit: None,
-        });
-        let record = append_local_op(&pool, "dev-1", edit).await.unwrap();
-
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // "content" block type does NOT trigger tag or page cache rebuild
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for create_block(content) should succeed"
+        );
     }
 
     #[tokio::test]
-    async fn dispatch_op_delete_block() {
+    async fn dispatch_op_edit_block_enqueues_reindex_and_pages_cache() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
-            block_id: "blk-3".into(),
-            cascade: false,
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+        // Create block first so sequence exists
+        make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "blk-2".into(),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(0),
+                content: "original".into(),
+            }),
+        )
+        .await;
 
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let record = make_op_record(
+            &pool,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: "blk-2".into(),
+                to_text: "edited".into(),
+                prev_edit: None,
+            }),
+        )
+        .await;
+
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for edit_block should succeed"
+        );
     }
 
     #[tokio::test]
-    async fn dispatch_op_restore_block() {
+    async fn dispatch_op_delete_block_enqueues_all_caches() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
-            block_id: "blk-r".into(),
-            deleted_at_ref: "2025-01-01T00:00:00Z".into(),
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+        let record = make_op_record(
+            &pool,
+            OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: "blk-3".into(),
+                cascade: false,
+            }),
+        )
+        .await;
 
-        // restore_block triggers RebuildTagsCache + RebuildPagesCache + RebuildAgendaCache
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for delete_block should succeed"
+        );
     }
 
     #[tokio::test]
-    async fn dispatch_op_purge_block() {
+    async fn dispatch_op_restore_block_enqueues_all_caches() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
-            block_id: "blk-p".into(),
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+        let record = make_op_record(
+            &pool,
+            OpPayload::RestoreBlock(RestoreBlockPayload {
+                block_id: "blk-r".into(),
+                deleted_at_ref: FIXED_TS.into(),
+            }),
+        )
+        .await;
 
-        // purge_block triggers RebuildTagsCache + RebuildPagesCache + RebuildAgendaCache
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for restore_block should succeed"
+        );
     }
 
     #[tokio::test]
-    async fn dispatch_op_add_tag() {
+    async fn dispatch_op_purge_block_enqueues_all_caches() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let payload = OpPayload::AddTag(AddTagPayload {
-            block_id: "blk-4".into(),
-            tag_id: "tag-1".into(),
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+        let record = make_op_record(
+            &pool,
+            OpPayload::PurgeBlock(PurgeBlockPayload {
+                block_id: "blk-p".into(),
+            }),
+        )
+        .await;
 
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for purge_block should succeed"
+        );
     }
 
     #[tokio::test]
-    async fn dispatch_op_set_property() {
+    async fn dispatch_op_add_tag_enqueues_tags_and_agenda() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let payload = OpPayload::SetProperty(SetPropertyPayload {
-            block_id: "blk-5".into(),
-            key: "due".into(),
-            value_text: None,
-            value_num: None,
-            value_date: Some("2025-01-15".into()),
-            value_ref: None,
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+        let record = make_op_record(
+            &pool,
+            OpPayload::AddTag(AddTagPayload {
+                block_id: "blk-4".into(),
+                tag_id: "tag-1".into(),
+            }),
+        )
+        .await;
 
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for add_tag should succeed"
+        );
     }
 
     #[tokio::test]
-    async fn dispatch_op_delete_property() {
+    async fn dispatch_op_remove_tag_enqueues_tags_and_agenda() {
+        use crate::op::RemoveTagPayload;
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
-            block_id: "blk-dp".into(),
-            key: "due".into(),
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+        let record = make_op_record(
+            &pool,
+            OpPayload::RemoveTag(RemoveTagPayload {
+                block_id: "blk-rt".into(),
+                tag_id: "tag-99".into(),
+            }),
+        )
+        .await;
 
-        // delete_property triggers RebuildAgendaCache
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for remove_tag should succeed"
+        );
     }
 
     #[tokio::test]
-    async fn dispatch_op_move_block_no_background_tasks() {
+    async fn dispatch_op_set_property_enqueues_agenda() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let payload = OpPayload::MoveBlock(MoveBlockPayload {
-            block_id: "blk-6".into(),
-            new_parent_id: Some("blk-parent".into()),
-            new_position: 2,
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+        let record = make_op_record(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: "blk-5".into(),
+                key: "due".into(),
+                value_text: None,
+                value_num: None,
+                value_date: Some("2025-01-15".into()),
+                value_ref: None,
+            }),
+        )
+        .await;
 
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for set_property should succeed"
+        );
     }
 
     #[tokio::test]
-    async fn dispatch_op_add_attachment_no_bg_tasks() {
+    async fn dispatch_op_delete_property_enqueues_agenda() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let payload = OpPayload::AddAttachment(AddAttachmentPayload {
-            attachment_id: "att-1".into(),
-            block_id: "blk-a".into(),
-            mime_type: "image/png".into(),
-            filename: "photo.png".into(),
-            size_bytes: 1024,
-            fs_path: "/tmp/photo.png".into(),
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+        let record = make_op_record(
+            &pool,
+            OpPayload::DeleteProperty(DeletePropertyPayload {
+                block_id: "blk-dp".into(),
+                key: "due".into(),
+            }),
+        )
+        .await;
 
-        // add_attachment triggers NO background tasks
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for delete_property should succeed"
+        );
     }
 
     #[tokio::test]
-    async fn dispatch_op_delete_attachment_no_bg_tasks() {
+    async fn dispatch_op_move_block_no_extra_bg_tasks() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let payload = OpPayload::DeleteAttachment(DeleteAttachmentPayload {
-            attachment_id: "att-2".into(),
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+        let record = make_op_record(
+            &pool,
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: "blk-6".into(),
+                new_parent_id: Some("blk-parent".into()),
+                new_position: 2,
+            }),
+        )
+        .await;
 
-        // delete_attachment triggers NO background tasks
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for move_block should succeed"
+        );
     }
 
     #[tokio::test]
-    async fn dispatch_op_unknown_op_type() {
+    async fn dispatch_op_add_attachment_no_extra_bg_tasks() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::AddAttachment(AddAttachmentPayload {
+                attachment_id: "att-1".into(),
+                block_id: "blk-a".into(),
+                mime_type: "image/png".into(),
+                filename: "photo.png".into(),
+                size_bytes: 1024,
+                fs_path: "/tmp/photo.png".into(),
+            }),
+        )
+        .await;
+
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for add_attachment should succeed"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_op_delete_attachment_no_extra_bg_tasks() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+                attachment_id: "att-2".into(),
+            }),
+        )
+        .await;
+
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "dispatch_op for delete_attachment should succeed"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_op_unknown_op_type_does_not_panic() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool);
 
-        // Construct an OpRecord with an unrecognised op_type directly.
-        let record = OpRecord {
-            device_id: "dev-1".into(),
-            seq: 99,
-            parent_seqs: None,
-            hash: "0".repeat(64),
-            op_type: "unknown_future_op".into(),
-            payload: "{}".into(),
-            created_at: "2025-01-01T00:00:00Z".into(),
-        };
+        let record = fake_op_record("unknown_future_op", "{}");
 
-        // Should succeed without panicking — unknown ops are logged but not fatal.
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            mat.dispatch_op(&record).await.is_ok(),
+            "unknown op_type should be logged but not cause an error"
+        );
     }
 
-    // ── enqueue methods ─────────────────────────────────────────────────
+    // ======================================================================
+    // dispatch_background (used by command handlers)
+    // ======================================================================
 
     #[tokio::test]
-    async fn enqueue_foreground_directly() {
+    async fn dispatch_background_for_edit_block_skips_foreground() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: "blk-bg".into(),
+                to_text: "edited bg".into(),
+                prev_edit: None,
+            }),
+        )
+        .await;
+
+        // dispatch_background skips foreground ApplyOp, only enqueues bg tasks
+        assert!(
+            mat.dispatch_background(&record).is_ok(),
+            "dispatch_background for edit_block should succeed"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_background_for_delete_block_enqueues_all_caches() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: "blk-db".into(),
+                cascade: true,
+            }),
+        )
+        .await;
+
+        assert!(
+            mat.dispatch_background(&record).is_ok(),
+            "dispatch_background for delete_block should succeed"
+        );
+    }
+
+    // ======================================================================
+    // Enqueue methods
+    // ======================================================================
+
+    #[tokio::test]
+    async fn enqueue_foreground_accepts_any_task_type() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool);
 
-        let task = MaterializeTask::RebuildTagsCache;
-        // Even though this is a bg task type, the queue accepts it
-        assert!(mat.enqueue_foreground(task).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Even though this is a bg task type, the foreground queue accepts it
+        assert!(
+            mat.enqueue_foreground(MaterializeTask::RebuildTagsCache)
+                .await
+                .is_ok(),
+            "foreground queue should accept any task type"
+        );
     }
 
     #[tokio::test]
-    async fn enqueue_background_directly() {
+    async fn enqueue_background_accepts_all_task_variants() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool);
 
@@ -807,11 +996,10 @@ mod tests {
             })
             .await
             .is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     #[tokio::test]
-    async fn try_enqueue_background_ok_when_full() {
+    async fn try_enqueue_background_silently_drops_when_full() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool);
 
@@ -824,10 +1012,151 @@ mod tests {
                 "try_enqueue_background should never fail for a full queue"
             );
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    // ── dedup ───────────────────────────────────────────────────────────
+    #[tokio::test]
+    async fn try_enqueue_background_after_shutdown_returns_err() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool);
+
+        mat.shutdown();
+        // Give consumer tasks time to notice the flag and exit.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let result = mat.try_enqueue_background(MaterializeTask::RebuildTagsCache);
+        assert!(
+            result.is_err(),
+            "try_enqueue_background should fail after shutdown"
+        );
+    }
+
+    // ======================================================================
+    // Shutdown
+    // ======================================================================
+
+    #[tokio::test]
+    async fn shutdown_stops_consumers_and_rejects_new_tasks() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool);
+
+        // Verify queue is functional before shutdown.
+        assert!(mat
+            .enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_ok());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        mat.shutdown();
+        // Give consumer tasks time to notice the flag and exit.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // After consumers exit the receiver is dropped, so send returns Err.
+        let result = mat
+            .enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await;
+        assert!(
+            result.is_err(),
+            "enqueue_background should fail after shutdown"
+        );
+    }
+
+    // ======================================================================
+    // Metrics
+    // ======================================================================
+
+    #[tokio::test]
+    async fn metrics_track_processed_bg_tasks() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Enqueue distinct bg tasks to minimise dedup interference.
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .unwrap();
+        mat.enqueue_background(MaterializeTask::RebuildPagesCache)
+            .await
+            .unwrap();
+        mat.enqueue_background(MaterializeTask::RebuildAgendaCache)
+            .await
+            .unwrap();
+
+        // Allow bg consumer time to process
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let m = mat.metrics();
+        let processed = m.bg_processed.load(AtomicOrdering::Relaxed);
+        assert!(
+            processed >= 1,
+            "expected at least 1 bg task processed, got {processed}"
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_track_processed_fg_tasks() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "blk-fg".into(),
+                block_type: "content".into(),
+                parent_id: None,
+                position: None,
+                content: "hello".into(),
+            }),
+        )
+        .await;
+
+        mat.enqueue_foreground(MaterializeTask::ApplyOp(record))
+            .await
+            .unwrap();
+
+        // Allow fg consumer time to process
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let m = mat.metrics();
+        let fg = m.fg_processed.load(AtomicOrdering::Relaxed);
+        assert!(fg >= 1, "expected at least 1 fg task processed, got {fg}");
+    }
+
+    #[tokio::test]
+    async fn consumer_survives_multiple_tasks_and_remains_functional() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Enqueue several different tasks — the consumer loop must survive
+        // all of them (error isolation).
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .unwrap();
+        mat.enqueue_background(MaterializeTask::RebuildPagesCache)
+            .await
+            .unwrap();
+        mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+            block_id: "blk-iso".into(),
+        })
+        .await
+        .unwrap();
+        mat.enqueue_background(MaterializeTask::RebuildAgendaCache)
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Queue should still be functional — consumer loop survived.
+        let result = mat
+            .enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await;
+        assert!(
+            result.is_ok(),
+            "queue should still accept tasks after processing multiple tasks"
+        );
+    }
+
+    // ======================================================================
+    // dedup_tasks (pure logic, no async)
+    // ======================================================================
 
     #[test]
     fn dedup_coalesces_duplicate_cache_tasks() {
@@ -842,7 +1171,7 @@ mod tests {
 
         let deduped = dedup_tasks(tasks);
 
-        assert_eq!(deduped.len(), 3);
+        assert_eq!(deduped.len(), 3, "should coalesce to 3 unique cache tasks");
         assert!(matches!(deduped[0], MaterializeTask::RebuildTagsCache));
         assert!(matches!(deduped[1], MaterializeTask::RebuildPagesCache));
         assert!(matches!(deduped[2], MaterializeTask::RebuildAgendaCache));
@@ -868,8 +1197,7 @@ mod tests {
 
         let deduped = dedup_tasks(tasks);
 
-        // a, b, RebuildTagsCache, c — four unique tasks
-        assert_eq!(deduped.len(), 4);
+        assert_eq!(deduped.len(), 4, "a, b, RebuildTagsCache, c");
         assert!(matches!(
             &deduped[0],
             MaterializeTask::ReindexBlockLinks { block_id } if block_id == "a"
@@ -885,267 +1213,9 @@ mod tests {
         ));
     }
 
-    // ── shutdown ────────────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn shutdown_stops_consumers() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool);
-
-        // Verify queue is functional before shutdown.
-        assert!(mat
-            .enqueue_background(MaterializeTask::RebuildTagsCache)
-            .await
-            .is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        mat.shutdown();
-        // Give consumer tasks time to notice the flag and exit.
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // After consumers exit the receiver is dropped, so send returns Err.
-        let result = mat
-            .enqueue_background(MaterializeTask::RebuildTagsCache)
-            .await;
-        assert!(result.is_err(), "send should fail after shutdown");
-    }
-
-    // ── metrics ─────────────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn metrics_track_processed_bg_tasks() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        // Enqueue distinct bg tasks to minimise dedup interference.
-        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
-            .await
-            .unwrap();
-        mat.enqueue_background(MaterializeTask::RebuildPagesCache)
-            .await
-            .unwrap();
-        mat.enqueue_background(MaterializeTask::RebuildAgendaCache)
-            .await
-            .unwrap();
-
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        let m = mat.metrics();
-        let processed = m.bg_processed.load(AtomicOrdering::Relaxed);
-        assert!(
-            processed >= 1,
-            "Expected at least 1 bg task processed, got {processed}"
-        );
-    }
-
-    #[tokio::test]
-    async fn foreground_processes_apply_op_and_tracks_metric() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        let payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "blk-fg".into(),
-            block_type: "content".into(),
-            parent_id: None,
-            position: None,
-            content: "hello".into(),
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
-
-        mat.enqueue_foreground(MaterializeTask::ApplyOp(record))
-            .await
-            .unwrap();
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        let m = mat.metrics();
-        let fg = m.fg_processed.load(AtomicOrdering::Relaxed);
-        assert!(fg >= 1, "Expected at least 1 fg task processed, got {fg}");
-    }
-
-    // ── FIFO ordering ───────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn queue_fifo_ordering() {
-        // mpsc channels guarantee FIFO — verify with direct recv.
-        let (tx, mut rx) = mpsc::channel::<MaterializeTask>(10);
-
-        tx.send(MaterializeTask::RebuildTagsCache).await.unwrap();
-        tx.send(MaterializeTask::RebuildPagesCache).await.unwrap();
-        tx.send(MaterializeTask::RebuildAgendaCache).await.unwrap();
-        tx.send(MaterializeTask::ReindexBlockLinks {
-            block_id: "x".into(),
-        })
-        .await
-        .unwrap();
-
-        assert!(matches!(
-            rx.recv().await.unwrap(),
-            MaterializeTask::RebuildTagsCache
-        ));
-        assert!(matches!(
-            rx.recv().await.unwrap(),
-            MaterializeTask::RebuildPagesCache
-        ));
-        assert!(matches!(
-            rx.recv().await.unwrap(),
-            MaterializeTask::RebuildAgendaCache
-        ));
-        assert!(matches!(
-            rx.recv().await.unwrap(),
-            MaterializeTask::ReindexBlockLinks { block_id } if block_id == "x"
-        ));
-    }
-
-    // ── error isolation ─────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn consumer_continues_after_multiple_tasks() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        // Enqueue several different tasks — the consumer loop must survive
-        // all of them (error isolation) and update metrics.
-        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
-            .await
-            .unwrap();
-        mat.enqueue_background(MaterializeTask::RebuildPagesCache)
-            .await
-            .unwrap();
-        mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
-            block_id: "blk-iso".into(),
-        })
-        .await
-        .unwrap();
-        mat.enqueue_background(MaterializeTask::RebuildAgendaCache)
-            .await
-            .unwrap();
-
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        // All tasks should have been processed (no crash).
-        let m = mat.metrics();
-        let processed = m.bg_processed.load(AtomicOrdering::Relaxed);
-        assert!(
-            processed >= 1,
-            "Consumer should have processed tasks, got {processed}"
-        );
-
-        // Queue should still be functional — consumer loop survived.
-        let result = mat
-            .enqueue_background(MaterializeTask::RebuildTagsCache)
-            .await;
-        assert!(
-            result.is_ok(),
-            "Queue should still accept tasks after processing"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-
-    // ── dispatch_op coverage — remove_tag ───────────────────────────────
-
-    #[tokio::test]
-    async fn dispatch_op_remove_tag() {
-        use crate::op::RemoveTagPayload;
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        let payload = OpPayload::RemoveTag(RemoveTagPayload {
-            block_id: "blk-rt".into(),
-            tag_id: "tag-99".into(),
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
-
-        // remove_tag triggers RebuildTagsCache + RebuildAgendaCache
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-
-    // ── dispatch_op — create_block with content type (no bg cache) ──────
-
-    #[tokio::test]
-    async fn dispatch_op_create_block_content_type_no_bg_cache() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        let payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "blk-c".into(),
-            block_type: "content".into(),
-            parent_id: None,
-            position: Some(0),
-            content: "just content".into(),
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
-
-        // "content" block type does NOT trigger tag or page cache rebuild
-        assert!(mat.dispatch_op(&record).await.is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-
-    // ── dispatch_background (used by commands) ──────────────────────────
-
-    #[tokio::test]
-    async fn dispatch_background_for_edit_block() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        let edit = OpPayload::EditBlock(EditBlockPayload {
-            block_id: "blk-bg".into(),
-            to_text: "edited bg".into(),
-            prev_edit: None,
-        });
-        let record = append_local_op(&pool, "dev-1", edit).await.unwrap();
-
-        // dispatch_background skips foreground ApplyOp, only enqueues bg tasks
-        assert!(mat.dispatch_background(&record).is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-
-    #[tokio::test]
-    async fn dispatch_background_for_delete_block() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool.clone());
-
-        let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
-            block_id: "blk-db".into(),
-            cascade: true,
-        });
-        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
-
-        assert!(mat.dispatch_background(&record).is_ok());
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-
-    // ── try_enqueue_background after shutdown returns Err ────────────────
-
-    #[tokio::test]
-    async fn try_enqueue_background_after_shutdown_returns_err() {
-        let (pool, _dir) = test_pool().await;
-        let mat = Materializer::new(pool);
-
-        mat.shutdown();
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        let result = mat.try_enqueue_background(MaterializeTask::RebuildTagsCache);
-        assert!(
-            result.is_err(),
-            "try_enqueue_background should fail after shutdown"
-        );
-    }
-
-    // ── dedup — ApplyOp is never dropped ────────────────────────────────
-
     #[test]
     fn dedup_never_drops_apply_op() {
-        let record = OpRecord {
-            device_id: "dev-1".into(),
-            seq: 1,
-            parent_seqs: None,
-            hash: "0".repeat(64),
-            op_type: "create_block".into(),
-            payload: "{}".into(),
-            created_at: "2025-01-01T00:00:00Z".into(),
-        };
+        let record = fake_op_record("create_block", "{}");
 
         let tasks = vec![
             MaterializeTask::ApplyOp(record.clone()),
@@ -1156,8 +1226,8 @@ mod tests {
         ];
 
         let deduped = dedup_tasks(tasks);
-        // 3 ApplyOps + 1 RebuildTagsCache = 4
-        assert_eq!(deduped.len(), 4);
+        assert_eq!(deduped.len(), 4, "3 ApplyOps + 1 RebuildTagsCache = 4");
+
         let apply_count = deduped
             .iter()
             .filter(|t| matches!(t, MaterializeTask::ApplyOp(_)))
@@ -1168,6 +1238,41 @@ mod tests {
     #[test]
     fn dedup_empty_batch_returns_empty() {
         let deduped = dedup_tasks(vec![]);
-        assert!(deduped.is_empty());
+        assert!(
+            deduped.is_empty(),
+            "empty input should produce empty output"
+        );
+    }
+
+    #[test]
+    fn dedup_single_item_returns_single_item() {
+        let deduped = dedup_tasks(vec![MaterializeTask::RebuildTagsCache]);
+        assert_eq!(
+            deduped.len(),
+            1,
+            "single item should pass through unchanged"
+        );
+    }
+
+    #[test]
+    fn dedup_all_same_reindex_block_id_coalesces_to_one() {
+        let tasks = vec![
+            MaterializeTask::ReindexBlockLinks {
+                block_id: "same".into(),
+            },
+            MaterializeTask::ReindexBlockLinks {
+                block_id: "same".into(),
+            },
+            MaterializeTask::ReindexBlockLinks {
+                block_id: "same".into(),
+            },
+        ];
+
+        let deduped = dedup_tasks(tasks);
+        assert_eq!(
+            deduped.len(),
+            1,
+            "all-same block_id should coalesce to one task"
+        );
     }
 }
