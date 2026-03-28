@@ -150,7 +150,7 @@ export function JournalPage({ onBlockClick: _onBlockClick }: JournalPageProps): 
       {/* Date navigation */}
       <div className="flex items-center justify-between">
         <Button variant="outline" onClick={goToPrevDay}>
-          <ChevronLeft className="-ml-1 h-4 w-4" />
+          <ChevronLeft className="h-4 w-4" />
           Prev
         </Button>
         <div className="flex items-center gap-2">
@@ -163,7 +163,7 @@ export function JournalPage({ onBlockClick: _onBlockClick }: JournalPageProps): 
         </div>
         <Button variant="outline" onClick={goToNextDay}>
           Next
-          <ChevronRight className="-mr-1 h-4 w-4" />
+          <ChevronRight className="h-4 w-4" />
         </Button>
       </div>
 
@@ -216,7 +216,7 @@ export function JournalPage({ onBlockClick: _onBlockClick }: JournalPageProps): 
           className="flex-1"
         />
         <Button type="submit" variant="outline" disabled={!newContent.trim()}>
-          <Plus className="-ml-1 h-4 w-4" /> Add
+          <Plus className="h-4 w-4" /> Add
         </Button>
       </form>
     </div>
