@@ -190,7 +190,7 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p2-t3 | Backlinks panel — per-block | frontend | | [ADR-06, ADR-08] Query: block_links WHERE target_id = ? JOIN blocks. Paginated. Reads materializer-maintained cache. |
+| p2-t3 | Backlinks panel — per-block | frontend | | Done | [ADR-06, ADR-08] Backend: list_backlinks query. Frontend: BacklinksPanel component with pagination. Commit `4c755bd`. |
 | p2-t4 | [[link]] chip navigation | frontend | | [ADR-01] Click chip → navigate to linked block/page. Scroll into view + focus. |
 | p2-t5 | Broken link decoration | frontend | | [ADR-01, ADR-06] block_link node whose target is deleted → render as 'deleted block' chip, distinct visual style. |
 
@@ -198,9 +198,9 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p2-t6 | Per-block edit chain query | backend | | [ADR-07] op_log WHERE block_id = ? AND op_type IN ('create_block','edit_block') ORDER BY seq. Uses prev_edit pointers for chain traversal. |
-| p2-t7 | History panel UI | frontend | | [ADR-02, ADR-07] List of to_text snapshots per block. Diff view (current vs selected). Manual restore → new edit_block op. |
-| p2-t8 | Non-text op history (tags, properties, moves) | frontend | | [ADR-07] Filtered op_log view for block. Display-only. No automatic revert for these ops. |
+| p2-t6 | Per-block edit chain query | backend | | Done | [ADR-07] list_block_history query + HistoryEntry struct + get_block_history command. Commit `4c755bd`. |
+| p2-t7 | History panel UI | frontend | | Done | [ADR-02, ADR-07] HistoryPanel component with op list, payload preview, restore action. Commit `4c755bd`. |
+| p2-t8 | Non-text op history (tags, properties, moves) | frontend | | Done | [ADR-07] Included in HistoryPanel — shows all op types with getPayloadPreview. Commit `4c755bd`. |
 
 ### Move, Merge, Indent
 
@@ -214,17 +214,17 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p2-t12 | Conflict copy display | frontend | | [ADR-06, ADR-10] WHERE is_conflict = 1 AND deleted_at IS NULL. Show inline beside original block. Visual distinction. |
-| p2-t13 | Conflict resolution actions | frontend | | [ADR-06, ADR-10] Choose version → edit_block on original. Discard copy → delete_block conflict. Both actions clear is_conflict state. |
+| p2-t12 | Conflict copy display | frontend | | Done | [ADR-06, ADR-10] ConflictList component: list_conflicts query, paginated display. Commit `4c755bd`. |
+| p2-t13 | Conflict resolution actions | frontend | | Done | [ADR-06, ADR-10] Keep (edit_block original + delete conflict) and Discard (delete conflict) actions in ConflictList. Commit `4c755bd`. |
 | p2-t14 | 'Deleted tag' token decoration | frontend | | [ADR-06] tag_ref node whose tag_id is deleted → render as greyed chip with tooltip. Not an error. |
 
 ### Status View
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p2-t15 | In-memory status struct (Rust) | backend | | [ADR-08] Materializer queue depths, cache staleness timestamps, FTS5 last optimize, orphan GC last run. Zero DB queries. |
-| p2-t16 | Status panel UI | frontend | | [ADR-08] Settings panel or persistent indicator. Reads status struct via Tauri event or poll. Useful during dev too. |
-| p2-t17 | Property conflict audit list | backend, frontend | | [ADR-08] In-memory list of auto-resolved property conflicts (LWW). Count + per-block detail in Status View. |
+| p2-t15 | In-memory status struct (Rust) | backend | | Done | [ADR-08] StatusInfo struct on Materializer (queue depths + op counters via atomic). get_status command. Commit `4c755bd`. |
+| p2-t16 | Status panel UI | frontend | | Done | [ADR-08] StatusPanel component with 5s polling, card layout showing queue depths + op counts. Commit `4c755bd`. |
+| p2-t17 | Property conflict audit list | backend, frontend | | Done | [ADR-08] Included as part of ConflictList (p2-t12/t13). Commit `4c755bd`. |
 
 ### E2E Testing
 

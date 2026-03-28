@@ -382,6 +382,23 @@
 
 ---
 
+### Phase 2 Wave 1 — Backend Queries + Frontend Panels
+
+#### [00:05] Subagent: Backend queries + commands [REVIEWED]
+- **Tasks:** p2-t3 (backlinks query), p2-t6 (history query), p2-t12 (conflicts query), p2-t15 (status command)
+- **Build:** list_backlinks, list_block_history, list_conflicts in pagination.rs; get_backlinks, get_block_history, get_conflicts, get_status in commands.rs; StatusInfo on Materializer
+- **Review:** All correct, added 6 more tests (cursor roundtrip, backward compat, empty results, conflicts pagination)
+- **Tests:** 452 Rust tests passing
+
+#### [00:30] Subagent: Frontend panels + IPC wrappers [REVIEWED]
+- **Tasks:** p2-t4/t5 (backlinks panel), p2-t7/t8 (history panel), p2-t13/t14 (conflict UI), p2-t16/t17 (status panel)
+- **Build:** BacklinksPanel, HistoryPanel, StatusPanel, ConflictList components; 4 IPC wrappers + 7 mock handlers; Status/Conflicts nav in App.tsx
+- **Review:** Fixed optional params bug in getBacklinks (params? → params required), added 9 edge-case tests
+- **Tests:** 330 frontend tests passing
+- **Commit:** `4c755bd`
+
+---
+
 <!-- Template:
 #### [HH:MM] Subagent: <title> [BUILT|REVIEWED]
 - **Tasks:** <task IDs>
