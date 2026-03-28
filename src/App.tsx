@@ -53,15 +53,14 @@ function App() {
     <BootGate>
       <SidebarProvider>
         <Sidebar collapsible="icon">
-          <SidebarHeader>
+          <SidebarHeader className="p-4 pb-2">
             <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
               <span className="hidden text-lg font-bold group-data-[collapsible=icon]:block">
-                O
+                A
               </span>
-              <div className="flex flex-col group-data-[collapsible=icon]:hidden">
-                <span className="text-lg font-bold leading-tight">Org-Mode!</span>
-                <span className="text-xs text-muted-foreground">for the rest of us</span>
-              </div>
+              <span className="text-base font-semibold leading-none tracking-tight group-data-[collapsible=icon]:hidden">
+                Agaric
+              </span>
             </div>
           </SidebarHeader>
           <SidebarContent>

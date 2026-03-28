@@ -19,11 +19,11 @@ import { cn } from '@/lib/utils'
 
 const SIDEBAR_COOKIE_NAME = 'sidebar_state'
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
-const SIDEBAR_WIDTH_DEFAULT = 256 // 16rem in px
-const SIDEBAR_WIDTH_MIN = 200
-const SIDEBAR_WIDTH_MAX = 480
+const SIDEBAR_WIDTH_DEFAULT = 150
+const SIDEBAR_WIDTH_MIN = 120
 const SIDEBAR_WIDTH_MOBILE = '18rem'
 const SIDEBAR_WIDTH_ICON = '3rem'
+const SIDEBAR_WIDTH_ICON_PX = 48 // 3rem at 16px base
 const SIDEBAR_WIDTH_STORAGE_KEY = 'sidebar_width'
 const SIDEBAR_KEYBOARD_SHORTCUT = 'b'
 
@@ -74,7 +74,7 @@ function SidebarProvider({
       const stored = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
       if (stored) {
         const parsed = Number(stored)
-        if (parsed >= SIDEBAR_WIDTH_MIN && parsed <= SIDEBAR_WIDTH_MAX) return parsed
+        if (parsed >= SIDEBAR_WIDTH_MIN) return Math.min(parsed, window.innerWidth * 0.5)
       }
     } catch {
       // localStorage unavailable
@@ -82,7 +82,8 @@ function SidebarProvider({
     return SIDEBAR_WIDTH_DEFAULT
   })
   const setSidebarWidth = React.useCallback((width: number) => {
-    const clamped = Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, width))
+    const maxWidth = Math.floor(window.innerWidth * 0.5)
+    const clamped = Math.max(SIDEBAR_WIDTH_MIN, Math.min(maxWidth, width))
     _setSidebarWidth(clamped)
     try {
       localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clamped))
@@ -315,7 +316,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
 }
 
 function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
-  const { toggleSidebar, setSidebarWidth, sidebarWidth, setIsResizing } = useSidebar()
+  const { toggleSidebar, setSidebarWidth, sidebarWidth, setIsResizing, setOpen } = useSidebar()
   const dragState = React.useRef({ dragging: false, startX: 0, startWidth: 0, moved: false })
 
   const onMouseDown = React.useCallback(
@@ -336,7 +337,19 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
           setIsResizing(true)
         }
         if (state.moved) {
-          setSidebarWidth(state.startWidth + delta)
+          const newWidth = state.startWidth + delta
+          if (newWidth < SIDEBAR_WIDTH_ICON_PX) {
+            // Dragged below icon width — collapse
+            state.dragging = false
+            document.removeEventListener('mousemove', onMouseMove)
+            document.removeEventListener('mouseup', onMouseUp)
+            document.documentElement.style.cursor = ''
+            document.body.style.userSelect = ''
+            setIsResizing(false)
+            setOpen(false)
+            return
+          }
+          setSidebarWidth(newWidth)
         }
       }
 
@@ -359,7 +372,7 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
       document.documentElement.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
     },
-    [sidebarWidth, setSidebarWidth, toggleSidebar, setIsResizing],
+    [sidebarWidth, setSidebarWidth, toggleSidebar, setIsResizing, setOpen],
   )
 
   return (
