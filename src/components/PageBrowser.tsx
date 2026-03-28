@@ -2,7 +2,7 @@
  * PageBrowser — lists all page blocks (p15-t22).
  *
  * WHERE block_type = 'page' AND deleted_at IS NULL.
- * Default sort: reverse ULID (creation time desc) via cursor pagination.
+ * Default sort: ULID ascending (oldest first) via cursor pagination.
  */
 
 import type React from 'react'

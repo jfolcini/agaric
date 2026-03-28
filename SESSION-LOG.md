@@ -152,6 +152,59 @@
 
 ---
 
+## Session 6 — 2026-03-28
+
+### Phase 1.5 — Daily Driver Frontend
+
+#### Markdown Serializer [BUILT]
+- **Tasks:** p15-t1..t5
+- **Result:** `src/editor/markdown-serializer.ts`, `src/editor/types.ts`, 84 Vitest tests. Hand-rolled parser/serializer for bold/italic/code/tag_ref/block_link. Round-trip identity verified.
+- **Commit:** 5d3a277
+
+#### TipTap Extensions + Roving Editor + Keyboard Hook [BUILT]
+- **Tasks:** p15-t6..t9
+- **Result:** `tag-ref.ts`, `block-link.ts` extensions, `use-roving-editor.ts`, `use-block-keyboard.ts`. Mount/unmount lifecycle, serialize on blur.
+- **Commit:** 91274ba
+
+#### Block Store + Tree Renderer + Auto-Split + CRUD UI [BUILT]
+- **Tasks:** p15-t10, t14..t16
+- **Result:** `blocks.ts` Zustand store, `BlockTree.tsx`, `EditableBlock.tsx`, `StaticBlock.tsx`. Auto-split on blur, Enter to create, Backspace to delete.
+- **Commit:** a582373
+
+#### Tag Picker + Block-Link Picker Extensions [BUILT]
+- **Tasks:** p15-t11, t12
+- **Result:** `tag-picker.ts`, `block-link-picker.ts`, `SuggestionList.tsx`, `suggestion-renderer.ts`. Installed `@tiptap/suggestion`. Fuzzy search via TipTap suggestion plugin.
+- **Commit:** 519bedd
+
+#### Viewport Intersection Observer [BUILT]
+- **Tasks:** p15-t13
+- **Result:** `useViewportObserver.ts` hook, integrated into BlockTree. Off-screen blocks rendered as static divs.
+- **Commit:** 5412526
+
+#### Indent/Dedent + move_block Command [BUILT]
+- **Tasks:** p15-t17
+- **Result:** `move_block` Rust command added to `commands.rs` + `lib.rs`. Frontend `indent()`/`dedent()` in blocks store. Tab/Shift+Tab in BlockTree.
+- **Commit:** 62ef596
+
+#### Tag Panel + add_tag/remove_tag Commands [BUILT]
+- **Tasks:** p15-t18, t19
+- **Result:** `TagPanel.tsx`, `add_tag`/`remove_tag` Rust commands. Apply/remove tags from blocks.
+- **Commit:** 3ca3d77
+
+#### Journal Page + Date Nav + Page Browser [BUILT]
+- **Tasks:** p15-t20..t22
+- **Result:** `JournalPage.tsx`, `PageBrowser.tsx`. Date navigation (today/prev/next), paginated page list. Updated `list_blocks` with `agenda_date` param.
+- **Commit:** fc54ca4
+
+#### Trash View + Restore + Purge UI [BUILT]
+- **Tasks:** p15-t23..t25
+- **Result:** `TrashView.tsx`. Paginated trash list, restore with deleted_at_ref, purge with confirmation dialog.
+- **Commit:** 6317216
+
+**NOTE:** All Phase 1.5 commits above were built without review subagents — workflow violation. Retroactive review in progress.
+
+---
+
 <!-- Template:
 #### [HH:MM] Subagent: <title> [BUILT|REVIEWED]
 - **Tasks:** <task IDs>

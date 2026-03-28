@@ -58,8 +58,9 @@ export interface RovingEditorHandle {
 /**
  * Replace the editor document without adding to undo history.
  * This ensures Ctrl+Z never crosses mount/unmount boundaries.
+ * @internal Exported for testing.
  */
-function replaceDocSilently(editor: Editor, json: Record<string, unknown>): void {
+export function replaceDocSilently(editor: Editor, json: Record<string, unknown>): void {
   const pmDoc = editor.schema.nodeFromJSON(json)
   const { tr } = editor.state
   tr.replaceWith(0, editor.state.doc.content.size, pmDoc.content)
@@ -107,6 +108,12 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
 
       const doc = parse(markdown)
       replaceDocSilently(editor, doc as unknown as Record<string, unknown>)
+      // ADR-01: "Cleared on blur/flush. Ctrl+Z does not cross the flush boundary."
+      // Reset undo history so previous block's edits don't leak into this one.
+      // We do this by replacing the editor state with a fresh history plugin state.
+      const { state } = editor
+      const newState = state.reconfigure({})
+      editor.view.updateState(newState)
       editor.commands.focus()
     },
     [editor],

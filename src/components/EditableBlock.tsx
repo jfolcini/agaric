@@ -32,9 +32,9 @@ export function EditableBlock({
     (id: string) => {
       // Unmount from previous block if any
       if (rovingEditor.activeBlockId && rovingEditor.activeBlockId !== id) {
+        const prevId = rovingEditor.activeBlockId // capture BEFORE unmount nullifies it
         const changed = rovingEditor.unmount()
         if (changed !== null) {
-          const prevId = rovingEditor.activeBlockId
           // Auto-split if content contains newlines
           if (changed.includes('\n')) {
             splitBlock(prevId, changed)

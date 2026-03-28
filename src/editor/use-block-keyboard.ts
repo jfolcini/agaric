@@ -24,54 +24,83 @@ export interface BlockKeyboardCallbacks {
   onFlush: () => string | null
 }
 
+/** Minimal editor shape needed by the key handler (for testability). */
+export interface EditorState {
+  selection: { from: number; to: number; empty: boolean }
+  doc: { content: { size: number } }
+}
+
+export interface EditorLike {
+  state: EditorState
+  isEmpty: boolean
+}
+
+/**
+ * Pure key-down handler for block keyboard navigation.
+ * Extracted from the hook for direct unit testing.
+ */
+export function handleBlockKeyDown(
+  event: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'preventDefault'>,
+  editor: EditorLike,
+  callbacks: BlockKeyboardCallbacks,
+): void {
+  const { key, shiftKey } = event
+  const { from, to, empty: selectionEmpty } = editor.state.selection
+  const docSize = editor.state.doc.content.size
+  const atStart = from <= 1 && selectionEmpty
+  const atEnd = to >= docSize - 1 && selectionEmpty
+  const isEmpty = editor.isEmpty
+
+  // Tab / Shift+Tab: indent / dedent
+  if (key === 'Tab') {
+    event.preventDefault()
+    callbacks.onFlush()
+    if (shiftKey) {
+      callbacks.onDedent()
+    } else {
+      callbacks.onIndent()
+    }
+    return
+  }
+
+  // ArrowUp / ArrowLeft at position 0 → previous block
+  if ((key === 'ArrowUp' || key === 'ArrowLeft') && atStart) {
+    event.preventDefault()
+    callbacks.onFlush()
+    callbacks.onFocusPrev()
+    return
+  }
+
+  // ArrowDown / ArrowRight at end → next block
+  if ((key === 'ArrowDown' || key === 'ArrowRight') && atEnd) {
+    event.preventDefault()
+    callbacks.onFlush()
+    callbacks.onFocusNext()
+    return
+  }
+
+  // Backspace on empty block → delete block
+  if (key === 'Backspace' && isEmpty) {
+    event.preventDefault()
+    callbacks.onDeleteBlock()
+    return
+  }
+}
+
 export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboardCallbacks): void {
   const { onFocusPrev, onFocusNext, onDeleteBlock, onIndent, onDedent, onFlush } = callbacks
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
       if (!editor) return
-
-      const { key, shiftKey } = event
-      const { from, to, empty: selectionEmpty } = editor.state.selection
-      const docSize = editor.state.doc.content.size
-      const atStart = from <= 1 && selectionEmpty
-      const atEnd = to >= docSize - 1 && selectionEmpty
-      const isEmpty = editor.isEmpty
-
-      // Tab / Shift+Tab: indent / dedent
-      if (key === 'Tab') {
-        event.preventDefault()
-        onFlush()
-        if (shiftKey) {
-          onDedent()
-        } else {
-          onIndent()
-        }
-        return
-      }
-
-      // ArrowUp / ArrowLeft at position 0 → previous block
-      if ((key === 'ArrowUp' || key === 'ArrowLeft') && atStart) {
-        event.preventDefault()
-        onFlush()
-        onFocusPrev()
-        return
-      }
-
-      // ArrowDown / ArrowRight at end → next block
-      if ((key === 'ArrowDown' || key === 'ArrowRight') && atEnd) {
-        event.preventDefault()
-        onFlush()
-        onFocusNext()
-        return
-      }
-
-      // Backspace on empty block → delete block
-      if (key === 'Backspace' && isEmpty) {
-        event.preventDefault()
-        onDeleteBlock()
-        return
-      }
+      handleBlockKeyDown(event, editor, {
+        onFocusPrev,
+        onFocusNext,
+        onDeleteBlock,
+        onIndent,
+        onDedent,
+        onFlush,
+      })
     },
     [editor, onFocusPrev, onFocusNext, onDeleteBlock, onIndent, onDedent, onFlush],
   )

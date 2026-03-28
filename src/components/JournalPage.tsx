@@ -3,6 +3,7 @@
  *
  * Shows blocks scheduled for a given date. Supports prev/next day
  * navigation. Uses listBlocks with agendaDate filter.
+ * Paginated via cursor-based pagination (ADR requirement).
  */
 
 import type React from 'react'
@@ -37,18 +38,42 @@ export function JournalPage({ onBlockClick }: JournalPageProps): React.ReactElem
   const [date, setDate] = useState(() => new Date())
   const [blocks, setBlocks] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(false)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(false)
 
   const dateStr = formatDate(date)
 
+  const loadBlocks = useCallback(
+    async (cursor?: string) => {
+      setLoading(true)
+      try {
+        const resp = await listBlocks({ agendaDate: dateStr, cursor, limit: 50 })
+        if (cursor) {
+          setBlocks((prev) => [...prev, ...resp.items])
+        } else {
+          setBlocks(resp.items)
+        }
+        setNextCursor(resp.next_cursor)
+        setHasMore(resp.has_more)
+      } catch {
+        // Silently fail
+      }
+      setLoading(false)
+    },
+    [dateStr],
+  )
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset and reload when date changes
   useEffect(() => {
-    setLoading(true)
-    listBlocks({ agendaDate: dateStr })
-      .then((resp) => {
-        setBlocks(resp.items)
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
+    setBlocks([])
+    setNextCursor(null)
+    setHasMore(false)
+    loadBlocks()
   }, [dateStr])
+
+  const loadMore = useCallback(() => {
+    if (nextCursor) loadBlocks(nextCursor)
+  }, [nextCursor, loadBlocks])
 
   const goToPrevDay = useCallback(() => {
     setDate((prev) => {
@@ -91,13 +116,13 @@ export function JournalPage({ onBlockClick }: JournalPageProps): React.ReactElem
         </button>
       </div>
 
-      {loading && <div className="journal-loading">Loading...</div>}
+      {loading && blocks.length === 0 && <div className="journal-loading">Loading...</div>}
 
       {!loading && blocks.length === 0 && (
         <div className="journal-empty">No blocks scheduled for {formatDateDisplay(date)}</div>
       )}
 
-      {!loading && blocks.length > 0 && (
+      {blocks.length > 0 && (
         <div className="journal-blocks">
           {blocks.map((block) => (
             <button
@@ -111,6 +136,12 @@ export function JournalPage({ onBlockClick }: JournalPageProps): React.ReactElem
             </button>
           ))}
         </div>
+      )}
+
+      {hasMore && (
+        <button type="button" className="journal-load-more" onClick={loadMore} disabled={loading}>
+          {loading ? 'Loading...' : 'Load more'}
+        </button>
       )}
     </div>
   )

@@ -107,51 +107,51 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p15-t1 | markdown-serializer.ts — standalone module | frontend | **YES** | src/editor/markdown-serializer.ts. Zero deps on tiptap-markdown or any Markdown library. ~150 lines. Only schema: bold/italic/code/tag_ref/block_link. |
-| p15-t2 | Serializer: parse() — Markdown → ProseMirror doc | frontend | **YES** | Single-pass hand-rolled parser. Regex for token ID only. Mark stack — unclosed marks become plain text, never error. |
-| p15-t3 | Serializer: serialize() — ProseMirror doc → Markdown | frontend | **YES** | hardBreak → \n. paragraph wrapper → content only. Unknown nodes stripped + warn. Never emits \n\n. |
-| p15-t4 | Serializer escape rules | frontend | | \* for literal asterisk, \` for literal backtick. #[ without valid 26-char ULID passes through unescaped. |
-| p15-t5 | Serializer test suite (Vitest) | testing | **YES** | Round-trip identity. Mark nesting (bold-in-italic, code adjacent to bold). Token at string boundaries. hardBreak / paragraph paste normalization. Empty + whitespace-only strings. NO exceptions before Phase 2. |
+| p15-t1 | markdown-serializer.ts — standalone module | frontend | **YES** | [BUILT] src/editor/markdown-serializer.ts. Zero deps on tiptap-markdown or any Markdown library. ~150 lines. Only schema: bold/italic/code/tag_ref/block_link. |
+| p15-t2 | Serializer: parse() — Markdown → ProseMirror doc | frontend | **YES** | [BUILT] Single-pass hand-rolled parser. Regex for token ID only. Mark stack — unclosed marks become plain text, never error. |
+| p15-t3 | Serializer: serialize() — ProseMirror doc → Markdown | frontend | **YES** | [BUILT] hardBreak → \n. paragraph wrapper → content only. Unknown nodes stripped + warn. Never emits \n\n. |
+| p15-t4 | Serializer escape rules | frontend | | [BUILT] \* for literal asterisk, \` for literal backtick. #[ without valid 26-char ULID passes through unescaped. |
+| p15-t5 | Serializer test suite (Vitest) | testing | **YES** | [BUILT] Round-trip identity. Mark nesting (bold-in-italic, code adjacent to bold). Token at string boundaries. hardBreak / paragraph paste normalization. Empty + whitespace-only strings. NO exceptions before Phase 2. |
 
 ### TipTap + Roving Instance
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p15-t6 | TipTap extension: tag_ref inline node | frontend | | atom:true, inline:true. Attr: id (ULID). Renders chip from tags_cache. Never shows raw ULID. |
-| p15-t7 | TipTap extension: block_link inline node | frontend | | Same as tag_ref. Attr: id. Reads from pages_cache. Chip renders resolved page title. |
-| p15-t8 | Roving TipTap instance — mount/unmount lifecycle | frontend | **YES** | Exactly ONE instance at all times. Mount on focus (parse → setContent). Unmount on blur (serialize → compare → flush if dirty → clearHistory). Static div for all non-focused blocks. |
-| p15-t9 | useBlockKeyboard hook | frontend | | ArrowUp/Left at pos 0 → prev block. ArrowDown/Right at end → next block. Backspace on empty → delete+focus prev. Enter → \n. Tab → indent. Shift+Tab → dedent. |
-| p15-t10 | Auto-split on blur | frontend | **YES** | Serialized string contains \n → splitOnNewlines(). First segment: edit_block. Subsequent: create_block in order. Tags/props on first segment only. Same path as cross-block paste. |
-| p15-t11 | # picker extension (tag autocomplete) | frontend | | Intercept # keystroke → fuzzy search tags_cache. Select → insert tag_ref node with ULID. Never writes #tagname to storage. |
-| p15-t12 | [[ picker extension (page/block link) | frontend | | Intercept [[ → fuzzy search pages_cache. Select → insert block_link node with ULID. |
-| p15-t13 | Viewport Intersection Observer | frontend | | Off-screen blocks: static div with known height. Intersection Observer drives visible window. Zero per-block TipTap overhead for off-screen blocks. |
+| p15-t6 | TipTap extension: tag_ref inline node | frontend | | [BUILT] atom:true, inline:true. Attr: id (ULID). Renders chip from tags_cache. Never shows raw ULID. |
+| p15-t7 | TipTap extension: block_link inline node | frontend | | [BUILT] Same as tag_ref. Attr: id. Reads from pages_cache. Chip renders resolved page title. |
+| p15-t8 | Roving TipTap instance — mount/unmount lifecycle | frontend | **YES** | [BUILT] Exactly ONE instance at all times. Mount on focus (parse → setContent). Unmount on blur (serialize → compare → flush if dirty → clearHistory). Static div for all non-focused blocks. |
+| p15-t9 | useBlockKeyboard hook | frontend | | [BUILT] ArrowUp/Left at pos 0 → prev block. ArrowDown/Right at end → next block. Backspace on empty → delete+focus prev. Enter → \n. Tab → indent. Shift+Tab → dedent. |
+| p15-t10 | Auto-split on blur | frontend | **YES** | [BUILT] Serialized string contains \n → splitOnNewlines(). First segment: edit_block. Subsequent: create_block in order. Tags/props on first segment only. Same path as cross-block paste. |
+| p15-t11 | # picker extension (tag autocomplete) | frontend | | [BUILT] Intercept # keystroke → fuzzy search tags_cache. Select → insert tag_ref node with ULID. Never writes #tagname to storage. |
+| p15-t12 | [[ picker extension (page/block link) | frontend | | [BUILT] Intercept [[ → fuzzy search pages_cache. Select → insert block_link node with ULID. |
+| p15-t13 | Viewport Intersection Observer | frontend | | [BUILT] Off-screen blocks: static div with known height. Intersection Observer drives visible window. Zero per-block TipTap overhead for off-screen blocks. |
 
 ### Block CRUD UI
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p15-t14 | Block tree renderer (static) | frontend | | Recursive render of block tree. Placeholder heights for unmeasured off-screen blocks. |
-| p15-t15 | Block creation — Enter to create below | frontend | | Calls create_block. Focuses new block immediately. |
-| p15-t16 | Block deletion — Backspace on empty | frontend | | Calls delete_block(cascade:true). Focus previous. Graceful on first block. |
-| p15-t17 | Indent / dedent (Tab / Shift+Tab) | frontend | | Flush first. Calls move_block. Emits batch move_block ops for position compaction. |
-| p15-t18 | Flat tag panel | frontend | | Apply/remove tags from a block. Reads tags_cache. Calls add_tag / remove_tag ops. |
-| p15-t19 | Create tag block UI | frontend | | Calls create_block(block_type:'tag'). Immediately available in tags_cache after materializer. |
+| p15-t14 | Block tree renderer (static) | frontend | | [BUILT] Recursive render of block tree. Placeholder heights for unmeasured off-screen blocks. |
+| p15-t15 | Block creation — Enter to create below | frontend | | [BUILT] Calls create_block. Focuses new block immediately. |
+| p15-t16 | Block deletion — Backspace on empty | frontend | | [BUILT] Calls delete_block(cascade:true). Focus previous. Graceful on first block. |
+| p15-t17 | Indent / dedent (Tab / Shift+Tab) | frontend | | [BUILT] Flush first. Calls move_block. Emits batch move_block ops for position compaction. |
+| p15-t18 | Flat tag panel | frontend | | [BUILT] Apply/remove tags from a block. Reads tags_cache. Calls add_tag / remove_tag ops. |
+| p15-t19 | Create tag block UI | frontend | | [BUILT] Calls create_block(block_type:'tag'). Immediately available in tags_cache after materializer. |
 
 ### Journal View
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p15-t20 | Journal page — today's blocks | frontend | | Query: agenda_cache WHERE date = today. Paginated. Reads from foreground materializer queue. |
-| p15-t21 | Date navigation | frontend | | Previous / next day. agenda_cache WHERE date BETWEEN ? AND ?. Skeleton on load (stale-while-revalidate). |
-| p15-t22 | Page browser — all pages | frontend | | WHERE block_type = 'page' AND deleted_at IS NULL. Default sort: reverse ULID (creation time desc). User pref settable. |
+| p15-t20 | Journal page — today's blocks | frontend | | [BUILT] Query: agenda_cache WHERE date = today. Paginated. Reads from foreground materializer queue. |
+| p15-t21 | Date navigation | frontend | | [BUILT] Previous / next day. agenda_cache WHERE date BETWEEN ? AND ?. Skeleton on load (stale-while-revalidate). |
+| p15-t22 | Page browser — all pages | frontend | | [BUILT] WHERE block_type = 'page' AND deleted_at IS NULL. Default sort: reverse ULID (creation time desc). User pref settable. |
 
 ### Trash + Restore
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p15-t23 | Trash view | frontend | | WHERE deleted_at IS NOT NULL AND is_conflict = 0. Paginated. Shows block content + deleted_at. |
-| p15-t24 | Restore flow | frontend | | Calls restore_block op. deleted_at_ref in payload. Only descendants with matching timestamp are restored. |
-| p15-t25 | Permanent delete (purge) | frontend | | Explicit UI confirm. Calls purge_block op. Irreversible. Also triggered auto after 30 days. |
+| p15-t23 | Trash view | frontend | | [BUILT] WHERE deleted_at IS NOT NULL AND is_conflict = 0. Paginated. Shows block content + deleted_at. |
+| p15-t24 | Restore flow | frontend | | [BUILT] Calls restore_block op. deleted_at_ref in payload. Only descendants with matching timestamp are restored. |
+| p15-t25 | Permanent delete (purge) | frontend | | [BUILT] Explicit UI confirm. Calls purge_block op. Irreversible. Also triggered auto after 30 days. |
 
 ### Android Spike — Gate Before Phase 2
 

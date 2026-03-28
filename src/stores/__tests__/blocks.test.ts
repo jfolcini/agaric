@@ -1,0 +1,602 @@
+import { invoke } from '@tauri-apps/api/core'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useBlockStore } from '../blocks'
+
+const mockedInvoke = vi.mocked(invoke)
+
+/** Helper — build a BlockRow with defaults. */
+function makeBlock(
+  overrides: Partial<{
+    id: string
+    block_type: string
+    content: string | null
+    parent_id: string | null
+    position: number | null
+    deleted_at: string | null
+    archived_at: string | null
+    is_conflict: boolean
+  }> = {},
+) {
+  return {
+    id: overrides.id ?? 'BLOCK_001',
+    block_type: overrides.block_type ?? 'text',
+    content: overrides.content ?? 'hello',
+    parent_id: overrides.parent_id ?? null,
+    position: overrides.position ?? 0,
+    deleted_at: overrides.deleted_at ?? null,
+    archived_at: overrides.archived_at ?? null,
+    is_conflict: overrides.is_conflict ?? false,
+  }
+}
+
+describe('useBlockStore', () => {
+  beforeEach(() => {
+    useBlockStore.setState({
+      blocks: [],
+      focusedBlockId: null,
+      loading: false,
+    })
+    vi.clearAllMocks()
+  })
+
+  // ---------------------------------------------------------------------------
+  // load
+  // ---------------------------------------------------------------------------
+  describe('load', () => {
+    it('fetches blocks from the backend and stores them', async () => {
+      const blocks = [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })]
+      mockedInvoke.mockResolvedValueOnce({
+        items: blocks,
+        next_cursor: null,
+        has_more: false,
+      })
+
+      await useBlockStore.getState().load()
+
+      expect(useBlockStore.getState().blocks).toEqual(blocks)
+      expect(useBlockStore.getState().loading).toBe(false)
+    })
+
+    it('sets loading=true while the request is in flight', async () => {
+      let resolvePromise!: (v: unknown) => void
+      const pending = new Promise((resolve) => {
+        resolvePromise = resolve
+      })
+      mockedInvoke.mockReturnValueOnce(pending)
+
+      const loadPromise = useBlockStore.getState().load()
+      expect(useBlockStore.getState().loading).toBe(true)
+
+      resolvePromise({ items: [], next_cursor: null, has_more: false })
+      await loadPromise
+
+      expect(useBlockStore.getState().loading).toBe(false)
+    })
+
+    it('resets loading on error without changing blocks', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('network'))
+
+      await useBlockStore.getState().load()
+
+      expect(useBlockStore.getState().loading).toBe(false)
+      expect(useBlockStore.getState().blocks).toEqual([])
+    })
+
+    it('passes parentId through to list_blocks', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      await useBlockStore.getState().load('PARENT_42')
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_blocks',
+        expect.objectContaining({ parentId: 'PARENT_42' }),
+      )
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // setFocused
+  // ---------------------------------------------------------------------------
+  describe('setFocused', () => {
+    it('sets the focused block id', () => {
+      useBlockStore.getState().setFocused('BLOCK_A')
+      expect(useBlockStore.getState().focusedBlockId).toBe('BLOCK_A')
+    })
+
+    it('clears the focused block id', () => {
+      useBlockStore.setState({ focusedBlockId: 'BLOCK_A' })
+      useBlockStore.getState().setFocused(null)
+      expect(useBlockStore.getState().focusedBlockId).toBeNull()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // createBelow
+  // ---------------------------------------------------------------------------
+  describe('createBelow', () => {
+    it('inserts a new block after the specified block', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1 })
+      useBlockStore.setState({ blocks: [blockA, blockB] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'NEW',
+        block_type: 'text',
+        content: 'new content',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+
+      const newId = await useBlockStore.getState().createBelow('A', 'new content')
+
+      expect(newId).toBe('NEW')
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks).toHaveLength(3)
+      expect(blocks[0].id).toBe('A')
+      expect(blocks[1].id).toBe('NEW')
+      expect(blocks[1].content).toBe('new content')
+      expect(blocks[2].id).toBe('B')
+    })
+
+    it('returns null when afterBlockId is not found', async () => {
+      useBlockStore.setState({ blocks: [makeBlock({ id: 'A' })] })
+
+      const result = await useBlockStore.getState().createBelow('NONEXISTENT')
+
+      expect(result).toBeNull()
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('returns null on backend error (state unchanged)', async () => {
+      const block = makeBlock({ id: 'A' })
+      useBlockStore.setState({ blocks: [block] })
+      mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
+
+      const result = await useBlockStore.getState().createBelow('A')
+
+      expect(result).toBeNull()
+      expect(useBlockStore.getState().blocks).toHaveLength(1)
+    })
+
+    it('inherits parent_id from the afterBlock', async () => {
+      const block = makeBlock({ id: 'A', parent_id: 'PARENT', position: 3 })
+      useBlockStore.setState({ blocks: [block] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'NEW',
+        block_type: 'text',
+        content: '',
+        parent_id: 'PARENT',
+        position: 4,
+        deleted_at: null,
+      })
+
+      await useBlockStore.getState().createBelow('A')
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'create_block',
+        expect.objectContaining({
+          parentId: 'PARENT',
+          position: 4,
+        }),
+      )
+    })
+
+    it('defaults content to empty string', async () => {
+      useBlockStore.setState({ blocks: [makeBlock({ id: 'A', position: 0 })] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'NEW',
+        block_type: 'text',
+        content: '',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+
+      await useBlockStore.getState().createBelow('A')
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'create_block',
+        expect.objectContaining({ content: '' }),
+      )
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // edit
+  // ---------------------------------------------------------------------------
+  describe('edit', () => {
+    it('updates block content locally after successful backend call', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A', content: 'old' })],
+      })
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'new',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+
+      await useBlockStore.getState().edit('A', 'new')
+
+      expect(useBlockStore.getState().blocks[0].content).toBe('new')
+    })
+
+    it('does not update local state on backend error', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A', content: 'old' })],
+      })
+      mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
+
+      await useBlockStore.getState().edit('A', 'new')
+
+      expect(useBlockStore.getState().blocks[0].content).toBe('old')
+    })
+
+    it('only updates the target block, leaving others unchanged', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A', content: 'aaa' }), makeBlock({ id: 'B', content: 'bbb' })],
+      })
+      mockedInvoke.mockResolvedValueOnce({})
+
+      await useBlockStore.getState().edit('A', 'aaa-updated')
+
+      expect(useBlockStore.getState().blocks[0].content).toBe('aaa-updated')
+      expect(useBlockStore.getState().blocks[1].content).toBe('bbb')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // remove
+  // ---------------------------------------------------------------------------
+  describe('remove', () => {
+    it('removes the block from local state on success', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })],
+        focusedBlockId: null,
+      })
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'A',
+        deleted_at: '2025-01-01T00:00:00Z',
+        descendants_affected: 0,
+      })
+
+      await useBlockStore.getState().remove('A')
+
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0].id).toBe('B')
+    })
+
+    it('clears focusedBlockId when the focused block is deleted', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A' })],
+        focusedBlockId: 'A',
+      })
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'A',
+        deleted_at: '2025-01-01T00:00:00Z',
+        descendants_affected: 0,
+      })
+
+      await useBlockStore.getState().remove('A')
+
+      expect(useBlockStore.getState().focusedBlockId).toBeNull()
+    })
+
+    it('preserves focusedBlockId when a different block is deleted', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })],
+        focusedBlockId: 'A',
+      })
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        deleted_at: '2025-01-01T00:00:00Z',
+        descendants_affected: 0,
+      })
+
+      await useBlockStore.getState().remove('B')
+
+      expect(useBlockStore.getState().focusedBlockId).toBe('A')
+    })
+
+    it('does not modify state on backend error', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A' })],
+        focusedBlockId: 'A',
+      })
+      mockedInvoke.mockRejectedValueOnce(new Error('delete failed'))
+
+      await useBlockStore.getState().remove('A')
+
+      expect(useBlockStore.getState().blocks).toHaveLength(1)
+      expect(useBlockStore.getState().focusedBlockId).toBe('A')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // splitBlock
+  // ---------------------------------------------------------------------------
+  describe('splitBlock', () => {
+    it('does nothing for single-line content', async () => {
+      useBlockStore.setState({ blocks: [makeBlock({ id: 'A' })] })
+
+      await useBlockStore.getState().splitBlock('A', 'no newlines')
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('edits first line and creates new blocks for remaining lines', async () => {
+      const block = makeBlock({ id: 'A', position: 0, content: '' })
+      useBlockStore.setState({ blocks: [block] })
+
+      // edit('A', 'line1') → invoke('edit_block', ...)
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'line1',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+      // createBelow('A', 'line2') → invoke('create_block', ...)
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'B',
+        block_type: 'text',
+        content: 'line2',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+      // createBelow('B', 'line3') → invoke('create_block', ...)
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'C',
+        block_type: 'text',
+        content: 'line3',
+        parent_id: null,
+        position: 2,
+        deleted_at: null,
+      })
+
+      await useBlockStore.getState().splitBlock('A', 'line1\nline2\nline3')
+
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks).toHaveLength(3)
+      expect(blocks[0].content).toBe('line1')
+      expect(blocks[1].content).toBe('line2')
+      expect(blocks[2].content).toBe('line3')
+    })
+
+    it('handles empty first line in split', async () => {
+      const block = makeBlock({ id: 'A', position: 0, content: '' })
+      useBlockStore.setState({ blocks: [block] })
+
+      // edit('A', '') → invoke('edit_block', ...)
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: '',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+      // createBelow('A', 'text') → invoke('create_block', ...)
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'B',
+        block_type: 'text',
+        content: 'text',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+
+      await useBlockStore.getState().splitBlock('A', '\ntext')
+
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks).toHaveLength(2)
+      expect(blocks[0].content).toBe('')
+      expect(blocks[1].content).toBe('text')
+    })
+
+    it('chains createBelow sequentially using previous new id', async () => {
+      const block = makeBlock({ id: 'A', position: 0 })
+      useBlockStore.setState({ blocks: [block] })
+
+      // edit
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'a',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+      // createBelow('A', 'b') → returns 'B'
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'B',
+        block_type: 'text',
+        content: 'b',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+      // createBelow('B', 'c') — note: must use B as the afterBlockId
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'C',
+        block_type: 'text',
+        content: 'c',
+        parent_id: null,
+        position: 2,
+        deleted_at: null,
+      })
+
+      await useBlockStore.getState().splitBlock('A', 'a\nb\nc')
+
+      // Verify the third invoke used position based on B's position
+      expect(mockedInvoke).toHaveBeenCalledTimes(3)
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks.map((b) => b.id)).toEqual(['A', 'B', 'C'])
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // indent
+  // ---------------------------------------------------------------------------
+  describe('indent', () => {
+    it('makes a block a child of its previous sibling', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null })
+      useBlockStore.setState({ blocks: [blockA, blockB] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        new_parent_id: 'A',
+        new_position: 0,
+      })
+
+      await useBlockStore.getState().indent('B')
+
+      const moved = useBlockStore.getState().blocks.find((b) => b.id === 'B')
+      expect(moved?.parent_id).toBe('A')
+      expect(moved?.position).toBe(0)
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'B',
+        newParentId: 'A',
+        newPosition: 0,
+      })
+    })
+
+    it('does nothing for the first block (idx === 0)', async () => {
+      useBlockStore.setState({ blocks: [makeBlock({ id: 'A' })] })
+
+      await useBlockStore.getState().indent('A')
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('does nothing when block not found', async () => {
+      useBlockStore.setState({ blocks: [makeBlock({ id: 'A' })] })
+
+      await useBlockStore.getState().indent('NONEXISTENT')
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('does nothing when previous block has a different parent', async () => {
+      const blockA = makeBlock({ id: 'A', parent_id: 'P1' })
+      const blockB = makeBlock({ id: 'B', parent_id: 'P2' })
+      useBlockStore.setState({ blocks: [blockA, blockB] })
+
+      await useBlockStore.getState().indent('B')
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('does not update state on backend error', async () => {
+      const blockA = makeBlock({ id: 'A', parent_id: null })
+      const blockB = makeBlock({ id: 'B', parent_id: null })
+      useBlockStore.setState({ blocks: [blockA, blockB] })
+
+      mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
+
+      await useBlockStore.getState().indent('B')
+
+      expect(useBlockStore.getState().blocks.find((b) => b.id === 'B')?.parent_id).toBeNull()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // dedent
+  // ---------------------------------------------------------------------------
+  describe('dedent', () => {
+    it('moves a block up to its grandparent', async () => {
+      const parent = makeBlock({ id: 'P', parent_id: null, position: 0 })
+      const child = makeBlock({ id: 'C', parent_id: 'P', position: 0 })
+      useBlockStore.setState({ blocks: [parent, child] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'C',
+        new_parent_id: null,
+        new_position: 1,
+      })
+
+      await useBlockStore.getState().dedent('C')
+
+      const moved = useBlockStore.getState().blocks.find((b) => b.id === 'C')
+      expect(moved?.parent_id).toBeNull()
+      expect(moved?.position).toBe(1)
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'C',
+        newParentId: null,
+        newPosition: 1,
+      })
+    })
+
+    it('does nothing if block is at root level', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A', parent_id: null })],
+      })
+
+      await useBlockStore.getState().dedent('A')
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('does nothing when block not found', async () => {
+      useBlockStore.setState({ blocks: [] })
+
+      await useBlockStore.getState().dedent('NONEXISTENT')
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('does nothing when parent is not in the blocks array', async () => {
+      const orphan = makeBlock({ id: 'A', parent_id: 'MISSING_PARENT' })
+      useBlockStore.setState({ blocks: [orphan] })
+
+      await useBlockStore.getState().dedent('A')
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('does not update state on backend error', async () => {
+      const parent = makeBlock({ id: 'P', parent_id: null })
+      const child = makeBlock({ id: 'C', parent_id: 'P' })
+      useBlockStore.setState({ blocks: [parent, child] })
+
+      mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
+
+      await useBlockStore.getState().dedent('C')
+
+      expect(useBlockStore.getState().blocks.find((b) => b.id === 'C')?.parent_id).toBe('P')
+    })
+
+    it('positions after parent when moving to grandparent', async () => {
+      const parent = makeBlock({ id: 'P', parent_id: 'GP', position: 5 })
+      const child = makeBlock({ id: 'C', parent_id: 'P', position: 0 })
+      useBlockStore.setState({ blocks: [parent, child] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'C',
+        new_parent_id: 'GP',
+        new_position: 6,
+      })
+
+      await useBlockStore.getState().dedent('C')
+
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'C',
+        newParentId: 'GP',
+        newPosition: 6,
+      })
+    })
+  })
+})

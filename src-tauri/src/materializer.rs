@@ -135,14 +135,14 @@ impl Materializer {
             let pool = pool.clone();
             let shutdown_flag = shutdown_flag.clone();
             let metrics = metrics.clone();
-            tokio::spawn(Self::run_foreground(pool, fg_rx, shutdown_flag, metrics));
+            Self::spawn_task(Self::run_foreground(pool, fg_rx, shutdown_flag, metrics));
         }
 
         // Spawn background consumer (with batch-drain dedup)
         {
             let shutdown_flag = shutdown_flag.clone();
             let metrics = metrics.clone();
-            tokio::spawn(Self::run_background(pool, bg_rx, shutdown_flag, metrics));
+            Self::spawn_task(Self::run_background(pool, bg_rx, shutdown_flag, metrics));
         }
 
         Self {
@@ -151,6 +151,19 @@ impl Materializer {
             shutdown_flag,
             metrics,
         }
+    }
+
+    /// Spawn an async task on the appropriate runtime.
+    /// In production (Tauri), uses `tauri::async_runtime::spawn` which works
+    /// inside the Tauri setup hook. In tests, uses `tokio::spawn` directly.
+    fn spawn_task<F>(future: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        #[cfg(test)]
+        tokio::spawn(future);
+        #[cfg(not(test))]
+        tauri::async_runtime::spawn(future);
     }
 
     // -- error logging (excluded from coverage — defensive panic/error paths

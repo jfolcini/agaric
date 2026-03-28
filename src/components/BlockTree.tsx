@@ -38,12 +38,13 @@ export function BlockTree(): React.ReactElement {
   // Keyboard callbacks
   const handleFlush = useCallback((): string | null => {
     if (!rovingEditor.activeBlockId) return null
+    const blockId = rovingEditor.activeBlockId // capture BEFORE unmount nullifies it
     const changed = rovingEditor.unmount()
-    if (changed !== null && rovingEditor.activeBlockId) {
+    if (changed !== null) {
       if (changed.includes('\n')) {
-        splitBlock(rovingEditor.activeBlockId, changed)
+        splitBlock(blockId, changed)
       } else {
-        edit(rovingEditor.activeBlockId, changed)
+        edit(blockId, changed)
       }
     }
     return changed

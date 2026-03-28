@@ -423,20 +423,7 @@ pub async fn move_block_inner(
     new_parent_id: Option<String>,
     new_position: i64,
 ) -> Result<MoveResponse, AppError> {
-    // 1. Validate block exists and is not deleted (same pattern as edit_block_inner)
-    let existing: Option<BlockRow> = sqlx::query_as(
-        "SELECT id, block_type, content, parent_id, position, \
-                deleted_at, archived_at, is_conflict \
-         FROM blocks WHERE id = ? AND deleted_at IS NULL",
-    )
-    .bind(&block_id)
-    .fetch_optional(pool)
-    .await?;
-
-    existing
-        .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
-
-    // 2. Validate block cannot become its own parent
+    // 1. Validate block cannot become its own parent (pure-logic check, no DB)
     if let Some(ref pid) = new_parent_id {
         if pid == &block_id {
             return Err(AppError::InvalidOperation(format!(
@@ -445,34 +432,48 @@ pub async fn move_block_inner(
         }
     }
 
-    // 3. If new_parent_id is Some, validate the parent exists and is not deleted
-    if let Some(ref pid) = new_parent_id {
-        let exists: Option<(i64,)> =
-            sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
-                .bind(pid)
-                .fetch_optional(pool)
-                .await?;
-        if exists.is_none() {
-            return Err(AppError::NotFound(format!("parent block '{pid}'")));
-        }
-    }
-
-    // 4. Build OpPayload
+    // 2. Build OpPayload
     let payload = OpPayload::MoveBlock(MoveBlockPayload {
         block_id: block_id.clone(),
         new_parent_id: new_parent_id.clone(),
         new_position,
     });
 
-    // 5. Begin IMMEDIATE transaction for atomic op_log + blocks write.
-    //    IMMEDIATE eagerly acquires the write lock, avoiding
-    //    SQLITE_BUSY_SNAPSHOT when a background cache rebuild commits
-    //    between our first read and first write.
+    // 3. Single IMMEDIATE transaction: validation + op_log + move.
+    //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
+    //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
+    //    and the actual mutation.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // Validate block exists and is not deleted (TOCTOU-safe)
+    let existing: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
+            .bind(&block_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if existing.is_none() {
+        return Err(AppError::NotFound(format!(
+            "block '{block_id}' (not found or deleted)"
+        )));
+    }
+
+    // Validate new parent exists and is not deleted (TOCTOU-safe)
+    if let Some(ref pid) = new_parent_id {
+        let exists: Option<(i64,)> =
+            sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
+                .bind(pid)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if exists.is_none() {
+            return Err(AppError::NotFound(format!("parent block '{pid}'")));
+        }
+    }
+
+    // 4. Append to op_log within transaction
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
 
-    // 6. Update blocks table within same transaction
+    // 5. Update blocks table within same transaction
     sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
         .bind(&new_parent_id)
         .bind(new_position)
@@ -482,10 +483,10 @@ pub async fn move_block_inner(
 
     tx.commit().await?;
 
-    // 7. Dispatch background cache tasks (fire-and-forget)
+    // 6. Dispatch background cache tasks (fire-and-forget)
     let _ = materializer.dispatch_background(&op_record);
 
-    // 8. Return response
+    // 7. Return response
     Ok(MoveResponse {
         block_id,
         new_parent_id,
@@ -539,11 +540,23 @@ pub async fn add_tag_inner(
     block_id: String,
     tag_id: String,
 ) -> Result<TagResponse, AppError> {
-    // 1. Validate block exists and is not deleted
+    // 1. Build OpPayload
+    let payload = OpPayload::AddTag(AddTagPayload {
+        block_id: block_id.clone(),
+        tag_id: tag_id.clone(),
+    });
+
+    // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
+    //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
+    //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
+    //    and the actual mutation.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // Validate block exists and is not deleted (TOCTOU-safe)
     let exists: Option<(i64,)> =
         sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
             .bind(&block_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!(
@@ -551,11 +564,11 @@ pub async fn add_tag_inner(
         )));
     }
 
-    // 2. Validate tag_id refers to a block with block_type = 'tag' and is not deleted
+    // Validate tag_id refers to a block with block_type = 'tag' and is not deleted (TOCTOU-safe)
     let tag_row: Option<(String,)> =
         sqlx::query_as("SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL")
             .bind(&tag_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
     match tag_row {
         None => {
@@ -571,29 +584,22 @@ pub async fn add_tag_inner(
         _ => {}
     }
 
-    // 3. Check for existing association
+    // Check for existing association (TOCTOU-safe)
     let dup: Option<(i64,)> =
         sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
             .bind(&block_id)
             .bind(&tag_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
     if dup.is_some() {
         return Err(AppError::InvalidOperation("tag already applied".into()));
     }
 
-    // 4. Build OpPayload
-    let payload = OpPayload::AddTag(AddTagPayload {
-        block_id: block_id.clone(),
-        tag_id: tag_id.clone(),
-    });
-
-    // 5. Begin IMMEDIATE transaction for atomic op_log + block_tags write.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // 3. Append to op_log within transaction
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
 
-    // 6. Insert into block_tags within same transaction
+    // 4. Insert into block_tags within same transaction
     sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
         .bind(&block_id)
         .bind(&tag_id)
@@ -602,10 +608,10 @@ pub async fn add_tag_inner(
 
     tx.commit().await?;
 
-    // 7. Dispatch background cache tasks (fire-and-forget)
+    // 5. Dispatch background cache tasks (fire-and-forget)
     let _ = materializer.dispatch_background(&op_record);
 
-    // 8. Return response
+    // 6. Return response
     Ok(TagResponse { block_id, tag_id })
 }
 
@@ -616,11 +622,23 @@ pub async fn remove_tag_inner(
     block_id: String,
     tag_id: String,
 ) -> Result<TagResponse, AppError> {
-    // 1. Validate block exists and is not deleted
+    // 1. Build OpPayload
+    let payload = OpPayload::RemoveTag(RemoveTagPayload {
+        block_id: block_id.clone(),
+        tag_id: tag_id.clone(),
+    });
+
+    // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
+    //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
+    //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
+    //    and the actual mutation.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // Validate block exists and is not deleted (TOCTOU-safe)
     let exists: Option<(i64,)> =
         sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
             .bind(&block_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!(
@@ -628,29 +646,22 @@ pub async fn remove_tag_inner(
         )));
     }
 
-    // 2. Check association exists
+    // Check association exists (TOCTOU-safe)
     let assoc: Option<(i64,)> =
         sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
             .bind(&block_id)
             .bind(&tag_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
     if assoc.is_none() {
         return Err(AppError::NotFound("tag association".into()));
     }
 
-    // 3. Build OpPayload
-    let payload = OpPayload::RemoveTag(RemoveTagPayload {
-        block_id: block_id.clone(),
-        tag_id: tag_id.clone(),
-    });
-
-    // 4. Begin IMMEDIATE transaction for atomic op_log + block_tags write.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // 3. Append to op_log within transaction
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
 
-    // 5. Delete from block_tags within same transaction
+    // 4. Delete from block_tags within same transaction
     sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
         .bind(&block_id)
         .bind(&tag_id)
@@ -659,10 +670,10 @@ pub async fn remove_tag_inner(
 
     tx.commit().await?;
 
-    // 6. Dispatch background cache tasks (fire-and-forget)
+    // 5. Dispatch background cache tasks (fire-and-forget)
     let _ = materializer.dispatch_background(&op_record);
 
-    // 7. Return response
+    // 6. Return response
     Ok(TagResponse { block_id, tag_id })
 }
 

@@ -1,5 +1,7 @@
 # Developer Documentation — Block Notes App
 
+> **ABSOLUTE RULE: No changes to this file (AGENTS.md) without explicit user approval. Ever.**
+
 ## Environment
 
 | Tool | Version | Path |
@@ -252,16 +254,45 @@ Review subagents that make fixes should run `cargo test` to verify their changes
 
 ## Subagent Workflow
 
+> **THIS WORKFLOW IS NON-NEGOTIABLE.** Every step must be followed for every task.
+> No step may be skipped for convenience, time pressure, or "it's just a small change."
+> Violations undermine the entire quality process. If a step seems unnecessary,
+> update this document first — don't silently skip it.
+
 ### The Cycle
 
 ```
 1. PLAN     — Pick tasks from project-plan.md, group by domain
-2. BUILD    — Launch subagent(s), with worktrees only if parallel + multi-file
-3. REVIEW   — Launch review subagent for each build subagent
-4. MERGE    — Copy changed files back to main worktree
-5. COMMIT   — git add + commit (prek hooks verify everything)
-6. LOG      — Update SESSION-LOG.md with results
+2. BUILD    — Launch subagent(s), with worktrees if parallel + multi-file
+3. TEST     — Comprehensive tests for ALL new code (see Testing Requirements below)
+4. REVIEW   — Launch review subagent for each build subagent (MANDATORY, no exceptions)
+5. MERGE    — Copy changed files back to main worktree
+6. COMMIT   — git add + commit (prek hooks verify everything)
+7. LOG      — Update SESSION-LOG.md AND project-plan.md with results
 ```
+
+**Every step is mandatory.** In particular:
+- **Step 3 (TEST):** Build subagents must write tests for their code. Review subagents must verify test coverage and add missing tests.
+- **Step 4 (REVIEW):** A separate review subagent must review every build before commit. No self-reviewed commits.
+- **Step 7 (LOG):** Both SESSION-LOG.md and project-plan.md must be updated after every commit. Task status must reflect reality at all times.
+
+### Testing Requirements
+
+**Every new module, component, function, or feature must have comprehensive tests.** This is not optional.
+
+| Layer | What to test | Tool |
+|-------|-------------|------|
+| Rust unit tests | Every public function, error paths, edge cases | `cargo test` |
+| Rust integration tests | Cross-module workflows, command pipelines | `integration_tests.rs` |
+| Frontend unit tests | Store logic, pure functions, hooks | Vitest |
+| Frontend component tests | Rendering, user interactions, state changes | Vitest + jsdom |
+| Serializer tests | Round-trip identity, edge cases, escapes | Vitest |
+
+Rules:
+- **Build subagents** write tests alongside implementation. No code ships without tests.
+- **Review subagents** verify test quality and add missing coverage. If a review finds untested paths, the reviewer writes the tests.
+- **Minimum bar:** Every exported function has at least one happy-path test and one error-path test. Components have render + interaction tests.
+- **Test files live next to source** — `__tests__/` dirs for frontend, `#[cfg(test)] mod tests` for Rust.
 
 ### Task Status
 
@@ -270,7 +301,7 @@ Tasks tracked in project-plan.md and SESSION-LOG.md use these statuses:
 | Status | Meaning |
 |--------|---------|
 | `[BUILT]` | Code written by build subagent, not yet reviewed |
-| `[REVIEWED]` | Reviewed by a separate review subagent |
+| `[REVIEWED]` | Reviewed and tested by a separate review subagent |
 
 Everything in Phase 1 has been built and reviewed.
 
@@ -302,7 +333,8 @@ Keep prompts **minimal**. Subagents can read AGENTS.md and source files themselv
 For review subagents:
 1. Which files to review (with paths)
 2. What to check for (specific concerns, not generic checklists)
-3. Fix directly, verify with `cargo test`
+3. Verify test coverage — add missing tests for untested paths
+4. Fix directly, verify with `cargo test` (Rust) or `npx vitest run` (frontend)
 
 **Do NOT include** in prompts: full file contents (subagent can read them), full ADR text, environment table, tool versions, long checklists.
 

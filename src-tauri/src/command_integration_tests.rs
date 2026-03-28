@@ -1606,3 +1606,705 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
         "expected {expected_pages} pages for {TOTAL} items at page size {PAGE_SIZE}"
     );
 }
+
+// ======================================================================
+// move_block — happy paths
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_reparents_and_updates_position() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "MV_PAR_A", "page", "parent A", None, Some(1)).await;
+    insert_block(&pool, "MV_PAR_B", "page", "parent B", None, Some(2)).await;
+    insert_block(
+        &pool,
+        "MV_CHILD",
+        "content",
+        "child",
+        Some("MV_PAR_A"),
+        Some(1),
+    )
+    .await;
+
+    let resp = move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "MV_CHILD".into(),
+        Some("MV_PAR_B".into()),
+        5,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp.block_id, "MV_CHILD", "block_id must match");
+    assert_eq!(
+        resp.new_parent_id,
+        Some("MV_PAR_B".into()),
+        "new parent must be MV_PAR_B"
+    );
+    assert_eq!(resp.new_position, 5, "position must match");
+
+    // Verify DB state
+    let row = get_block_inner(&pool, "MV_CHILD".into()).await.unwrap();
+    assert_eq!(row.parent_id, Some("MV_PAR_B".into()), "parent_id in DB");
+    assert_eq!(row.position, Some(5), "position in DB");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_to_root_clears_parent() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "MV2_PAR", "page", "parent", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "MV2_CHD",
+        "content",
+        "child",
+        Some("MV2_PAR"),
+        Some(1),
+    )
+    .await;
+
+    let resp = move_block_inner(&pool, DEV, &mat, "MV2_CHD".into(), None, 10)
+        .await
+        .unwrap();
+
+    assert!(
+        resp.new_parent_id.is_none(),
+        "root move must have None parent"
+    );
+    assert_eq!(resp.new_position, 10, "position must match");
+
+    let row = get_block_inner(&pool, "MV2_CHD".into()).await.unwrap();
+    assert!(
+        row.parent_id.is_none(),
+        "parent_id must be NULL after root move"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_writes_op_log_entry() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "MV_LOG", "content", "block", None, Some(1)).await;
+
+    move_block_inner(&pool, DEV, &mat, "MV_LOG".into(), None, 3)
+        .await
+        .unwrap();
+
+    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    assert_eq!(ops.len(), 1, "exactly one op must be logged");
+    assert_eq!(ops[0].op_type, "move_block", "op_type must be move_block");
+    assert!(
+        ops[0].payload.contains("MV_LOG"),
+        "payload must contain block_id"
+    );
+}
+
+// ======================================================================
+// move_block — error paths
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_nonexistent_block_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let result = move_block_inner(&pool, DEV, &mat, "GHOST_MV".into(), None, 1).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "moving nonexistent block must return AppError::NotFound"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_deleted_block_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "MV_DEL", "content", "deleted", None, Some(1)).await;
+    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'MV_DEL'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = move_block_inner(&pool, DEV, &mat, "MV_DEL".into(), None, 1).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "moving deleted block must return AppError::NotFound"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_self_parent_returns_invalid_operation() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "MV_SELF", "content", "self", None, Some(1)).await;
+
+    let result = move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "MV_SELF".into(),
+        Some("MV_SELF".into()),
+        1,
+    )
+    .await;
+
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AppError::InvalidOperation(_)),
+        "self-parent must return AppError::InvalidOperation"
+    );
+    assert!(
+        err.to_string().contains("cannot be its own parent"),
+        "error message must mention self-parent constraint"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_to_nonexistent_parent_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "MV_NP", "content", "block", None, Some(1)).await;
+
+    let result = move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "MV_NP".into(),
+        Some("GHOST_PARENT".into()),
+        1,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "moving to nonexistent parent must return AppError::NotFound"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_to_deleted_parent_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "MV_DP_BLK", "content", "block", None, Some(1)).await;
+    insert_block(&pool, "MV_DP_PAR", "page", "deleted parent", None, Some(2)).await;
+    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'MV_DP_PAR'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "MV_DP_BLK".into(),
+        Some("MV_DP_PAR".into()),
+        1,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "moving to deleted parent must return AppError::NotFound"
+    );
+}
+
+// ======================================================================
+// add_tag — happy paths
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_associates_block_with_tag() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "AT_BLK", "content", "my block", None, Some(1)).await;
+    insert_block(&pool, "AT_TAG", "tag", "urgent", None, None).await;
+
+    let resp = add_tag_inner(&pool, DEV, &mat, "AT_BLK".into(), "AT_TAG".into())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.block_id, "AT_BLK", "block_id must match");
+    assert_eq!(resp.tag_id, "AT_TAG", "tag_id must match");
+
+    // Verify block_tags row
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            .bind("AT_BLK")
+            .bind("AT_TAG")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert!(row.is_some(), "block_tags row must exist after add_tag");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_writes_op_log_entry() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "ATL_BLK", "content", "my block", None, Some(1)).await;
+    insert_block(&pool, "ATL_TAG", "tag", "urgent", None, None).await;
+
+    add_tag_inner(&pool, DEV, &mat, "ATL_BLK".into(), "ATL_TAG".into())
+        .await
+        .unwrap();
+
+    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    assert_eq!(ops.len(), 1, "exactly one op must be logged");
+    assert_eq!(ops[0].op_type, "add_tag", "op_type must be add_tag");
+    assert!(
+        ops[0].payload.contains("ATL_BLK"),
+        "payload must contain block_id"
+    );
+    assert!(
+        ops[0].payload.contains("ATL_TAG"),
+        "payload must contain tag_id"
+    );
+}
+
+// ======================================================================
+// add_tag — error paths
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_nonexistent_block_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "ATNB_TAG", "tag", "urgent", None, None).await;
+
+    let result = add_tag_inner(&pool, DEV, &mat, "GHOST_BLK".into(), "ATNB_TAG".into()).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "adding tag to nonexistent block must return AppError::NotFound"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_deleted_block_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "ATDB_BLK", "content", "deleted", None, Some(1)).await;
+    insert_block(&pool, "ATDB_TAG", "tag", "urgent", None, None).await;
+    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'ATDB_BLK'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = add_tag_inner(&pool, DEV, &mat, "ATDB_BLK".into(), "ATDB_TAG".into()).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "adding tag to deleted block must return AppError::NotFound"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_nonexistent_tag_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "ATNT_BLK", "content", "my block", None, Some(1)).await;
+
+    let result = add_tag_inner(&pool, DEV, &mat, "ATNT_BLK".into(), "GHOST_TAG".into()).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "adding nonexistent tag must return AppError::NotFound"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_with_non_tag_block_type_returns_invalid_operation() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "ATNTT_BLK", "content", "my block", None, Some(1)).await;
+    insert_block(&pool, "ATNTT_CONT", "content", "not a tag", None, Some(2)).await;
+
+    let result = add_tag_inner(&pool, DEV, &mat, "ATNTT_BLK".into(), "ATNTT_CONT".into()).await;
+
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AppError::InvalidOperation(_)),
+        "using content block as tag_id must return AppError::InvalidOperation"
+    );
+    assert!(
+        err.to_string().contains("expected 'tag'"),
+        "error message must mention expected tag type"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_duplicate_returns_invalid_operation() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "ATDUP_BLK", "content", "my block", None, Some(1)).await;
+    insert_block(&pool, "ATDUP_TAG", "tag", "urgent", None, None).await;
+
+    add_tag_inner(&pool, DEV, &mat, "ATDUP_BLK".into(), "ATDUP_TAG".into())
+        .await
+        .unwrap();
+
+    let result = add_tag_inner(&pool, DEV, &mat, "ATDUP_BLK".into(), "ATDUP_TAG".into()).await;
+
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AppError::InvalidOperation(_)),
+        "duplicate add_tag must return AppError::InvalidOperation"
+    );
+    assert!(
+        err.to_string().contains("tag already applied"),
+        "error message must mention tag already applied"
+    );
+}
+
+// ======================================================================
+// remove_tag — happy paths
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remove_tag_deletes_association() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "RT_BLK", "content", "my block", None, Some(1)).await;
+    insert_block(&pool, "RT_TAG", "tag", "urgent", None, None).await;
+
+    add_tag_inner(&pool, DEV, &mat, "RT_BLK".into(), "RT_TAG".into())
+        .await
+        .unwrap();
+
+    let resp = remove_tag_inner(&pool, DEV, &mat, "RT_BLK".into(), "RT_TAG".into())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.block_id, "RT_BLK", "block_id must match");
+    assert_eq!(resp.tag_id, "RT_TAG", "tag_id must match");
+
+    // Verify association gone
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            .bind("RT_BLK")
+            .bind("RT_TAG")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert!(
+        row.is_none(),
+        "block_tags row must be gone after remove_tag"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remove_tag_writes_op_log_entry() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "RTL_BLK", "content", "my block", None, Some(1)).await;
+    insert_block(&pool, "RTL_TAG", "tag", "urgent", None, None).await;
+
+    add_tag_inner(&pool, DEV, &mat, "RTL_BLK".into(), "RTL_TAG".into())
+        .await
+        .unwrap();
+
+    remove_tag_inner(&pool, DEV, &mat, "RTL_BLK".into(), "RTL_TAG".into())
+        .await
+        .unwrap();
+
+    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    assert_eq!(ops.len(), 2, "add_tag + remove_tag = 2 ops");
+    assert_eq!(ops[1].op_type, "remove_tag", "second op must be remove_tag");
+    assert!(
+        ops[1].payload.contains("RTL_BLK"),
+        "payload must contain block_id"
+    );
+}
+
+// ======================================================================
+// remove_tag — error paths
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remove_tag_nonexistent_block_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let result = remove_tag_inner(&pool, DEV, &mat, "GHOST_BLK".into(), "GHOST_TAG".into()).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "removing tag from nonexistent block must return AppError::NotFound"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remove_tag_deleted_block_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "RTDB_BLK", "content", "deleted", None, Some(1)).await;
+    insert_block(&pool, "RTDB_TAG", "tag", "urgent", None, None).await;
+    // Add tag before deleting block
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind("RTDB_BLK")
+        .bind("RTDB_TAG")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'RTDB_BLK'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = remove_tag_inner(&pool, DEV, &mat, "RTDB_BLK".into(), "RTDB_TAG".into()).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "removing tag from deleted block must return AppError::NotFound"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remove_tag_not_applied_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "RTNA_BLK", "content", "my block", None, Some(1)).await;
+    insert_block(&pool, "RTNA_TAG", "tag", "urgent", None, None).await;
+
+    let result = remove_tag_inner(&pool, DEV, &mat, "RTNA_BLK".into(), "RTNA_TAG".into()).await;
+
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AppError::NotFound(_)),
+        "removing unapplied tag must return AppError::NotFound"
+    );
+    assert!(
+        err.to_string().contains("tag association"),
+        "error message must mention tag association"
+    );
+}
+
+// ======================================================================
+// list_blocks — agenda_date filter
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_blocks_with_agenda_date_returns_matching_blocks() {
+    let (pool, _dir) = test_pool().await;
+
+    // Create blocks and agenda_cache entries
+    insert_block(&pool, "AG_BLK1", "content", "meeting", None, Some(1)).await;
+    insert_block(&pool, "AG_BLK2", "content", "deadline", None, Some(2)).await;
+    insert_block(&pool, "AG_BLK3", "content", "other day", None, Some(3)).await;
+
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind("2025-06-15")
+        .bind("AG_BLK1")
+        .bind("property:due_date")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind("2025-06-15")
+        .bind("AG_BLK2")
+        .bind("property:due_date")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+        .bind("2025-06-16")
+        .bind("AG_BLK3")
+        .bind("property:due_date")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let resp = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2025-06-15".into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        2,
+        "must return only blocks with agenda date 2025-06-15"
+    );
+    let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(ids.contains(&"AG_BLK1"), "AG_BLK1 must be in results");
+    assert!(ids.contains(&"AG_BLK2"), "AG_BLK2 must be in results");
+    assert!(
+        !ids.contains(&"AG_BLK3"),
+        "AG_BLK3 must not be in results (different date)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_blocks_with_agenda_date_no_matches_returns_empty() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "AG_EMPTY", "content", "block", None, Some(1)).await;
+
+    let resp = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2099-12-31".into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        resp.items.is_empty(),
+        "no blocks for nonexistent agenda date"
+    );
+    assert!(!resp.has_more, "has_more must be false for empty results");
+}
+
+// ======================================================================
+// Cross-cutting: move_block + add_tag lifecycle
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn full_lifecycle_create_tag_move_remove_tag() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // 1. Create blocks
+    let parent = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "parent".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle().await;
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block".into(),
+        Some(parent.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let tag = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "tag".into(),
+        "important".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle().await;
+
+    // 2. Add tag
+    add_tag_inner(&pool, DEV, &mat, block.id.clone(), tag.id.clone())
+        .await
+        .unwrap();
+
+    // 3. Verify tag via list_by_tag
+    let tagged = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        Some(tag.id.clone()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(tagged.items.len(), 1, "one block tagged");
+    assert_eq!(tagged.items[0].id, block.id, "correct block tagged");
+
+    // 4. Move block to root
+    move_block_inner(&pool, DEV, &mat, block.id.clone(), None, 99)
+        .await
+        .unwrap();
+
+    let moved = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert!(moved.parent_id.is_none(), "block moved to root");
+    assert_eq!(moved.position, Some(99), "position updated");
+
+    // 5. Remove tag
+    remove_tag_inner(&pool, DEV, &mat, block.id.clone(), tag.id.clone())
+        .await
+        .unwrap();
+
+    let untagged = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        Some(tag.id.clone()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        untagged.items.is_empty(),
+        "no blocks tagged after remove_tag"
+    );
+
+    // 6. Verify op_log contains all operations
+    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    let op_types: Vec<&str> = ops.iter().map(|o| o.op_type.as_str()).collect();
+    assert!(
+        op_types.contains(&"create_block"),
+        "op_log must contain create_block"
+    );
+    assert!(op_types.contains(&"add_tag"), "op_log must contain add_tag");
+    assert!(
+        op_types.contains(&"move_block"),
+        "op_log must contain move_block"
+    );
+    assert!(
+        op_types.contains(&"remove_tag"),
+        "op_log must contain remove_tag"
+    );
+}
