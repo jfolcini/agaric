@@ -59,6 +59,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 │   ├── components/BootGate.tsx        # Boot gate — blocks UI until ready
 │   ├── stores/boot.ts                 # Zustand boot state machine
 │   ├── lib/tauri.ts                   # Type-safe Tauri invoke wrappers
+│   ├── lib/tauri-mock.ts              # Browser IPC mock (auto-loaded outside Tauri)
 │   ├── __tests__/smoke.test.ts        # Vitest smoke test
 │   ├── __tests__/boot-store.test.ts   # Vitest boot store tests
 │   └── vite-env.d.ts                  # Vite type declarations
@@ -162,6 +163,79 @@ cargo tauri build        # Production build
 prek run --all-files     # Run all hooks on entire repo
 prek run                 # Run hooks on staged files only
 ```
+
+## Browser Preview (Chrome DevTools MCP)
+
+The Tauri webview (WebKitGTK on Linux) does not expose a Chrome DevTools Protocol (CDP) endpoint, so the `chrome-devtools-mcp` server cannot connect to it directly. To enable visual inspection via MCP:
+
+### How it works
+
+1. **`src/lib/tauri-mock.ts`** — mocks all Tauri IPC commands (`create_block`, `list_blocks`, `delete_block`, etc.) with an in-memory store using `@tauri-apps/api/mocks`.
+2. **`src/main.tsx`** — detects `!window.__TAURI_INTERNALS__` at startup and dynamically imports the mock before rendering.
+3. **`src/vite-env.d.ts`** — declares the `Window.__TAURI_INTERNALS__` type.
+
+### Autonomous visual development workflow
+
+Follow these steps to visually inspect and iterate on the UI:
+
+**Step 1 — Start Vite dev server** (if not already running):
+```bash
+# Run in background
+npm run dev
+# Verify it's listening:
+ss -tlnp | grep 5173
+```
+
+**Step 2 — Use `chrome-browser` MCP server** (launches its own Chrome — no user setup needed):
+```
+# Verify connection
+mcp_call_tool(chrome-browser, list_pages)
+
+# Navigate to the app
+mcp_call_tool(chrome-browser, navigate_page, {type: "url", url: "http://localhost:5173"})
+
+# Take a screenshot to see the current state
+mcp_call_tool(chrome-browser, take_screenshot, {filePath: "/tmp/app-screenshot.png"})
+# Then read the screenshot:  read("/tmp/app-screenshot.png")
+
+# Get the a11y tree to find element uids for interaction
+mcp_call_tool(chrome-browser, take_snapshot)
+
+# Interact: click buttons, fill inputs, etc. using uids from snapshot
+mcp_call_tool(chrome-browser, click, {uid: "<uid>", includeSnapshot: true})
+mcp_call_tool(chrome-browser, fill, {uid: "<uid>", value: "text", includeSnapshot: true})
+```
+
+**Step 3 — Iterate:** After editing code, Vite hot-reloads automatically. Take another screenshot to verify changes.
+
+### MCP servers
+
+Two `chrome-devtools-mcp` servers are configured:
+
+| Server | Flag | Use case |
+|--------|------|----------|
+| `chrome-browser` | (none) | **Preferred.** Launches its own headless Chrome. Fully autonomous — no user action needed. |
+| `chrome-devtools` | `--autoConnect` | Connects to user's Chrome. Requires `google-chrome --remote-debugging-port=9222`. Use only if you need the user's browser session. |
+
+Always use **`chrome-browser`** for autonomous visual development.
+
+### MCP tool cheatsheet
+
+| Tool | Purpose |
+|------|---------|
+| `list_pages` | List open Chrome tabs — also verifies MCP connection |
+| `take_screenshot` | Screenshot of page or element (by uid). Save to `/tmp/` and `read()` to view. |
+| `take_snapshot` | A11y tree text snapshot — lists elements with uids for interaction |
+| `navigate_page` | Navigate to URL, back, forward, reload |
+| `click` | Click element by uid |
+| `fill` | Type into input by uid |
+| `evaluate_script` | Run JS in the page (e.g., check state, scroll) |
+
+### Important
+
+- The mock is **dev-only** — it is tree-shaken out of production builds (dynamic import behind a runtime check).
+- Mock data is ephemeral (in-memory Map, resets on page reload).
+- The mock does NOT replicate backend logic (op log, materializer, pagination cursors). It returns minimal valid responses so the UI renders.
 
 ## Pre-commit Hooks (prek)
 
