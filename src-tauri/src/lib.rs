@@ -13,6 +13,9 @@ pub mod recovery;
 pub mod soft_delete;
 pub mod ulid;
 
+#[cfg(test)]
+mod integration_tests;
+
 use device::DeviceId;
 use materializer::Materializer;
 use tauri::Manager;

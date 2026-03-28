@@ -64,10 +64,6 @@ jobs:
       - name: Vitest
         run: npm test
 
-      # TODO: Enable sqlx offline cache check once query!() macros are added.
-      # Requires: cargo sqlx prepare (to generate .sqlx/) then commit .sqlx/.
-      # - name: sqlx offline cache check
-      #   working-directory: src-tauri
-      #   run: cargo sqlx prepare --check
-      #   env:
-      #     SQLX_OFFLINE: "true"
+      - name: sqlx offline cache check
+        working-directory: src-tauri
+        run: cargo sqlx prepare --check

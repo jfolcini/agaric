@@ -785,7 +785,7 @@ mod tests {
     // delete_block
     // ======================================================================
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn delete_block_cascades_to_children() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -823,7 +823,7 @@ mod tests {
         assert!(!resp.deleted_at.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn delete_block_already_deleted_returns_invalid_operation() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -897,7 +897,7 @@ mod tests {
     // purge_block
     // ======================================================================
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn purge_block_physically_removes() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
