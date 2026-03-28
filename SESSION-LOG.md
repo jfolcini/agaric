@@ -201,7 +201,22 @@
 - **Result:** `TrashView.tsx`. Paginated trash list, restore with deleted_at_ref, purge with confirmation dialog.
 - **Commit:** 6317216
 
-**NOTE:** All Phase 1.5 commits above were built without review subagents — workflow violation. Retroactive review in progress.
+**NOTE:** All Phase 1.5 commits above were built without review subagents — workflow violation. Retroactive review completed below.
+
+#### Retroactive Review — 5 Parallel Subagents in Worktrees [REVIEWED]
+- **Scope:** All Phase 1.5 code (p15-t1..t25)
+- **Group A (serializer):** Review in progress (subagent stuck, retried)
+- **Group B (editor):** clearHistory on mount via state.reconfigure (ADR-01 undo leak fix). Extracted testable `handleBlockKeyDown` pure function. +47 tests.
+- **Group C (components):** Fixed captured `activeBlockId` before `unmount()` in EditableBlock + BlockTree (content loss on focus-switch). +45 tests.
+- **Group D (Rust):** TOCTOU fix — moved validation inside `BEGIN IMMEDIATE` for move_block, add_tag, remove_tag. +23 Rust tests (421 total).
+- **Group E (views):** JournalPage missing cursor pagination (ADR violation — fixed). PageBrowser sort comment fix. +32 tests.
+- **Also fixed:** Materializer `tokio::spawn` → `cfg(test)`/`cfg(not(test))` split to fix Tauri setup hook panic.
+- **Tests after review:** 421 Rust + 213 Vitest = 634 total.
+- **Commit:** dbfbf65
+
+#### App Layout — Collapsible Sidebar [BUILT]
+- **Result:** Sidebar with Journal/Pages/Tags/Trash navigation. Opens Journal by default. Replaced Tauri template CSS.
+- **Commit:** dbfbf65 (same commit as review)
 
 ---
 
