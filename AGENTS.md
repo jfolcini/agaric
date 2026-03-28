@@ -120,9 +120,11 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 
 ## Test Coverage
 
-- **262 Rust tests** + **5 Vitest frontend tests** = 267 total
-- **Tarpaulin coverage: 91.05%** (814/894 lines)
-- Per-module coverage: cache 100%, db 100%, draft 100%, hash 96%, op 100%, op_log 100%, soft_delete 100%, pagination 96%, recovery 90%, materializer 93%, commands 83%, device 86%
+- **379 Rust tests** + **5 Vitest frontend tests** = 384 total
+- **Tarpaulin coverage: 97.61%** (817/837 lines)
+- Per-module coverage: cache 100%, db 100%, draft 100%, hash 96%, op 100%, op_log 100%, soft_delete 100%, pagination 99%, recovery 90%, materializer 96%, commands 98%, device 86%, ulid 100%
+- Untestable Tauri bootstrap (lib.rs::run, main.rs::main, 7 command wrappers) excluded via `#[cfg(not(tarpaulin_include))]`
+- Remaining 20 uncovered lines: defensive DB error paths + tarpaulin instrumentation artifacts
 
 ## Database
 
