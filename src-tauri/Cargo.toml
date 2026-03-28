@@ -50,3 +50,7 @@ harness = false
 [[bench]]
 name = "soft_delete_bench"
 harness = false
+
+[[bench]]
+name = "commands_bench"
+harness = false

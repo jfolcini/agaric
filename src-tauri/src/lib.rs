@@ -14,6 +14,8 @@ pub mod soft_delete;
 pub mod ulid;
 
 #[cfg(test)]
+mod command_integration_tests;
+#[cfg(test)]
 mod integration_tests;
 
 use device::DeviceId;
