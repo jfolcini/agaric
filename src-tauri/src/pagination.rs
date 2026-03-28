@@ -49,6 +49,16 @@ pub struct BlockRow {
     pub is_conflict: bool,
 }
 
+/// Row returned by block history queries (op_log entries for a block).
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
+pub struct HistoryEntry {
+    pub device_id: String,
+    pub seq: i64,
+    pub op_type: String,
+    pub payload: String,
+    pub created_at: String,
+}
+
 /// Internal cursor for keyset pagination.
 /// Opaque to callers; serialised as base64-encoded JSON.
 ///
@@ -63,6 +73,8 @@ pub struct Cursor {
     pub position: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<i64>,
 }
 
 /// Pagination request from the client.
@@ -207,6 +219,7 @@ pub async fn list_children(
         id: last.id.clone(),
         position: Some(last.position.unwrap_or(NULL_POSITION_SENTINEL)),
         deleted_at: None,
+        seq: None,
     })
 }
 
@@ -246,6 +259,7 @@ pub async fn list_by_type(
         id: last.id.clone(),
         position: None,
         deleted_at: None,
+        seq: None,
     })
 }
 
@@ -290,6 +304,7 @@ pub async fn list_trash(
         id: last.id.clone(),
         position: None,
         deleted_at: last.deleted_at.clone(),
+        seq: None,
     })
 }
 
@@ -330,6 +345,7 @@ pub async fn list_by_tag(
         id: last.id.clone(),
         position: None,
         deleted_at: None,
+        seq: None,
     })
 }
 
@@ -372,6 +388,128 @@ pub async fn list_agenda(
         id: last.id.clone(),
         position: None,
         deleted_at: None,
+        seq: None,
+    })
+}
+
+/// List backlinks — blocks that link *to* `target_id`, paginated.
+///
+/// Ordered by `b.id ASC` (ULID ≈ chronological).
+/// Uses index `idx_block_links_target(target_id)`.
+pub async fn list_backlinks(
+    pool: &SqlitePool,
+    target_id: &str,
+    page: &PageRequest,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    let fetch_limit = page.limit + 1;
+
+    let (cursor_flag, cursor_id): (Option<i64>, String) = match page.after.as_ref() {
+        Some(c) => (Some(1), c.id.clone()),
+        None => (None, String::new()),
+    };
+
+    let rows = sqlx::query_as::<_, BlockRow>(
+        "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
+                b.deleted_at, b.archived_at, b.is_conflict \
+         FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL \
+           AND (?2 IS NULL OR b.id > ?3) \
+         ORDER BY b.id ASC \
+         LIMIT ?4",
+    )
+    .bind(target_id) // ?1
+    .bind(cursor_flag) // ?2
+    .bind(&cursor_id) // ?3
+    .bind(fetch_limit) // ?4
+    .fetch_all(pool)
+    .await?;
+
+    build_page_response(rows, page.limit, |last| Cursor {
+        id: last.id.clone(),
+        position: None,
+        deleted_at: None,
+        seq: None,
+    })
+}
+
+/// List op-log history for a specific block, paginated.
+///
+/// Returns all ops whose payload contains the given `block_id`, ordered by
+/// `seq DESC` (newest first).  Cursor is the `seq` number.
+///
+/// Note: This queries ALL op types for a block (create, edit, add_tag,
+/// remove_tag, move, set_property, etc.).
+pub async fn list_block_history(
+    pool: &SqlitePool,
+    block_id: &str,
+    page: &PageRequest,
+) -> Result<PageResponse<HistoryEntry>, AppError> {
+    let fetch_limit = page.limit + 1;
+
+    let (cursor_flag, cursor_seq): (Option<i64>, i64) = match page.after.as_ref() {
+        Some(c) => (Some(1), c.seq.unwrap_or(0)),
+        None => (None, 0),
+    };
+
+    let rows = sqlx::query_as::<_, HistoryEntry>(
+        "SELECT device_id, seq, op_type, payload, created_at \
+         FROM op_log \
+         WHERE json_extract(payload, '$.block_id') = ?1 \
+           AND (?2 IS NULL OR seq < ?3) \
+         ORDER BY seq DESC \
+         LIMIT ?4",
+    )
+    .bind(block_id) // ?1
+    .bind(cursor_flag) // ?2
+    .bind(cursor_seq) // ?3
+    .bind(fetch_limit) // ?4
+    .fetch_all(pool)
+    .await?;
+
+    build_page_response(rows, page.limit, |last| Cursor {
+        id: String::new(),
+        position: None,
+        deleted_at: None,
+        seq: Some(last.seq),
+    })
+}
+
+/// List conflict blocks, paginated.
+///
+/// Ordered by `id ASC` (ULID ≈ chronological).
+/// Returns only non-deleted blocks with `is_conflict = 1`.
+pub async fn list_conflicts(
+    pool: &SqlitePool,
+    page: &PageRequest,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    let fetch_limit = page.limit + 1;
+
+    let (cursor_flag, cursor_id): (Option<i64>, String) = match page.after.as_ref() {
+        Some(c) => (Some(1), c.id.clone()),
+        None => (None, String::new()),
+    };
+
+    let rows = sqlx::query_as::<_, BlockRow>(
+        "SELECT id, block_type, content, parent_id, position, \
+                deleted_at, archived_at, is_conflict \
+         FROM blocks \
+         WHERE is_conflict = 1 AND deleted_at IS NULL \
+           AND (?1 IS NULL OR id > ?2) \
+         ORDER BY id ASC \
+         LIMIT ?3",
+    )
+    .bind(cursor_flag) // ?1
+    .bind(&cursor_id) // ?2
+    .bind(fetch_limit) // ?3
+    .fetch_all(pool)
+    .await?;
+
+    build_page_response(rows, page.limit, |last| Cursor {
+        id: last.id.clone(),
+        position: None,
+        deleted_at: None,
+        seq: None,
     })
 }
 
@@ -382,10 +520,12 @@ pub async fn list_agenda(
 #[cfg(test)]
 mod tests {
     //! Tests for cursor-based keyset pagination — cursor codec, page request
-    //! validation, and all five paginated query functions (list_children,
-    //! list_by_type, list_trash, list_by_tag, list_agenda).  Covers first-page,
+    //! validation, and all eight paginated query functions (list_children,
+    //! list_by_type, list_trash, list_by_tag, list_agenda, list_backlinks,
+    //! list_block_history, list_conflicts).  Covers first-page,
     //! cursor-continuation, last-page, empty results, ordering, tiebreakers,
-    //! soft-delete exclusion, cursor stability after inserts, and exhaustive walks.
+    //! soft-delete exclusion, cursor stability after inserts, exhaustive walks,
+    //! seq-field backward compatibility, and all op types in history.
 
     use super::*;
     use crate::db::init_pool;
@@ -470,6 +610,7 @@ mod tests {
             id: "01HZ0000000000000000000001".into(),
             position: Some(3),
             deleted_at: None,
+            seq: None,
         };
         let encoded = cursor.encode().unwrap();
         let decoded = Cursor::decode(&encoded).unwrap();
@@ -485,10 +626,38 @@ mod tests {
             id: "01HZ0000000000000000000001".into(),
             position: None,
             deleted_at: Some("2025-01-15T12:00:00+00:00".into()),
+            seq: None,
         };
         let encoded = cursor.encode().unwrap();
         let decoded = Cursor::decode(&encoded).unwrap();
         assert_eq!(cursor, decoded);
+    }
+
+    #[test]
+    fn cursor_encode_decode_with_seq() {
+        let cursor = Cursor {
+            id: String::new(),
+            position: None,
+            deleted_at: None,
+            seq: Some(42),
+        };
+        let encoded = cursor.encode().unwrap();
+        let decoded = Cursor::decode(&encoded).unwrap();
+        assert_eq!(cursor, decoded, "cursor with seq must survive roundtrip");
+    }
+
+    #[test]
+    fn cursor_decode_without_seq_defaults_to_none() {
+        // Simulate a pre-Phase-2 cursor that doesn't have the seq field
+        let old_json = r#"{"id":"01HZ0000000000000000000001","position":3}"#;
+        let encoded = URL_SAFE_NO_PAD.encode(old_json.as_bytes());
+        let decoded = Cursor::decode(&encoded).unwrap();
+        assert_eq!(decoded.id, "01HZ0000000000000000000001");
+        assert_eq!(decoded.position, Some(3));
+        assert_eq!(
+            decoded.seq, None,
+            "old cursor without seq field must default to None"
+        );
     }
 
     #[test]
@@ -507,6 +676,7 @@ mod tests {
             id: "id-with-émojis-\u{1f389}-and-\"quotes\"".into(),
             position: Some(42),
             deleted_at: Some("2025-06-01T00:00:00+00:00".into()),
+            seq: None,
         };
         let encoded = cursor.encode().unwrap();
         let decoded = Cursor::decode(&encoded).unwrap();
@@ -1379,5 +1549,475 @@ mod tests {
         insta::assert_yaml_snapshot!(resp, {
             ".next_cursor" => "[CURSOR]",
         });
+    }
+
+    // ====================================================================
+    // list_backlinks
+    // ====================================================================
+
+    /// Insert a block_links row directly.
+    async fn insert_block_link(pool: &SqlitePool, source_id: &str, target_id: &str) {
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(source_id)
+            .bind(target_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Insert an op_log entry directly for history tests.
+    async fn insert_op_log_entry(
+        pool: &SqlitePool,
+        device_id: &str,
+        seq: i64,
+        op_type: &str,
+        payload: &str,
+        created_at: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(device_id)
+        .bind(seq)
+        .bind("test-hash-placeholder")
+        .bind(op_type)
+        .bind(payload)
+        .bind(created_at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Mark a block as a conflict.
+    async fn set_conflict(pool: &SqlitePool, id: &str) {
+        sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_list_backlinks_basic() {
+        let (pool, _dir) = test_pool().await;
+
+        // Target block and source blocks
+        insert_block(&pool, "TARGET01", "page", "target page", None, None).await;
+        insert_block(&pool, "SOURCE01", "content", "links to target", None, None).await;
+        insert_block(&pool, "SOURCE02", "content", "also links", None, None).await;
+        insert_block(&pool, "UNLINKED", "content", "no link", None, None).await;
+
+        insert_block_link(&pool, "SOURCE01", "TARGET01").await;
+        insert_block_link(&pool, "SOURCE02", "TARGET01").await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_backlinks(&pool, "TARGET01", &page).await.unwrap();
+
+        assert_eq!(resp.items.len(), 2, "only linked blocks must be returned");
+        assert_eq!(resp.items[0].id, "SOURCE01");
+        assert_eq!(resp.items[1].id, "SOURCE02");
+        assert!(!resp.has_more);
+        assert!(resp.next_cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_backlinks_pagination() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TARGET01", "page", "target", None, None).await;
+        for i in 1..=5_i64 {
+            let id = format!("SRC{i:05}");
+            insert_block(&pool, &id, "content", &format!("source {i}"), None, None).await;
+            insert_block_link(&pool, &id, "TARGET01").await;
+        }
+
+        // Page 1
+        let r1 = list_backlinks(&pool, "TARGET01", &PageRequest::new(None, Some(2)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(r1.items.len(), 2);
+        assert!(r1.has_more);
+        assert_eq!(r1.items[0].id, "SRC00001");
+        assert_eq!(r1.items[1].id, "SRC00002");
+
+        // Page 2
+        let r2 = list_backlinks(
+            &pool,
+            "TARGET01",
+            &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r2.items.len(), 2);
+        assert!(r2.has_more);
+        assert_eq!(r2.items[0].id, "SRC00003");
+        assert_eq!(r2.items[1].id, "SRC00004");
+
+        // Page 3 (last)
+        let r3 = list_backlinks(
+            &pool,
+            "TARGET01",
+            &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r3.items.len(), 1);
+        assert!(!r3.has_more);
+        assert!(r3.next_cursor.is_none());
+        assert_eq!(r3.items[0].id, "SRC00005");
+    }
+
+    #[tokio::test]
+    async fn test_list_backlinks_excludes_deleted() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TARGET01", "page", "target", None, None).await;
+        insert_block(&pool, "SOURCE01", "content", "alive", None, None).await;
+        insert_block(&pool, "SOURCE02", "content", "deleted", None, None).await;
+        insert_block(&pool, "SOURCE03", "content", "alive too", None, None).await;
+
+        insert_block_link(&pool, "SOURCE01", "TARGET01").await;
+        insert_block_link(&pool, "SOURCE02", "TARGET01").await;
+        insert_block_link(&pool, "SOURCE03", "TARGET01").await;
+
+        soft_delete_block(&pool, "SOURCE02", FIXED_DELETED_AT).await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_backlinks(&pool, "TARGET01", &page).await.unwrap();
+
+        assert_eq!(
+            resp.items.len(),
+            2,
+            "soft-deleted source block must be excluded"
+        );
+        assert_eq!(resp.items[0].id, "SOURCE01");
+        assert_eq!(resp.items[1].id, "SOURCE03");
+    }
+
+    #[tokio::test]
+    async fn test_list_backlinks_empty() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TARGET01", "page", "target page", None, None).await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_backlinks(&pool, "TARGET01", &page).await.unwrap();
+
+        assert!(
+            resp.items.is_empty(),
+            "target with no links must return empty"
+        );
+        assert!(!resp.has_more);
+        assert!(resp.next_cursor.is_none());
+    }
+
+    // ====================================================================
+    // list_block_history
+    // ====================================================================
+
+    #[tokio::test]
+    async fn test_list_block_history_basic() {
+        let (pool, _dir) = test_pool().await;
+
+        let payload = r#"{"block_id":"HIST_BLK","block_type":"content","content":"hello"}"#;
+        insert_op_log_entry(
+            &pool,
+            "device-1",
+            1,
+            "create_block",
+            payload,
+            "2025-01-01T00:00:00Z",
+        )
+        .await;
+
+        let edit_payload = r#"{"block_id":"HIST_BLK","to_text":"updated"}"#;
+        insert_op_log_entry(
+            &pool,
+            "device-1",
+            2,
+            "edit_block",
+            edit_payload,
+            "2025-01-01T01:00:00Z",
+        )
+        .await;
+
+        // Unrelated op (different block)
+        let other_payload = r#"{"block_id":"OTHER_BLK","content":"other"}"#;
+        insert_op_log_entry(
+            &pool,
+            "device-1",
+            3,
+            "create_block",
+            other_payload,
+            "2025-01-01T02:00:00Z",
+        )
+        .await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_block_history(&pool, "HIST_BLK", &page).await.unwrap();
+
+        assert_eq!(resp.items.len(), 2, "only ops for HIST_BLK");
+        // Newest first (seq DESC)
+        assert_eq!(resp.items[0].seq, 2, "newest op first");
+        assert_eq!(resp.items[0].op_type, "edit_block");
+        assert_eq!(resp.items[1].seq, 1);
+        assert_eq!(resp.items[1].op_type, "create_block");
+        assert!(!resp.has_more);
+    }
+
+    #[tokio::test]
+    async fn test_list_block_history_pagination() {
+        let (pool, _dir) = test_pool().await;
+
+        for i in 1..=5_i64 {
+            let payload = format!(r#"{{"block_id":"HIST_BLK","to_text":"v{i}"}}"#);
+            insert_op_log_entry(
+                &pool,
+                "device-1",
+                i,
+                "edit_block",
+                &payload,
+                &format!("2025-01-01T{i:02}:00:00Z"),
+            )
+            .await;
+        }
+
+        // Page 1: newest first → seq 5, 4
+        let r1 = list_block_history(&pool, "HIST_BLK", &PageRequest::new(None, Some(2)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(r1.items.len(), 2);
+        assert!(r1.has_more);
+        assert_eq!(r1.items[0].seq, 5);
+        assert_eq!(r1.items[1].seq, 4);
+
+        // Page 2: seq 3, 2
+        let r2 = list_block_history(
+            &pool,
+            "HIST_BLK",
+            &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r2.items.len(), 2);
+        assert!(r2.has_more);
+        assert_eq!(r2.items[0].seq, 3);
+        assert_eq!(r2.items[1].seq, 2);
+
+        // Page 3 (last): seq 1
+        let r3 = list_block_history(
+            &pool,
+            "HIST_BLK",
+            &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r3.items.len(), 1);
+        assert!(!r3.has_more);
+        assert!(r3.next_cursor.is_none());
+        assert_eq!(r3.items[0].seq, 1);
+    }
+
+    #[tokio::test]
+    async fn test_list_block_history_empty() {
+        let (pool, _dir) = test_pool().await;
+
+        // No ops in op_log at all
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_block_history(&pool, "NONEXISTENT", &page)
+            .await
+            .unwrap();
+
+        assert!(
+            resp.items.is_empty(),
+            "block with no history must return empty"
+        );
+        assert!(!resp.has_more);
+        assert!(resp.next_cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_block_history_all_op_types() {
+        let (pool, _dir) = test_pool().await;
+
+        let ops = [
+            (
+                1,
+                "create_block",
+                r#"{"block_id":"BLK01","block_type":"content","content":"hi"}"#,
+            ),
+            (
+                2,
+                "edit_block",
+                r#"{"block_id":"BLK01","to_text":"updated"}"#,
+            ),
+            (3, "add_tag", r#"{"block_id":"BLK01","tag_id":"TAG01"}"#),
+            (4, "remove_tag", r#"{"block_id":"BLK01","tag_id":"TAG01"}"#),
+            (
+                5,
+                "move_block",
+                r#"{"block_id":"BLK01","new_parent_id":null,"new_position":1}"#,
+            ),
+        ];
+
+        for (seq, op_type, payload) in &ops {
+            insert_op_log_entry(
+                &pool,
+                "device-1",
+                *seq,
+                op_type,
+                payload,
+                "2025-01-01T00:00:00Z",
+            )
+            .await;
+        }
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_block_history(&pool, "BLK01", &page).await.unwrap();
+
+        assert_eq!(
+            resp.items.len(),
+            5,
+            "all op types for the block must be returned"
+        );
+        let op_types: Vec<&str> = resp.items.iter().map(|e| e.op_type.as_str()).collect();
+        assert!(op_types.contains(&"create_block"));
+        assert!(op_types.contains(&"edit_block"));
+        assert!(op_types.contains(&"add_tag"));
+        assert!(op_types.contains(&"remove_tag"));
+        assert!(op_types.contains(&"move_block"));
+    }
+
+    // ====================================================================
+    // list_conflicts
+    // ====================================================================
+
+    #[tokio::test]
+    async fn test_list_conflicts_basic() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "NORMAL01", "content", "normal", None, None).await;
+        insert_block(&pool, "CONFLCT1", "content", "conflict 1", None, None).await;
+        insert_block(&pool, "CONFLCT2", "content", "conflict 2", None, None).await;
+
+        set_conflict(&pool, "CONFLCT1").await;
+        set_conflict(&pool, "CONFLCT2").await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_conflicts(&pool, &page).await.unwrap();
+
+        assert_eq!(resp.items.len(), 2, "only conflict blocks");
+        assert_eq!(resp.items[0].id, "CONFLCT1");
+        assert_eq!(resp.items[1].id, "CONFLCT2");
+        assert!(
+            resp.items.iter().all(|b| b.is_conflict),
+            "all returned blocks must be conflicts"
+        );
+        assert!(!resp.has_more);
+    }
+
+    #[tokio::test]
+    async fn test_list_conflicts_excludes_deleted() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "CONFLCT1", "content", "alive conflict", None, None).await;
+        insert_block(&pool, "CONFLCT2", "content", "deleted conflict", None, None).await;
+
+        set_conflict(&pool, "CONFLCT1").await;
+        set_conflict(&pool, "CONFLCT2").await;
+        soft_delete_block(&pool, "CONFLCT2", FIXED_DELETED_AT).await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_conflicts(&pool, &page).await.unwrap();
+
+        assert_eq!(
+            resp.items.len(),
+            1,
+            "soft-deleted conflict must be excluded"
+        );
+        assert_eq!(resp.items[0].id, "CONFLCT1");
+    }
+
+    #[tokio::test]
+    async fn test_list_conflicts_empty() {
+        let (pool, _dir) = test_pool().await;
+
+        // Only normal blocks, no conflicts
+        insert_block(&pool, "NORMAL01", "content", "normal", None, None).await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_conflicts(&pool, &page).await.unwrap();
+
+        assert!(
+            resp.items.is_empty(),
+            "no conflict blocks must return empty"
+        );
+        assert!(!resp.has_more);
+        assert!(resp.next_cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_conflicts_pagination() {
+        let (pool, _dir) = test_pool().await;
+
+        for i in 1..=5_i64 {
+            let id = format!("CONFLCT{i}");
+            insert_block(&pool, &id, "content", &format!("conflict {i}"), None, None).await;
+            set_conflict(&pool, &id).await;
+        }
+
+        // Page 1
+        let r1 = list_conflicts(&pool, &PageRequest::new(None, Some(2)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(r1.items.len(), 2);
+        assert!(r1.has_more);
+        assert_eq!(r1.items[0].id, "CONFLCT1");
+        assert_eq!(r1.items[1].id, "CONFLCT2");
+
+        // Page 2
+        let r2 = list_conflicts(&pool, &PageRequest::new(r1.next_cursor, Some(2)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(r2.items.len(), 2);
+        assert!(r2.has_more);
+        assert_eq!(r2.items[0].id, "CONFLCT3");
+        assert_eq!(r2.items[1].id, "CONFLCT4");
+
+        // Page 3 (last)
+        let r3 = list_conflicts(&pool, &PageRequest::new(r2.next_cursor, Some(2)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(r3.items.len(), 1);
+        assert!(!r3.has_more);
+        assert!(r3.next_cursor.is_none());
+        assert_eq!(r3.items[0].id, "CONFLCT5");
+    }
+
+    // ====================================================================
+    // insta snapshot tests — HistoryEntry
+    // ====================================================================
+
+    /// Snapshot a PageResponse<HistoryEntry> from list_block_history.
+    #[tokio::test]
+    async fn snapshot_history_entry_response() {
+        let (pool, _dir) = test_pool().await;
+
+        let payload = r#"{"block_id":"SNAP_HIS","block_type":"content","content":"snap"}"#;
+        insert_op_log_entry(
+            &pool,
+            "snap-device",
+            1,
+            "create_block",
+            payload,
+            "2025-06-15T12:00:00Z",
+        )
+        .await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_block_history(&pool, "SNAP_HIS", &page).await.unwrap();
+
+        insta::assert_yaml_snapshot!(resp);
     }
 }

@@ -87,6 +87,46 @@ export function setupMock(): void {
         return b
       }
 
+      case 'move_block': {
+        const a = args as Record<string, unknown>
+        const b = blocks.get(a.blockId as string)
+        if (!b) throw new Error('not found')
+        b.parent_id = a.newParentId as string | null
+        b.position = a.newPosition as number
+        return { block_id: a.blockId, new_parent_id: b.parent_id, new_position: b.position }
+      }
+
+      case 'add_tag': {
+        const a = args as Record<string, unknown>
+        return { block_id: a.blockId, tag_id: a.tagId }
+      }
+
+      case 'remove_tag': {
+        const a = args as Record<string, unknown>
+        return { block_id: a.blockId, tag_id: a.tagId }
+      }
+
+      case 'get_backlinks': {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+
+      case 'get_block_history': {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+
+      case 'get_conflicts': {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+
+      case 'get_status': {
+        return {
+          foreground_queue_depth: 0,
+          background_queue_depth: 0,
+          total_ops_dispatched: 0,
+          total_background_dispatched: 0,
+        }
+      }
+
       default:
         return null
     }

@@ -38,6 +38,10 @@ mod specta_tests {
             crate::commands::get_block,
             crate::commands::add_tag,
             crate::commands::remove_tag,
+            crate::commands::get_backlinks,
+            crate::commands::get_block_history,
+            crate::commands::get_conflicts,
+            crate::commands::get_status,
         ])
     }
 
@@ -63,12 +67,22 @@ mod specta_tests {
         let committed = std::fs::read_to_string(&committed_path)
             .expect("read committed bindings.ts — run the ignored regenerate test first");
 
-        // Normalize trailing whitespace so trailing-whitespace hooks don't cause spurious diffs
+        // Normalize: trim trailing whitespace, strip `// @ts-nocheck` header,
+        // and trim leading/trailing blank lines so minor whitespace differences
+        // between specta output and the committed file don't cause spurious diffs.
         let norm = |s: &str| -> String {
-            s.lines()
+            let lines: Vec<&str> = s
+                .lines()
                 .map(|l| l.trim_end())
-                .collect::<Vec<_>>()
-                .join("\n")
+                .filter(|l| *l != "// @ts-nocheck")
+                .collect();
+            // Trim leading and trailing empty lines
+            let start = lines.iter().position(|l| !l.is_empty()).unwrap_or(0);
+            let end = lines
+                .iter()
+                .rposition(|l| !l.is_empty())
+                .map_or(0, |i| i + 1);
+            lines[start..end].join("\n")
         };
 
         assert_eq!(
@@ -86,13 +100,19 @@ mod specta_tests {
     #[ignore]
     fn regenerate_ts_bindings() {
         let builder = specta_builder();
+        let out_path = "../src/lib/bindings.ts";
         builder
             .export(
                 specta_typescript::Typescript::default()
                     .bigint(specta_typescript::BigIntExportBehavior::Number),
-                "../src/lib/bindings.ts",
+                out_path,
             )
             .expect("Failed to export TypeScript bindings");
+
+        // Prepend `// @ts-nocheck` so tsc ignores unused specta-generated declarations
+        let content = std::fs::read_to_string(out_path).expect("read generated bindings");
+        std::fs::write(out_path, format!("// @ts-nocheck\n{content}"))
+            .expect("write bindings with ts-nocheck header");
     }
 }
 
@@ -115,6 +135,10 @@ pub fn run() {
         commands::get_block,
         commands::add_tag,
         commands::remove_tag,
+        commands::get_backlinks,
+        commands::get_block_history,
+        commands::get_conflicts,
+        commands::get_status,
     ]);
 
     tauri::Builder::default()

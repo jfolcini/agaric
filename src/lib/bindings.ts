@@ -84,6 +84,38 @@ async removeTag(blockId: string, tagId: string) : Promise<Result<TagResponse, { 
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async getBacklinks(blockId: string, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_backlinks", { blockId, cursor, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getBlockHistory(blockId: string, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<HistoryEntry>, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_block_history", { blockId, cursor, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getConflicts(cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_conflicts", { cursor, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getStatus() : Promise<Result<StatusInfo, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -103,6 +135,10 @@ export type BlockResponse = { id: string; block_type: string; content: string | 
  */
 export type BlockRow = { id: string; block_type: string; content: string | null; parent_id: string | null; position: number | null; deleted_at: string | null; archived_at: string | null; is_conflict: boolean }
 export type DeleteResponse = { block_id: string; deleted_at: string; descendants_affected: number }
+/**
+ * Row returned by block history queries (op_log entries for a block).
+ */
+export type HistoryEntry = { device_id: string; seq: number; op_type: string; payload: string; created_at: string }
 export type MoveResponse = { block_id: string; new_parent_id: string | null; new_position: number }
 /**
  * Paginated response.
@@ -112,6 +148,13 @@ export type MoveResponse = { block_id: string; new_parent_id: string | null; new
 export type PageResponse<T> = { items: T[]; next_cursor: string | null; has_more: boolean }
 export type PurgeResponse = { block_id: string; purged_count: number }
 export type RestoreResponse = { block_id: string; restored_count: number }
+/**
+ * Serializable status snapshot of the materializer queues.
+ *
+ * Built from [`QueueMetrics`] (atomic counters) and channel capacity info.
+ * Exposed by the `get_status` command.
+ */
+export type StatusInfo = { foreground_queue_depth: number; background_queue_depth: number; total_ops_dispatched: number; total_background_dispatched: number }
 export type TagResponse = { block_id: string; tag_id: string }
 
 /** tauri-specta globals **/

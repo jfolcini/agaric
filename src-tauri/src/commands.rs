@@ -16,13 +16,13 @@ use tauri::State;
 
 use crate::device::DeviceId;
 use crate::error::AppError;
-use crate::materializer::Materializer;
+use crate::materializer::{Materializer, StatusInfo};
 use crate::op::{
     AddTagPayload, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload,
     OpPayload, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
 };
 use crate::op_log;
-use crate::pagination::{self, BlockRow, PageResponse};
+use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
 use crate::recovery;
 use crate::soft_delete;
 use crate::ulid::BlockId;
@@ -678,6 +678,39 @@ pub async fn remove_tag_inner(
     Ok(TagResponse { block_id, tag_id })
 }
 
+pub async fn get_backlinks_inner(
+    pool: &SqlitePool,
+    block_id: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    pagination::list_backlinks(pool, &block_id, &page).await
+}
+
+pub async fn get_block_history_inner(
+    pool: &SqlitePool,
+    block_id: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<HistoryEntry>, AppError> {
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    pagination::list_block_history(pool, &block_id, &page).await
+}
+
+pub async fn get_conflicts_inner(
+    pool: &SqlitePool,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    pagination::list_conflicts(pool, &page).await
+}
+
+pub fn get_status_inner(materializer: &Materializer) -> StatusInfo {
+    materializer.status()
+}
+
 // ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
@@ -839,6 +872,48 @@ pub async fn remove_tag(
     tag_id: String,
 ) -> Result<TagResponse, AppError> {
     remove_tag_inner(&pool, &device_id.0, &materializer, block_id, tag_id).await
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_backlinks(
+    pool: State<'_, SqlitePool>,
+    block_id: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    get_backlinks_inner(&pool, block_id, cursor, limit).await
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_block_history(
+    pool: State<'_, SqlitePool>,
+    block_id: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<HistoryEntry>, AppError> {
+    get_block_history_inner(&pool, block_id, cursor, limit).await
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_conflicts(
+    pool: State<'_, SqlitePool>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    get_conflicts_inner(&pool, cursor, limit).await
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_status(materializer: State<'_, Materializer>) -> Result<StatusInfo, AppError> {
+    Ok(get_status_inner(&materializer))
 }
 
 // ---------------------------------------------------------------------------
@@ -2217,6 +2292,163 @@ mod tests {
         insert_block(&pool, "SNAP_BLK2", "page", "second", None, Some(2)).await;
 
         let resp = list_blocks_inner(&pool, None, None, None, None, None, None, Some(10))
+            .await
+            .unwrap();
+
+        insta::assert_yaml_snapshot!(resp);
+    }
+
+    // ======================================================================
+    // get_backlinks
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_backlinks_returns_linked_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BL_TGT", "page", "target", None, None).await;
+        insert_block(&pool, "BL_SRC1", "content", "src1", None, None).await;
+        insert_block(&pool, "BL_SRC2", "content", "src2", None, None).await;
+
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind("BL_SRC1")
+            .bind("BL_TGT")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind("BL_SRC2")
+            .bind("BL_TGT")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let resp = get_backlinks_inner(&pool, "BL_TGT".into(), None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(resp.items.len(), 2);
+        assert_eq!(resp.items[0].id, "BL_SRC1");
+        assert_eq!(resp.items[1].id, "BL_SRC2");
+    }
+
+    // ======================================================================
+    // get_block_history
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_block_history_returns_ops_for_block() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let created = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "hello".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        edit_block_inner(&pool, DEV, &mat, created.id.clone(), "updated".into())
+            .await
+            .unwrap();
+
+        let resp = get_block_history_inner(&pool, created.id, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(resp.items.len(), 2, "create + edit = 2 ops");
+        // Newest first (seq DESC)
+        assert_eq!(resp.items[0].op_type, "edit_block");
+        assert_eq!(resp.items[1].op_type, "create_block");
+    }
+
+    // ======================================================================
+    // get_conflicts
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_conflicts_returns_conflict_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "CF_NORM", "content", "normal", None, None).await;
+        insert_block(&pool, "CF_CONF", "content", "conflict", None, None).await;
+
+        sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
+            .bind("CF_CONF")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let resp = get_conflicts_inner(&pool, None, None).await.unwrap();
+
+        assert_eq!(resp.items.len(), 1);
+        assert_eq!(resp.items[0].id, "CF_CONF");
+        assert!(resp.items[0].is_conflict);
+    }
+
+    // ======================================================================
+    // get_status
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_status_returns_initial_metrics() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Allow consumer tasks to start before checking status
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let status = get_status_inner(&mat);
+
+        // Fresh materializer — all counters at zero
+        assert_eq!(status.total_ops_dispatched, 0);
+        assert_eq!(status.total_background_dispatched, 0);
+    }
+
+    // ======================================================================
+    // insta snapshot tests — new response types
+    // ======================================================================
+
+    /// Snapshot a StatusInfo from get_status_inner.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn snapshot_status_info_response() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Allow consumer tasks to start
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let status = get_status_inner(&mat);
+
+        insta::assert_yaml_snapshot!(status);
+    }
+
+    /// Snapshot a PageResponse<HistoryEntry> from get_block_history_inner.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn snapshot_block_history_response() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert deterministic op_log entries directly
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("snap-device")
+        .bind(1_i64)
+        .bind("snap-hash")
+        .bind("create_block")
+        .bind(r#"{"block_id":"SNAP_HIST","block_type":"content","content":"hi"}"#)
+        .bind("2025-06-15T12:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let resp = get_block_history_inner(&pool, "SNAP_HIST".into(), None, None)
             .await
             .unwrap();
 

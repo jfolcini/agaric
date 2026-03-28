@@ -1,8 +1,10 @@
-import { Calendar, ChevronsLeft, FileText, Tag, Trash2 } from 'lucide-react'
+import { Activity, Calendar, ChevronsLeft, FileText, GitMerge, Tag, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { BootGate } from './components/BootGate'
+import { ConflictList } from './components/ConflictList'
 import { JournalPage } from './components/JournalPage'
 import { PageBrowser } from './components/PageBrowser'
+import { StatusPanel } from './components/StatusPanel'
 import { TagList } from './components/TagList'
 import { TrashView } from './components/TrashView'
 import {
@@ -22,13 +24,15 @@ import {
   useSidebar,
 } from './components/ui/sidebar'
 
-type View = 'journal' | 'pages' | 'tags' | 'trash'
+type View = 'journal' | 'pages' | 'tags' | 'trash' | 'status' | 'conflicts'
 
 const NAV_ITEMS: { id: View; icon: React.ElementType; label: string }[] = [
   { id: 'journal', icon: Calendar, label: 'Journal' },
   { id: 'pages', icon: FileText, label: 'Pages' },
   { id: 'tags', icon: Tag, label: 'Tags' },
   { id: 'trash', icon: Trash2, label: 'Trash' },
+  { id: 'status', icon: Activity, label: 'Status' },
+  { id: 'conflicts', icon: GitMerge, label: 'Conflicts' },
 ]
 
 function CollapseButton() {
@@ -97,6 +101,8 @@ function App() {
             {view === 'pages' && <PageBrowser onPageSelect={() => {}} />}
             {view === 'tags' && <TagList />}
             {view === 'trash' && <TrashView />}
+            {view === 'status' && <StatusPanel />}
+            {view === 'conflicts' && <ConflictList />}
           </div>
         </SidebarInset>
       </SidebarProvider>

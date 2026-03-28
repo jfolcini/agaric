@@ -4,7 +4,7 @@
  * Validates:
  *  - Renders with sidebar and default view (Journal)
  *  - Clicking nav items switches views
- *  - All 4 views render (Journal, Pages, Tags, Trash)
+ *  - All 6 views render (Journal, Pages, Tags, Trash, Status, Conflicts)
  *  - a11y compliance
  */
 
@@ -47,12 +47,14 @@ describe('App', () => {
       expect(screen.getByText('Agaric')).toBeInTheDocument()
     })
 
-    // Sidebar should have all 4 nav items
+    // Sidebar should have all 6 nav items
     const sidebar = getSidebar()
     expect(sidebar.getByText('Journal')).toBeInTheDocument()
     expect(sidebar.getByText('Pages')).toBeInTheDocument()
     expect(sidebar.getByText('Tags')).toBeInTheDocument()
     expect(sidebar.getByText('Trash')).toBeInTheDocument()
+    expect(sidebar.getByText('Status')).toBeInTheDocument()
+    expect(sidebar.getByText('Conflicts')).toBeInTheDocument()
   })
 
   it('renders the app branding', async () => {
@@ -127,6 +129,49 @@ describe('App', () => {
     // TrashView should render its empty state
     await waitFor(() => {
       expect(screen.getByText('Trash is empty.')).toBeInTheDocument()
+    })
+  })
+
+  it('switches to Status view', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValue({
+      foreground_queue_depth: 0,
+      background_queue_depth: 0,
+      total_ops_dispatched: 0,
+      total_background_dispatched: 0,
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+
+    // Click Status in sidebar
+    const sidebar = getSidebar()
+    await user.click(sidebar.getByText('Status'))
+
+    // StatusPanel should render
+    await waitFor(() => {
+      expect(screen.getByText('Materializer Status')).toBeInTheDocument()
+    })
+  })
+
+  it('switches to Conflicts view', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+
+    // Click Conflicts in sidebar
+    const sidebar = getSidebar()
+    await user.click(sidebar.getByText('Conflicts'))
+
+    // ConflictList should render its empty state
+    await waitFor(() => {
+      expect(screen.getByText('No conflicts')).toBeInTheDocument()
     })
   })
 

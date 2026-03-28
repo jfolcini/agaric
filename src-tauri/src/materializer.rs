@@ -32,7 +32,7 @@
 
 #![allow(dead_code)]
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::mem;
@@ -103,6 +103,18 @@ pub struct QueueMetrics {
     pub bg_processed: AtomicU64,
     /// Number of background tasks dropped by dedup coalescing.
     pub bg_deduped: AtomicU64,
+}
+
+/// Serializable status snapshot of the materializer queues.
+///
+/// Built from [`QueueMetrics`] (atomic counters) and channel capacity info.
+/// Exposed by the `get_status` command.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct StatusInfo {
+    pub foreground_queue_depth: usize,
+    pub background_queue_depth: usize,
+    pub total_ops_dispatched: u64,
+    pub total_background_dispatched: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +341,16 @@ impl Materializer {
     /// Access the observable queue metrics (atomic counters).
     pub fn metrics(&self) -> &QueueMetrics {
         &self.metrics
+    }
+
+    /// Build a [`StatusInfo`] snapshot from the current queue state.
+    pub fn status(&self) -> StatusInfo {
+        StatusInfo {
+            foreground_queue_depth: FOREGROUND_CAPACITY - self.fg_tx.capacity(),
+            background_queue_depth: BACKGROUND_CAPACITY - self.bg_tx.capacity(),
+            total_ops_dispatched: self.metrics.fg_processed.load(Ordering::Relaxed),
+            total_background_dispatched: self.metrics.bg_processed.load(Ordering::Relaxed),
+        }
     }
 
     /// Enqueue only background cache tasks for the given op record.

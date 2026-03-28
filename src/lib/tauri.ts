@@ -4,10 +4,12 @@ export type {
   BlockResponse,
   BlockRow,
   DeleteResponse,
+  HistoryEntry,
   MoveResponse,
   PageResponse,
   PurgeResponse,
   RestoreResponse,
+  StatusInfo,
   TagResponse,
 } from './bindings'
 
@@ -15,10 +17,12 @@ import type {
   BlockResponse,
   BlockRow,
   DeleteResponse,
+  HistoryEntry,
   MoveResponse,
   PageResponse,
   PurgeResponse,
   RestoreResponse,
+  StatusInfo,
   TagResponse,
 } from './bindings'
 
@@ -94,4 +98,42 @@ export async function addTag(blockId: string, tagId: string): Promise<TagRespons
 
 export async function removeTag(blockId: string, tagId: string): Promise<TagResponse> {
   return invoke('remove_tag', { blockId, tagId })
+}
+
+export async function getBacklinks(params: {
+  blockId: string
+  cursor?: string
+  limit?: number
+}): Promise<PageResponse<BlockRow>> {
+  return invoke('get_backlinks', {
+    blockId: params.blockId,
+    cursor: params.cursor ?? null,
+    limit: params.limit ?? null,
+  })
+}
+
+export async function getBlockHistory(params: {
+  blockId: string
+  cursor?: string
+  limit?: number
+}): Promise<PageResponse<HistoryEntry>> {
+  return invoke('get_block_history', {
+    blockId: params.blockId,
+    cursor: params?.cursor ?? null,
+    limit: params?.limit ?? null,
+  })
+}
+
+export async function getConflicts(params?: {
+  cursor?: string
+  limit?: number
+}): Promise<PageResponse<BlockRow>> {
+  return invoke('get_conflicts', {
+    cursor: params?.cursor ?? null,
+    limit: params?.limit ?? null,
+  })
+}
+
+export async function getStatus(): Promise<StatusInfo> {
+  return invoke('get_status')
 }

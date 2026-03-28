@@ -1,0 +1,13 @@
+---
+source: src/commands.rs
+assertion_line: 2457
+expression: resp
+---
+items:
+  - device_id: snap-device
+    seq: 1
+    op_type: create_block
+    payload: "{\"block_id\":\"SNAP_HIST\",\"block_type\":\"content\",\"content\":\"hi\"}"
+    created_at: "2025-06-15T12:00:00Z"
+next_cursor: ~
+has_more: false
