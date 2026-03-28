@@ -69,6 +69,8 @@ pub fn run() {
             commands::move_block,
             commands::list_blocks,
             commands::get_block,
+            commands::add_tag,
+            commands::remove_tag,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

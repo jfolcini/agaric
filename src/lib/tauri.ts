@@ -49,6 +49,11 @@ export interface MoveResponse {
   new_position: number
 }
 
+export interface TagResponse {
+  block_id: string
+  tag_id: string
+}
+
 // Command wrappers
 export async function createBlock(params: {
   blockType: string
@@ -111,4 +116,12 @@ export async function moveBlock(
   newPosition: number,
 ): Promise<MoveResponse> {
   return invoke('move_block', { blockId, newParentId, newPosition })
+}
+
+export async function addTag(blockId: string, tagId: string): Promise<TagResponse> {
+  return invoke('add_tag', { blockId, tagId })
+}
+
+export async function removeTag(blockId: string, tagId: string): Promise<TagResponse> {
+  return invoke('remove_tag', { blockId, tagId })
 }

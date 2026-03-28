@@ -17,8 +17,8 @@ use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::op::{
-    CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
-    PurgeBlockPayload, RestoreBlockPayload,
+    AddTagPayload, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload,
+    OpPayload, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
 };
 use crate::op_log;
 use crate::pagination::{self, BlockRow, PageResponse};
@@ -64,6 +64,12 @@ pub struct MoveResponse {
     pub block_id: String,
     pub new_parent_id: Option<String>,
     pub new_position: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TagResponse {
+    pub block_id: String,
+    pub tag_id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -522,6 +528,140 @@ pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<Bloc
     row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}'")))
 }
 
+pub async fn add_tag_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    tag_id: String,
+) -> Result<TagResponse, AppError> {
+    // 1. Validate block exists and is not deleted
+    let exists: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
+            .bind(&block_id)
+            .fetch_optional(pool)
+            .await?;
+    if exists.is_none() {
+        return Err(AppError::NotFound(format!(
+            "block '{block_id}' (not found or deleted)"
+        )));
+    }
+
+    // 2. Validate tag_id refers to a block with block_type = 'tag' and is not deleted
+    let tag_row: Option<(String,)> =
+        sqlx::query_as("SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL")
+            .bind(&tag_id)
+            .fetch_optional(pool)
+            .await?;
+    match tag_row {
+        None => {
+            return Err(AppError::NotFound(format!(
+                "tag block '{tag_id}' (not found or deleted)"
+            )));
+        }
+        Some((ref bt,)) if bt != "tag" => {
+            return Err(AppError::InvalidOperation(format!(
+                "block '{tag_id}' has block_type '{bt}', expected 'tag'"
+            )));
+        }
+        _ => {}
+    }
+
+    // 3. Check for existing association
+    let dup: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            .bind(&block_id)
+            .bind(&tag_id)
+            .fetch_optional(pool)
+            .await?;
+    if dup.is_some() {
+        return Err(AppError::InvalidOperation("tag already applied".into()));
+    }
+
+    // 4. Build OpPayload
+    let payload = OpPayload::AddTag(AddTagPayload {
+        block_id: block_id.clone(),
+        tag_id: tag_id.clone(),
+    });
+
+    // 5. Begin IMMEDIATE transaction for atomic op_log + block_tags write.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+
+    // 6. Insert into block_tags within same transaction
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(&block_id)
+        .bind(&tag_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    // 7. Dispatch background cache tasks (fire-and-forget)
+    let _ = materializer.dispatch_background(&op_record);
+
+    // 8. Return response
+    Ok(TagResponse { block_id, tag_id })
+}
+
+pub async fn remove_tag_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    tag_id: String,
+) -> Result<TagResponse, AppError> {
+    // 1. Validate block exists and is not deleted
+    let exists: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
+            .bind(&block_id)
+            .fetch_optional(pool)
+            .await?;
+    if exists.is_none() {
+        return Err(AppError::NotFound(format!(
+            "block '{block_id}' (not found or deleted)"
+        )));
+    }
+
+    // 2. Check association exists
+    let assoc: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            .bind(&block_id)
+            .bind(&tag_id)
+            .fetch_optional(pool)
+            .await?;
+    if assoc.is_none() {
+        return Err(AppError::NotFound("tag association".into()));
+    }
+
+    // 3. Build OpPayload
+    let payload = OpPayload::RemoveTag(RemoveTagPayload {
+        block_id: block_id.clone(),
+        tag_id: tag_id.clone(),
+    });
+
+    // 4. Begin IMMEDIATE transaction for atomic op_log + block_tags write.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+
+    // 5. Delete from block_tags within same transaction
+    sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
+        .bind(&block_id)
+        .bind(&tag_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    // 6. Dispatch background cache tasks (fire-and-forget)
+    let _ = materializer.dispatch_background(&op_record);
+
+    // 7. Return response
+    Ok(TagResponse { block_id, tag_id })
+}
+
 // ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
@@ -646,6 +786,30 @@ pub async fn get_block(
     block_id: String,
 ) -> Result<BlockRow, AppError> {
     get_block_inner(&pool, block_id).await
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+pub async fn add_tag(
+    pool: State<'_, SqlitePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_id: String,
+    tag_id: String,
+) -> Result<TagResponse, AppError> {
+    add_tag_inner(&pool, &device_id.0, &materializer, block_id, tag_id).await
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+pub async fn remove_tag(
+    pool: State<'_, SqlitePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_id: String,
+    tag_id: String,
+) -> Result<TagResponse, AppError> {
+    remove_tag_inner(&pool, &device_id.0, &materializer, block_id, tag_id).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1780,6 +1944,170 @@ mod tests {
         assert!(
             err.to_string().contains("cannot be its own parent"),
             "error message should explain the constraint"
+        );
+    }
+
+    // ======================================================================
+    // add_tag
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn add_tag_success() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "AT_BLK", "content", "my block", None, Some(1)).await;
+        insert_block(&pool, "AT_TAG", "tag", "urgent", None, None).await;
+
+        let resp = add_tag_inner(&pool, DEV, &mat, "AT_BLK".into(), "AT_TAG".into())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.block_id, "AT_BLK");
+        assert_eq!(resp.tag_id, "AT_TAG");
+
+        // Verify block_tags row
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind("AT_BLK")
+                .bind("AT_TAG")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert!(row.is_some(), "block_tags row should exist after add_tag");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn add_tag_duplicate_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "ATD_BLK", "content", "my block", None, Some(1)).await;
+        insert_block(&pool, "ATD_TAG", "tag", "urgent", None, None).await;
+
+        add_tag_inner(&pool, DEV, &mat, "ATD_BLK".into(), "ATD_TAG".into())
+            .await
+            .unwrap();
+
+        let result = add_tag_inner(&pool, DEV, &mat, "ATD_BLK".into(), "ATD_TAG".into()).await;
+
+        assert!(
+            matches!(result, Err(AppError::InvalidOperation(_))),
+            "adding same tag twice should return InvalidOperation"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("tag already applied"),
+            "error message should mention tag already applied"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn add_tag_nonexistent_block_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "ATN_TAG", "tag", "urgent", None, None).await;
+
+        let result = add_tag_inner(&pool, DEV, &mat, "NONEXISTENT".into(), "ATN_TAG".into()).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "adding tag to nonexistent block should return NotFound"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn add_tag_nonexistent_tag_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "ATNT_BLK", "content", "my block", None, Some(1)).await;
+
+        let result = add_tag_inner(&pool, DEV, &mat, "ATNT_BLK".into(), "NONEXISTENT".into()).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "adding nonexistent tag should return NotFound"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn add_tag_non_tag_block_type_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "ATNBT_BLK", "content", "my block", None, Some(1)).await;
+        insert_block(&pool, "ATNBT_CONT", "content", "not a tag", None, Some(2)).await;
+
+        let result = add_tag_inner(&pool, DEV, &mat, "ATNBT_BLK".into(), "ATNBT_CONT".into()).await;
+
+        assert!(
+            matches!(result, Err(AppError::InvalidOperation(_))),
+            "using a content block as tag_id should return InvalidOperation"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("expected 'tag'"),
+            "error message should mention expected tag type"
+        );
+    }
+
+    // ======================================================================
+    // remove_tag
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn remove_tag_success() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "RT_BLK", "content", "my block", None, Some(1)).await;
+        insert_block(&pool, "RT_TAG", "tag", "urgent", None, None).await;
+
+        add_tag_inner(&pool, DEV, &mat, "RT_BLK".into(), "RT_TAG".into())
+            .await
+            .unwrap();
+
+        let resp = remove_tag_inner(&pool, DEV, &mat, "RT_BLK".into(), "RT_TAG".into())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.block_id, "RT_BLK");
+        assert_eq!(resp.tag_id, "RT_TAG");
+
+        // Verify block_tags is empty
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind("RT_BLK")
+                .bind("RT_TAG")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert!(
+            row.is_none(),
+            "block_tags row should be gone after remove_tag"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn remove_tag_not_applied_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "RTNA_BLK", "content", "my block", None, Some(1)).await;
+        insert_block(&pool, "RTNA_TAG", "tag", "urgent", None, None).await;
+
+        let result = remove_tag_inner(&pool, DEV, &mat, "RTNA_BLK".into(), "RTNA_TAG".into()).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "removing a tag that was never applied should return NotFound"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("tag association"),
+            "error message should mention tag association"
         );
     }
 }
