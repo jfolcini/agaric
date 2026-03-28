@@ -3,8 +3,18 @@
 //! Each operation in the log has a typed payload. The [`OpType`] enum identifies
 //! the operation kind, and [`OpPayload`] is an internally-tagged enum that wraps
 //! all payload structs for (de)serialization.
+//!
+//! ## Validation
+//!
+//! These types are *structural* — they enforce correct shapes at
+//! (de)serialization time but do **not** validate domain invariants such as
+//! non-empty `block_id`. Domain validation is the responsibility of the command
+//! layer that constructs payloads before appending to the op log.
 
 #![allow(dead_code)]
+
+use std::fmt;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,8 +24,12 @@ use serde::{Deserialize, Serialize};
 
 /// Operation type tag. Serialized as snake_case strings for storage in the
 /// `op_log.op_type` TEXT column.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Marked `#[non_exhaustive]` so that new variants can be added in future
+/// versions without breaking downstream match arms outside this crate.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum OpType {
     CreateBlock,
     EditBlock,
@@ -29,6 +43,48 @@ pub enum OpType {
     DeleteProperty,
     AddAttachment,
     DeleteAttachment,
+}
+
+impl OpType {
+    /// Returns the snake_case string representation, matching the serde
+    /// serialization and the `op_log.op_type` column value.
+    ///
+    /// This is the single source of truth for the string mapping. Both
+    /// [`Display`] and [`OpPayload::op_type_str`] delegate here.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OpType::CreateBlock => "create_block",
+            OpType::EditBlock => "edit_block",
+            OpType::DeleteBlock => "delete_block",
+            OpType::RestoreBlock => "restore_block",
+            OpType::PurgeBlock => "purge_block",
+            OpType::MoveBlock => "move_block",
+            OpType::AddTag => "add_tag",
+            OpType::RemoveTag => "remove_tag",
+            OpType::SetProperty => "set_property",
+            OpType::DeleteProperty => "delete_property",
+            OpType::AddAttachment => "add_attachment",
+            OpType::DeleteAttachment => "delete_attachment",
+        }
+    }
+}
+
+impl fmt::Display for OpType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for OpType {
+    type Err = serde_json::Error;
+
+    /// Parses a snake_case string (e.g. `"create_block"`) into an [`OpType`].
+    ///
+    /// Uses serde deserialization internally so the accepted strings are always
+    /// consistent with the `#[serde(rename_all = "snake_case")]` attribute.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_value(serde_json::Value::String(s.to_owned()))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -165,49 +221,170 @@ impl OpPayload {
 
     /// Returns the op type as a snake_case string suitable for the
     /// `op_log.op_type` column.
+    ///
+    /// Delegates to [`OpType::as_str`] to keep the string mapping in one place.
     pub fn op_type_str(&self) -> &'static str {
+        self.op_type().as_str()
+    }
+
+    /// Returns the `block_id` from the inner payload, if present.
+    ///
+    /// All payload variants except [`DeleteAttachment`](OpPayload::DeleteAttachment)
+    /// carry a `block_id`. `DeleteAttachment` identifies the target by
+    /// `attachment_id` only, so this method returns `None` for that variant.
+    pub fn block_id(&self) -> Option<&str> {
         match self {
-            OpPayload::CreateBlock(_) => "create_block",
-            OpPayload::EditBlock(_) => "edit_block",
-            OpPayload::DeleteBlock(_) => "delete_block",
-            OpPayload::RestoreBlock(_) => "restore_block",
-            OpPayload::PurgeBlock(_) => "purge_block",
-            OpPayload::MoveBlock(_) => "move_block",
-            OpPayload::AddTag(_) => "add_tag",
-            OpPayload::RemoveTag(_) => "remove_tag",
-            OpPayload::SetProperty(_) => "set_property",
-            OpPayload::DeleteProperty(_) => "delete_property",
-            OpPayload::AddAttachment(_) => "add_attachment",
-            OpPayload::DeleteAttachment(_) => "delete_attachment",
+            OpPayload::CreateBlock(p) => Some(&p.block_id),
+            OpPayload::EditBlock(p) => Some(&p.block_id),
+            OpPayload::DeleteBlock(p) => Some(&p.block_id),
+            OpPayload::RestoreBlock(p) => Some(&p.block_id),
+            OpPayload::PurgeBlock(p) => Some(&p.block_id),
+            OpPayload::MoveBlock(p) => Some(&p.block_id),
+            OpPayload::AddTag(p) => Some(&p.block_id),
+            OpPayload::RemoveTag(p) => Some(&p.block_id),
+            OpPayload::SetProperty(p) => Some(&p.block_id),
+            OpPayload::DeleteProperty(p) => Some(&p.block_id),
+            OpPayload::AddAttachment(p) => Some(&p.block_id),
+            OpPayload::DeleteAttachment(_) => None,
         }
     }
 }
+
+// ===========================================================================
+// Tests
+// ===========================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn create_block_payload_roundtrip() {
-        let payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "01HZ00000000000000000000AB".into(),
-            block_type: "content".into(),
-            parent_id: None,
-            position: Some(0),
-            content: "Hello world".into(),
-        });
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
 
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("\"op_type\":\"create_block\""));
-
-        let deser: OpPayload = serde_json::from_str(&json).unwrap();
-        assert_eq!(deser.op_type_str(), "create_block");
+    /// All OpType variants, for exhaustive iteration in tests.
+    fn all_op_types() -> Vec<OpType> {
+        vec![
+            OpType::CreateBlock,
+            OpType::EditBlock,
+            OpType::DeleteBlock,
+            OpType::RestoreBlock,
+            OpType::PurgeBlock,
+            OpType::MoveBlock,
+            OpType::AddTag,
+            OpType::RemoveTag,
+            OpType::SetProperty,
+            OpType::DeleteProperty,
+            OpType::AddAttachment,
+            OpType::DeleteAttachment,
+        ]
     }
+
+    /// Builds one test instance of each OpPayload variant with block_id "B1".
+    fn all_test_payloads() -> Vec<OpPayload> {
+        vec![
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "B1".into(),
+                block_type: "content".into(),
+                parent_id: Some("P1".into()),
+                position: Some(0),
+                content: "hello".into(),
+            }),
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: "B1".into(),
+                to_text: "updated".into(),
+                prev_edit: Some(("dev-1".into(), 1)),
+            }),
+            OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: "B1".into(),
+                cascade: true,
+            }),
+            OpPayload::RestoreBlock(RestoreBlockPayload {
+                block_id: "B1".into(),
+                deleted_at_ref: "ref-1".into(),
+            }),
+            OpPayload::PurgeBlock(PurgeBlockPayload {
+                block_id: "B1".into(),
+            }),
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: "B1".into(),
+                new_parent_id: Some("P2".into()),
+                new_position: 3,
+            }),
+            OpPayload::AddTag(AddTagPayload {
+                block_id: "B1".into(),
+                tag_id: "T1".into(),
+            }),
+            OpPayload::RemoveTag(RemoveTagPayload {
+                block_id: "B1".into(),
+                tag_id: "T1".into(),
+            }),
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: "B1".into(),
+                key: "priority".into(),
+                value_text: Some("high".into()),
+                value_num: Some(1.0),
+                value_date: None,
+                value_ref: None,
+            }),
+            OpPayload::DeleteProperty(DeletePropertyPayload {
+                block_id: "B1".into(),
+                key: "priority".into(),
+            }),
+            OpPayload::AddAttachment(AddAttachmentPayload {
+                attachment_id: "A1".into(),
+                block_id: "B1".into(),
+                mime_type: "image/png".into(),
+                filename: "photo.png".into(),
+                size_bytes: 1024,
+                fs_path: "/tmp/photo.png".into(),
+            }),
+            OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+                attachment_id: "A1".into(),
+            }),
+        ]
+    }
+
+    // -----------------------------------------------------------------------
+    // 1. Serde roundtrip — all 12 payload types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_payload_serde_roundtrip() {
+        let payloads = all_test_payloads();
+        // Sanity: we must cover all 12 variants
+        assert_eq!(payloads.len(), 12);
+
+        for payload in payloads {
+            let tag = payload.op_type_str();
+            let json =
+                serde_json::to_string(&payload).unwrap_or_else(|e| panic!("serialize {tag}: {e}"));
+
+            // Internally-tagged representation must include the op_type field
+            assert!(
+                json.contains(&format!("\"op_type\":\"{tag}\"")),
+                "{tag}: missing op_type tag in {json}"
+            );
+
+            // Deserialize back and verify the tag round-trips
+            let deser: OpPayload =
+                serde_json::from_str(&json).unwrap_or_else(|e| panic!("deserialize {tag}: {e}"));
+            assert_eq!(deser.op_type_str(), tag);
+
+            // Re-serialize and verify JSON stability (serialize -> deser -> serialize)
+            let json2 = serde_json::to_string(&deser).unwrap();
+            assert_eq!(json, json2, "{tag}: re-serialization mismatch");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. Individual payload edge cases
+    // -----------------------------------------------------------------------
 
     #[test]
     fn edit_block_prev_edit_serializes_as_array_or_null() {
         let with = EditBlockPayload {
-            block_id: "01HZ00000000000000000000AB".into(),
+            block_id: "B1".into(),
             to_text: "new text".into(),
             prev_edit: Some(("device-1".into(), 5)),
         };
@@ -215,13 +392,39 @@ mod tests {
         assert!(json.contains("[\"device-1\",5]"));
 
         let without = EditBlockPayload {
-            block_id: "01HZ00000000000000000000AB".into(),
+            block_id: "B1".into(),
             to_text: "new text".into(),
             prev_edit: None,
         };
         let json = serde_json::to_string(&without).unwrap();
         assert!(json.contains("\"prev_edit\":null"));
     }
+
+    #[test]
+    fn create_block_optional_fields_null() {
+        let p = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: "B1".into(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: None,
+            content: "".into(),
+        });
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"parent_id\":null"));
+        assert!(json.contains("\"position\":null"));
+
+        let deser: OpPayload = serde_json::from_str(&json).unwrap();
+        if let OpPayload::CreateBlock(inner) = deser {
+            assert!(inner.parent_id.is_none());
+            assert!(inner.position.is_none());
+        } else {
+            panic!("expected CreateBlock variant");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. OpType — serde, Display, FromStr
+    // -----------------------------------------------------------------------
 
     #[test]
     fn op_type_serde_snake_case() {
@@ -233,108 +436,284 @@ mod tests {
     }
 
     #[test]
-    fn all_op_type_str_values() {
-        // Ensure exhaustive coverage — compiler enforces no wildcards
-        let cases: Vec<(OpPayload, &str)> = vec![
-            (
-                OpPayload::CreateBlock(CreateBlockPayload {
-                    block_id: "X".into(),
-                    block_type: "content".into(),
-                    parent_id: None,
-                    position: None,
-                    content: "".into(),
-                }),
-                "create_block",
-            ),
-            (
-                OpPayload::EditBlock(EditBlockPayload {
-                    block_id: "X".into(),
-                    to_text: "".into(),
-                    prev_edit: None,
-                }),
-                "edit_block",
-            ),
-            (
-                OpPayload::DeleteBlock(DeleteBlockPayload {
-                    block_id: "X".into(),
-                    cascade: false,
-                }),
-                "delete_block",
-            ),
-            (
-                OpPayload::RestoreBlock(RestoreBlockPayload {
-                    block_id: "X".into(),
-                    deleted_at_ref: "".into(),
-                }),
-                "restore_block",
-            ),
-            (
-                OpPayload::PurgeBlock(PurgeBlockPayload {
-                    block_id: "X".into(),
-                }),
-                "purge_block",
-            ),
-            (
-                OpPayload::MoveBlock(MoveBlockPayload {
-                    block_id: "X".into(),
-                    new_parent_id: None,
-                    new_position: 0,
-                }),
-                "move_block",
-            ),
-            (
-                OpPayload::AddTag(AddTagPayload {
-                    block_id: "X".into(),
-                    tag_id: "T".into(),
-                }),
-                "add_tag",
-            ),
-            (
-                OpPayload::RemoveTag(RemoveTagPayload {
-                    block_id: "X".into(),
-                    tag_id: "T".into(),
-                }),
-                "remove_tag",
-            ),
-            (
-                OpPayload::SetProperty(SetPropertyPayload {
-                    block_id: "X".into(),
-                    key: "k".into(),
-                    value_text: None,
-                    value_num: None,
-                    value_date: None,
-                    value_ref: None,
-                }),
-                "set_property",
-            ),
-            (
-                OpPayload::DeleteProperty(DeletePropertyPayload {
-                    block_id: "X".into(),
-                    key: "k".into(),
-                }),
-                "delete_property",
-            ),
-            (
-                OpPayload::AddAttachment(AddAttachmentPayload {
-                    attachment_id: "A".into(),
-                    block_id: "X".into(),
-                    mime_type: "text/plain".into(),
-                    filename: "f.txt".into(),
-                    size_bytes: 100,
-                    fs_path: "/tmp/f.txt".into(),
-                }),
-                "add_attachment",
-            ),
-            (
-                OpPayload::DeleteAttachment(DeleteAttachmentPayload {
-                    attachment_id: "A".into(),
-                }),
-                "delete_attachment",
-            ),
-        ];
+    fn op_type_as_str_matches_serde_for_all_variants() {
+        for variant in all_op_types() {
+            let serde_json_str = serde_json::to_string(&variant).unwrap();
+            // serde produces `"snake_case"` — strip the surrounding quotes
+            let serde_str = serde_json_str.trim_matches('"');
+            assert_eq!(
+                variant.as_str(),
+                serde_str,
+                "as_str() vs serde mismatch for {:?}",
+                variant
+            );
+        }
+    }
 
-        for (payload, expected) in cases {
-            assert_eq!(payload.op_type_str(), expected);
+    #[test]
+    fn op_type_display() {
+        assert_eq!(OpType::CreateBlock.to_string(), "create_block");
+        assert_eq!(OpType::SetProperty.to_string(), "set_property");
+        assert_eq!(OpType::DeleteAttachment.to_string(), "delete_attachment");
+
+        // Display must match as_str for every variant
+        for variant in all_op_types() {
+            assert_eq!(variant.to_string(), variant.as_str());
+        }
+    }
+
+    #[test]
+    fn op_type_from_str_roundtrip() {
+        for variant in all_op_types() {
+            let s = variant.as_str();
+            let parsed: OpType = s.parse().unwrap_or_else(|e| panic!("parse '{s}': {e}"));
+            assert_eq!(parsed, variant);
+        }
+    }
+
+    #[test]
+    fn op_type_from_str_rejects_invalid() {
+        assert!("not_a_real_op".parse::<OpType>().is_err());
+        assert!("CreateBlock".parse::<OpType>().is_err()); // PascalCase rejected
+        assert!("CREATE_BLOCK".parse::<OpType>().is_err()); // UPPER_SNAKE rejected
+        assert!("".parse::<OpType>().is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // 4. OpPayload::op_type_str consistency with serde tag
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn op_type_str_consistent_with_serde_tag() {
+        for payload in all_test_payloads() {
+            let json = serde_json::to_string(&payload).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            let serde_tag = value["op_type"].as_str().unwrap();
+            assert_eq!(
+                payload.op_type_str(),
+                serde_tag,
+                "op_type_str vs JSON tag mismatch for {:?}",
+                payload.op_type()
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. OpPayload::block_id()
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn block_id_returns_value_for_block_bearing_variants() {
+        for payload in all_test_payloads() {
+            match payload {
+                OpPayload::DeleteAttachment(_) => {
+                    assert_eq!(
+                        payload.block_id(),
+                        None,
+                        "DeleteAttachment should return None"
+                    );
+                }
+                _ => {
+                    assert_eq!(
+                        payload.block_id(),
+                        Some("B1"),
+                        "{:?} should have block_id B1",
+                        payload.op_type()
+                    );
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. Deserialization from raw JSON (simulating DB reads)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn deserialize_create_block_from_raw_json() {
+        let raw = r#"{
+            "op_type": "create_block",
+            "block_id": "01HZ00000000000000000000AB",
+            "block_type": "content",
+            "parent_id": null,
+            "position": 0,
+            "content": "Hello from DB"
+        }"#;
+
+        let payload: OpPayload = serde_json::from_str(raw).unwrap();
+        assert_eq!(payload.op_type_str(), "create_block");
+        assert_eq!(payload.block_id(), Some("01HZ00000000000000000000AB"));
+
+        if let OpPayload::CreateBlock(inner) = &payload {
+            assert_eq!(inner.content, "Hello from DB");
+            assert!(inner.parent_id.is_none());
+            assert_eq!(inner.position, Some(0));
+        } else {
+            panic!("expected CreateBlock");
+        }
+    }
+
+    #[test]
+    fn deserialize_set_property_from_raw_json() {
+        let raw = r#"{
+            "op_type": "set_property",
+            "block_id": "B42",
+            "key": "status",
+            "value_text": "done",
+            "value_num": null,
+            "value_date": null,
+            "value_ref": null
+        }"#;
+
+        let payload: OpPayload = serde_json::from_str(raw).unwrap();
+        assert_eq!(payload.op_type_str(), "set_property");
+        if let OpPayload::SetProperty(inner) = &payload {
+            assert_eq!(inner.value_text.as_deref(), Some("done"));
+            assert!(inner.value_num.is_none());
+        } else {
+            panic!("expected SetProperty");
+        }
+    }
+
+    #[test]
+    fn deserialize_delete_attachment_from_raw_json() {
+        let raw = r#"{"op_type": "delete_attachment", "attachment_id": "A99"}"#;
+        let payload: OpPayload = serde_json::from_str(raw).unwrap();
+        assert_eq!(payload.op_type_str(), "delete_attachment");
+        assert_eq!(payload.block_id(), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // 7. Error handling — malformed / unknown
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn malformed_json_returns_error() {
+        // Not valid JSON at all
+        assert!(serde_json::from_str::<OpPayload>("not json").is_err());
+        // Valid JSON but missing required fields
+        assert!(serde_json::from_str::<OpPayload>(r#"{"op_type": "create_block"}"#).is_err());
+        // Empty object — no op_type tag
+        assert!(serde_json::from_str::<OpPayload>("{}").is_err());
+        // Array instead of object
+        assert!(serde_json::from_str::<OpPayload>("[]").is_err());
+    }
+
+    #[test]
+    fn unknown_op_type_returns_error() {
+        let raw = r#"{"op_type": "frobnicate", "block_id": "B1"}"#;
+        let result = serde_json::from_str::<OpPayload>(raw);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        // serde should mention the unknown variant name
+        assert!(
+            err_msg.contains("frobnicate") || err_msg.contains("unknown variant"),
+            "error should reference the bad variant: {err_msg}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 8. Edge cases — Unicode, empty, long content
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unicode_content_roundtrip() {
+        let text = "日本語テスト 🚀 spëcial — «guillemets» \u{200B}";
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: "B1".into(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: None,
+            content: text.into(),
+        });
+        let json = serde_json::to_string(&payload).unwrap();
+        let deser: OpPayload = serde_json::from_str(&json).unwrap();
+        if let OpPayload::CreateBlock(inner) = deser {
+            assert_eq!(inner.content, text);
+        } else {
+            panic!("expected CreateBlock");
+        }
+    }
+
+    #[test]
+    fn empty_and_long_content_roundtrip() {
+        // Empty content
+        let payload = OpPayload::EditBlock(EditBlockPayload {
+            block_id: "B1".into(),
+            to_text: "".into(),
+            prev_edit: None,
+        });
+        let json = serde_json::to_string(&payload).unwrap();
+        let deser: OpPayload = serde_json::from_str(&json).unwrap();
+        if let OpPayload::EditBlock(inner) = &deser {
+            assert_eq!(inner.to_text, "");
+        } else {
+            panic!("expected EditBlock");
+        }
+
+        // Very long content (100 KB)
+        let long_text = "x".repeat(100_000);
+        let payload = OpPayload::EditBlock(EditBlockPayload {
+            block_id: "B1".into(),
+            to_text: long_text.clone(),
+            prev_edit: None,
+        });
+        let json = serde_json::to_string(&payload).unwrap();
+        let deser: OpPayload = serde_json::from_str(&json).unwrap();
+        if let OpPayload::EditBlock(inner) = deser {
+            assert_eq!(inner.to_text.len(), 100_000);
+        } else {
+            panic!("expected EditBlock");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 9. Optional field handling
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_optional_set_property_fields_serialize_as_null() {
+        let payload = SetPropertyPayload {
+            block_id: "B1".into(),
+            key: "k".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("\"value_text\":null"));
+        assert!(json.contains("\"value_num\":null"));
+        assert!(json.contains("\"value_date\":null"));
+        assert!(json.contains("\"value_ref\":null"));
+
+        // Roundtrip through deserialization
+        let deser: SetPropertyPayload = serde_json::from_str(&json).unwrap();
+        assert!(deser.value_text.is_none());
+        assert!(deser.value_num.is_none());
+        assert!(deser.value_date.is_none());
+        assert!(deser.value_ref.is_none());
+    }
+
+    #[test]
+    fn set_property_mixed_value_types() {
+        let payload = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: "B1".into(),
+            key: "score".into(),
+            value_text: None,
+            value_num: Some(42.5),
+            value_date: Some("2024-01-15".into()),
+            value_ref: None,
+        });
+        let json = serde_json::to_string(&payload).unwrap();
+        let deser: OpPayload = serde_json::from_str(&json).unwrap();
+        if let OpPayload::SetProperty(inner) = deser {
+            assert!(inner.value_text.is_none());
+            assert_eq!(inner.value_num, Some(42.5));
+            assert_eq!(inner.value_date.as_deref(), Some("2024-01-15"));
+            assert!(inner.value_ref.is_none());
+        } else {
+            panic!("expected SetProperty");
         }
     }
 }

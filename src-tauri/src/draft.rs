@@ -22,7 +22,7 @@ use crate::op_log::{append_local_op, OpRecord};
 // ---------------------------------------------------------------------------
 
 /// A single draft row from `block_drafts`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Draft {
     pub block_id: String,
     pub content: String,
@@ -49,6 +49,25 @@ pub async fn save_draft(pool: &SqlitePool, block_id: &str, content: &str) -> Res
     Ok(())
 }
 
+/// Save a draft only if the content differs from the currently stored draft.
+///
+/// Returns `Ok(true)` if a write was performed, `Ok(false)` if skipped.
+/// This avoids unnecessary writes when the user hasn't changed anything
+/// since the last autosave tick.
+pub async fn save_draft_if_changed(
+    pool: &SqlitePool,
+    block_id: &str,
+    content: &str,
+) -> Result<bool, AppError> {
+    if let Some(existing) = get_draft(pool, block_id).await? {
+        if existing.content == content {
+            return Ok(false);
+        }
+    }
+    save_draft(pool, block_id, content).await?;
+    Ok(true)
+}
+
 /// Delete a draft row for the given block (if it exists).
 pub async fn delete_draft(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
     sqlx::query("DELETE FROM block_drafts WHERE block_id = ?")
@@ -58,30 +77,45 @@ pub async fn delete_draft(pool: &SqlitePool, block_id: &str) -> Result<(), AppEr
     Ok(())
 }
 
-/// Return all draft rows.
+/// Return a single draft by block ID, or `None` if no draft exists.
+pub async fn get_draft(pool: &SqlitePool, block_id: &str) -> Result<Option<Draft>, AppError> {
+    let draft = sqlx::query_as::<_, Draft>(
+        "SELECT block_id, content, updated_at FROM block_drafts WHERE block_id = ?",
+    )
+    .bind(block_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(draft)
+}
+
+/// Return all draft rows ordered by `updated_at` ascending.
 pub async fn get_all_drafts(pool: &SqlitePool) -> Result<Vec<Draft>, AppError> {
-    let rows = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT block_id, content, updated_at FROM block_drafts",
+    let drafts = sqlx::query_as::<_, Draft>(
+        "SELECT block_id, content, updated_at FROM block_drafts ORDER BY updated_at ASC",
     )
     .fetch_all(pool)
     .await?;
-
-    let drafts = rows
-        .into_iter()
-        .map(|(block_id, content, updated_at)| Draft {
-            block_id,
-            content,
-            updated_at,
-        })
-        .collect();
     Ok(drafts)
+}
+
+/// Return the number of drafts currently stored.
+pub async fn draft_count(pool: &SqlitePool) -> Result<i64, AppError> {
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_drafts")
+        .fetch_one(pool)
+        .await?;
+    Ok(count)
 }
 
 /// Flush a draft: write an `edit_block` op and then delete the draft row.
 ///
-/// This is the blur / window-focus-loss path. The op append and draft deletion
-/// happen sequentially — `append_local_op` uses its own transaction internally,
-/// then the draft row is deleted after.
+/// This is the blur / window-focus-loss path.
+///
+/// **Atomicity note:** the op append and draft deletion are *not* wrapped in a
+/// single transaction because [`append_local_op`] manages its own internal
+/// transaction.  If the process crashes after the op is committed but before
+/// the draft is deleted, an orphaned draft row will remain.  This is benign:
+/// the op has already been recorded, and the stale draft will be visible via
+/// [`get_all_drafts`] on next startup for the frontend to discard or re-flush.
 pub async fn flush_draft(
     pool: &SqlitePool,
     device_id: &str,
@@ -119,6 +153,8 @@ mod tests {
         let pool = init_pool(&db_path).await.unwrap();
         (pool, dir)
     }
+
+    // -- Original tests (1-5) -----------------------------------------------
 
     #[tokio::test]
     async fn save_draft_creates_and_updates_row() {
@@ -202,5 +238,186 @@ mod tests {
         assert_eq!(record.op_type, "edit_block");
         // Payload should contain the prev_edit reference
         assert!(record.payload.contains("dev-1"));
+    }
+
+    // -- New tests (6-15) ---------------------------------------------------
+
+    #[tokio::test]
+    async fn save_draft_unicode_content() {
+        let (pool, _dir) = test_pool().await;
+
+        // Emoji
+        save_draft(&pool, "b-emoji", "Hello 🌍🚀✨").await.unwrap();
+        let d = get_draft(&pool, "b-emoji").await.unwrap().unwrap();
+        assert_eq!(d.content, "Hello 🌍🚀✨");
+
+        // CJK characters
+        save_draft(&pool, "b-cjk", "你好世界 こんにちは 안녕하세요")
+            .await
+            .unwrap();
+        let d = get_draft(&pool, "b-cjk").await.unwrap().unwrap();
+        assert_eq!(d.content, "你好世界 こんにちは 안녕하세요");
+
+        // RTL text (Arabic)
+        save_draft(&pool, "b-rtl", "مرحبا بالعالم").await.unwrap();
+        let d = get_draft(&pool, "b-rtl").await.unwrap().unwrap();
+        assert_eq!(d.content, "مرحبا بالعالم");
+    }
+
+    #[tokio::test]
+    async fn save_draft_large_content() {
+        let (pool, _dir) = test_pool().await;
+
+        // ~100 KB of text
+        let large = "A".repeat(100 * 1024);
+        save_draft(&pool, "b-large", &large).await.unwrap();
+
+        let d = get_draft(&pool, "b-large").await.unwrap().unwrap();
+        assert_eq!(d.content.len(), 100 * 1024);
+        assert_eq!(d.content, large);
+    }
+
+    #[tokio::test]
+    async fn save_draft_empty_content() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft(&pool, "b-empty", "").await.unwrap();
+        let d = get_draft(&pool, "b-empty").await.unwrap().unwrap();
+        assert_eq!(d.content, "");
+    }
+
+    #[tokio::test]
+    async fn get_all_drafts_ordering() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert drafts sequentially — timestamps have nanosecond precision so
+        // they will differ across awaits.
+        save_draft(&pool, "b-1", "first").await.unwrap();
+        save_draft(&pool, "b-2", "second").await.unwrap();
+        save_draft(&pool, "b-3", "third").await.unwrap();
+
+        let drafts = get_all_drafts(&pool).await.unwrap();
+        assert_eq!(drafts.len(), 3);
+
+        // ORDER BY updated_at ASC — timestamps must be non-decreasing
+        assert!(
+            drafts[0].updated_at <= drafts[1].updated_at,
+            "drafts[0].updated_at ({}) should <= drafts[1].updated_at ({})",
+            drafts[0].updated_at,
+            drafts[1].updated_at,
+        );
+        assert!(
+            drafts[1].updated_at <= drafts[2].updated_at,
+            "drafts[1].updated_at ({}) should <= drafts[2].updated_at ({})",
+            drafts[1].updated_at,
+            drafts[2].updated_at,
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_draft_without_existing_draft() {
+        let (pool, _dir) = test_pool().await;
+
+        // No draft row exists, but flush should still write the op
+        let record = flush_draft(&pool, "dev-1", "block-x", "content", None)
+            .await
+            .unwrap();
+
+        assert_eq!(record.op_type, "edit_block");
+        assert!(record.payload.contains("block-x"));
+        // No drafts should exist
+        assert_eq!(draft_count(&pool).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn get_draft_existing_and_missing() {
+        let (pool, _dir) = test_pool().await;
+
+        // Missing → None
+        assert!(get_draft(&pool, "nope").await.unwrap().is_none());
+
+        // Existing → Some
+        save_draft(&pool, "b-1", "hello").await.unwrap();
+        let d = get_draft(&pool, "b-1").await.unwrap().unwrap();
+        assert_eq!(d.block_id, "b-1");
+        assert_eq!(d.content, "hello");
+    }
+
+    #[tokio::test]
+    async fn draft_count_accuracy() {
+        let (pool, _dir) = test_pool().await;
+
+        assert_eq!(draft_count(&pool).await.unwrap(), 0);
+
+        save_draft(&pool, "b-1", "a").await.unwrap();
+        assert_eq!(draft_count(&pool).await.unwrap(), 1);
+
+        save_draft(&pool, "b-2", "b").await.unwrap();
+        assert_eq!(draft_count(&pool).await.unwrap(), 2);
+
+        // Overwrite b-1 — count should stay at 2
+        save_draft(&pool, "b-1", "a2").await.unwrap();
+        assert_eq!(draft_count(&pool).await.unwrap(), 2);
+
+        delete_draft(&pool, "b-1").await.unwrap();
+        assert_eq!(draft_count(&pool).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn save_draft_updated_at_changes_on_resave() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft(&pool, "b-1", "version 1").await.unwrap();
+        let ts1 = get_draft(&pool, "b-1").await.unwrap().unwrap().updated_at;
+
+        // Re-save with different content
+        save_draft(&pool, "b-1", "version 2").await.unwrap();
+        let ts2 = get_draft(&pool, "b-1").await.unwrap().unwrap().updated_at;
+
+        // Timestamp should not regress
+        assert!(ts2 >= ts1, "updated_at should not regress: {ts2} < {ts1}");
+    }
+
+    #[tokio::test]
+    async fn save_draft_if_changed_skips_identical() {
+        let (pool, _dir) = test_pool().await;
+
+        // First write — no existing draft → always writes
+        let wrote = save_draft_if_changed(&pool, "b-1", "hello").await.unwrap();
+        assert!(wrote);
+
+        let ts1 = get_draft(&pool, "b-1").await.unwrap().unwrap().updated_at;
+
+        // Same content → should skip
+        let wrote = save_draft_if_changed(&pool, "b-1", "hello").await.unwrap();
+        assert!(!wrote);
+        let ts_after = get_draft(&pool, "b-1").await.unwrap().unwrap().updated_at;
+        assert_eq!(ts1, ts_after, "timestamp must not change on skip");
+
+        // Different content → should write
+        let wrote = save_draft_if_changed(&pool, "b-1", "world").await.unwrap();
+        assert!(wrote);
+        let d = get_draft(&pool, "b-1").await.unwrap().unwrap();
+        assert_eq!(d.content, "world");
+    }
+
+    #[tokio::test]
+    async fn flush_draft_only_deletes_target_block() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft(&pool, "b-1", "content A").await.unwrap();
+        save_draft(&pool, "b-2", "content B").await.unwrap();
+        assert_eq!(draft_count(&pool).await.unwrap(), 2);
+
+        // Flush only b-1
+        let record = flush_draft(&pool, "dev-1", "b-1", "content A", None)
+            .await
+            .unwrap();
+        assert_eq!(record.op_type, "edit_block");
+
+        // b-1 draft gone, b-2 untouched
+        assert!(get_draft(&pool, "b-1").await.unwrap().is_none());
+        assert!(get_draft(&pool, "b-2").await.unwrap().is_some());
+        assert_eq!(draft_count(&pool).await.unwrap(), 1);
     }
 }

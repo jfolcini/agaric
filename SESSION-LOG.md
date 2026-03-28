@@ -152,6 +152,21 @@
 - **Files modified:** src-tauri/{Cargo.toml,Cargo.lock,src/lib.rs,src/error.rs}
 - **Commit:** cb24cb3
 
+#### [14:15] Parallel Review Sweep: All Wave 3 Modules — LAUNCHING
+- **Task IDs:** p1-t11 through p1-t23 (9 parallel subagents)
+- **Status:** launched
+- **What it does:** Thorough review of every module: code improvements, test hardening, criterion benchmarks
+- **Subagents:**
+  1. op.rs (p1-t13) — add Display, block_id(), more tests
+  2. hash.rs (p1-t12) + benchmark — perf optimization, golden tests
+  3. op_log.rs (p1-t11) + benchmark — query helpers, stress tests
+  4. draft.rs (p1-t14) — FromRow, atomicity, edge cases
+  5. recovery.rs (p1-t15) — perf notes, multi-draft tests
+  6. materializer.rs (p1-t16+t17) — debouncing, try_send, error isolation
+  7. cache.rs (p1-t18..t21) + benchmark — DRY queries, edge cases
+  8. pagination.rs (p1-t22) + benchmark — new query functions, exhaustive walk tests
+  9. soft_delete.rs (p1-t23) + benchmark — batch purge optimization, deep tree tests
+
 ---
 
 <!-- Template for subagent entries:

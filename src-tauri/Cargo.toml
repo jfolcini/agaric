@@ -22,9 +22,30 @@ regex = "1"
 base64 = "0.22.1"
 
 [dev-dependencies]
+criterion = { version = "0.8.2", features = ["async_tokio"] }
 tempfile = "3.27.0"
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
 [lib]
 name = "block_notes_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bench]]
+name = "hash_bench"
+harness = false
+
+[[bench]]
+name = "op_log_bench"
+harness = false
+
+[[bench]]
+name = "cache_bench"
+harness = false
+
+[[bench]]
+name = "pagination_bench"
+harness = false
+
+[[bench]]
+name = "soft_delete_bench"
+harness = false
