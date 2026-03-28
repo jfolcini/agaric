@@ -312,17 +312,36 @@ impl Materializer {
         &self.metrics
     }
 
+    /// Enqueue only background cache tasks for the given op record.
+    ///
+    /// Used by command handlers that have already applied the op synchronously
+    /// to the blocks table. This avoids double-writes by skipping the
+    /// foreground `ApplyOp` task and only triggering stale-while-revalidate
+    /// cache rebuilds / reindexing.
+    pub fn dispatch_background(&self, record: &OpRecord) -> Result<(), AppError> {
+        self.enqueue_background_tasks(record)
+    }
+
     /// Main entry point after an op is appended to the log.
     ///
     /// 1. Always enqueues `ApplyOp` on the foreground queue (must not be
     ///    dropped — user-visible latency path).
     /// 2. Inspects the op type and payload to best-effort enqueue appropriate
     ///    background cache-rebuild / reindex tasks via `try_enqueue_background`.
+    ///
+    /// Used for replayed/remote ops (Phase 4) where the materializer must
+    /// apply the op from scratch.
     pub async fn dispatch_op(&self, record: &OpRecord) -> Result<(), AppError> {
         // Always apply the op in the foreground (critical path).
         self.enqueue_foreground(MaterializeTask::ApplyOp(record.clone()))
             .await?;
 
+        self.enqueue_background_tasks(record)
+    }
+
+    /// Shared background-task routing logic used by both `dispatch_op` and
+    /// `dispatch_background`.
+    fn enqueue_background_tasks(&self, record: &OpRecord) -> Result<(), AppError> {
         // Background tasks are best-effort — use try_enqueue_background to
         // avoid blocking on a full queue.
         match record.op_type.as_str() {

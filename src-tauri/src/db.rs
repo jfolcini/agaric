@@ -13,7 +13,8 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppEr
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Normal)
         .create_if_missing(true)
-        .pragma("foreign_keys", "ON");
+        .pragma("foreign_keys", "ON")
+        .busy_timeout(std::time::Duration::from_secs(5));
 
     let pool = SqlitePoolOptions::new()
         .max_connections(5) // 1 writer + 4 readers under WAL
