@@ -119,3 +119,4 @@ CREATE INDEX IF NOT EXISTS idx_block_links_target ON block_links(target_id);
 CREATE INDEX IF NOT EXISTS idx_block_props_date ON block_properties(value_date) WHERE value_date IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_op_log_created ON op_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_agenda_date ON agenda_cache(date);
+CREATE INDEX IF NOT EXISTS idx_blocks_deleted ON blocks(deleted_at, id) WHERE deleted_at IS NOT NULL;

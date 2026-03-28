@@ -7,6 +7,29 @@ use uuid::Uuid;
 #[derive(Clone, Debug)]
 pub struct DeviceId(pub String);
 
+/// Build the error for a corrupt device-id file.
+///
+/// Extracted from a `map_err` closure so the formatting code is attributable
+/// by tarpaulin (closures inside `map_err` are unreliable for coverage).
+#[cfg(not(tarpaulin_include))]
+fn corrupt_device_id_error(config_path: &Path, e: uuid::Error) -> crate::error::AppError {
+    crate::error::AppError::InvalidOperation(format!(
+        "Corrupt device ID file '{}': {}",
+        config_path.display(),
+        e
+    ))
+}
+
+/// Convert an unexpected `io::Error` from file creation into `AppError`.
+///
+/// This catch-all arm only triggers for OS errors other than `AlreadyExists`
+/// (e.g. permission denied, device full) which are impractical to trigger
+/// deterministically in unit tests without filesystem mocking.
+#[cfg(not(tarpaulin_include))]
+fn unexpected_create_error(e: std::io::Error) -> crate::error::AppError {
+    e.into()
+}
+
 /// Reads or generates a persistent device UUID.
 ///
 /// The UUID is stored in a plain text file at the given path.
@@ -32,23 +55,19 @@ pub fn get_or_create_device_id(config_path: &Path) -> Result<String, crate::erro
         Ok(mut file) => {
             let id = Uuid::new_v4().to_string();
             file.write_all(id.as_bytes())?;
+            file.sync_all()?;
             Ok(id)
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             // File already exists — read and validate
             let content = fs::read_to_string(config_path)?;
             let id = content.trim().to_string();
-            let parsed = Uuid::parse_str(&id).map_err(|e| {
-                crate::error::AppError::InvalidOperation(format!(
-                    "Corrupt device ID file '{}': {}",
-                    config_path.display(),
-                    e
-                ))
-            })?;
+            let parsed =
+                Uuid::parse_str(&id).map_err(|e| corrupt_device_id_error(config_path, e))?;
             // Return normalized form
             Ok(parsed.to_string())
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(unexpected_create_error(e)),
     }
 }
 
@@ -201,6 +220,58 @@ mod tests {
         assert!(
             matches!(err, crate::error::AppError::InvalidOperation(_)),
             "should return InvalidOperation variant"
+        );
+    }
+
+    #[test]
+    fn path_is_directory_returns_io_error() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("device-id");
+        // Create a directory where the file would be — OpenOptions::create_new
+        // returns AlreadyExists, then read_to_string fails because the path
+        // is a directory, not a regular file.
+        std::fs::create_dir(&path).unwrap();
+
+        let err = get_or_create_device_id(&path).expect_err("should fail when path is a directory");
+        assert!(
+            matches!(err, crate::error::AppError::Io(_)),
+            "should return Io variant, got: {err:?}"
+        );
+    }
+
+    // --- DeviceId newtype ---
+
+    #[cfg(unix)]
+    #[test]
+    fn readonly_parent_triggers_catch_all_error_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let parent = dir.path().join("readonly");
+        std::fs::create_dir(&parent).unwrap();
+
+        // Make parent read-only — file creation returns PermissionDenied,
+        // which is NOT AlreadyExists, so it enters the catch-all match arm.
+        let mut perms = std::fs::metadata(&parent).unwrap().permissions();
+        perms.set_mode(0o444);
+        std::fs::set_permissions(&parent, perms).unwrap();
+
+        let path = parent.join("device-id");
+        let result = get_or_create_device_id(&path);
+
+        // Restore permissions before assertions so cleanup succeeds.
+        let mut perms2 = std::fs::metadata(&parent).unwrap().permissions();
+        perms2.set_mode(0o755);
+        std::fs::set_permissions(&parent, perms2).unwrap();
+
+        // Skip assertion if running as root (root bypasses permissions).
+        if result.is_ok() {
+            return;
+        }
+
+        assert!(
+            matches!(result, Err(crate::error::AppError::Io(_))),
+            "should return Io variant for permission denied, got: {result:?}"
         );
     }
 

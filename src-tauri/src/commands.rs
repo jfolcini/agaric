@@ -129,8 +129,8 @@ pub async fn create_block_inner(
 
     tx.commit().await?;
 
-    // 6. Dispatch background cache tasks
-    materializer.dispatch_background(&op_record)?;
+    // 6. Dispatch background cache tasks (fire-and-forget)
+    let _ = materializer.dispatch_background(&op_record);
 
     // 7. Return response
     Ok(BlockResponse {
@@ -193,8 +193,8 @@ pub async fn edit_block_inner(
 
     tx.commit().await?;
 
-    // 6. Dispatch background cache tasks
-    materializer.dispatch_background(&op_record)?;
+    // 6. Dispatch background cache tasks (fire-and-forget)
+    let _ = materializer.dispatch_background(&op_record);
 
     // 7. Return response
     Ok(BlockResponse {
@@ -213,46 +213,61 @@ pub async fn delete_block_inner(
     materializer: &Materializer,
     block_id: String,
 ) -> Result<DeleteResponse, AppError> {
-    // 1. Validate block exists
+    let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: block_id.clone(),
+        cascade: true,
+    });
+
+    // Single IMMEDIATE transaction: validation + op_log + cascade soft-delete.
+    // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
+    // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
+    // and the actual mutation.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // Validate inside transaction (TOCTOU-safe)
     let row: Option<(Option<String>,)> =
         sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
             .bind(&block_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
-
     let (deleted_at,) = row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}'")))?;
-
-    // 2. Check not already deleted
     if deleted_at.is_some() {
         return Err(AppError::InvalidOperation(format!(
             "block '{block_id}' is already deleted"
         )));
     }
 
-    // 3. Build OpPayload
-    let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
-        block_id: block_id.clone(),
-        cascade: true,
-    });
+    // Append to op_log within transaction
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
 
-    // 4. Append to op_log
-    // TODO(Phase 2): Wrap op_log + cascade in a single transaction.
-    // Currently the op_log commit and cascade are separate.
-    // Refactoring cascade_soft_delete / restore_block / purge_block
-    // to accept a transaction is deferred to keep this change minimal.
-    let op_record = op_log::append_local_op(pool, device_id, payload).await?;
+    // Cascade soft-delete within same transaction
+    let now = Utc::now().to_rfc3339();
+    let result = sqlx::query(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL \
+         ) \
+         UPDATE blocks SET deleted_at = ? \
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
+    )
+    .bind(&block_id)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
 
-    // 5. Cascade soft delete
-    let (timestamp, count) = soft_delete::cascade_soft_delete(pool, &block_id).await?;
+    tx.commit().await?;
 
-    // 6. Dispatch background cache tasks
-    materializer.dispatch_background(&op_record)?;
+    // Fire-and-forget background cache dispatch
+    let _ = materializer.dispatch_background(&op_record);
 
-    // 7. Return response
     Ok(DeleteResponse {
         block_id,
-        deleted_at: timestamp,
-        descendants_affected: count,
+        deleted_at: now,
+        descendants_affected: result.rows_affected(),
     })
 }
 
@@ -263,11 +278,17 @@ pub async fn restore_block_inner(
     block_id: String,
     deleted_at_ref: String,
 ) -> Result<RestoreResponse, AppError> {
-    // 1. Validate block exists and IS deleted
+    // Single IMMEDIATE transaction: validation + op_log + restore.
+    // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
+    // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
+    // and the actual mutation.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // Validate inside transaction (TOCTOU-safe)
     let row: Option<(Option<String>,)> =
         sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
             .bind(&block_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
 
     match row {
@@ -280,8 +301,6 @@ pub async fn restore_block_inner(
             )));
         }
         Some((Some(ref actual_deleted_at),)) => {
-            // Validate deleted_at_ref matches the actual timestamp to prevent
-            // restoring children under a still-deleted parent (stale ref).
             if *actual_deleted_at != deleted_at_ref {
                 return Err(AppError::InvalidOperation(format!(
                     "block '{block_id}' deleted_at mismatch: expected '{}', got '{}'",
@@ -291,29 +310,39 @@ pub async fn restore_block_inner(
         }
     }
 
-    // 2. Build OpPayload
     let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
         block_id: block_id.clone(),
         deleted_at_ref: deleted_at_ref.clone(),
     });
 
-    // 3. Append to op_log
-    // TODO(Phase 2): Wrap op_log + cascade in a single transaction.
-    // Currently the op_log commit and cascade are separate.
-    // Refactoring cascade_soft_delete / restore_block / purge_block
-    // to accept a transaction is deferred to keep this change minimal.
-    let op_record = op_log::append_local_op(pool, device_id, payload).await?;
+    // Append to op_log within transaction
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
 
-    // 4. Restore block and descendants
-    let count = soft_delete::restore_block(pool, &block_id, &deleted_at_ref).await?;
+    // Restore within same transaction
+    let result = sqlx::query(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         UPDATE blocks SET deleted_at = NULL \
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
+    )
+    .bind(&block_id)
+    .bind(&deleted_at_ref)
+    .execute(&mut *tx)
+    .await?;
 
-    // 5. Dispatch background cache tasks
-    materializer.dispatch_background(&op_record)?;
+    tx.commit().await?;
 
-    // 6. Return response
+    // Fire-and-forget background cache dispatch
+    let _ = materializer.dispatch_background(&op_record);
+
     Ok(RestoreResponse {
         block_id,
-        restored_count: count,
+        restored_count: result.rows_affected(),
     })
 }
 
@@ -323,11 +352,17 @@ pub async fn purge_block_inner(
     materializer: &Materializer,
     block_id: String,
 ) -> Result<PurgeResponse, AppError> {
-    // 1. Validate block exists and IS deleted (purge requires prior soft-delete)
+    // Single IMMEDIATE transaction: validation + op_log.
+    // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
+    // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
+    // and the actual mutation.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // Validate inside transaction (TOCTOU-safe)
     let row: Option<(Option<String>,)> =
         sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
             .bind(&block_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
 
     match row {
@@ -342,25 +377,25 @@ pub async fn purge_block_inner(
         Some((Some(_),)) => {} // block is deleted, proceed with purge
     }
 
-    // 2. Build OpPayload
     let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
         block_id: block_id.clone(),
     });
 
-    // 3. Append to op_log
-    // TODO(Phase 2): Wrap op_log + cascade in a single transaction.
-    // Currently the op_log commit and cascade are separate.
-    // Refactoring cascade_soft_delete / restore_block / purge_block
-    // to accept a transaction is deferred to keep this change minimal.
-    let op_record = op_log::append_local_op(pool, device_id, payload).await?;
+    // Append to op_log within transaction
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
 
-    // 4. Purge block physically
+    tx.commit().await?;
+
+    // Purge block physically (uses its own transaction internally).
+    // TODO(Phase 2): Inline purge logic into the main transaction above
+    // for full atomicity. Currently the validation + op_log are atomic,
+    // but the physical purge is a separate transaction.
     let count = soft_delete::purge_block(pool, &block_id).await?;
 
-    // 5. Dispatch background cache tasks
-    materializer.dispatch_background(&op_record)?;
+    // Fire-and-forget background cache dispatch
+    let _ = materializer.dispatch_background(&op_record);
 
-    // 6. Return response
     Ok(PurgeResponse {
         block_id,
         purged_count: count,
@@ -1314,6 +1349,40 @@ mod tests {
         let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
         assert!(ids.contains(&"CH1"));
         assert!(ids.contains(&"CH2"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_blocks_with_tag_id_filter() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create a tag and a content block, then associate them
+        insert_block(&pool, "TAG_FILTER", "tag", "urgent", None, None).await;
+        insert_block(&pool, "TAGGED_BLK", "content", "tagged item", None, Some(1)).await;
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind("TAGGED_BLK")
+            .bind("TAG_FILTER")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let resp = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            Some("TAG_FILTER".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resp.items.len(),
+            1,
+            "should return blocks tagged with TAG_FILTER"
+        );
+        assert_eq!(resp.items[0].id, "TAGGED_BLK");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -87,7 +87,12 @@ pub async fn append_local_op_in_tx(
     // or null for the genesis op.
     let parent_seqs: Option<String> = if seq > 1 {
         let prev_seq = seq - 1;
-        Some(serde_json::to_string(&vec![(device_id, prev_seq)])?)
+        // Sorted by (device_id, seq) for deterministic blake3 hashes.
+        // Phase 1 has exactly one parent; Phase 4 multi-parent DAG will
+        // extend this to multiple entries.
+        let mut parents = vec![(device_id, prev_seq)];
+        parents.sort();
+        Some(serde_json::to_string(&parents)?)
     } else {
         None
     };

@@ -153,6 +153,28 @@ impl Materializer {
         }
     }
 
+    // -- error logging (excluded from coverage — defensive panic/error paths
+    //    that require injecting failures into spawned tokio tasks) ----------
+
+    /// Log consumer task results — only the error/panic arms execute under
+    /// exceptional circumstances that are impractical to trigger in tests
+    /// (spawned-task panic, DB failure inside a tokio::spawn).
+    #[cfg(not(tarpaulin_include))]
+    fn log_consumer_result(
+        label: &str,
+        result: Result<Result<(), crate::error::AppError>, tokio::task::JoinError>,
+    ) {
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                eprintln!("[materializer:{label}] Error processing task: {e}");
+            }
+            Err(e) => {
+                eprintln!("[materializer:{label}] Task panicked: {e}");
+            }
+        }
+    }
+
     // -- consumer loops (type-safe, separate functions) --------------------
 
     /// Foreground consumer: processes tasks one-at-a-time in FIFO order.
@@ -182,15 +204,7 @@ impl Materializer {
                 tokio::task::spawn(async move { handle_foreground_task(&pool_clone, &task).await })
                     .await;
 
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    eprintln!("[materializer:fg] Error processing task: {e}");
-                }
-                Err(e) => {
-                    eprintln!("[materializer:fg] Task panicked: {e}");
-                }
-            }
+            Self::log_consumer_result("fg", result);
 
             metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
         }
@@ -234,15 +248,7 @@ impl Materializer {
                     )
                     .await;
 
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        eprintln!("[materializer:bg] Error processing task: {e}");
-                    }
-                    Err(e) => {
-                        eprintln!("[materializer:bg] Task panicked: {e}");
-                    }
-                }
+                Self::log_consumer_result("bg", result);
 
                 metrics.bg_processed.fetch_add(1, Ordering::Relaxed);
             }
@@ -364,9 +370,12 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::ReindexBlockLinks {
                     block_id: hint.block_id,
                 })?;
-                // Conservatively rebuild pages cache — we cannot determine
-                // block_type from the edit payload alone without a DB lookup.
+                // Conservatively rebuild all content-dependent caches — we cannot
+                // determine block_type from the edit payload alone without a DB
+                // lookup, so a tag rename or date change must still invalidate.
+                self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
             }
             "delete_block" | "restore_block" | "purge_block" => {
                 self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;

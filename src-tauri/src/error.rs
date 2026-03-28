@@ -202,6 +202,35 @@ mod tests {
     }
 
     #[test]
+    fn serialize_database_variant_has_correct_kind() {
+        let db_err = AppError::Database(sqlx::Error::RowNotFound);
+        let json = serde_json::to_value(&db_err).expect("Database error should serialize");
+        assert_eq!(json["kind"], "database", "Database variant kind");
+        assert!(
+            json["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Database error"),
+            "Database message prefix"
+        );
+    }
+
+    #[test]
+    fn serialize_migration_variant_has_correct_kind() {
+        let migrate_err = sqlx::migrate::MigrateError::Execute(sqlx::Error::RowNotFound);
+        let app_err = AppError::Migration(migrate_err);
+        let json = serde_json::to_value(&app_err).expect("Migration error should serialize");
+        assert_eq!(json["kind"], "migration", "Migration variant kind");
+        assert!(
+            json["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("Migration error"),
+            "Migration message prefix"
+        );
+    }
+
+    #[test]
     fn serialize_produces_exactly_two_fields() {
         let err = AppError::NotFound("x".into());
         let json = serde_json::to_value(&err).unwrap();

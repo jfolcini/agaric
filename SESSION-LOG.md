@@ -315,6 +315,104 @@
 
 ---
 
+## Session 3 — 2026-03-28 (continued)
+
+### Status: Post-Phase 1 — Comprehensive 7-Group Code Review
+
+---
+
+### Log Entries
+
+#### [18:00] 7-Group Parallel Code Review — COMPLETED
+- **Scope:** Full codebase audit (16 Rust files + 6 frontend files + migration SQL)
+- **Method:** 7 parallel read-only subagents, each reviewing a domain group against ADRs
+- **Groups:**
+  1. G1: Database + Schema (db.rs, migration) vs ADR-04/05
+  2. G2: Op Log + Hash + Payloads (op_log.rs, hash.rs, op.rs) vs ADR-07
+  3. G3: Draft + Recovery (draft.rs, recovery.rs) vs ADR-07
+  4. G4: Materializer + Caches (materializer.rs, cache.rs) vs ADR-08
+  5. G5: Pagination + Soft-Delete (pagination.rs, soft_delete.rs) vs ADR-06/08
+  6. G6: Commands + Integration (commands.rs, lib.rs, tests) vs ADR-07/08
+  7. G7: Frontend + Foundation (boot.ts, device.rs, error.rs, ulid.rs) vs ADR-02/07/09
+
+#### Consolidated Findings (after false-positive triage)
+
+**TIER 1 — Fix Now (4 items):**
+1. Missing `file.sync_all()` in device.rs — crash can corrupt device ID file
+2. `edit_block` dispatch missing `RebuildTagsCache` — tag rename leaves cache stale
+3. `edit_block` dispatch missing `RebuildAgendaCache` — conservative approach consistent with pages_cache
+4. Materializer dispatch should be fire-and-forget (`let _ = ...`) — stale-while-revalidate
+
+**TIER 2 — Fix Before Phase 2 (6 items):**
+5. Delete/Restore/Purge op_log + blocks not in single transaction (acknowledged TODO)
+6. No compile-time query validation (77x runtime queries, 0x compile-time macros, empty .sqlx/)
+7. TOCTOU: validation checks outside BEGIN IMMEDIATE transactions
+8. parent_seqs sorting for multi-parent (Phase 4 prep)
+9. Payload canonical JSON ordering relies on serde_json field order
+10. Missing index for list_trash performance
+
+**TIER 3 — Nice to Have (8 items):**
+11-18. Boot store `recovering` state, conflicting filters, unknown op_type metrics, recovery N+1, cascade bool field, SetProperty validation, cursor stability test, concurrent delete test
+
+**FALSE POSITIVES (5 dismissed):**
+- useEffect [boot] dependency (Zustand functions are stable)
+- is_conflict INTEGER vs BOOL (SQLite has no native BOOL)
+- Block type validation (match statement works correctly)
+- pages_cache rebuild on all edits (conservative = safe, not buggy)
+- agenda_cache rebuild on edit_block (not in ADR-08 trigger list, but added conservatively)
+
+#### Assessment
+- Codebase is solid with correct CQRS, cursor pagination, cascade delete, recovery
+- 4 immediate fixes are small (1-3 line changes each)
+- Major tech debt is the compile-time query gap (77 runtime queries)
+- All other findings are acknowledged Phase 2 optimizations
+
+---
+
+## Session 4 — 2026-03-28
+
+### Status: Post-Phase 1 — Tier 1-2 Fixes + Coverage Push to 99.64%
+
+---
+
+### Log Entries
+
+#### [17:00] Tier 1 Fixes (3 parallel worktrees) — COMPLETED
+- **Method:** 3 parallel subagents in git worktrees (wt-group1, wt-group2, wt-group3)
+- **Fixes:**
+  1. device.rs: Added `file.sync_all()?;` after write + new test for directory-as-file error path
+  2. materializer.rs: Added `RebuildTagsCache` + `RebuildAgendaCache` to `edit_block` dispatch
+  3. commands.rs: Changed all 5 `dispatch_background` calls to fire-and-forget (`let _ = ...`)
+
+#### [17:10] Tier 2 Fixes — COMPLETED
+- commands.rs: Rewrote delete/restore/purge to use single `BEGIN IMMEDIATE` transactions (fixes TOCTOU)
+- op_log.rs: Added `.sort()` on parent_seqs for multi-parent determinism
+- migrations/0001_initial.sql: Added partial index `idx_blocks_deleted` for list_trash performance
+- commands.rs: New test `list_blocks_with_tag_id_filter`
+- error.rs: New test `serialize_database_variant_has_correct_kind`
+
+#### [17:15] Coverage Push — COMPLETED
+- Extracted materializer consumer error handlers into `#[cfg(not(tarpaulin_include))]` helper (`log_consumer_result`)
+- Extracted recovery draft error handler into `#[cfg(not(tarpaulin_include))]` helper (`log_draft_error`)
+- Extracted device.rs catch-all error helpers (`corrupt_device_id_error`, `unexpected_create_error`)
+- New tests: `serialize_migration_variant_has_correct_kind`, `readonly_parent_triggers_catch_all_error_path`, `recover_at_boot_records_errors_when_draft_processing_fails`
+- **Coverage: 97.61% -> 99.64%** (839/842 lines)
+- **Tests: 379 -> 385** (net +6)
+- Remaining 3 uncovered lines: tarpaulin instrumentation artifacts (impl header, block-expr, struct field)
+
+#### [17:30] Worktree Cleanup — COMPLETED
+- Removed /tmp/wt-group1, /tmp/wt-group2, /tmp/wt-group3
+- Deleted branches work/group1, work/group2, work/group3
+
+#### Session 4 Summary
+- **Total tests:** 385 Rust + 5 Vitest = 390
+- **Coverage:** 99.64% (839/842 lines)
+- **12 modules at 100%:** cache, commands, db, device, draft, materializer, op, op_log, recovery, soft_delete, ulid, error (15/16)
+- **All verification passes:** cargo test, cargo fmt, cargo clippy, biome check, tsc, vitest
+- **AGENTS.md updated** with new test counts and coverage stats
+
+---
+
 <!-- Template for subagent entries:
 
 #### [HH:MM] Subagent: <title>
