@@ -6,8 +6,12 @@
  * Also allows creating new tag blocks inline (p15-t19).
  */
 
+import { Plus, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import type { BlockRow } from '../lib/tauri'
 import { addTag, createBlock, listBlocks, removeTag } from '../lib/tauri'
 
@@ -96,8 +100,10 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
 
   if (!blockId) {
     return (
-      <div className="tag-panel">
-        <div className="tag-panel-empty">Select a block to manage tags</div>
+      <div className="tag-panel rounded-lg border border-dashed p-6 text-center">
+        <div className="tag-panel-empty text-sm text-muted-foreground">
+          Select a block to manage tags
+        </div>
       </div>
     )
   }
@@ -109,45 +115,46 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
 
   return (
     <div className="tag-panel">
-      <div className="tag-panel-applied">
+      <div className="tag-panel-applied flex flex-wrap gap-2">
         {appliedTags.map((tag) => (
-          <span key={tag.id} className="tag-chip">
+          <Badge key={tag.id} variant="secondary" className="tag-chip gap-1">
             {tag.name}
             <button
               type="button"
-              className="tag-chip-remove"
+              className="tag-chip-remove ml-1 rounded-full hover:bg-muted"
               onClick={() => handleRemoveTag(tag.id)}
               aria-label={`Remove tag ${tag.name}`}
             >
-              x
+              <X className="h-3 w-3" />
             </button>
-          </span>
+          </Badge>
         ))}
       </div>
 
-      <button
-        type="button"
-        className="tag-panel-add-btn"
+      <Button
+        variant="outline"
+        size="sm"
+        className="tag-panel-add-btn gap-1"
         onClick={() => setShowPicker(!showPicker)}
       >
-        + Add tag
-      </button>
+        <Plus className="h-3.5 w-3.5" />
+        Add tag
+      </Button>
 
       {showPicker && (
-        <div className="tag-picker">
-          <input
-            type="text"
-            className="tag-picker-input"
+        <div className="tag-picker mt-2 space-y-2 rounded-lg border bg-popover p-3 shadow-md">
+          <Input
+            className="tag-picker-input h-8"
             placeholder="Search tags..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <div className="tag-picker-list" role="listbox">
+          <div className="tag-picker-list max-h-40 space-y-1 overflow-y-auto" role="listbox">
             {availableTags.map((tag) => (
               <button
                 key={tag.id}
                 type="button"
-                className="tag-picker-item"
+                className="tag-picker-item flex w-full items-center rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
                 role="option"
                 aria-selected={false}
                 onClick={() => handleAddTag(tag.id)}
@@ -156,11 +163,11 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
               </button>
             ))}
             {availableTags.length === 0 && query && (
-              <div className="tag-picker-empty">
+              <div className="tag-picker-empty text-sm text-muted-foreground">
                 No matching tags.{' '}
                 <button
                   type="button"
-                  className="tag-create-inline"
+                  className="tag-create-inline text-primary underline-offset-4 hover:underline"
                   onClick={() => {
                     setNewTagName(query)
                     setShowPicker(false)
@@ -175,20 +182,24 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
       )}
 
       {newTagName && (
-        <div className="tag-create-form">
-          <input
-            type="text"
-            className="tag-create-input"
+        <div className="tag-create-form mt-2 flex items-center gap-2">
+          <Input
+            className="tag-create-input h-8 flex-1"
             value={newTagName}
             onChange={(e) => setNewTagName(e.target.value)}
             placeholder="Tag name"
           />
-          <button type="button" className="tag-create-btn" onClick={handleCreateTag}>
+          <Button size="sm" className="tag-create-btn" onClick={handleCreateTag}>
             Create tag
-          </button>
-          <button type="button" className="tag-create-cancel" onClick={() => setNewTagName('')}>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="tag-create-cancel"
+            onClick={() => setNewTagName('')}
+          >
             Cancel
-          </button>
+          </Button>
         </div>
       )}
     </div>

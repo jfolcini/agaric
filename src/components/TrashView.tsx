@@ -5,8 +5,11 @@
  * Supports restore (p15-t24) and permanent purge (p15-t25).
  */
 
+import { AlertTriangle, RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import type { BlockRow } from '../lib/tauri'
 import { listBlocks, purgeBlock, restoreBlock } from '../lib/tauri'
 
@@ -63,57 +66,74 @@ export function TrashView(): React.ReactElement {
   }, [nextCursor, loadTrash])
 
   return (
-    <div className="trash-view">
-      <h2 className="trash-view-title">Trash</h2>
+    <div className="trash-view space-y-4">
+      <h2 className="trash-view-title text-lg font-semibold tracking-tight">Trash</h2>
 
-      {loading && blocks.length === 0 && <div className="trash-view-loading">Loading trash...</div>}
+      {loading && blocks.length === 0 && (
+        <div className="trash-view-loading text-sm text-muted-foreground">Loading trash...</div>
+      )}
 
-      {!loading && blocks.length === 0 && <div className="trash-view-empty">Trash is empty.</div>}
+      {!loading && blocks.length === 0 && (
+        <div className="trash-view-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+          Trash is empty.
+        </div>
+      )}
 
-      <div className="trash-view-list">
+      <div className="trash-view-list space-y-2">
         {blocks.map((block) => (
-          <div key={block.id} className="trash-item">
-            <div className="trash-item-content">
-              <span className="trash-item-type">{block.block_type}</span>
-              <span className="trash-item-text">{block.content ?? '(empty)'}</span>
-              <span className="trash-item-date">
+          <div
+            key={block.id}
+            className="trash-item flex items-center justify-between rounded-lg border bg-card p-3"
+          >
+            <div className="trash-item-content flex items-center gap-3">
+              <Badge variant="outline" className="trash-item-type shrink-0">
+                {block.block_type}
+              </Badge>
+              <span className="trash-item-text text-sm">{block.content ?? '(empty)'}</span>
+              <span className="trash-item-date text-xs text-muted-foreground">
                 Deleted: {block.deleted_at ? new Date(block.deleted_at).toLocaleDateString() : ''}
               </span>
             </div>
-            <div className="trash-item-actions">
-              <button
-                type="button"
+            <div className="trash-item-actions flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
                 className="trash-restore-btn"
                 onClick={() => handleRestore(block)}
               >
+                <RotateCcw className="h-3.5 w-3.5" />
                 Restore
-              </button>
+              </Button>
               {confirmPurgeId === block.id ? (
-                <span className="trash-purge-confirm">
+                <span className="trash-purge-confirm flex items-center gap-1.5 text-sm">
+                  <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
                   <span>Delete forever?</span>
-                  <button
-                    type="button"
+                  <Button
+                    variant="destructive"
+                    size="xs"
                     className="trash-purge-yes"
                     onClick={() => handlePurge(block.id)}
                   >
                     Yes
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
                     className="trash-purge-no"
                     onClick={() => setConfirmPurgeId(null)}
                   >
                     No
-                  </button>
+                  </Button>
                 </span>
               ) : (
-                <button
-                  type="button"
-                  className="trash-purge-btn"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="trash-purge-btn text-destructive hover:text-destructive"
                   onClick={() => setConfirmPurgeId(block.id)}
                 >
                   Purge
-                </button>
+                </Button>
               )}
             </div>
           </div>
@@ -121,9 +141,15 @@ export function TrashView(): React.ReactElement {
       </div>
 
       {hasMore && (
-        <button type="button" className="trash-load-more" onClick={loadMore} disabled={loading}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="trash-load-more w-full"
+          onClick={loadMore}
+          disabled={loading}
+        >
           {loading ? 'Loading...' : 'Load more'}
-        </button>
+        </Button>
       )}
     </div>
   )

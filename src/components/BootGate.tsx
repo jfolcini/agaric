@@ -1,4 +1,6 @@
+import { Loader2 } from 'lucide-react'
 import { useEffect } from 'react'
+import { Button } from '@/components/ui/button'
 import { useBootStore } from '../stores/boot'
 
 export function BootGate({ children }: { children: React.ReactNode }) {
@@ -10,36 +12,20 @@ export function BootGate({ children }: { children: React.ReactNode }) {
 
   if (state === 'booting') {
     return (
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-        }}
-      >
-        <p>Loading...</p>
+      <div className="flex h-screen items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     )
   }
 
   if (state === 'error') {
     return (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-          gap: '1rem',
-        }}
-      >
-        <h2>Failed to start</h2>
-        <p style={{ color: '#ef4444' }}>{error}</p>
-        <button type="button" onClick={() => boot()}>
+      <div className="flex h-screen flex-col items-center justify-center gap-4">
+        <h2 className="text-lg font-semibold">Failed to start</h2>
+        <p className="text-sm text-destructive">{error}</p>
+        <Button variant="outline" onClick={() => boot()}>
           Retry
-        </button>
+        </Button>
       </div>
     )
   }

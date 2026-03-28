@@ -1,53 +1,108 @@
-import './App.css'
+import { Calendar, ChevronsLeft, FileText, Tag, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { BootGate } from './components/BootGate'
 import { JournalPage } from './components/JournalPage'
 import { PageBrowser } from './components/PageBrowser'
-import { TagPanel } from './components/TagPanel'
+import { TagList } from './components/TagList'
 import { TrashView } from './components/TrashView'
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from './components/ui/sidebar'
 
 type View = 'journal' | 'pages' | 'tags' | 'trash'
 
-const NAV_ITEMS: { id: View; icon: string; label: string }[] = [
-  { id: 'journal', icon: '\u{1F4C5}', label: 'Journal' },
-  { id: 'pages', icon: '\u{1F4C4}', label: 'Pages' },
-  { id: 'tags', icon: '\u{1F3F7}', label: 'Tags' },
-  { id: 'trash', icon: '\u{1F5D1}', label: 'Trash' },
+const NAV_ITEMS: { id: View; icon: React.ElementType; label: string }[] = [
+  { id: 'journal', icon: Calendar, label: 'Journal' },
+  { id: 'pages', icon: FileText, label: 'Pages' },
+  { id: 'tags', icon: Tag, label: 'Tags' },
+  { id: 'trash', icon: Trash2, label: 'Trash' },
 ]
+
+function CollapseButton() {
+  const { toggleSidebar } = useSidebar()
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton tooltip="Toggle Sidebar" onClick={toggleSidebar}>
+          <ChevronsLeft className="transition-transform group-data-[state=collapsed]:rotate-180" />
+          <span>Collapse</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  )
+}
 
 function App() {
   const [view, setView] = useState<View>('journal')
-  const [collapsed, setCollapsed] = useState(false)
 
   return (
     <BootGate>
-      <div className="app-layout">
-        <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
-          <button type="button" className="sidebar-toggle" onClick={() => setCollapsed((c) => !c)}>
-            {collapsed ? '\u{25B6}' : '\u{25C0}'}
-          </button>
-          <nav className="sidebar-nav">
-            {NAV_ITEMS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`sidebar-link${view === item.id ? ' active' : ''}`}
-                onClick={() => setView(item.id)}
-                title={item.label}
-              >
-                <span className="icon">{item.icon}</span>
-                <span className="label">{item.label}</span>
-              </button>
-            ))}
-          </nav>
-        </aside>
-        <main className="main-content">
-          {view === 'journal' && <JournalPage />}
-          {view === 'pages' && <PageBrowser onPageSelect={() => {}} />}
-          {view === 'tags' && <TagPanel blockId={null} />}
-          {view === 'trash' && <TrashView />}
-        </main>
-      </div>
+      <SidebarProvider>
+        <Sidebar collapsible="icon">
+          <SidebarHeader>
+            <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+              <span className="hidden text-lg font-bold group-data-[collapsible=icon]:block">
+                O
+              </span>
+              <div className="flex flex-col group-data-[collapsible=icon]:hidden">
+                <span className="text-lg font-bold leading-tight">Org-Mode!</span>
+                <span className="text-xs text-muted-foreground">for the rest of us</span>
+              </div>
+            </div>
+          </SidebarHeader>
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {NAV_ITEMS.map((item) => (
+                    <SidebarMenuItem key={item.id}>
+                      <SidebarMenuButton
+                        isActive={view === item.id}
+                        tooltip={item.label}
+                        onClick={() => setView(item.id)}
+                      >
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+          <SidebarFooter>
+            <CollapseButton />
+          </SidebarFooter>
+          <SidebarRail />
+        </Sidebar>
+        <SidebarInset>
+          <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
+            <SidebarTrigger className="md:hidden" />
+            <span className="font-medium">{NAV_ITEMS.find((item) => item.id === view)?.label}</span>
+          </header>
+          <div className="flex-1 overflow-y-auto p-6">
+            {view === 'journal' && <JournalPage />}
+            {view === 'pages' && <PageBrowser onPageSelect={() => {}} />}
+            {view === 'tags' && <TagList />}
+            {view === 'trash' && <TrashView />}
+          </div>
+        </SidebarInset>
+      </SidebarProvider>
     </BootGate>
   )
 }

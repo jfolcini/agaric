@@ -51,11 +51,15 @@ export function StaticBlock({ blockId, content, onFocus }: StaticBlockProps): Re
   return (
     <button
       type="button"
-      className="block-static"
+      className="block-static flex w-full cursor-text rounded-md px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent/50"
       data-block-id={blockId}
       onClick={() => onFocus(blockId)}
     >
-      {content ? renderPlainText(content) : <span className="block-placeholder">Empty block</span>}
+      {content ? (
+        renderPlainText(content)
+      ) : (
+        <span className="block-placeholder text-muted-foreground italic">Empty block</span>
+      )}
     </button>
   )
 }

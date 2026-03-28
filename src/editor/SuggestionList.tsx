@@ -7,6 +7,7 @@
  */
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from 'react'
+import { cn } from '@/lib/utils'
 
 /** An item in the suggestion popup (tag or page). */
 export interface PickerItem {
@@ -59,15 +60,21 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
     }))
 
     if (items.length === 0) {
-      return <div className="suggestion-empty">No results</div>
+      return <div className="suggestion-empty p-2 text-sm text-muted-foreground">No results</div>
     }
 
     return (
-      <div className="suggestion-list" role="listbox">
+      <div
+        className="suggestion-list flex flex-col gap-0.5 overflow-y-auto rounded-lg border bg-popover p-1 shadow-md"
+        role="listbox"
+      >
         {items.map((item, index) => (
           <button
             key={item.id}
-            className={`suggestion-item${index === selectedIndex ? ' is-selected' : ''}`}
+            className={cn(
+              'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors',
+              index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+            )}
             onClick={() => selectItem(index)}
             onMouseEnter={() => setSelectedIndex(index)}
             type="button"

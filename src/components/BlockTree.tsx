@@ -111,11 +111,15 @@ export function BlockTree(): React.ReactElement {
   })
 
   if (loading) {
-    return <div className="block-tree-loading">Loading blocks...</div>
+    return (
+      <div className="block-tree-loading flex items-center justify-center p-8 text-sm text-muted-foreground">
+        Loading blocks...
+      </div>
+    )
   }
 
   return (
-    <div className="block-tree">
+    <div className="block-tree space-y-0.5">
       {blocks.map((block) => {
         const isFocused = focusedBlockId === block.id
         // Focused block is never virtualized — always render fully
@@ -142,7 +146,7 @@ export function BlockTree(): React.ReactElement {
         )
       })}
       {blocks.length === 0 && (
-        <div className="block-tree-empty">
+        <div className="block-tree-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           <p>No blocks yet. Start typing to create one.</p>
         </div>
       )}
