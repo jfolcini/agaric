@@ -16,8 +16,18 @@ import { useBlockStore } from '../stores/blocks'
 import { EditableBlock } from './EditableBlock'
 
 export function BlockTree(): React.ReactElement {
-  const { blocks, focusedBlockId, loading, load, setFocused, remove, edit, splitBlock } =
-    useBlockStore()
+  const {
+    blocks,
+    focusedBlockId,
+    loading,
+    load,
+    setFocused,
+    remove,
+    edit,
+    splitBlock,
+    indent,
+    dedent,
+  } = useBlockStore()
   const rovingEditor = useRovingEditor()
   const viewport = useViewportObserver()
 
@@ -77,12 +87,18 @@ export function BlockTree(): React.ReactElement {
   }, [focusedBlockId, blocks, rovingEditor, remove, setFocused])
 
   const handleIndent = useCallback(() => {
-    // p15-t17: indent/dedent deferred to its own task
-  }, [])
+    if (!focusedBlockId) return
+    // Flush editor content before structural move
+    handleFlush()
+    indent(focusedBlockId)
+  }, [focusedBlockId, handleFlush, indent])
 
   const handleDedent = useCallback(() => {
-    // p15-t17: indent/dedent deferred to its own task
-  }, [])
+    if (!focusedBlockId) return
+    // Flush editor content before structural move
+    handleFlush()
+    dedent(focusedBlockId)
+  }, [focusedBlockId, handleFlush, dedent])
 
   useBlockKeyboard(rovingEditor.editor, {
     onFocusPrev: handleFocusPrev,

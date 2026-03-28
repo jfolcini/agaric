@@ -17,8 +17,8 @@ use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::op::{
-    CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, OpPayload, PurgeBlockPayload,
-    RestoreBlockPayload,
+    CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
+    PurgeBlockPayload, RestoreBlockPayload,
 };
 use crate::op_log;
 use crate::pagination::{self, BlockRow, PageResponse};
@@ -57,6 +57,13 @@ pub struct RestoreResponse {
 pub struct PurgeResponse {
     pub block_id: String,
     pub purged_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MoveResponse {
+    pub block_id: String,
+    pub new_parent_id: Option<String>,
+    pub new_position: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -402,6 +409,84 @@ pub async fn purge_block_inner(
     })
 }
 
+pub async fn move_block_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    new_parent_id: Option<String>,
+    new_position: i64,
+) -> Result<MoveResponse, AppError> {
+    // 1. Validate block exists and is not deleted (same pattern as edit_block_inner)
+    let existing: Option<BlockRow> = sqlx::query_as(
+        "SELECT id, block_type, content, parent_id, position, \
+                deleted_at, archived_at, is_conflict \
+         FROM blocks WHERE id = ? AND deleted_at IS NULL",
+    )
+    .bind(&block_id)
+    .fetch_optional(pool)
+    .await?;
+
+    existing
+        .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
+
+    // 2. Validate block cannot become its own parent
+    if let Some(ref pid) = new_parent_id {
+        if pid == &block_id {
+            return Err(AppError::InvalidOperation(format!(
+                "block '{block_id}' cannot be its own parent"
+            )));
+        }
+    }
+
+    // 3. If new_parent_id is Some, validate the parent exists and is not deleted
+    if let Some(ref pid) = new_parent_id {
+        let exists: Option<(i64,)> =
+            sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
+                .bind(pid)
+                .fetch_optional(pool)
+                .await?;
+        if exists.is_none() {
+            return Err(AppError::NotFound(format!("parent block '{pid}'")));
+        }
+    }
+
+    // 4. Build OpPayload
+    let payload = OpPayload::MoveBlock(MoveBlockPayload {
+        block_id: block_id.clone(),
+        new_parent_id: new_parent_id.clone(),
+        new_position,
+    });
+
+    // 5. Begin IMMEDIATE transaction for atomic op_log + blocks write.
+    //    IMMEDIATE eagerly acquires the write lock, avoiding
+    //    SQLITE_BUSY_SNAPSHOT when a background cache rebuild commits
+    //    between our first read and first write.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+
+    // 6. Update blocks table within same transaction
+    sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
+        .bind(&new_parent_id)
+        .bind(new_position)
+        .bind(&block_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    // 7. Dispatch background cache tasks (fire-and-forget)
+    let _ = materializer.dispatch_background(&op_record);
+
+    // 8. Return response
+    Ok(MoveResponse {
+        block_id,
+        new_parent_id,
+        new_position,
+    })
+}
+
 pub async fn list_blocks_inner(
     pool: &SqlitePool,
     parent_id: Option<String>,
@@ -508,6 +593,27 @@ pub async fn purge_block(
     block_id: String,
 ) -> Result<PurgeResponse, AppError> {
     purge_block_inner(&pool, &device_id.0, &materializer, block_id).await
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+pub async fn move_block(
+    pool: State<'_, SqlitePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_id: String,
+    new_parent_id: Option<String>,
+    new_position: i64,
+) -> Result<MoveResponse, AppError> {
+    move_block_inner(
+        &pool,
+        &device_id.0,
+        &materializer,
+        block_id,
+        new_parent_id,
+        new_position,
+    )
+    .await
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -1475,6 +1581,205 @@ mod tests {
             block.deleted_at,
             Some(FIXED_TS.into()),
             "get_block should return deleted_at for soft-deleted blocks"
+        );
+    }
+
+    // ======================================================================
+    // move_block
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn move_block_basic_reparent() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Setup: two parents and a child under parent A
+        insert_block(&pool, "MV_PAR_A", "page", "parent A", None, Some(1)).await;
+        insert_block(&pool, "MV_PAR_B", "page", "parent B", None, Some(2)).await;
+        insert_block(
+            &pool,
+            "MV_CHILD",
+            "content",
+            "child",
+            Some("MV_PAR_A"),
+            Some(1),
+        )
+        .await;
+
+        let resp = move_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "MV_CHILD".into(),
+            Some("MV_PAR_B".into()),
+            5,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.block_id, "MV_CHILD");
+        assert_eq!(resp.new_parent_id, Some("MV_PAR_B".into()));
+        assert_eq!(resp.new_position, 5);
+
+        // Verify DB state
+        let row: (Option<String>, Option<i64>) =
+            sqlx::query_as("SELECT parent_id, position FROM blocks WHERE id = ?")
+                .bind("MV_CHILD")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            row.0,
+            Some("MV_PAR_B".into()),
+            "parent_id should be updated in DB"
+        );
+        assert_eq!(row.1, Some(5), "position should be updated in DB");
+
+        // Verify op_log entry
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND op_type = 'move_block'",
+        )
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count.0, 1, "exactly one move_block op should be logged");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn move_block_to_root() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Setup: a parent and a child under it
+        insert_block(&pool, "MV_ROOT_PAR", "page", "parent", None, Some(1)).await;
+        insert_block(
+            &pool,
+            "MV_ROOT_CHD",
+            "content",
+            "child",
+            Some("MV_ROOT_PAR"),
+            Some(1),
+        )
+        .await;
+
+        // Move child to root (new_parent_id = None)
+        let resp = move_block_inner(&pool, DEV, &mat, "MV_ROOT_CHD".into(), None, 10)
+            .await
+            .unwrap();
+
+        assert_eq!(resp.block_id, "MV_ROOT_CHD");
+        assert!(
+            resp.new_parent_id.is_none(),
+            "new_parent_id should be None for root move"
+        );
+        assert_eq!(resp.new_position, 10);
+
+        // Verify DB state
+        let row: (Option<String>, Option<i64>) =
+            sqlx::query_as("SELECT parent_id, position FROM blocks WHERE id = ?")
+                .bind("MV_ROOT_CHD")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            row.0.is_none(),
+            "parent_id should be NULL in DB after move to root"
+        );
+        assert_eq!(row.1, Some(10), "position should be updated in DB");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn move_block_nonexistent_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = move_block_inner(&pool, DEV, &mat, "NONEXISTENT".into(), None, 1).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "should return NotFound for nonexistent block"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn move_block_deleted_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "MV_DEL", "content", "deleted block", None, Some(1)).await;
+
+        // Soft-delete the block
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = 'MV_DEL'")
+            .bind(FIXED_TS)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = move_block_inner(&pool, DEV, &mat, "MV_DEL".into(), None, 1).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "moving a deleted block should return NotFound"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn move_block_to_deleted_parent_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "MV_BLK", "content", "block", None, Some(1)).await;
+        insert_block(&pool, "MV_DEL_PAR", "page", "deleted parent", None, Some(2)).await;
+
+        // Soft-delete the parent
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = 'MV_DEL_PAR'")
+            .bind(FIXED_TS)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = move_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "MV_BLK".into(),
+            Some("MV_DEL_PAR".into()),
+            1,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "moving to a deleted parent should return NotFound"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn move_block_to_self_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "MV_SELF", "content", "self ref", None, Some(1)).await;
+
+        let result = move_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "MV_SELF".into(),
+            Some("MV_SELF".into()),
+            1,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::InvalidOperation(_))),
+            "block_id == new_parent_id should return InvalidOperation"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("cannot be its own parent"),
+            "error message should explain the constraint"
         );
     }
 }

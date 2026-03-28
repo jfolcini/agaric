@@ -66,6 +66,7 @@ pub fn run() {
             commands::delete_block,
             commands::restore_block,
             commands::purge_block,
+            commands::move_block,
             commands::list_blocks,
             commands::get_block,
         ])

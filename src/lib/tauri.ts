@@ -43,6 +43,12 @@ export interface PurgeResponse {
   purged_count: number
 }
 
+export interface MoveResponse {
+  block_id: string
+  new_parent_id: string | null
+  new_position: number
+}
+
 // Command wrappers
 export async function createBlock(params: {
   blockType: string
@@ -97,4 +103,12 @@ export async function listBlocks(params?: {
 
 export async function getBlock(blockId: string): Promise<BlockRow> {
   return invoke('get_block', { blockId })
+}
+
+export async function moveBlock(
+  blockId: string,
+  newParentId: string | null,
+  newPosition: number,
+): Promise<MoveResponse> {
+  return invoke('move_block', { blockId, newParentId, newPosition })
 }

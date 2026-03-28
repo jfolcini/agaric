@@ -7,7 +7,7 @@
 
 import { create } from 'zustand'
 import type { BlockRow, PageResponse } from '../lib/tauri'
-import { createBlock, deleteBlock, editBlock, listBlocks } from '../lib/tauri'
+import { createBlock, deleteBlock, editBlock, listBlocks, moveBlock } from '../lib/tauri'
 
 interface BlockStore {
   /** Ordered list of blocks for the current view. */
@@ -35,6 +35,11 @@ interface BlockStore {
    * create new blocks below.
    */
   splitBlock: (blockId: string, markdown: string) => Promise<void>
+
+  /** Indent: make block a child of its previous sibling. */
+  indent: (blockId: string) => Promise<void>
+  /** Dedent: move block up one level to grandparent. */
+  dedent: (blockId: string) => Promise<void>
 }
 
 export const useBlockStore = create<BlockStore>((set, get) => ({
@@ -126,6 +131,54 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     for (const line of rest) {
       const newId = await get().createBelow(lastId, line)
       if (newId) lastId = newId
+    }
+  },
+
+  indent: async (blockId: string) => {
+    const { blocks } = get()
+    const idx = blocks.findIndex((b) => b.id === blockId)
+    if (idx <= 0) return // First block or not found — can't indent
+
+    const block = blocks[idx]
+    const prevSibling = blocks[idx - 1]
+
+    // Only indent if previous block is a sibling (same parent)
+    if (block.parent_id !== prevSibling.parent_id) return
+
+    // Move block to be a child of previous sibling, position 0
+    try {
+      await moveBlock(blockId, prevSibling.id, 0)
+      set((state) => ({
+        blocks: state.blocks.map((b) =>
+          b.id === blockId ? { ...b, parent_id: prevSibling.id, position: 0 } : b,
+        ),
+      }))
+    } catch {
+      // Silently fail
+    }
+  },
+
+  dedent: async (blockId: string) => {
+    const { blocks } = get()
+    const block = blocks.find((b) => b.id === blockId)
+    if (!block?.parent_id) return // Already at root — can't dedent
+
+    // Find the parent block to get grandparent info
+    const parent = blocks.find((b) => b.id === block.parent_id)
+    if (!parent) return
+
+    // Move to grandparent, position after the parent
+    const newParentId = parent.parent_id
+    const newPosition = (parent.position ?? 0) + 1
+    try {
+      await moveBlock(blockId, newParentId, newPosition)
+      set((state) => ({
+        blocks: state.blocks.map((b) =>
+          b.id === blockId ? { ...b, parent_id: newParentId, position: newPosition } : b,
+        ),
+      }))
+    } catch {
+      // Silently fail
     }
   },
 }))
