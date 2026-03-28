@@ -36,15 +36,29 @@
 
 ---
 
-#### [12:05] Subagent B: Database & Backend Foundation — LAUNCHING
+#### [12:05] Subagent B: Database & Backend Foundation — COMPLETED
 - **Task IDs:** p1-t6 (sqlx bootstrap), p1-t7 (initial migration), p1-t9 (error types), p1-t10 (ULID utility)
-- **Status:** launching
+- **Status:** completed
 - **What it does:** Adds sqlx with WAL mode, creates 0001_initial.sql with full schema, AppError enum, ULID newtype wrapper
+- **Result:** 4 new files (db.rs, error.rs, ulid.rs, 0001_initial.sql), Cargo.toml updated, cargo check passes
+- **Files:** src-tauri/src/{db,error,ulid}.rs, src-tauri/migrations/0001_initial.sql, src-tauri/Cargo.toml, src-tauri/src/lib.rs
 
-#### [12:05] Subagent C: CI + Tooling — LAUNCHING
+#### [12:10] Subagent B-Review: Code review of database & backend — COMPLETED
+- **Status:** completed
+- **What it does:** Reviewed db.rs, error.rs, ulid.rs, migration SQL against ADRs
+- **Issues found:** 9 (1 critical, 5 important, 3 minor)
+- **Critical fix:** Added `PRAGMA foreign_keys = ON` — SQLite FK constraints were not enforced
+- **Key fixes:**
+  - db.rs: Return AppError, use builder API, added FK pragma
+  - error.rs: Added `Serialize` impl on AppError for Tauri 2 command compatibility
+  - ulid.rs: Normalized case to uppercase (critical for blake3 hash determinism)
+  - lib.rs: Wired DB pool init in Tauri setup() hook with managed state
+  - Cargo.toml: Removed unused `anyhow`, moved `tokio` to dev-deps
+- **Build:** cargo check + cargo fmt + cargo clippy all pass
+
+#### [12:05] Subagent C: CI + Tooling — ON HOLD (sequential workflow change)
 - **Task IDs:** p1-t4 (GitHub Actions CI), p1-t5 (device UUID), p1-t8 (.sqlx offline cache), p1-t30 (Vitest config)
-- **Status:** launching
-- **What it does:** GitHub Actions workflow, device UUID persistence module, .sqlx/ CI gate, Vitest setup
+- **Status:** waiting for B review+commit cycle
 
 ---
 

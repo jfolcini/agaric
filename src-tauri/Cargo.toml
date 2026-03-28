@@ -12,10 +12,11 @@ tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
-tokio = { version = "1.50.0", features = ["full"] }
 thiserror = "2.0.18"
-anyhow = "1.0.102"
 ulid = "1.2.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
 
 [lib]
 name = "block_notes_lib"
