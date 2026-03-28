@@ -55,18 +55,13 @@ pub async fn append_local_op(
     append_local_op_at(pool, device_id, op_payload, Utc::now().to_rfc3339()).await
 }
 
-/// Append a local operation with an explicit `created_at` (RFC 3339).
+/// Append a local operation within an existing transaction.
 ///
-/// Accepting the timestamp as a parameter makes tests fully deterministic —
-/// callers can freeze time without mocking.
-///
-/// 1. Determines the next `seq` for this device.
-/// 2. Computes `parent_seqs` (Phase 1: single linear chain).
-/// 3. Serializes the payload to canonical JSON.
-/// 4. Computes the blake3 content hash.
-/// 5. Inserts the row and returns the full [`OpRecord`].
-pub async fn append_local_op_at(
-    pool: &SqlitePool,
+/// The caller is responsible for committing the transaction.
+/// This is used by command handlers to wrap both the op_log append
+/// and the blocks-table write in a single atomic transaction.
+pub async fn append_local_op_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
     op_payload: OpPayload,
     created_at: String,
@@ -78,15 +73,13 @@ pub async fn append_local_op_at(
     // the op_log.payload column contains only the operation-specific fields.
     let payload_json = serialize_inner_payload(&op_payload)?;
 
-    let mut tx = pool.begin().await?;
-
     // NOTE: `COALESCE(MAX(seq), 0) + 1` is efficient here because the
     // PRIMARY KEY (device_id, seq) gives SQLite a B-tree index that makes
     // `MAX(seq) WHERE device_id = ?` an O(log n) seek, not a table scan.
     let row: (i64,) =
         sqlx::query_as("SELECT COALESCE(MAX(seq), 0) + 1 FROM op_log WHERE device_id = ?")
             .bind(device_id)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut **tx)
             .await?;
     let seq = row.0;
 
@@ -118,10 +111,8 @@ pub async fn append_local_op_at(
     .bind(&op_type)
     .bind(&payload_json)
     .bind(&created_at)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
-
-    tx.commit().await?;
 
     Ok(OpRecord {
         device_id: device_id.to_owned(),
@@ -132,6 +123,31 @@ pub async fn append_local_op_at(
         payload: payload_json,
         created_at,
     })
+}
+
+/// Append a local operation with an explicit `created_at` (RFC 3339).
+///
+/// Accepting the timestamp as a parameter makes tests fully deterministic —
+/// callers can freeze time without mocking.
+///
+/// 1. Determines the next `seq` for this device.
+/// 2. Computes `parent_seqs` (Phase 1: single linear chain).
+/// 3. Serializes the payload to canonical JSON.
+/// 4. Computes the blake3 content hash.
+/// 5. Inserts the row and returns the full [`OpRecord`].
+pub async fn append_local_op_at(
+    pool: &SqlitePool,
+    device_id: &str,
+    op_payload: OpPayload,
+    created_at: String,
+) -> Result<OpRecord, AppError> {
+    // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
+    // SQLITE_BUSY_SNAPSHOT when a concurrent background cache rebuild
+    // commits between our first read and first write inside the tx.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let record = append_local_op_in_tx(&mut tx, device_id, op_payload, created_at).await?;
+    tx.commit().await?;
+    Ok(record)
 }
 
 /// Serialize only the inner payload fields (without the `op_type` serde tag).

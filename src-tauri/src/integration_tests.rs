@@ -34,7 +34,7 @@ const DEV: &str = "test-device-integration";
 
 /// Create a block, edit it, delete it, restore it. Verify each op in
 /// op_log has correct seq, parent_seqs, and hash chain.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_pipeline_create_edit_delete_restore() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -127,7 +127,7 @@ async fn full_pipeline_create_edit_delete_restore() {
 
 /// Create 10 blocks, verify that each op's parent_seqs points to the
 /// previous op's [device_id, seq], and each hash is unique and deterministic.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hash_chain_integrity_across_operations() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -193,7 +193,7 @@ async fn hash_chain_integrity_across_operations() {
 
 /// Create several blocks, edit some, delete others. Query op_log and
 /// blocks table, verify they're consistent.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn op_log_records_match_blocks_state() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -273,7 +273,7 @@ async fn op_log_records_match_blocks_state() {
 
 /// Insert a draft row manually into block_drafts, run recover_at_boot,
 /// verify it becomes an edit_block op in op_log.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn crash_recovery_unflushed_draft_becomes_edit_op() {
     let (pool, _dir) = test_pool().await;
 
@@ -308,7 +308,7 @@ async fn crash_recovery_unflushed_draft_becomes_edit_op() {
 
 /// Insert a draft AND a matching edit op, run recovery, verify draft
 /// is deleted but no duplicate op is created.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn crash_recovery_already_flushed_draft_is_deleted() {
     let (pool, _dir) = test_pool().await;
 
@@ -350,7 +350,7 @@ async fn crash_recovery_already_flushed_draft_is_deleted() {
 }
 
 /// Run recovery on empty database, verify report shows zeros.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn crash_recovery_empty_database_is_noop() {
     let (pool, _dir) = test_pool().await;
 
@@ -372,7 +372,7 @@ async fn crash_recovery_empty_database_is_noop() {
 
 /// Create parent->child->grandchild, delete parent, verify all three
 /// are soft-deleted with same timestamp.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cascade_delete_three_level_tree() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -435,7 +435,7 @@ async fn cascade_delete_three_level_tree() {
 /// Create parent->child1, child2. Delete child1 independently. Delete
 /// parent (cascades to child2). Restore parent -> child2 restored,
 /// child1 stays deleted.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restore_after_cascade_preserves_independent_deletes() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -522,7 +522,7 @@ async fn restore_after_cascade_preserves_independent_deletes() {
 /// Create a block, add tags, properties, attachment metadata. Purge it.
 /// Verify it's gone from blocks, block_tags, block_properties, and
 /// attachments. Op_log entries are preserved (append-only).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn purge_removes_from_all_tables() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -604,6 +604,13 @@ async fn purge_removes_from_all_tables() {
         .unwrap();
     assert_eq!(att_count.0, 1);
 
+    // Soft-delete the block first (purge requires prior soft-delete)
+    let _del_resp = delete_block_inner(&pool, DEV, &mat, bid.clone())
+        .await
+        .unwrap();
+    // Allow bg cache tasks from delete to settle before purge
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
     // Purge the block
     let purge_resp = purge_block_inner(&pool, DEV, &mat, bid.clone())
         .await
@@ -652,9 +659,10 @@ async fn purge_removes_from_all_tables() {
         !ops.is_empty(),
         "op_log entries must be preserved after purge"
     );
-    // Should have create(block) + create(tag) + purge = 3 ops
-    assert_eq!(ops.len(), 3);
-    assert_eq!(ops[2].op_type, "purge_block");
+    // Should have create(block) + create(tag) + delete + purge = 4 ops
+    assert_eq!(ops.len(), 4);
+    assert_eq!(ops[2].op_type, "delete_block");
+    assert_eq!(ops[3].op_type, "purge_block");
 }
 
 // ======================================================================
@@ -663,7 +671,7 @@ async fn purge_removes_from_all_tables() {
 
 /// Create 5 blocks, delete 2. list_blocks shows 3. list_blocks with
 /// show_deleted shows 2.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_blocks_respects_soft_delete() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -710,7 +718,7 @@ async fn list_blocks_respects_soft_delete() {
 
 /// Create 20 blocks, walk all pages via cursor. Verify we get all 20
 /// with no duplicates.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pagination_across_create_and_edit() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -757,7 +765,7 @@ async fn pagination_across_create_and_edit() {
 
 /// Create blocks of type 'content', 'page', 'tag'. Filter by each type,
 /// verify correct counts.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_by_type_after_creation() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -832,7 +840,7 @@ async fn list_by_type_after_creation() {
 
 /// Create blocks with positions 3, 1, 2. list_children should return
 /// them in order 1, 2, 3.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn blocks_ordered_by_position() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -912,7 +920,7 @@ async fn blocks_ordered_by_position() {
 }
 
 /// Create block with position 5, edit content. Verify position is still 5.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn edit_does_not_change_position() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -951,7 +959,7 @@ async fn edit_does_not_change_position() {
 
 /// Create a page block, verify materializer metrics show background
 /// tasks processed (pages_cache rebuild).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_background_enqueues_correct_tasks_for_create() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -981,7 +989,7 @@ async fn dispatch_background_enqueues_correct_tasks_for_create() {
 
 /// Edit a block, verify materializer metrics show background tasks
 /// (block_links reindex).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_background_enqueues_correct_tasks_for_edit() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());

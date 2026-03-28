@@ -1041,4 +1041,133 @@ mod tests {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+
+    // ── dispatch_op coverage — remove_tag ───────────────────────────────
+
+    #[tokio::test]
+    async fn dispatch_op_remove_tag() {
+        use crate::op::RemoveTagPayload;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let payload = OpPayload::RemoveTag(RemoveTagPayload {
+            block_id: "blk-rt".into(),
+            tag_id: "tag-99".into(),
+        });
+        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+
+        // remove_tag triggers RebuildTagsCache + RebuildAgendaCache
+        assert!(mat.dispatch_op(&record).await.is_ok());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // ── dispatch_op — create_block with content type (no bg cache) ──────
+
+    #[tokio::test]
+    async fn dispatch_op_create_block_content_type_no_bg_cache() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: "blk-c".into(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            content: "just content".into(),
+        });
+        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+
+        // "content" block type does NOT trigger tag or page cache rebuild
+        assert!(mat.dispatch_op(&record).await.is_ok());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // ── dispatch_background (used by commands) ──────────────────────────
+
+    #[tokio::test]
+    async fn dispatch_background_for_edit_block() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let edit = OpPayload::EditBlock(EditBlockPayload {
+            block_id: "blk-bg".into(),
+            to_text: "edited bg".into(),
+            prev_edit: None,
+        });
+        let record = append_local_op(&pool, "dev-1", edit).await.unwrap();
+
+        // dispatch_background skips foreground ApplyOp, only enqueues bg tasks
+        assert!(mat.dispatch_background(&record).is_ok());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_background_for_delete_block() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: "blk-db".into(),
+            cascade: true,
+        });
+        let record = append_local_op(&pool, "dev-1", payload).await.unwrap();
+
+        assert!(mat.dispatch_background(&record).is_ok());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // ── try_enqueue_background after shutdown returns Err ────────────────
+
+    #[tokio::test]
+    async fn try_enqueue_background_after_shutdown_returns_err() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool);
+
+        mat.shutdown();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let result = mat.try_enqueue_background(MaterializeTask::RebuildTagsCache);
+        assert!(
+            result.is_err(),
+            "try_enqueue_background should fail after shutdown"
+        );
+    }
+
+    // ── dedup — ApplyOp is never dropped ────────────────────────────────
+
+    #[test]
+    fn dedup_never_drops_apply_op() {
+        let record = OpRecord {
+            device_id: "dev-1".into(),
+            seq: 1,
+            parent_seqs: None,
+            hash: "0".repeat(64),
+            op_type: "create_block".into(),
+            payload: "{}".into(),
+            created_at: "2025-01-01T00:00:00Z".into(),
+        };
+
+        let tasks = vec![
+            MaterializeTask::ApplyOp(record.clone()),
+            MaterializeTask::RebuildTagsCache,
+            MaterializeTask::ApplyOp(record.clone()),
+            MaterializeTask::RebuildTagsCache, // dup — coalesced
+            MaterializeTask::ApplyOp(record),
+        ];
+
+        let deduped = dedup_tasks(tasks);
+        // 3 ApplyOps + 1 RebuildTagsCache = 4
+        assert_eq!(deduped.len(), 4);
+        let apply_count = deduped
+            .iter()
+            .filter(|t| matches!(t, MaterializeTask::ApplyOp(_)))
+            .count();
+        assert_eq!(apply_count, 3, "ApplyOp should never be deduped");
+    }
+
+    #[test]
+    fn dedup_empty_batch_returns_empty() {
+        let deduped = dedup_tasks(vec![]);
+        assert!(deduped.is_empty());
+    }
 }

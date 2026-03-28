@@ -66,7 +66,9 @@ pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
          LEFT JOIN (
              SELECT tag_id, COUNT(*) AS cnt FROM block_tags GROUP BY tag_id
          ) t ON t.tag_id = b.id
-         WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL",
+         WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL
+           AND b.is_conflict = 0
+         ORDER BY b.id",
     )
     .bind(&now)
     .execute(&mut *tx)
@@ -210,11 +212,18 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
     }
 
     for target in &to_insert {
-        sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
-            .bind(block_id)
-            .bind(*target)
-            .execute(&mut *tx)
-            .await?;
+        // Use INSERT ... SELECT ... WHERE EXISTS to skip targets that don't
+        // exist in the blocks table. INSERT OR IGNORE does NOT suppress FK
+        // violations in SQLite — only PK/UNIQUE/NOT NULL/CHECK conflicts.
+        sqlx::query(
+            "INSERT OR IGNORE INTO block_links (source_id, target_id) \
+             SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+        )
+        .bind(block_id)
+        .bind(*target)
+        .bind(*target)
+        .execute(&mut *tx)
+        .await?;
     }
 
     tx.commit().await?;

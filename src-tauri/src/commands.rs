@@ -8,6 +8,7 @@
 //! All commands return `Result<T, AppError>` — `AppError` already implements
 //! `Serialize` for Tauri 2 command error propagation.
 
+use chrono::Utc;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
@@ -71,10 +72,20 @@ pub async fn create_block_inner(
     parent_id: Option<String>,
     position: Option<i64>,
 ) -> Result<BlockResponse, AppError> {
-    // 1. Generate new BlockId
+    // 1. Validate block_type
+    match block_type.as_str() {
+        "content" | "tag" | "page" => {}
+        _ => {
+            return Err(AppError::Validation(format!(
+                "unknown block_type '{block_type}': must be 'content', 'tag', or 'page'"
+            )));
+        }
+    }
+
+    // 2. Generate new BlockId
     let block_id = BlockId::new();
 
-    // 2. If parent_id is Some, validate it exists and is not deleted
+    // 3. If parent_id is Some, validate it exists and is not deleted
     if let Some(ref pid) = parent_id {
         let exists: Option<(i64,)> =
             sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
@@ -95,10 +106,15 @@ pub async fn create_block_inner(
         content: content.clone(),
     });
 
-    // 4. Append to op_log
-    let op_record = op_log::append_local_op(pool, device_id, payload).await?;
+    // 4. Begin IMMEDIATE transaction for atomic op_log + blocks write.
+    //    IMMEDIATE eagerly acquires the write lock, avoiding
+    //    SQLITE_BUSY_SNAPSHOT when a background cache rebuild commits
+    //    between our first read and first write.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
 
-    // 5. Insert into blocks table directly
+    // 5. Insert into blocks table within same transaction
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position) \
          VALUES (?, ?, ?, ?, ?)",
@@ -108,8 +124,10 @@ pub async fn create_block_inner(
     .bind(&content)
     .bind(&parent_id)
     .bind(position)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     // 6. Dispatch background cache tasks
     materializer.dispatch_background(&op_record)?;
@@ -158,15 +176,22 @@ pub async fn edit_block_inner(
         prev_edit,
     });
 
-    // 4. Append to op_log
-    let op_record = op_log::append_local_op(pool, device_id, payload).await?;
+    // 4. Begin IMMEDIATE transaction for atomic op_log + blocks write.
+    //    IMMEDIATE eagerly acquires the write lock, avoiding
+    //    SQLITE_BUSY_SNAPSHOT when a background cache rebuild commits
+    //    between our first read and first write.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
 
-    // 5. Update blocks table directly
+    // 5. Update blocks table within same transaction
     sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
         .bind(&to_text)
         .bind(&block_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+
+    tx.commit().await?;
 
     // 6. Dispatch background cache tasks
     materializer.dispatch_background(&op_record)?;
@@ -211,6 +236,10 @@ pub async fn delete_block_inner(
     });
 
     // 4. Append to op_log
+    // TODO(Phase 2): Wrap op_log + cascade in a single transaction.
+    // Currently the op_log commit and cascade are separate.
+    // Refactoring cascade_soft_delete / restore_block / purge_block
+    // to accept a transaction is deferred to keep this change minimal.
     let op_record = op_log::append_local_op(pool, device_id, payload).await?;
 
     // 5. Cascade soft delete
@@ -250,7 +279,16 @@ pub async fn restore_block_inner(
                 "block '{block_id}' is not deleted"
             )));
         }
-        Some((Some(_),)) => {} // block is deleted, proceed
+        Some((Some(ref actual_deleted_at),)) => {
+            // Validate deleted_at_ref matches the actual timestamp to prevent
+            // restoring children under a still-deleted parent (stale ref).
+            if *actual_deleted_at != deleted_at_ref {
+                return Err(AppError::InvalidOperation(format!(
+                    "block '{block_id}' deleted_at mismatch: expected '{}', got '{}'",
+                    deleted_at_ref, actual_deleted_at
+                )));
+            }
+        }
     }
 
     // 2. Build OpPayload
@@ -260,6 +298,10 @@ pub async fn restore_block_inner(
     });
 
     // 3. Append to op_log
+    // TODO(Phase 2): Wrap op_log + cascade in a single transaction.
+    // Currently the op_log commit and cascade are separate.
+    // Refactoring cascade_soft_delete / restore_block / purge_block
+    // to accept a transaction is deferred to keep this change minimal.
     let op_record = op_log::append_local_op(pool, device_id, payload).await?;
 
     // 4. Restore block and descendants
@@ -281,13 +323,23 @@ pub async fn purge_block_inner(
     materializer: &Materializer,
     block_id: String,
 ) -> Result<PurgeResponse, AppError> {
-    // 1. Validate block exists
-    let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM blocks WHERE id = ?")
-        .bind(&block_id)
-        .fetch_optional(pool)
-        .await?;
-    if exists.is_none() {
-        return Err(AppError::NotFound(format!("block '{block_id}'")));
+    // 1. Validate block exists and IS deleted (purge requires prior soft-delete)
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(&block_id)
+            .fetch_optional(pool)
+            .await?;
+
+    match row {
+        None => {
+            return Err(AppError::NotFound(format!("block '{block_id}'")));
+        }
+        Some((None,)) => {
+            return Err(AppError::InvalidOperation(format!(
+                "block '{block_id}' must be soft-deleted before purging"
+            )));
+        }
+        Some((Some(_),)) => {} // block is deleted, proceed with purge
     }
 
     // 2. Build OpPayload
@@ -296,6 +348,10 @@ pub async fn purge_block_inner(
     });
 
     // 3. Append to op_log
+    // TODO(Phase 2): Wrap op_log + cascade in a single transaction.
+    // Currently the op_log commit and cascade are separate.
+    // Refactoring cascade_soft_delete / restore_block / purge_block
+    // to accept a transaction is deferred to keep this change minimal.
     let op_record = op_log::append_local_op(pool, device_id, payload).await?;
 
     // 4. Purge block physically
@@ -494,7 +550,7 @@ mod tests {
     // create_block
     // ======================================================================
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn create_block_returns_correct_fields() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -518,7 +574,7 @@ mod tests {
         assert!(resp.deleted_at.is_none());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn create_block_generates_valid_ulid() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -542,7 +598,7 @@ mod tests {
         assert!(BlockId::from_string(&resp.id).is_ok());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn create_block_with_valid_parent() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -576,7 +632,7 @@ mod tests {
         assert_eq!(child.parent_id, Some(parent.id));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn create_block_nonexistent_parent_returns_not_found() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -597,7 +653,7 @@ mod tests {
         assert!(matches!(err, AppError::NotFound(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn create_block_deleted_parent_returns_not_found() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -615,9 +671,15 @@ mod tests {
         .await
         .unwrap();
 
+        // Allow bg cache tasks to settle before delete
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
         delete_block_inner(&pool, DEV, &mat, parent.id.clone())
             .await
             .unwrap();
+
+        // Allow bg cache tasks from delete to settle
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Try to create a child under the deleted parent
         let result = create_block_inner(
@@ -635,7 +697,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn create_block_writes_op_to_op_log() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -667,7 +729,7 @@ mod tests {
     // edit_block
     // ======================================================================
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn edit_block_updates_content() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -699,7 +761,7 @@ mod tests {
         assert_eq!(row.0, Some("updated".into()));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn edit_block_finds_prev_edit_automatically() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -743,7 +805,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn edit_block_nonexistent_returns_not_found() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -754,7 +816,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn edit_block_deleted_block_returns_not_found() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -855,7 +917,7 @@ mod tests {
     // restore_block
     // ======================================================================
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn restore_block_restores_block_and_descendants() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -902,19 +964,15 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let created = create_block_inner(
-            &pool,
-            DEV,
-            &mat,
-            "content".into(),
-            "doomed".into(),
-            None,
-            Some(1),
-        )
-        .await
-        .unwrap();
+        // Insert block directly to avoid materializer bg contention
+        insert_block(&pool, "PURGE1", "content", "doomed", None, Some(1)).await;
 
-        let resp = purge_block_inner(&pool, DEV, &mat, created.id.clone())
+        // Soft-delete first (purge requires prior soft-delete)
+        soft_delete::cascade_soft_delete(&pool, "PURGE1")
+            .await
+            .unwrap();
+
+        let resp = purge_block_inner(&pool, DEV, &mat, "PURGE1".into())
             .await
             .unwrap();
 
@@ -922,7 +980,7 @@ mod tests {
 
         // Verify block is gone
         let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM blocks WHERE id = ?")
-            .bind(&created.id)
+            .bind("PURGE1")
             .fetch_optional(&pool)
             .await
             .unwrap();
@@ -933,7 +991,7 @@ mod tests {
     // list_blocks
     // ======================================================================
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn list_blocks_no_filters_returns_top_level() {
         let (pool, _dir) = test_pool().await;
 
@@ -953,7 +1011,7 @@ mod tests {
         assert!(ids.contains(&"TOP2"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn list_blocks_with_block_type_filter() {
         let (pool, _dir) = test_pool().await;
 
@@ -969,7 +1027,7 @@ mod tests {
         assert_eq!(resp.items[0].id, "PAGE1");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn list_blocks_with_parent_id_filter() {
         let (pool, _dir) = test_pool().await;
 
@@ -988,7 +1046,7 @@ mod tests {
         assert!(ids.contains(&"CH2"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn list_blocks_show_deleted_returns_trash() {
         let (pool, _dir) = test_pool().await;
 
@@ -1013,7 +1071,7 @@ mod tests {
     // get_block
     // ======================================================================
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn get_block_returns_single_block() {
         let (pool, _dir) = test_pool().await;
 
@@ -1025,7 +1083,7 @@ mod tests {
         assert_eq!(block.content, Some("hello".into()));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn get_block_nonexistent_returns_not_found() {
         let (pool, _dir) = test_pool().await;
 
@@ -1038,7 +1096,7 @@ mod tests {
     // Additional edge cases
     // ======================================================================
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn delete_block_nonexistent_returns_not_found() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -1048,7 +1106,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn purge_block_nonexistent_returns_not_found() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -1058,7 +1116,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn restore_block_not_deleted_returns_invalid_operation() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -1082,7 +1140,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), AppError::InvalidOperation(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn restore_block_nonexistent_returns_not_found() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -1100,7 +1158,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn create_block_persists_to_blocks_table() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -1124,5 +1182,75 @@ mod tests {
         assert_eq!(row.content, Some("persisted".into()));
         assert_eq!(row.position, Some(5));
         assert!(row.deleted_at.is_none());
+    }
+
+    // ======================================================================
+    // create_block — validation
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_block_invalid_block_type_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "invalid_type".into(),
+            "hello".into(),
+            None,
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)));
+        assert!(err.to_string().contains("unknown block_type"));
+    }
+
+    // ======================================================================
+    // purge_block — non-deleted block
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn purge_block_not_deleted_returns_invalid_operation() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Insert a non-deleted block directly
+        insert_block(&pool, "PURGE_ALIVE", "content", "alive", None, Some(1)).await;
+
+        let result = purge_block_inner(&pool, DEV, &mat, "PURGE_ALIVE".into()).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::InvalidOperation(_)));
+        assert!(err.to_string().contains("soft-deleted before purging"));
+    }
+
+    // ======================================================================
+    // restore_block — deleted_at mismatch
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_block_mismatched_deleted_at_returns_invalid_operation() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Insert and soft-delete a block
+        insert_block(&pool, "MISMATCH1", "content", "test", None, Some(1)).await;
+        let (ts, _) = soft_delete::cascade_soft_delete(&pool, "MISMATCH1")
+            .await
+            .unwrap();
+
+        // Use a wrong deleted_at_ref
+        let wrong_ts = format!("{}_wrong", ts);
+        let result = restore_block_inner(&pool, DEV, &mat, "MISMATCH1".into(), wrong_ts).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::InvalidOperation(_)));
+        assert!(err.to_string().contains("deleted_at mismatch"));
     }
 }
