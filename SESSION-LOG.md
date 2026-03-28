@@ -140,10 +140,17 @@
 - **Files modified:** src-tauri/{Cargo.toml,Cargo.lock,src/lib.rs,src/materializer.rs}, prek.toml
 - **Commit:** 954e49e
 
-#### [13:45] Subagent I: Cursor Pagination + Soft-Delete Cascade — LAUNCHING
+#### [13:45] Subagent I: Cursor Pagination + Soft-Delete Cascade — COMPLETED
 - **Task IDs:** p1-t22 (cursor-based pagination), p1-t23 (soft-delete cascade)
-- **Status:** launched
+- **Status:** completed
 - **What it does:** Implements cursor/keyset pagination helpers and recursive CTE soft-delete cascade
+- **Result:**
+  - Build subagent created pagination.rs + soft_delete.rs (75 tests total)
+  - Review subagent confirmed correctness, added 5 more tests (80 total)
+  - No bugs found — reviewer verified all 12 FK references cleaned in purge
+- **Files created:** src-tauri/src/pagination.rs, src-tauri/src/soft_delete.rs
+- **Files modified:** src-tauri/{Cargo.toml,Cargo.lock,src/lib.rs,src/error.rs}
+- **Commit:** cb24cb3
 
 ---
 

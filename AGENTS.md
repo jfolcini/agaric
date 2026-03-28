@@ -76,7 +76,9 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
         ├── materializer.rs            # Foreground + background queues (ADR-08)
         ├── op.rs                      # Op payload types + OpType enum (ADR-07)
         ├── op_log.rs                  # Op log writer — append_local_op (ADR-07)
+        ├── pagination.rs              # Cursor/keyset pagination (ADR critical)
         ├── recovery.rs                # Crash recovery at boot (ADR-07)
+        ├── soft_delete.rs             # Cascade soft-delete, restore, purge (ADR-06)
         └── ulid.rs                    # BlockId newtype (ULID, case-normalized)
 ```
 
@@ -94,7 +96,9 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 | `materializer.rs` | Foreground + background materializer queues (ADR-08) | `Materializer`, `MaterializeTask`, `dispatch_op()` |
 | `op.rs` | Op payload types — 12 op types (ADR-07) | `OpType`, `OpPayload`, all payload structs |
 | `op_log.rs` | Op log writer — append local ops | `OpRecord`, `append_local_op()` |
+| `pagination.rs` | Cursor/keyset pagination — all list queries | `Cursor`, `PageRequest`, `PageResponse`, `list_children()`, `list_by_type()`, `list_trash()` |
 | `recovery.rs` | Crash recovery at boot (ADR-07) | `RecoveryReport`, `recover_at_boot()` |
+| `soft_delete.rs` | Cascade soft-delete, restore, purge (ADR-06) | `soft_delete_block()`, `cascade_soft_delete()`, `restore_block()`, `purge_block()` |
 | `ulid.rs` | ID generation and validation | `BlockId`, `AttachmentId`, `SnapshotId` |
 
 ## Database
@@ -253,7 +257,7 @@ When launching a review subagent, include:
 - [x] p1-t10: ULID utility
 - [x] p1-t30: Vitest config
 
-### Wave 3: Core logic — IN PROGRESS
+### Wave 3: Core logic — DONE
 - [x] p1-t11: Op log writer (CRITICAL)
 - [x] p1-t12: blake3 hash
 - [x] p1-t13: Op payload serde structs
@@ -265,10 +269,10 @@ When launching a review subagent, include:
 - [x] p1-t19: pages_cache materializer
 - [x] p1-t20: agenda_cache materializer
 - [x] p1-t21: block_links index materializer
-- [ ] p1-t22: Pagination — cursor-based (CRITICAL)
-- [ ] p1-t23: Soft-delete cascade
+- [x] p1-t22: Pagination — cursor-based (CRITICAL)
+- [x] p1-t23: Soft-delete cascade
 
-### Wave 4: Commands + Tests — PENDING
+### Wave 4: Commands + Tests — NEXT
 - [ ] p1-t24: Tauri command: create_block
 - [ ] p1-t25: Tauri command: edit_block
 - [ ] p1-t26: Tauri command: delete_block / restore_block / purge_block
