@@ -152,20 +152,36 @@
 - **Files modified:** src-tauri/{Cargo.toml,Cargo.lock,src/lib.rs,src/error.rs}
 - **Commit:** cb24cb3
 
-#### [14:15] Parallel Review Sweep: All Wave 3 Modules — LAUNCHING
+#### [14:15] Parallel Review Sweep: All Wave 3 Modules — COMPLETED
 - **Task IDs:** p1-t11 through p1-t23 (9 parallel subagents)
-- **Status:** launched
+- **Status:** completed
 - **What it does:** Thorough review of every module: code improvements, test hardening, criterion benchmarks
-- **Subagents:**
-  1. op.rs (p1-t13) — add Display, block_id(), more tests
-  2. hash.rs (p1-t12) + benchmark — perf optimization, golden tests
-  3. op_log.rs (p1-t11) + benchmark — query helpers, stress tests
-  4. draft.rs (p1-t14) — FromRow, atomicity, edge cases
-  5. recovery.rs (p1-t15) — perf notes, multi-draft tests
-  6. materializer.rs (p1-t16+t17) — debouncing, try_send, error isolation
-  7. cache.rs (p1-t18..t21) + benchmark — DRY queries, edge cases
-  8. pagination.rs (p1-t22) + benchmark — new query functions, exhaustive walk tests
-  9. soft_delete.rs (p1-t23) + benchmark — batch purge optimization, deep tree tests
+- **Result:**
+  - All 9 subagents completed successfully
+  - Tests: 80 → 189 (more than doubled)
+  - 5 new criterion benchmarks (hash, op_log, cache, pagination, soft_delete)
+  - Key improvements per module:
+    1. op.rs: #[non_exhaustive], Display/FromStr, block_id(), as_str() (4→19 tests)
+    2. hash.rs: verify_op_hash() with constant-time comparison, zero-alloc seq (5→16 tests)
+    3. op_log.rs: serialize_variant! macro, read helpers, append_local_op_at() (4→16 tests)
+    4. draft.rs: FromRow derive, get_draft(), draft_count(), save_draft_if_changed() (5→15 tests)
+    5. recovery.rs: duration_ms/draft_errors fields, error resilience, LIKE pre-filter (6→14 tests)
+    6. materializer.rs: dedup_tasks(), try_enqueue_background(), shutdown(), QueueMetrics (10→25 tests)
+    7. cache.rs: NULL content guard, UNION ALL in agenda, rebuild_all_caches() (21→35 tests)
+    8. pagination.rs: DRY build_page_response(), list_by_tag(), list_agenda() (16→28 tests)
+    9. soft_delete.rs: batch purge O(k), cascade returns count, is_deleted() (8→21 tests)
+  - Also excluded src-tauri/gen/ from biome checks (auto-generated files)
+  - Consolidation: no cross-file conflicts, all 189 tests pass, clippy clean, fmt clean, benchmarks compile
+- **Files modified:** All 9 module .rs files, Cargo.toml, Cargo.lock, lib.rs, biome.json
+- **Files created:** 5 benchmark files in src-tauri/benches/
+- **Commit:** 86a0dff
+
+#### [14:35] Wave 3 Complete — Summary
+- **All 13 Wave 3 tasks done:** p1-t11 through p1-t23
+- **Total Rust tests:** 189 (all passing in 0.50s)
+- **Total benchmarks:** 5 criterion benchmark suites
+- **Modules:** 9 core modules + 3 infrastructure (db, device, ulid)
+- **Next:** Wave 4 — Commands + Tests (p1-t24 through p1-t31)
 
 ---
 

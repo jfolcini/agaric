@@ -64,6 +64,12 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
     ├── capabilities/default.json      # Tauri 2 ACL permissions
     ├── icons/                         # App icons (placeholders)
     ├── gen/                           # Auto-generated (schemas, ACL)
+    ├── benches/                       # Criterion benchmarks
+    │   ├── hash_bench.rs              # blake3 hash benchmarks
+    │   ├── op_log_bench.rs            # Op log append benchmarks
+    │   ├── cache_bench.rs             # Cache rebuild benchmarks
+    │   ├── pagination_bench.rs        # Pagination query benchmarks
+    │   └── soft_delete_bench.rs       # Soft-delete/purge benchmarks
     └── src/
         ├── main.rs                    # Binary entry
         ├── lib.rs                     # Library with Tauri setup + commands
@@ -87,18 +93,18 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 | Module | Purpose | Key types |
 |--------|---------|-----------|
 | `lib.rs` | Tauri app entry, setup hook, command handlers | `run()` |
-| `cache.rs` | Cache rebuild: tags, pages, agenda, block_links (ADR-08) | `rebuild_tags_cache()`, `rebuild_pages_cache()`, `rebuild_agenda_cache()`, `reindex_block_links()` |
+| `cache.rs` | Cache rebuild: tags, pages, agenda, block_links (ADR-08) | `rebuild_tags_cache()`, `rebuild_pages_cache()`, `rebuild_agenda_cache()`, `reindex_block_links()`, `rebuild_all_caches()` |
 | `db.rs` | SQLite pool with WAL + FK pragma | `init_pool()` |
 | `device.rs` | Device UUID generation + file persistence | `DeviceId`, `get_or_create_device_id()` |
-| `draft.rs` | Block draft save/flush/delete (ADR-07) | `Draft`, `save_draft()`, `flush_draft()`, `delete_draft()` |
-| `error.rs` | Error types for commands | `AppError`, `CommandError` |
-| `hash.rs` | blake3 hash for op log entries (ADR-07) | `compute_op_hash()` |
-| `materializer.rs` | Foreground + background materializer queues (ADR-08) | `Materializer`, `MaterializeTask`, `dispatch_op()` |
-| `op.rs` | Op payload types — 12 op types (ADR-07) | `OpType`, `OpPayload`, all payload structs |
-| `op_log.rs` | Op log writer — append local ops | `OpRecord`, `append_local_op()` |
-| `pagination.rs` | Cursor/keyset pagination — all list queries | `Cursor`, `PageRequest`, `PageResponse`, `list_children()`, `list_by_type()`, `list_trash()` |
-| `recovery.rs` | Crash recovery at boot (ADR-07) | `RecoveryReport`, `recover_at_boot()` |
-| `soft_delete.rs` | Cascade soft-delete, restore, purge (ADR-06) | `soft_delete_block()`, `cascade_soft_delete()`, `restore_block()`, `purge_block()` |
+| `draft.rs` | Block draft save/flush/delete (ADR-07) | `Draft`, `save_draft()`, `flush_draft()`, `delete_draft()`, `get_draft()`, `draft_count()`, `save_draft_if_changed()` |
+| `error.rs` | Error types for commands | `AppError` (Db, Io, Ulid, Serde, Blake3, Tauri, Validation) |
+| `hash.rs` | blake3 hash for op log entries (ADR-07) | `compute_op_hash()`, `verify_op_hash()` |
+| `materializer.rs` | Foreground + background materializer queues (ADR-08) | `Materializer`, `MaterializeTask`, `dispatch_op()`, `dedup_tasks()`, `QueueMetrics`, `shutdown()` |
+| `op.rs` | Op payload types — 12 op types (ADR-07) | `OpType` (Display, FromStr, non_exhaustive), `OpPayload`, all payload structs |
+| `op_log.rs` | Op log writer — append local ops | `OpRecord` (FromRow), `append_local_op()`, `append_local_op_at()`, `get_op_by_seq()`, `get_latest_seq()`, `get_ops_since()` |
+| `pagination.rs` | Cursor/keyset pagination — all list queries | `Cursor`, `PageRequest`, `PageResponse`, `list_children()`, `list_by_type()`, `list_trash()`, `list_by_tag()`, `list_agenda()` |
+| `recovery.rs` | Crash recovery at boot (ADR-07) | `RecoveryReport` (duration_ms, draft_errors), `recover_at_boot()` |
+| `soft_delete.rs` | Cascade soft-delete, restore, purge (ADR-06) | `soft_delete_block()`, `cascade_soft_delete()` (returns count), `restore_block()`, `purge_block()` (batch O(k)), `is_deleted()`, `get_descendants()` |
 | `ulid.rs` | ID generation and validation | `BlockId`, `AttachmentId`, `SnapshotId` |
 
 ## Database
@@ -124,10 +130,19 @@ npm run test:coverage    # Vitest with v8 coverage
 
 # Backend (source cargo env first: . "$HOME/.cargo/env")
 cd src-tauri && cargo check    # Type check Rust
-cd src-tauri && cargo test     # Run Rust tests
+cd src-tauri && cargo test     # Run Rust tests (189 tests)
 cd src-tauri && cargo fmt --check  # Rust formatting
 cd src-tauri && cargo clippy -- -D warnings  # Lint Rust
 cargo sqlx prepare             # Update .sqlx/ offline cache
+
+# Benchmarks (criterion)
+cd src-tauri && cargo bench              # Run all benchmarks
+cd src-tauri && cargo bench --bench hash_bench       # hash only
+cd src-tauri && cargo bench --bench op_log_bench     # op_log only
+cd src-tauri && cargo bench --bench cache_bench      # cache only
+cd src-tauri && cargo bench --bench pagination_bench # pagination only
+cd src-tauri && cargo bench --bench soft_delete_bench # soft_delete only
+cd src-tauri && cargo check --benches    # Verify benchmarks compile
 
 # Full Tauri app
 cargo tauri dev          # Dev mode with hot reload
