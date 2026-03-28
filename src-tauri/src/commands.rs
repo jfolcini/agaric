@@ -406,6 +406,7 @@ pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<Bloc
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
+#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 pub async fn create_block(
     pool: State<'_, SqlitePool>,
@@ -428,6 +429,7 @@ pub async fn create_block(
     .await
 }
 
+#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 pub async fn edit_block(
     pool: State<'_, SqlitePool>,
@@ -439,6 +441,7 @@ pub async fn edit_block(
     edit_block_inner(&pool, &device_id.0, &materializer, block_id, to_text).await
 }
 
+#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 pub async fn delete_block(
     pool: State<'_, SqlitePool>,
@@ -449,6 +452,7 @@ pub async fn delete_block(
     delete_block_inner(&pool, &device_id.0, &materializer, block_id).await
 }
 
+#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 pub async fn restore_block(
     pool: State<'_, SqlitePool>,
@@ -460,6 +464,7 @@ pub async fn restore_block(
     restore_block_inner(&pool, &device_id.0, &materializer, block_id, deleted_at_ref).await
 }
 
+#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 pub async fn purge_block(
     pool: State<'_, SqlitePool>,
@@ -470,6 +475,7 @@ pub async fn purge_block(
     purge_block_inner(&pool, &device_id.0, &materializer, block_id).await
 }
 
+#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 pub async fn list_blocks(
     pool: State<'_, SqlitePool>,
@@ -492,6 +498,7 @@ pub async fn list_blocks(
     .await
 }
 
+#[cfg(not(tarpaulin_include))]
 #[tauri::command]
 pub async fn get_block(
     pool: State<'_, SqlitePool>,

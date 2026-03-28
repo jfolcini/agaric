@@ -18,12 +18,13 @@ mod command_integration_tests;
 #[cfg(test)]
 mod integration_tests;
 
-use device::DeviceId;
-use materializer::Materializer;
-use tauri::Manager;
-
+#[cfg(not(tarpaulin_include))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    use device::DeviceId;
+    use materializer::Materializer;
+    use tauri::Manager;
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {

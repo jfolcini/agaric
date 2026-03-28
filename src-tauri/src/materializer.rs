@@ -1254,6 +1254,49 @@ mod tests {
         );
     }
 
+    // ======================================================================
+    // handle_foreground_task / handle_background_task edge cases
+    // ======================================================================
+
+    #[tokio::test]
+    async fn handle_foreground_task_unexpected_non_apply_op_returns_ok() {
+        let (pool, _dir) = test_pool().await;
+        let task = MaterializeTask::RebuildTagsCache;
+        let result = handle_foreground_task(&pool, &task).await;
+        assert!(
+            result.is_ok(),
+            "unexpected task in fg queue should return Ok"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_foreground_task_unexpected_reindex_returns_ok() {
+        let (pool, _dir) = test_pool().await;
+        let task = MaterializeTask::ReindexBlockLinks {
+            block_id: "01FAKE00000000000000000000".into(),
+        };
+        let result = handle_foreground_task(&pool, &task).await;
+        assert!(
+            result.is_ok(),
+            "unexpected ReindexBlockLinks in fg queue should return Ok"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_background_task_unexpected_apply_op_returns_ok() {
+        let (pool, _dir) = test_pool().await;
+        let record = fake_op_record(
+            "create_block",
+            r#"{"block_id":"X","block_type":"content","content":"t","parent_id":null,"position":null}"#,
+        );
+        let task = MaterializeTask::ApplyOp(record);
+        let result = handle_background_task(&pool, &task).await;
+        assert!(
+            result.is_ok(),
+            "unexpected ApplyOp in bg queue should return Ok"
+        );
+    }
+
     #[test]
     fn dedup_all_same_reindex_block_id_coalesces_to_one() {
         let tasks = vec![
