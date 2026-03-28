@@ -56,9 +56,21 @@
   - Cargo.toml: Removed unused `anyhow`, moved `tokio` to dev-deps
 - **Build:** cargo check + cargo fmt + cargo clippy all pass
 
-#### [12:05] Subagent C: CI + Tooling — ON HOLD (sequential workflow change)
+#### [12:05] Subagent C: CI + Tooling — COMPLETED
 - **Task IDs:** p1-t4 (GitHub Actions CI), p1-t5 (device UUID), p1-t8 (.sqlx offline cache), p1-t30 (Vitest config)
-- **Status:** waiting for B review+commit cycle
+- **Status:** completed
+- **Result:** CI workflow, device UUID module, .sqlx offline cache, Vitest with smoke test
+- **Files created:** .github/workflows/ci.yml, src-tauri/src/device.rs, src-tauri/.env, vitest.config.ts, src/__tests__/smoke.test.ts
+- **Files modified:** src-tauri/Cargo.toml (+uuid), src-tauri/src/lib.rs (+device mod+setup), package.json (+test scripts), .gitignore (+dev.db)
+- **Note:** Subagent flagged migration SQL issue (column after PRIMARY KEY constraint in op_log) — review subagent will fix
+
+#### [12:20] Subagent C-Review: Code review of CI + tooling — COMPLETED
+- **Status:** completed
+- **Issues found and fixed:**
+  - Critical: op_log migration SQL — PRIMARY KEY moved after all columns
+  - Added Vitest step to CI workflow  
+  - Device.rs + lib.rs wired correctly with DeviceId managed state
+- **Build:** cargo check + npm lint + npm test all pass
 
 ---
 

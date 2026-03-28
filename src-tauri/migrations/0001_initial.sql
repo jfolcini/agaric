@@ -55,12 +55,12 @@ CREATE TABLE IF NOT EXISTS attachments (
 CREATE TABLE IF NOT EXISTS op_log (
     device_id TEXT NOT NULL,                      -- originating device UUID
     seq INTEGER NOT NULL,                         -- per-device monotonic sequence number
-    PRIMARY KEY (device_id, seq),
     parent_seqs TEXT,                             -- JSON: [[device_id, seq], ...] or null
     hash TEXT NOT NULL,                           -- blake3 hash
     op_type TEXT NOT NULL,
     payload TEXT NOT NULL,                        -- JSON
-    created_at TEXT NOT NULL                      -- ISO 8601
+    created_at TEXT NOT NULL,                     -- ISO 8601
+    PRIMARY KEY (device_id, seq)
 );
 
 -- Draft autosave (mutable scratch space — the ONLY mutable table besides caches)

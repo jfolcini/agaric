@@ -26,3 +26,7 @@ dist-ssr
 # Tauri
 src-tauri/target/
 src-tauri/gen/
+
+# SQLx dev database (offline cache .sqlx/ is tracked)
+src-tauri/dev.db
+src-tauri/dev.db-*

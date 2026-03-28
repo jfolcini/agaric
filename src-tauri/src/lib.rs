@@ -1,7 +1,9 @@
 mod db;
+mod device;
 mod error;
 mod ulid;
 
+use device::DeviceId;
 use tauri::Manager;
 
 #[tauri::command]
@@ -24,6 +26,11 @@ pub fn run() {
 
             // Store in Tauri managed state — commands access via State<SqlitePool>
             app.manage(pool);
+
+            // Read or generate a persistent device UUID (ADR-07)
+            let device_id_path = app_data_dir.join("device-id");
+            let device_id = device::get_or_create_device_id(&device_id_path)?;
+            app.manage(DeviceId(device_id));
 
             Ok(())
         })

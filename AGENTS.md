@@ -59,8 +59,28 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
     ├── gen/                           # Auto-generated (schemas, ACL)
     └── src/
         ├── main.rs                    # Binary entry
-        └── lib.rs                     # Library with Tauri commands
+        ├── lib.rs                     # Library with Tauri commands + DB setup
+        ├── db.rs                      # SQLite pool init (WAL, FK pragma, migrations)
+        ├── error.rs                   # AppError enum + Serialize for Tauri 2
+        └── ulid.rs                    # BlockId newtype (ULID, case-normalized)
 ```
+
+## Rust Modules (src-tauri/src/)
+
+| Module | Purpose | Key types |
+|--------|---------|-----------|
+| `lib.rs` | Tauri app entry, setup hook, command handlers | `run()` |
+| `db.rs` | SQLite pool with WAL + FK pragma | `init_pool()` |
+| `error.rs` | Error types for commands | `AppError`, `CommandError` |
+| `ulid.rs` | ID generation and validation | `BlockId`, `AttachmentId`, `SnapshotId` |
+
+## Database
+
+- **File:** `notes.db` in OS app data dir (`~/.local/share/com.blocknotes.app/`)
+- **WAL mode** with `PRAGMA foreign_keys = ON` on every connection
+- **Pool:** max 5 connections (1 writer + 4 readers under WAL)
+- **Migrations:** `src-tauri/migrations/` — run automatically on pool init
+- **Schema:** 13 tables, 7 indexes (see `0001_initial.sql` and ADR-05)
 
 ## Build Commands
 
