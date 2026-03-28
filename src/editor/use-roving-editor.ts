@@ -18,8 +18,11 @@ import Text from '@tiptap/extension-text'
 import { type Editor, useEditor } from '@tiptap/react'
 import { useCallback, useRef } from 'react'
 import { BlockLink } from './extensions/block-link'
+import { BlockLinkPicker } from './extensions/block-link-picker'
+import { TagPicker } from './extensions/tag-picker'
 import { TagRef } from './extensions/tag-ref'
 import { parse, serialize } from './markdown-serializer'
+import type { PickerItem } from './SuggestionList'
 import type { DocNode } from './types'
 
 export interface RovingEditorOptions {
@@ -29,6 +32,10 @@ export interface RovingEditorOptions {
   resolveBlockTitle?: (id: string) => string
   /** Placeholder text for empty blocks */
   placeholder?: string
+  /** Return tags matching query (for # picker). */
+  searchTags?: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  /** Return pages matching query (for [[ picker). */
+  searchPages?: (query: string) => PickerItem[] | Promise<PickerItem[]>
 }
 
 export interface RovingEditorHandle {
@@ -65,6 +72,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     resolveTagName = (id: string) => `#${id.slice(0, 8)}...`,
     resolveBlockTitle = (id: string) => `[[${id.slice(0, 8)}...]]`,
     placeholder = 'Type something...',
+    searchTags = () => [],
+    searchPages = () => [],
   } = options
 
   const activeBlockIdRef = useRef<string | null>(null)
@@ -83,6 +92,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Placeholder.configure({ placeholder }),
       TagRef.configure({ resolveName: resolveTagName }),
       BlockLink.configure({ resolveTitle: resolveBlockTitle }),
+      TagPicker.configure({ items: searchTags }),
+      BlockLinkPicker.configure({ items: searchPages }),
     ],
     editable: true,
     content: { type: 'doc', content: [{ type: 'paragraph' }] },
