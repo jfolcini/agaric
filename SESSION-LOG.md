@@ -351,6 +351,37 @@
 
 ---
 
+## Session 3 — 2026-03-28 (continued)
+
+### Android Spike (p15-t26..t29)
+
+#### [23:05] Android Spike — Setup
+- Installed JDK 17, Android SDK (platform-tools, build-tools 34, NDK 27, emulator)
+- Installed Rust Android targets (aarch64, armv7, i686, x86_64)
+- Ran `cargo tauri android init` — generated Android project at `src-tauri/gen/android/`
+
+#### [23:40] Android Spike — Build + Test
+- Created AVD (spike_test, Pixel 6, Android 14 x86_64)
+- Fixed esbuild missing dep (Vite 8 change)
+- Manually installed Gradle 8.14.3 (network timeout workaround)
+- Built debug APK: `cargo tauri android build --target x86_64 --debug` — 154MB
+- Installed and launched on emulator — app renders correctly
+- **Rust backend init:** SQLite + WAL + device ID + crash recovery completed in 9ms
+- **IME/keyboard:** Virtual keyboard appears, text input works, autocomplete shows
+- **IPC reads:** `list_blocks` works, date navigation works
+- **IPC writes:** `create_block` fails with `Uncaught (in promise) #<Object>` — needs debugging
+- **Spike decision:** PROCEED — core architecture proven viable on Android
+- **Commit:** `441d5ea`
+
+### Types Re-export + UI Fixes + ADR Updates
+
+#### [earlier] Subagent: Types migration + UI fixes [REVIEWED]
+- **Tasks:** Re-export types from bindings.ts, ADR-01/ADR-13 status updates, button icon scaling, duplicate titles, sidebar A height, double-click rail
+- **Result:** 8 manual interfaces removed from tauri.ts, replaced with re-exports from bindings.ts. UI fixes for icon scaling, duplicate headings, sidebar height, rail double-click.
+- **Commit:** `967e79a`
+
+---
+
 <!-- Template:
 #### [HH:MM] Subagent: <title> [BUILT|REVIEWED]
 - **Tasks:** <task IDs>
