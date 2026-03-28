@@ -1,9 +1,11 @@
 mod db;
 mod device;
+mod draft;
 mod error;
 mod hash;
 mod op;
 mod op_log;
+mod recovery;
 mod ulid;
 
 use device::DeviceId;

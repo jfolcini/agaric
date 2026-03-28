@@ -88,10 +88,31 @@
 - Batch 1: p1-t11 (op log writer), p1-t12 (blake3 hash), p1-t13 (op payload structs)
 - Batch 2: p1-t14 (block draft writer), p1-t15 (crash recovery)
 
-#### [12:46] Subagent D: Op Log Core — LAUNCHING
+#### [12:46] Subagent D: Op Log Core — COMPLETED
 - **Task IDs:** p1-t11 (op log writer), p1-t12 (blake3 hash), p1-t13 (op payload structs)
-- **Status:** launched
+- **Status:** completed
 - **What it does:** Creates op payload types (all ADR-07 op types), blake3 hash chain, and op log writer with composite PK + next-seq logic
+- **Result:**
+  - op.rs: 12 op types, OpPayload tagged enum, exhaustive matching, 4 tests
+  - hash.rs: blake3 with null-byte separators, 5 tests
+  - op_log.rs: append_local_op() transactional writer, 4 integration tests
+  - Deps added: blake3 1.8.3, chrono 0.4.44, tempfile 3.27.0 (dev)
+  - 13 tests total, all pass. prek all green.
+- **Files created:** src-tauri/src/{op,hash,op_log}.rs
+- **Files modified:** src-tauri/{Cargo.toml,src/lib.rs}
+- **Commit:** 64147e1
+
+#### [12:55] Subagent E: Block Drafts + Crash Recovery — COMPLETED
+- **Task IDs:** p1-t14 (block draft writer), p1-t15 (crash recovery)
+- **Status:** completed
+- **What it does:** INSERT OR REPLACE drafts, boot-time crash recovery (delete pending snapshots, walk drafts, emit synthetic edit_block ops)
+- **Result:**
+  - draft.rs: save_draft, delete_draft, get_all_drafts, flush_draft (op + delete), 5 tests
+  - recovery.rs: recover_at_boot (3-step: delete pending snapshots, recover unflushed drafts with prev_edit, delete all drafts), RecoveryReport, 5 tests
+  - Review fixed 2 flaky test timing issues (explicit timestamps instead of Utc::now())
+  - 23 tests total, all pass. prek all green.
+- **Files created:** src-tauri/src/{draft,recovery}.rs
+- **Files modified:** src-tauri/src/lib.rs
 
 ---
 
