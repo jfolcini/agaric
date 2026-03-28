@@ -3,12 +3,15 @@
  *
  * Each block is either a StaticBlock (div) or the active TipTap editor.
  * Enter creates a new block below. Backspace on empty deletes.
+ * Off-screen blocks are replaced by height-preserving placeholders
+ * via IntersectionObserver (p15-t13).
  */
 
 import type React from 'react'
 import { useCallback, useEffect } from 'react'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
+import { useViewportObserver } from '../hooks/useViewportObserver'
 import { useBlockStore } from '../stores/blocks'
 import { EditableBlock } from './EditableBlock'
 
@@ -16,6 +19,7 @@ export function BlockTree(): React.ReactElement {
   const { blocks, focusedBlockId, loading, load, setFocused, remove, edit, splitBlock } =
     useBlockStore()
   const rovingEditor = useRovingEditor()
+  const viewport = useViewportObserver()
 
   useEffect(() => {
     load()
@@ -95,15 +99,31 @@ export function BlockTree(): React.ReactElement {
 
   return (
     <div className="block-tree">
-      {blocks.map((block) => (
-        <EditableBlock
-          key={block.id}
-          blockId={block.id}
-          content={block.content ?? ''}
-          isFocused={focusedBlockId === block.id}
-          rovingEditor={rovingEditor}
-        />
-      ))}
+      {blocks.map((block) => {
+        const isFocused = focusedBlockId === block.id
+        // Focused block is never virtualized — always render fully
+        if (!isFocused && viewport.isOffscreen(block.id)) {
+          return (
+            <div
+              key={block.id}
+              ref={viewport.observeRef}
+              data-block-id={block.id}
+              className="block-placeholder"
+              style={{ minHeight: viewport.getHeight(block.id) }}
+            />
+          )
+        }
+        return (
+          <div key={block.id} ref={viewport.observeRef} data-block-id={block.id}>
+            <EditableBlock
+              blockId={block.id}
+              content={block.content ?? ''}
+              isFocused={isFocused}
+              rovingEditor={rovingEditor}
+            />
+          </div>
+        )
+      })}
       {blocks.length === 0 && (
         <div className="block-tree-empty">
           <p>No blocks yet. Start typing to create one.</p>
