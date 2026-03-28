@@ -238,6 +238,41 @@
 
 ---
 
+## Session 4 — 2026-03-28
+
+### Status: Post-Phase 1 — Code Review + Coverage
+
+---
+
+### Log Entries
+
+#### [15:15] Post-Phase 1 Code Review — COMPLETED
+- **Scope:** 8 independent code reviews across all Rust modules
+- **Status:** completed
+- **Findings:** Triaged across 8 review files at /tmp/review-findings/
+- **9 fixes implemented:**
+  1. D1+D4: Atomic op_log+blocks transactions (BEGIN IMMEDIATE in op_log.rs, commands.rs)
+  2. D2: FK violation guard in reindex_block_links (EXISTS subquery in cache.rs)
+  3. D3: UNIQUE violation fix in rebuild_tags_cache (is_conflict filter in cache.rs)
+  4. D5: purge requires soft-delete validation (commands.rs)
+  5. D6: restore validates deleted_at_ref match (commands.rs)
+  6. D7: block_type validation — content|tag|page only (commands.rs)
+  7. D8: Remove dead CommandError struct (error.rs)
+  8. D9: device.rs TOCTOU fix (atomic create_new + UUID normalization)
+
+#### [15:30] Coverage Improvement — COMPLETED
+- **31 new tests added** (262 total, up from 230):
+  - device.rs: 7 tests (UUID lifecycle, normalization, error cases)
+  - error.rs: 5 tests (serialization, display, From impls)
+  - ulid.rs: 9 tests (generation, normalization, serde, type aliases)
+  - commands.rs: 3 tests (validation, purge guard, restore guard)
+  - materializer.rs: 7 tests (dispatch, shutdown, dedup)
+- **Coverage: 91.05%** (814/894 lines), up from 86.34% (+4.71%)
+- **All verification passes:** cargo test (262), cargo fmt, cargo clippy, biome check, vitest (5)
+- **Commit:** 3622519
+
+---
+
 <!-- Template for subagent entries:
 
 #### [HH:MM] Subagent: <title>

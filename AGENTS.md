@@ -104,16 +104,22 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 | `db.rs` | SQLite pool with WAL + FK pragma + busy_timeout(5s) | `init_pool()` |
 | `device.rs` | Device UUID generation + file persistence | `DeviceId`, `get_or_create_device_id()` |
 | `draft.rs` | Block draft save/flush/delete (ADR-07) | `Draft`, `save_draft()`, `flush_draft()`, `delete_draft()`, `get_draft()`, `draft_count()`, `save_draft_if_changed()` |
-| `error.rs` | Error types for commands | `AppError` (Db, Io, Ulid, Serde, Blake3, Tauri, Validation) |
+| `error.rs` | Error types for commands | `AppError` (Db, Io, Ulid, Serde, Blake3, Tauri, Validation, InvalidOperation, Channel, NotFound) |
 | `hash.rs` | blake3 hash for op log entries (ADR-07) | `compute_op_hash()`, `verify_op_hash()` |
 | `materializer.rs` | Foreground + background materializer queues (ADR-08) | `Materializer`, `MaterializeTask`, `dispatch_op()`, `dispatch_background()`, `dedup_tasks()`, `QueueMetrics`, `shutdown()` |
 | `op.rs` | Op payload types — 12 op types (ADR-07) | `OpType` (Display, FromStr, non_exhaustive), `OpPayload`, all payload structs |
-| `op_log.rs` | Op log writer — append local ops | `OpRecord` (FromRow), `append_local_op()`, `append_local_op_at()`, `get_op_by_seq()`, `get_latest_seq()`, `get_ops_since()` |
+| `op_log.rs` | Op log writer — append local ops | `OpRecord` (FromRow), `append_local_op()`, `append_local_op_at()`, `append_local_op_in_tx()`, `get_op_by_seq()`, `get_latest_seq()`, `get_ops_since()` |
 | `pagination.rs` | Cursor/keyset pagination — all list queries | `Cursor`, `PageRequest`, `PageResponse`, `list_children()`, `list_by_type()`, `list_trash()`, `list_by_tag()`, `list_agenda()` |
 | `recovery.rs` | Crash recovery at boot (ADR-07) | `RecoveryReport` (duration_ms, draft_errors), `recover_at_boot()` |
 | `soft_delete.rs` | Cascade soft-delete, restore, purge (ADR-06) | `soft_delete_block()`, `cascade_soft_delete()` (returns count), `restore_block()`, `purge_block()` (batch O(k)), `is_deleted()`, `get_descendants()` |
 | `ulid.rs` | ID generation and validation | `BlockId`, `AttachmentId`, `SnapshotId` |
 | `integration_tests.rs` | Cross-module pipeline tests (16 tests, test-only) | Op chains, recovery sim, cascade delete, pagination, materializer |
+
+## Test Coverage
+
+- **262 Rust tests** + **5 Vitest frontend tests** = 267 total
+- **Tarpaulin coverage: 91.05%** (814/894 lines)
+- Per-module coverage: cache 100%, db 100%, draft 100%, hash 96%, op 100%, op_log 100%, soft_delete 100%, pagination 96%, recovery 90%, materializer 93%, commands 83%, device 86%
 
 ## Database
 
@@ -138,7 +144,7 @@ npm run test:coverage    # Vitest with v8 coverage
 
 # Backend (source cargo env first: . "$HOME/.cargo/env")
 cd src-tauri && cargo check    # Type check Rust
-cd src-tauri && cargo test     # Run Rust tests (230 tests)
+cd src-tauri && cargo test     # Run Rust tests (262 tests)
 cd src-tauri && cargo fmt --check  # Rust formatting
 cd src-tauri && cargo clippy -- -D warnings  # Lint Rust
 cargo sqlx prepare             # Update .sqlx/ offline cache
