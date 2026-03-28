@@ -732,7 +732,7 @@ async fn deleted_blocks_excluded_from_list_blocks() {
         .await
         .unwrap();
 
-    let live = list_blocks_inner(&pool, None, None, None, None, None, None)
+    let live = list_blocks_inner(&pool, None, None, None, None, None, None, None)
         .await
         .unwrap();
 
@@ -772,7 +772,7 @@ async fn deleted_blocks_visible_in_list_blocks_show_deleted() {
         .await
         .unwrap();
 
-    let trash = list_blocks_inner(&pool, None, None, None, Some(true), None, None)
+    let trash = list_blocks_inner(&pool, None, None, None, Some(true), None, None, None)
         .await
         .unwrap();
 
@@ -1140,7 +1140,7 @@ async fn list_blocks_top_level_returns_root_blocks() {
     insert_block(&pool, "ROOT2", "content", "b", None, Some(2)).await;
     insert_block(&pool, "CHILD1", "content", "c", Some("ROOT1"), Some(1)).await;
 
-    let resp = list_blocks_inner(&pool, None, None, None, None, None, None)
+    let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None)
         .await
         .unwrap();
 
@@ -1167,9 +1167,18 @@ async fn list_blocks_with_parent_id_returns_children_only() {
     insert_block(&pool, "LC02", "content", "child 2", Some("LP01"), Some(2)).await;
     insert_block(&pool, "LOTHER", "content", "other", None, Some(2)).await;
 
-    let resp = list_blocks_inner(&pool, Some("LP01".into()), None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = list_blocks_inner(
+        &pool,
+        Some("LP01".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.items.len(), 2, "must return only children of LP01");
     let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
@@ -1189,9 +1198,18 @@ async fn list_blocks_with_block_type_filter_returns_matching_type() {
     insert_block(&pool, "LTAG1", "tag", "urgent", None, None).await;
     insert_block(&pool, "LCONT1", "content", "hello", None, Some(2)).await;
 
-    let resp = list_blocks_inner(&pool, None, Some("page".into()), None, None, None, None)
-        .await
-        .unwrap();
+    let resp = list_blocks_inner(
+        &pool,
+        None,
+        Some("page".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.items.len(), 1, "must return only page type blocks");
     assert_eq!(resp.items[0].id, "LPAGE1", "page block must be LPAGE1");
@@ -1201,7 +1219,7 @@ async fn list_blocks_with_block_type_filter_returns_matching_type() {
 async fn list_blocks_empty_db_returns_empty_page_no_more() {
     let (pool, _dir) = test_pool().await;
 
-    let resp = list_blocks_inner(&pool, None, None, None, None, None, None)
+    let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None)
         .await
         .unwrap();
 
@@ -1230,7 +1248,7 @@ async fn list_blocks_show_deleted_returns_only_deleted() {
         .await
         .unwrap();
 
-    let trash = list_blocks_inner(&pool, None, None, None, Some(true), None, None)
+    let trash = list_blocks_inner(&pool, None, None, None, Some(true), None, None, None)
         .await
         .unwrap();
 
@@ -1276,7 +1294,7 @@ async fn pagination_walk_all_pages_no_duplicates() {
     let mut cursor: Option<String> = None;
     let mut pages = 0;
     loop {
-        let page = list_blocks_inner(&pool, None, None, None, None, cursor, Some(4))
+        let page = list_blocks_inner(&pool, None, None, None, None, None, cursor, Some(4))
             .await
             .unwrap();
         for item in &page.items {
@@ -1313,7 +1331,7 @@ async fn pagination_limit_1_produces_single_item_pages() {
     let mut pages = 0;
 
     loop {
-        let page = list_blocks_inner(&pool, None, None, None, None, cursor, Some(1))
+        let page = list_blocks_inner(&pool, None, None, None, None, None, cursor, Some(1))
             .await
             .unwrap();
         assert!(
@@ -1555,7 +1573,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
     let mut pages = 0;
 
     loop {
-        let page = list_blocks_inner(&pool, None, None, None, None, cursor, Some(PAGE_SIZE))
+        let page = list_blocks_inner(&pool, None, None, None, None, None, cursor, Some(PAGE_SIZE))
             .await
             .unwrap();
         for item in &page.items {

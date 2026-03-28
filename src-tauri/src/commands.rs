@@ -493,12 +493,14 @@ pub async fn move_block_inner(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn list_blocks_inner(
     pool: &SqlitePool,
     parent_id: Option<String>,
     block_type: Option<String>,
     tag_id: Option<String>,
     show_deleted: Option<bool>,
+    agenda_date: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
@@ -506,6 +508,8 @@ pub async fn list_blocks_inner(
 
     if show_deleted == Some(true) {
         pagination::list_trash(pool, &page).await
+    } else if let Some(ref d) = agenda_date {
+        pagination::list_agenda(pool, d, &page).await
     } else if let Some(ref t) = tag_id {
         pagination::list_by_tag(pool, t, &page).await
     } else if let Some(ref bt) = block_type {
@@ -758,12 +762,14 @@ pub async fn move_block(
 
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn list_blocks(
     pool: State<'_, SqlitePool>,
     parent_id: Option<String>,
     block_type: Option<String>,
     tag_id: Option<String>,
     show_deleted: Option<bool>,
+    agenda_date: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
@@ -773,6 +779,7 @@ pub async fn list_blocks(
         block_type,
         tag_id,
         show_deleted,
+        agenda_date,
         cursor,
         limit,
     )
@@ -1572,7 +1579,7 @@ mod tests {
         insert_block(&pool, "TOP2", "content", "b", None, Some(2)).await;
         insert_block(&pool, "CHILD1", "content", "c", Some("TOP1"), Some(1)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None)
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None)
             .await
             .unwrap();
 
@@ -1594,9 +1601,18 @@ mod tests {
         insert_block(&pool, "TAG1", "tag", "urgent", None, None).await;
         insert_block(&pool, "CONT1", "content", "hello", None, Some(2)).await;
 
-        let resp = list_blocks_inner(&pool, None, Some("page".into()), None, None, None, None)
-            .await
-            .unwrap();
+        let resp = list_blocks_inner(
+            &pool,
+            None,
+            Some("page".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(resp.items.len(), 1, "should filter to page type only");
         assert_eq!(resp.items[0].id, "PAGE1");
@@ -1611,9 +1627,18 @@ mod tests {
         insert_block(&pool, "CH2", "content", "child 2", Some("PAR"), Some(2)).await;
         insert_block(&pool, "OTHER", "content", "other", None, Some(2)).await;
 
-        let resp = list_blocks_inner(&pool, Some("PAR".into()), None, None, None, None, None)
-            .await
-            .unwrap();
+        let resp = list_blocks_inner(
+            &pool,
+            Some("PAR".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(resp.items.len(), 2, "should return only children of PAR");
         let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
@@ -1643,6 +1668,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1668,7 +1694,7 @@ mod tests {
             .await
             .unwrap();
 
-        let resp = list_blocks_inner(&pool, None, None, None, Some(true), None, None)
+        let resp = list_blocks_inner(&pool, None, None, None, Some(true), None, None, None)
             .await
             .unwrap();
 
@@ -1684,7 +1710,7 @@ mod tests {
     async fn list_blocks_empty_db_returns_empty_page() {
         let (pool, _dir) = test_pool().await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None)
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None)
             .await
             .unwrap();
 
