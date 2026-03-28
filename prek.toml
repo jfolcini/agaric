@@ -1,0 +1,81 @@
+# Configuration file for `prek`, a git hook framework written in Rust.
+# See https://prek.j178.dev for more information.
+
+[[repos]]
+repo = "builtin"
+hooks = [
+    { id = "trailing-whitespace", exclude = "\\.(png|ico|icns|svg)$" },
+    { id = "end-of-file-fixer", exclude = "\\.(png|ico|icns|svg)$" },
+    { id = "check-yaml" },
+    { id = "check-toml" },
+    { id = "check-json", exclude = "tsconfig.*\\.json$" },
+    { id = "check-merge-conflict" },
+    { id = "check-added-large-files", args = ["--maxkb=500"] },
+    { id = "no-commit-to-branch", args = ["--branch=main"], stages = ["pre-push"] },
+]
+
+# Biome: lint + format for JS/TS
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "biome-check"
+name = "biome check"
+entry = "npx biome check --no-errors-on-unmatched"
+language = "system"
+types_or = ["javascript", "jsx", "ts", "tsx", "json"]
+pass_filenames = true
+
+# TypeScript type checking
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "tsc"
+name = "typescript check"
+entry = "npx tsc -b --noEmit"
+language = "system"
+pass_filenames = false
+types_or = ["ts", "tsx"]
+
+# Vitest (run on TS changes)
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "vitest"
+name = "vitest"
+entry = "npx vitest run --reporter=dot"
+language = "system"
+pass_filenames = false
+types_or = ["ts", "tsx"]
+
+# Rust: cargo fmt
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "cargo-fmt"
+name = "cargo fmt"
+entry = "bash -c 'cd src-tauri && cargo fmt --check'"
+language = "system"
+pass_filenames = false
+types = ["rust"]
+
+# Rust: cargo clippy
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "cargo-clippy"
+name = "cargo clippy"
+entry = "bash -c 'cd src-tauri && cargo clippy -- -D warnings -A dead_code'"
+language = "system"
+pass_filenames = false
+types = ["rust"]
+
+# Rust: cargo test
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "cargo-test"
+name = "cargo test"
+entry = "bash -c 'cd src-tauri && cargo test'"
+language = "system"
+pass_filenames = false
+types = ["rust"]

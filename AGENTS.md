@@ -12,9 +12,10 @@
 | Cargo | 1.94.1 | ~/.cargo/bin/cargo |
 | cargo-tauri | 2.10.1 | ~/.cargo/bin/cargo-tauri |
 | sqlx-cli | 0.8.6 | ~/.cargo/bin/sqlx |
+| prek | 0.3.8 | ~/.local/bin/prek |
 | Git | 2.43.0 | /usr/bin/git |
-| Python | 3.12.3 | /usr/bin/python3 |
 | Biome | 2.4.9 | node_modules/@biomejs/biome |
+| Vitest | (latest) | node_modules/.bin/vitest |
 
 ### Tauri 2.0 System Dependencies (confirmed installed)
 
@@ -36,31 +37,38 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 ├── SESSION-LOG.md                     # Subagent session tracking
 ├── project-plan.jsx                   # Original plan (React component)
 ├── project-plan.md                    # Plan converted to Markdown
+├── prek.toml                          # Pre-commit hooks config (prek)
 ├── biome.json                         # Biome 2 lint/format config
+├── vitest.config.ts                   # Vitest config (jsdom, v8 coverage)
 ├── index.html                         # Vite entry
 ├── package.json                       # Node deps + scripts
 ├── tsconfig.json                      # TS project references
 ├── tsconfig.app.json                  # App TS config (strict, @ alias)
 ├── tsconfig.node.json                 # Node TS config
 ├── vite.config.ts                     # Vite config (@ alias, Tauri env)
+├── .github/workflows/ci.yml           # GitHub Actions CI
 ├── public/                            # Static assets
 ├── src/                               # React source
 │   ├── main.tsx                       # React entry
 │   ├── App.tsx                        # Root component
 │   ├── App.css / index.css            # Styles
+│   ├── __tests__/smoke.test.ts        # Vitest smoke test
 │   └── vite-env.d.ts                  # Vite type declarations
 └── src-tauri/                         # Rust backend (Tauri 2)
     ├── Cargo.toml                     # Rust crate config
     ├── Cargo.lock                     # Rust lockfile
     ├── tauri.conf.json                # Tauri config
     ├── build.rs                       # Tauri build script
+    ├── .env                           # DATABASE_URL for sqlx-cli
+    ├── migrations/0001_initial.sql    # Full schema (13 tables, 7 indexes)
     ├── capabilities/default.json      # Tauri 2 ACL permissions
     ├── icons/                         # App icons (placeholders)
     ├── gen/                           # Auto-generated (schemas, ACL)
     └── src/
         ├── main.rs                    # Binary entry
-        ├── lib.rs                     # Library with Tauri commands + DB setup
+        ├── lib.rs                     # Library with Tauri setup + commands
         ├── db.rs                      # SQLite pool init (WAL, FK pragma, migrations)
+        ├── device.rs                  # Device UUID persistence (ADR-07)
         ├── error.rs                   # AppError enum + Serialize for Tauri 2
         └── ulid.rs                    # BlockId newtype (ULID, case-normalized)
 ```
@@ -71,6 +79,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 |--------|---------|-----------|
 | `lib.rs` | Tauri app entry, setup hook, command handlers | `run()` |
 | `db.rs` | SQLite pool with WAL + FK pragma | `init_pool()` |
+| `device.rs` | Device UUID generation + file persistence | `DeviceId`, `get_or_create_device_id()` |
 | `error.rs` | Error types for commands | `AppError`, `CommandError` |
 | `ulid.rs` | ID generation and validation | `BlockId`, `AttachmentId`, `SnapshotId` |
 
@@ -87,28 +96,60 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 ```bash
 # Frontend
 npm run dev              # Vite dev server on :5173
-npm run build            # Production build → dist/
+npm run build            # Production build -> dist/
 npm run lint             # Biome check (lint + format check)
 npm run lint:fix         # Biome check --write (auto-fix)
 npm run format           # Biome format --write
-npm run format:check     # Biome format (check only)
+npm run test             # Vitest run
+npm run test:watch       # Vitest watch mode
+npm run test:coverage    # Vitest with v8 coverage
 
 # Backend (source cargo env first: . "$HOME/.cargo/env")
 cd src-tauri && cargo check    # Type check Rust
 cd src-tauri && cargo test     # Run Rust tests
 cd src-tauri && cargo fmt --check  # Rust formatting
+cd src-tauri && cargo clippy -- -D warnings  # Lint Rust
 cargo sqlx prepare             # Update .sqlx/ offline cache
 
 # Full Tauri app
 cargo tauri dev          # Dev mode with hot reload
 cargo tauri build        # Production build
+
+# Pre-commit hooks
+prek run --all-files     # Run all hooks on entire repo
+prek run                 # Run hooks on staged files only
+prek install             # (Re)install git hooks
 ```
+
+## Pre-commit Hooks (prek)
+
+Config: `prek.toml`. Installed via `prek install`. Runs on every `git commit`.
+
+| Hook | What it checks |
+|------|---------------|
+| trailing-whitespace | No trailing whitespace (auto-fixes) |
+| end-of-file-fixer | Files end with newline (auto-fixes) |
+| check-yaml | YAML syntax |
+| check-toml | TOML syntax |
+| check-json | JSON syntax (excludes tsconfig JSONC files) |
+| check-merge-conflict | No conflict markers |
+| check-added-large-files | No files > 500KB |
+| no-commit-to-branch | Block direct push to main (pre-push stage) |
+| biome-check | Biome lint + format for JS/TS/JSON |
+| tsc | TypeScript type checking |
+| vitest | Run frontend tests |
+| cargo-fmt | Rust formatting check |
+| cargo-clippy | Rust linting (warnings = errors, dead_code allowed) |
+| cargo-test | Rust tests |
 
 ## CI Gates (Phase 1)
 
 - `cargo test`
 - `cargo fmt --check`
+- `cargo clippy -- -D warnings`
 - `biome check`
+- `tsc -b --noEmit`
+- `vitest run`
 - `cargo sqlx prepare --check` (offline cache must not be stale)
 
 ## Key Architectural Rules
@@ -119,38 +160,105 @@ cargo tauri build        # Production build
 4. **Single TipTap instance** — roving editor, static divs for everything else
 5. **Biome from day one** — no ESLint, no Prettier
 6. **sqlx compile-time queries** — all `query!` macros validated at compile time
+7. **PRAGMA foreign_keys = ON** — enforced on every SQLite connection
+8. **ULID case normalization** — always uppercase Crockford base32 for blake3 determinism
 
-## Phase 1 Task Execution Order
+---
 
-### Wave 1: Scaffold
-- p1-t1: Tauri 2.0 workspace init
-- p1-t2: Vite + React 18 frontend
-- p1-t3: Biome config
+## Subagent Orchestration Workflow
 
-### Wave 2: Foundation (parallel after scaffold)
-- p1-t4: GitHub Actions CI
-- p1-t5: Device UUID
-- p1-t6: sqlx bootstrap (CRITICAL)
-- p1-t7: Initial migration (CRITICAL)
-- p1-t8: .sqlx offline cache
-- p1-t9: Error types
-- p1-t10: ULID utility
-- p1-t30: Vitest config
+This project is built using a subagent-driven workflow. Each unit of work follows this cycle:
 
-### Wave 3: Core logic (parallel after foundation)
-- p1-t11: Op log writer (CRITICAL)
-- p1-t12: blake3 hash
-- p1-t13: Op payload serde structs
-- p1-t14: Block draft writer
-- p1-t15: Crash recovery (CRITICAL)
-- p1-t16: Foreground queue (CRITICAL)
-- p1-t17: Background queue
-- p1-t18–t21: Cache materializers
-- p1-t22: Pagination (CRITICAL)
-- p1-t23: Soft-delete cascade
+### The Cycle
 
-### Wave 4: Commands + Tests (after core logic)
-- p1-t24–t27: Tauri commands
-- p1-t28: Boot state machine (Zustand)
-- p1-t29: cargo test suite (CRITICAL)
-- p1-t31: sqlx CI validation
+```
+1. PLAN    — Identify next tasks from project-plan.md
+2. LOG     — Update SESSION-LOG.md with "LAUNCHING" entry
+3. BUILD   — Run subagent to implement the tasks
+4. REVIEW  — Run review subagent to audit + improve the code
+5. VERIFY  — Confirm builds pass (cargo check, npm lint, npm test, prek run)
+6. DOCS    — Update AGENTS.md with new modules/commands/structure
+7. COMMIT  — git add + commit with conventional commit message
+8. LOG     — Update SESSION-LOG.md with "COMPLETED" entry + results
+9. REPEAT  — Next task batch
+```
+
+### Files that track state
+
+| File | Purpose | When to update |
+|------|---------|---------------|
+| `SESSION-LOG.md` | Chronological log of every subagent launch and result | Before and after every subagent |
+| `REVIEW-LATER.md` | Items that need revisiting in future phases | When something is deferred or flagged |
+| `AGENTS.md` | Developer docs: env, structure, commands, modules | After every subagent cycle that changes project structure |
+| `project-plan.md` | Master task list with all phases and task IDs | Reference only (do not modify task definitions) |
+| `ADR.md` | Architecture decisions (20 ADRs) | Reference only (source of truth for all design decisions) |
+
+### Subagent rules
+
+- **One subagent at a time** — sequential, not parallel (allows review between each)
+- **Every build subagent gets a review subagent** — the reviewer audits against ADRs and fixes issues
+- **Commit after each review cycle** — atomic commits per logical unit of work
+- **prek hooks validate on commit** — all 13 hooks must pass
+- **Source Rust env** — every subagent that touches Rust must run `. "$HOME/.cargo/env"` first
+- **Never modify tracking files from subagents** — only the orchestrator updates SESSION-LOG.md, AGENTS.md, etc.
+
+### Subagent prompt template
+
+When launching a build subagent, include:
+1. Working directory and Rust crate path
+2. Environment notes (cargo env sourcing, tool versions)
+3. Current state of relevant files (Cargo.toml, lib.rs module list, etc.)
+4. Exact task IDs and descriptions from project-plan.md
+5. Relevant ADR excerpts
+6. What NOT to modify
+7. Verification steps
+
+When launching a review subagent, include:
+1. Full content of all files the build subagent created/modified
+2. ADR requirements to check against
+3. Specific review checklist
+4. Known issues to investigate
+5. Instructions to fix directly and verify builds pass
+
+---
+
+## Phase 1 Progress
+
+### Wave 1: Scaffold — DONE
+- [x] p1-t1: Tauri 2.0 workspace init
+- [x] p1-t2: Vite + React 18 frontend
+- [x] p1-t3: Biome config
+
+### Wave 2: Foundation — DONE
+- [x] p1-t4: GitHub Actions CI
+- [x] p1-t5: Device UUID
+- [x] p1-t6: sqlx bootstrap (CRITICAL)
+- [x] p1-t7: Initial migration (CRITICAL)
+- [x] p1-t8: .sqlx offline cache
+- [x] p1-t9: Error types
+- [x] p1-t10: ULID utility
+- [x] p1-t30: Vitest config
+
+### Wave 3: Core logic — NEXT
+- [ ] p1-t11: Op log writer (CRITICAL)
+- [ ] p1-t12: blake3 hash
+- [ ] p1-t13: Op payload serde structs
+- [ ] p1-t14: Block draft writer
+- [ ] p1-t15: Crash recovery (CRITICAL)
+- [ ] p1-t16: Foreground queue (CRITICAL)
+- [ ] p1-t17: Background queue
+- [ ] p1-t18: tags_cache materializer
+- [ ] p1-t19: pages_cache materializer
+- [ ] p1-t20: agenda_cache materializer
+- [ ] p1-t21: block_links index materializer
+- [ ] p1-t22: Pagination — cursor-based (CRITICAL)
+- [ ] p1-t23: Soft-delete cascade
+
+### Wave 4: Commands + Tests — PENDING
+- [ ] p1-t24: Tauri command: create_block
+- [ ] p1-t25: Tauri command: edit_block
+- [ ] p1-t26: Tauri command: delete_block / restore_block / purge_block
+- [ ] p1-t27: Tauri command: list_blocks (paginated)
+- [ ] p1-t28: Boot state machine (Zustand)
+- [ ] p1-t29: cargo test suite (CRITICAL)
+- [ ] p1-t31: sqlx CI validation

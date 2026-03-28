@@ -68,7 +68,7 @@
 - **Status:** completed
 - **Issues found and fixed:**
   - Critical: op_log migration SQL — PRIMARY KEY moved after all columns
-  - Added Vitest step to CI workflow  
+  - Added Vitest step to CI workflow
   - Device.rs + lib.rs wired correctly with DeviceId managed state
 - **Build:** cargo check + npm lint + npm test all pass
 
