@@ -74,6 +74,27 @@
 
 ---
 
+## Session 2 — 2026-03-28
+
+### Status: Phase 1 — Wave 3 (Op Log + Materializer)
+
+---
+
+### Log Entries
+
+#### [12:45] Session start
+- Read all project files (AGENTS.md, ADR.md, project-plan.md, all Rust sources)
+- Phase 1 Wave 2 complete. Starting Wave 3: Core logic
+- Batch 1: p1-t11 (op log writer), p1-t12 (blake3 hash), p1-t13 (op payload structs)
+- Batch 2: p1-t14 (block draft writer), p1-t15 (crash recovery)
+
+#### [12:46] Subagent D: Op Log Core — LAUNCHING
+- **Task IDs:** p1-t11 (op log writer), p1-t12 (blake3 hash), p1-t13 (op payload structs)
+- **Status:** launched
+- **What it does:** Creates op payload types (all ADR-07 op types), blake3 hash chain, and op log writer with composite PK + next-seq logic
+
+---
+
 <!-- Template for subagent entries:
 
 #### [HH:MM] Subagent: <title>
