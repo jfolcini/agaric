@@ -69,8 +69,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   return (
     <div className="page-browser space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="page-browser-title text-lg font-semibold tracking-tight">Pages</h2>
+      <div className="flex items-center justify-end">
         <Button variant="outline" size="sm" onClick={handleCreatePage}>
           <Plus className="h-4 w-4" /> New Page
         </Button>

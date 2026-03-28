@@ -87,12 +87,10 @@ describe('App', () => {
     const sidebar = getSidebar()
     await user.click(sidebar.getByText('Pages'))
 
-    // PageBrowser should render with its heading
+    // PageBrowser should render with its New Page button
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /Pages/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
     })
-    // PageBrowser has a "New Page" button
-    expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
   })
 
   it('switches to Tags view', async () => {
@@ -126,9 +124,9 @@ describe('App', () => {
     const sidebar = getSidebar()
     await user.click(sidebar.getByText('Trash'))
 
-    // TrashView should render its heading
+    // TrashView should render its empty state
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /Trash/i })).toBeInTheDocument()
+      expect(screen.getByText('Trash is empty.')).toBeInTheDocument()
     })
   })
 
@@ -145,7 +143,7 @@ describe('App', () => {
     // Go to Pages
     await user.click(sidebar.getByText('Pages'))
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /Pages/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
     })
 
     // Go back to Journal

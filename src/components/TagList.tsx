@@ -66,10 +66,6 @@ export function TagList(): React.ReactElement {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold tracking-tight">Tags</h2>
-      </div>
-
       {/* Create tag form */}
       <form
         onSubmit={(e) => {

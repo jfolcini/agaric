@@ -67,8 +67,6 @@ export function TrashView(): React.ReactElement {
 
   return (
     <div className="trash-view space-y-4">
-      <h2 className="trash-view-title text-lg font-semibold tracking-tight">Trash</h2>
-
       {loading && blocks.length === 0 && (
         <div className="trash-view-loading text-sm text-muted-foreground">Loading trash...</div>
       )}

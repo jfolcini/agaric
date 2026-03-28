@@ -1,58 +1,26 @@
 import { invoke } from '@tauri-apps/api/core'
 
-// Response types matching Rust structs
-export interface BlockResponse {
-  id: string
-  block_type: string
-  content: string | null
-  parent_id: string | null
-  position: number | null
-  deleted_at: string | null
-}
+export type {
+  BlockResponse,
+  BlockRow,
+  DeleteResponse,
+  MoveResponse,
+  PageResponse,
+  PurgeResponse,
+  RestoreResponse,
+  TagResponse,
+} from './bindings'
 
-export interface BlockRow {
-  id: string
-  block_type: string
-  content: string | null
-  parent_id: string | null
-  position: number | null
-  deleted_at: string | null
-  archived_at: string | null
-  is_conflict: boolean
-}
-
-export interface PageResponse<T> {
-  items: T[]
-  next_cursor: string | null
-  has_more: boolean
-}
-
-export interface DeleteResponse {
-  block_id: string
-  deleted_at: string
-  descendants_affected: number
-}
-
-export interface RestoreResponse {
-  block_id: string
-  restored_count: number
-}
-
-export interface PurgeResponse {
-  block_id: string
-  purged_count: number
-}
-
-export interface MoveResponse {
-  block_id: string
-  new_parent_id: string | null
-  new_position: number
-}
-
-export interface TagResponse {
-  block_id: string
-  tag_id: string
-}
+import type {
+  BlockResponse,
+  BlockRow,
+  DeleteResponse,
+  MoveResponse,
+  PageResponse,
+  PurgeResponse,
+  RestoreResponse,
+  TagResponse,
+} from './bindings'
 
 // Command wrappers
 export async function createBlock(params: {

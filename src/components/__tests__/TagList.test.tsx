@@ -38,15 +38,14 @@ beforeEach(() => {
 })
 
 describe('TagList', () => {
-  it('renders heading and create form on mount', async () => {
+  it('renders create form on mount', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     render(<TagList />)
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /Tags/i })).toBeInTheDocument()
+      expect(screen.getByPlaceholderText('New tag name...')).toBeInTheDocument()
     })
-    expect(screen.getByPlaceholderText('New tag name...')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Add Tag/i })).toBeInTheDocument()
   })
 

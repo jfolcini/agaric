@@ -154,7 +154,7 @@ Markdown serializer round-trips correctly under Android WebView's ProseMirror ou
 cost: 3–5 days. Phase 2 does not start until spike passes or mitigation is chosen.
 
 **Notes:**
-- specta / tauri-specta deferred to Phase 2 when the Tauri command surface stabilises.
+- specta / tauri-specta bindings implemented (Phase 1.5). `src/lib/bindings.ts` auto-generated; `ts_bindings_up_to_date` test ensures sync.
 - Biome is non-negotiable from day one — retrofitting means a whole-codebase reformat.
 
 ---
@@ -983,7 +983,7 @@ bundled.
 ---
 
 ## ADR-13 — Dev Tooling
-**Status:** Phase 1 complete. Phase 2+ tools (Playwright, insta, cargo-nextest) not started.
+**Status:** Phase 1.5 complete (insta snapshots). Playwright and cargo-nextest not started (Phase 2+).
 
 | Tool | When | Notes |
 |------|------|-------|

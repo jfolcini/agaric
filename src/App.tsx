@@ -53,8 +53,8 @@ function App() {
       <SidebarProvider>
         <Sidebar collapsible="icon">
           <SidebarHeader className="p-4 pb-2">
-            <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
-              <span className="hidden text-lg font-bold group-data-[collapsible=icon]:block">
+            <div className="flex h-7 items-center gap-2 group-data-[collapsible=icon]:justify-center">
+              <span className="hidden text-lg font-bold leading-none group-data-[collapsible=icon]:block">
                 A
               </span>
               <span className="text-base font-semibold leading-none tracking-tight group-data-[collapsible=icon]:hidden">
