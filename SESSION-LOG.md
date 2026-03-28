@@ -1,0 +1,61 @@
+# Session Log
+
+## Session 1 — 2026-03-28
+
+### Status: Phase 1 — Foundation
+
+---
+
+### Log Entries
+
+#### [11:37] Session start
+- Read ADR.md (1260 lines, 20 ADRs) and project-plan.jsx (857 lines, 5 phases, ~130 tasks)
+- Converted project-plan.jsx → project-plan.md
+- Created SESSION-LOG.md and REVIEW-LATER.md
+- Ready to begin Phase 1 execution
+
+#### [11:52] Environment check + Rust install
+- Node.js v22.22.0 confirmed (manually installed by user via curl)
+- Rust 1.94.1 stable installed via rustup
+- cargo-tauri 2.10.1 already present
+- sqlx-cli 0.8.6 installed
+- Tauri system deps confirmed: libwebkit2gtk-4.1-dev, libgtk-3-dev, libssl-dev, librsvg2-dev, libsoup-3.0-dev
+- Created AGENTS.md with full environment table
+
+#### [11:55] Subagent A: Repo Scaffold — COMPLETED
+- **Task IDs:** p1-t1 (Tauri 2.0 workspace), p1-t2 (Vite + React 18), p1-t3 (Biome)
+- **Status:** completed
+- **What it does:** Created full project skeleton
+- **Result:**
+  - Tauri 2.0 workspace: src-tauri/ with Cargo.toml, tauri.conf.json, main.rs, lib.rs, build.rs, capabilities, placeholder icons
+  - Vite + React 18 (react-ts template): strict TS, @ path alias, Tauri env prefix
+  - Biome 2.4.9: lint/format config, npm scripts (lint, lint:fix, format, format:check)
+  - `npm run lint` passes, `cargo check` passes
+- **Files created:** biome.json, index.html, package.json, vite.config.ts, tsconfig.*.json, src/, src-tauri/, .gitignore
+- **AGENTS.md updated** with project structure, build commands, Biome version
+
+---
+
+#### [12:05] Subagent B: Database & Backend Foundation — LAUNCHING
+- **Task IDs:** p1-t6 (sqlx bootstrap), p1-t7 (initial migration), p1-t9 (error types), p1-t10 (ULID utility)
+- **Status:** launching
+- **What it does:** Adds sqlx with WAL mode, creates 0001_initial.sql with full schema, AppError enum, ULID newtype wrapper
+
+#### [12:05] Subagent C: CI + Tooling — LAUNCHING
+- **Task IDs:** p1-t4 (GitHub Actions CI), p1-t5 (device UUID), p1-t8 (.sqlx offline cache), p1-t30 (Vitest config)
+- **Status:** launching
+- **What it does:** GitHub Actions workflow, device UUID persistence module, .sqlx/ CI gate, Vitest setup
+
+---
+
+<!-- Template for subagent entries:
+
+#### [HH:MM] Subagent: <title>
+- **Task IDs:** p1-tXX, p1-tXX
+- **Status:** launched / completed / failed
+- **Agent ID:** <id>
+- **What it does:** <brief description>
+- **Result:** <outcome summary after completion>
+- **Files touched:** <list>
+
+-->
