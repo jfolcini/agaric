@@ -67,6 +67,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
     └── src/
         ├── main.rs                    # Binary entry
         ├── lib.rs                     # Library with Tauri setup + commands
+        ├── cache.rs                   # Cache rebuild functions (ADR-08, p1-t18..t21)
         ├── db.rs                      # SQLite pool init (WAL, FK pragma, migrations)
         ├── device.rs                  # Device UUID persistence (ADR-07)
         ├── draft.rs                   # Block draft writer — save/flush/delete (ADR-07)
@@ -84,6 +85,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 | Module | Purpose | Key types |
 |--------|---------|-----------|
 | `lib.rs` | Tauri app entry, setup hook, command handlers | `run()` |
+| `cache.rs` | Cache rebuild: tags, pages, agenda, block_links (ADR-08) | `rebuild_tags_cache()`, `rebuild_pages_cache()`, `rebuild_agenda_cache()`, `reindex_block_links()` |
 | `db.rs` | SQLite pool with WAL + FK pragma | `init_pool()` |
 | `device.rs` | Device UUID generation + file persistence | `DeviceId`, `get_or_create_device_id()` |
 | `draft.rs` | Block draft save/flush/delete (ADR-07) | `Draft`, `save_draft()`, `flush_draft()`, `delete_draft()` |
@@ -259,10 +261,10 @@ When launching a review subagent, include:
 - [x] p1-t15: Crash recovery (CRITICAL)
 - [x] p1-t16: Foreground queue (CRITICAL)
 - [x] p1-t17: Background queue
-- [ ] p1-t18: tags_cache materializer
-- [ ] p1-t19: pages_cache materializer
-- [ ] p1-t20: agenda_cache materializer
-- [ ] p1-t21: block_links index materializer
+- [x] p1-t18: tags_cache materializer
+- [x] p1-t19: pages_cache materializer
+- [x] p1-t20: agenda_cache materializer
+- [x] p1-t21: block_links index materializer
 - [ ] p1-t22: Pagination — cursor-based (CRITICAL)
 - [ ] p1-t23: Soft-delete cascade
 

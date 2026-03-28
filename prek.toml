@@ -53,7 +53,7 @@ repo = "local"
 [[repos.hooks]]
 id = "cargo-fmt"
 name = "cargo fmt"
-entry = "bash -c 'cd src-tauri && cargo fmt --check'"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo fmt --check'"
 language = "system"
 pass_filenames = false
 types = ["rust"]
@@ -64,7 +64,7 @@ repo = "local"
 [[repos.hooks]]
 id = "cargo-clippy"
 name = "cargo clippy"
-entry = "bash -c 'cd src-tauri && cargo clippy -- -D warnings -A dead_code'"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo clippy -- -D warnings -A dead_code'"
 language = "system"
 pass_filenames = false
 types = ["rust"]
@@ -75,7 +75,7 @@ repo = "local"
 [[repos.hooks]]
 id = "cargo-test"
 name = "cargo test"
-entry = "bash -c 'cd src-tauri && cargo test'"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo test'"
 language = "system"
 pass_filenames = false
 types = ["rust"]

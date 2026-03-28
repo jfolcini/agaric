@@ -128,10 +128,17 @@
 - **Files modified:** src-tauri/{Cargo.toml,src/lib.rs,src/error.rs}
 - **Commit:** 6b8b85e
 
-#### [13:15] Subagent G: Cache Materializers — LAUNCHING
+#### [13:15] Subagent G: Cache Materializers — COMPLETED
 - **Task IDs:** p1-t18 (tags_cache), p1-t19 (pages_cache), p1-t20 (agenda_cache), p1-t21 (block_links)
-- **Status:** launched
+- **Status:** completed
 - **What it does:** Implements the 4 background cache rebuild functions that replace the materializer stubs
+- **Result:**
+  - Build subagent created cache.rs with 4 functions + 20 tests (54 total)
+  - Review subagent found and fixed INSERT OR IGNORE bug in agenda_cache rebuild + added 1 test (55 total)
+  - Fixed prek.toml cargo hooks to source cargo env (was causing hook failures)
+- **Files created:** src-tauri/src/cache.rs
+- **Files modified:** src-tauri/{Cargo.toml,Cargo.lock,src/lib.rs,src/materializer.rs}, prek.toml
+- **Commit:** 954e49e
 
 ---
 
