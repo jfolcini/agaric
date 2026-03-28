@@ -247,6 +247,78 @@
 **Result:** Zero custom components using inline styles or raw HTML buttons. All UI uses shadcn components + Tailwind utilities on the slate theme. 213/213 Vitest tests passing, tsc clean.
 - **Commit:** (pending)
 
+#### Usability Wiring (JournalPage, PageBrowser, TagList) [BUILT]
+- **JournalPage:** Rewritten with find-or-create daily page model. First block auto-creates page; deleting last block auto-deletes it. Add block form with Input + Button. Hover-reveal delete buttons.
+- **PageBrowser:** "New Page" button creates Untitled page, prepends to list.
+- **TagList:** New component (`src/components/TagList.tsx`). Lists all tags, inline add form, hover-delete. Replaces TagPanel in sidebar tags view.
+- **Tests:** 233 Vitest tests passing, tsc clean.
+- **Commit:** (pending)
+
+---
+
+## Session 8 — 2026-03-28
+
+### Browser Preview Infrastructure + Button Fix
+
+#### Browser Mock for Chrome DevTools MCP [BUILT]
+- **Problem:** Tauri webview (WebKitGTK) doesn't expose Chrome DevTools Protocol. The `chrome-devtools-mcp` server can't connect to the Tauri app for visual inspection.
+- **Solution:** Created `src/lib/tauri-mock.ts` using `@tauri-apps/api/mocks` — mocks all IPC commands with in-memory store. `src/main.tsx` auto-loads mock when `window.__TAURI_INTERNALS__` is absent. Added type declaration in `src/vite-env.d.ts`.
+- **Result:** App renders at `http://localhost:5173` in Chrome with functional mock data. `chrome-browser` MCP server (launches its own Chrome) connects and provides `take_screenshot`, `take_snapshot`, `navigate_page`, `click`, `fill`, etc.
+- **Key discovery:** Use `chrome-browser` server (not `chrome-devtools`) — it launches its own headless Chrome, no user setup needed.
+- **Files:** `src/lib/tauri-mock.ts` (new), `src/main.tsx` (modified), `src/vite-env.d.ts` (modified)
+
+#### Button Consistency Fix [BUILT]
+- **Problem:** Action buttons used inconsistent variants — JournalPage "Add" and TagList "Add Tag" used `default` (solid primary), PageBrowser "New Page" used `outline`. Same hierarchy level, different appearance.
+- **Fix:** Standardized all action buttons to `variant="outline" size="sm"`. Three levels: outline (actions), ghost+xs (utility like "Today"), ghost+icon-xs (hover-reveal delete icons).
+- **Files:** `src/components/JournalPage.tsx`, `src/components/TagList.tsx`
+
+#### AGENTS.md Updated [BUILT]
+- Added `src/lib/tauri-mock.ts` to project structure
+- Added "Browser Preview (Chrome DevTools MCP)" section with full autonomous workflow (start Vite, use `chrome-browser` MCP, screenshot/snapshot/interact cycle)
+- Documented MCP server comparison table (`chrome-browser` preferred vs `chrome-devtools`)
+- MCP tool cheatsheet
+- **Commit:** (pending)
+
+---
+
+## Session 8 — 2026-03-28
+
+### Serializer Bug Fix + Property-Based Tests
+
+#### Serializer Review Completion
+- **Bug fixed:** Unclosed italic revert was dropping nested `**` bold delimiter. `parse('*italic **bold')` produced `text("*italic bold")` instead of `text("*italic **bold")`. Fixed by splitting reverted nodes at bold boundary.
+- **26 new tests** added (84 → 110 total), 100% coverage across all metrics.
+- **Known limitation documented:** Bold-inside-italic mark merging causes data loss (REVIEW-LATER.md, high priority, Phase 2).
+- **Commit:** `7b224c8`
+
+#### fast-check Property-Based Tests
+- Added `fast-check` dependency for generative fuzzing of the serializer.
+- **12 property tests**, 500 random inputs each (6,000 generated cases per run):
+  - Parse safety (random + markdown-shaped strings)
+  - Serialize safety (any valid doc)
+  - Round-trip stabilization (normalized structural equality)
+  - Idempotence (string equality after two round-trips)
+  - Doc round-trip (normalize → serialize → parse → compare)
+  - ULID token preservation, text content preservation
+  - Structural invariants (paragraph hierarchy, non-empty text nodes, newline counts)
+- Custom `Arbitrary` generators: mark combos → text nodes → inline sequences → paragraphs → docs.
+- fast-check found during development: adjacent same-mark text node merging, empty code span splitting — both handled via `normalizeDoc()` helper.
+- **Commit:** `e4d579d`
+
+### ADR Status Annotations + Task-ADR Cross-References
+
+#### ADR.md — Status markers on all 20 ADRs
+- 2 **FULLY IMPLEMENTED**: ADR-04 (Database), ADR-05 (Schema)
+- 1 **FULLY IMPLEMENTED** (decision-only): ADR-15 (Encryption)
+- 1 **CLOSED**: ADR-18 (Tag Inheritance)
+- 2 **N/A**: ADR-14 (Dropped API), ADR-17 (Deferred Graph View)
+- 11 **Phase 1/1.5 complete** with remaining work noted
+- 3 **Not started**: ADR-09 (Sync), ADR-10 (CRDT), ADR-12 (Search)
+
+#### project-plan.md — ADR refs on 128/129 tasks
+- Every task now has `[ADR-XX]` prefix in Notes column (except p5-t10 Tauri updater — no ADR).
+- Most referenced ADRs: ADR-01 (22 tasks), ADR-06 (20), ADR-07 (18), ADR-08 (18).
+
 ---
 
 <!-- Template:

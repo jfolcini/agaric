@@ -9,6 +9,8 @@ block type.
 ---
 
 ## ADR-01 — Shell & Frontend
+**Status:** Phase 1.5 complete. Android spike (end of Phase 1.5) not started. Export (Phase 5) not started.
+
 **Decision:** Tauri 2.0, React 18 + Vite, TipTap, Biome.
 
 **Rejected:** Electron (too heavy), Flutter/Capacitor (wrong ecosystem), Vue/Preact/Svelte/Astro
@@ -158,6 +160,8 @@ cost: 3–5 days. Phase 2 does not start until spike passes or mitigation is cho
 ---
 
 ## ADR-02 — State Management
+**Status:** Phase 1 complete. TanStack Query (Phase 3+) and XState (Phase 4+) not started.
+
 **Phased introduction to match actual complexity:**
 
 | Phase | State layer |
@@ -181,6 +185,8 @@ cost: 3–5 days. Phase 2 does not start until spike passes or mitigation is cho
 ---
 
 ## ADR-03 — UI Components
+**Status:** Phase 1 complete. Noto Sans bundling deferred to Phase 5 (i18n).
+
 **Decision:** shadcn/ui (copy-paste, owned, no lock-in), Tailwind with `rtl:` variants, Noto
 Sans bundled.
 
@@ -190,6 +196,8 @@ Android).
 ---
 
 ## ADR-04 — Database
+**Status: FULLY IMPLEMENTED.**
+
 **Decision:** sqlx + sqlx migrate from Phase 1. WAL mode, single write connection, sqlx read
 pool for concurrent readers.
 
@@ -210,6 +218,7 @@ for reads (WAL allows concurrent readers).
 ---
 
 ## ADR-05 — Schema
+**Status: FULLY IMPLEMENTED.** All 13 tables, 7 indexes created in 0001_initial.sql.
 
 **Central principle: everything is a block.** Tags, pages, and content are all rows in `blocks`,
 distinguished by `block_type`. No separate tags or pages tables.
@@ -355,6 +364,7 @@ CREATE INDEX idx_agenda_date        ON agenda_cache(date);
 ---
 
 ## ADR-06 — Data Model
+**Status:** Phase 1 complete. Conflict copies (Phase 4), export (Phase 5) not started.
 
 **Integer position ordering:** `position` is a 1-based integer among siblings sharing the same
 `parent_id`. On insert between positions N and N+1, all siblings at position ≥ N+1 are
@@ -440,6 +450,7 @@ new `edit_block` on original, conflict copy → `delete_block`.
 ---
 
 ## ADR-07 — Operation Log
+**Status:** Phase 1 complete (linear chain, blake3 hash, device UUID, drafts, crash recovery, all 12 op types). Phase 4 DAG (LCA algorithm, multi-device merge) not started.
 
 **Core principle:** Op log is strictly append-only. `block_drafts` is the only mutable scratch
 space. Nothing else bypasses this invariant.
@@ -719,6 +730,7 @@ binary data).
 ---
 
 ## ADR-08 — Materializer
+**Status:** Phase 1 complete (foreground/background queues, all 4 cache rebuilds, cursor-based pagination). FTS5 maintenance (Phase 3), Status View (Phase 2+) not started.
 
 **Priority queues:**
 - Foreground queue: viewport blocks — low latency.
@@ -840,6 +852,7 @@ Reads from in-memory state struct — no additional DB queries.
 ---
 
 ## ADR-09 — Sync
+**Status:** Not started. Schema ready (peer_refs table, parent_seqs DAG support, device UUID). Phase 4.
 
 **Discovery:** mDNS on local network. Initiating device generates session passphrase.
 
@@ -908,6 +921,7 @@ reference only.
 ---
 
 ## ADR-10 — CRDT / Conflict Strategy
+**Status:** Not started. prev_edit pointer stored from Phase 1 (ready for LCA). Phase 4.
 
 **Decision:** Three-way merge via `diffy` crate at word-level granularity, not a CRDT library.
 
@@ -934,6 +948,7 @@ reference only.
 ---
 
 ## ADR-11 — Rust Libraries
+**Status:** Phase 1 complete. Phase 4 deps (diffy, zstd, ciborium) not yet added.
 
 | Library | Phase | Purpose |
 |---------|-------|---------|
@@ -958,6 +973,7 @@ reference only.
 ---
 
 ## ADR-12 — Search
+**Status:** Not started. Phase 3.
 
 **v1:** SQLite FTS5. Adequate for non-CJK text. CJK limitations documented in ADR-19.
 
@@ -967,6 +983,7 @@ bundled.
 ---
 
 ## ADR-13 — Dev Tooling
+**Status:** Phase 1 complete. Phase 2+ tools (Playwright, insta, cargo-nextest) not started.
 
 | Tool | When | Notes |
 |------|------|-------|
@@ -990,11 +1007,15 @@ bundled.
 ---
 
 ## ADR-14 — API
+**Status: N/A.** Dropped for v1.
+
 Dropped for v1. Deferred indefinitely.
 
 ---
 
 ## ADR-15 — Encryption at Rest
+**Status: FULLY IMPLEMENTED.** Decision-only ADR; no application code required.
+
 **Decision:** Filesystem-level only (Android FBE, Linux LUKS / dm-crypt).
 
 **Rejected:** SQLCipher — key derivation complexity, passphrase UX, platform keychain integration
@@ -1005,6 +1026,7 @@ for marginal benefit.
 ---
 
 ## ADR-16 — Build Order & Timeline
+**Status:** Planning ADR. Phase 1 and Phase 1.5 complete.
 
 | Phase | Scope | Estimate |
 |-------|-------|----------|
@@ -1023,6 +1045,8 @@ sync, pagination on all list queries.
 ---
 
 ## ADR-17 — Graph View (Deferred)
+**Status: N/A.** Deferred to Phase 5+. Schema supports it (block_links table).
+
 **Decision:** Out of scope for v1. Block and tag relationships are already in the schema; the
 graph view is a visualisation layer only. Deferred to Phase 5+.
 
@@ -1031,6 +1055,7 @@ graph view is a visualisation layer only. Deferred to Phase 5+.
 ---
 
 ## ADR-18 — Tag Inheritance — Closed, Not Planned
+**Status: CLOSED.** Will not be implemented. Prefix-aware LIKE search covers the use case.
 
 **Decision:** Tag inheritance via query propagation will not be implemented.
 
@@ -1055,6 +1080,7 @@ that pointed to the deleted tag render as "deleted tag" decoration in TipTap.
 ---
 
 ## ADR-19 — CJK Support: Limitations and Roadmap
+**Status:** v1 limitations documented and accepted. Tantivy + lindera planned for Phase 5.
 
 ### v1 limitations (explicit)
 
@@ -1115,6 +1141,7 @@ packaging constraints.
 ---
 
 ## ADR-20 — Content Storage Format
+**Status:** Phase 1.5 complete (serializer, types, TipTap integration, 110+ tests, property-based fuzzing). diffy integration (Phase 4), FTS5 stripping (Phase 3), and export (Phase 5) not started.
 
 **Decision:** Markdown with a locked inline mark set and two custom ULID token extensions.
 TipTap serializes to and from this format on every focus/blur cycle via a custom serializer.
