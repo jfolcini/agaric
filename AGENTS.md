@@ -50,9 +50,13 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 ├── public/                            # Static assets
 ├── src/                               # React source
 │   ├── main.tsx                       # React entry
-│   ├── App.tsx                        # Root component
+│   ├── App.tsx                        # Root component (BootGate wrapper)
 │   ├── App.css / index.css            # Styles
+│   ├── components/BootGate.tsx        # Boot gate — blocks UI until ready
+│   ├── stores/boot.ts                 # Zustand boot state machine
+│   ├── lib/tauri.ts                   # Type-safe Tauri invoke wrappers
 │   ├── __tests__/smoke.test.ts        # Vitest smoke test
+│   ├── __tests__/boot-store.test.ts   # Vitest boot store tests
 │   └── vite-env.d.ts                  # Vite type declarations
 └── src-tauri/                         # Rust backend (Tauri 2)
     ├── Cargo.toml                     # Rust crate config
@@ -73,8 +77,9 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
     └── src/
         ├── main.rs                    # Binary entry
         ├── lib.rs                     # Library with Tauri setup + commands
+        ├── commands.rs                # Tauri command handlers (p1-t24..t27)
         ├── cache.rs                   # Cache rebuild functions (ADR-08, p1-t18..t21)
-        ├── db.rs                      # SQLite pool init (WAL, FK pragma, migrations)
+        ├── db.rs                      # SQLite pool init (WAL, FK pragma, busy_timeout, migrations)
         ├── device.rs                  # Device UUID persistence (ADR-07)
         ├── draft.rs                   # Block draft writer — save/flush/delete (ADR-07)
         ├── error.rs                   # AppError enum + Serialize for Tauri 2
@@ -85,27 +90,30 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
         ├── pagination.rs              # Cursor/keyset pagination (ADR critical)
         ├── recovery.rs                # Crash recovery at boot (ADR-07)
         ├── soft_delete.rs             # Cascade soft-delete, restore, purge (ADR-06)
-        └── ulid.rs                    # BlockId newtype (ULID, case-normalized)
+        ├── ulid.rs                    # BlockId newtype (ULID, case-normalized)
+        └── integration_tests.rs       # Cross-module integration tests (test-only)
 ```
 
 ## Rust Modules (src-tauri/src/)
 
 | Module | Purpose | Key types |
 |--------|---------|-----------|
-| `lib.rs` | Tauri app entry, setup hook, command handlers | `run()` |
+| `lib.rs` | Tauri app entry, setup hook (pool + device + recovery + materializer) | `run()` |
+| `commands.rs` | Tauri command handlers — 7 commands (p1-t24..t27) | `create_block`, `edit_block`, `delete_block`, `restore_block`, `purge_block`, `list_blocks`, `get_block` |
 | `cache.rs` | Cache rebuild: tags, pages, agenda, block_links (ADR-08) | `rebuild_tags_cache()`, `rebuild_pages_cache()`, `rebuild_agenda_cache()`, `reindex_block_links()`, `rebuild_all_caches()` |
-| `db.rs` | SQLite pool with WAL + FK pragma | `init_pool()` |
+| `db.rs` | SQLite pool with WAL + FK pragma + busy_timeout(5s) | `init_pool()` |
 | `device.rs` | Device UUID generation + file persistence | `DeviceId`, `get_or_create_device_id()` |
 | `draft.rs` | Block draft save/flush/delete (ADR-07) | `Draft`, `save_draft()`, `flush_draft()`, `delete_draft()`, `get_draft()`, `draft_count()`, `save_draft_if_changed()` |
 | `error.rs` | Error types for commands | `AppError` (Db, Io, Ulid, Serde, Blake3, Tauri, Validation) |
 | `hash.rs` | blake3 hash for op log entries (ADR-07) | `compute_op_hash()`, `verify_op_hash()` |
-| `materializer.rs` | Foreground + background materializer queues (ADR-08) | `Materializer`, `MaterializeTask`, `dispatch_op()`, `dedup_tasks()`, `QueueMetrics`, `shutdown()` |
+| `materializer.rs` | Foreground + background materializer queues (ADR-08) | `Materializer`, `MaterializeTask`, `dispatch_op()`, `dispatch_background()`, `dedup_tasks()`, `QueueMetrics`, `shutdown()` |
 | `op.rs` | Op payload types — 12 op types (ADR-07) | `OpType` (Display, FromStr, non_exhaustive), `OpPayload`, all payload structs |
 | `op_log.rs` | Op log writer — append local ops | `OpRecord` (FromRow), `append_local_op()`, `append_local_op_at()`, `get_op_by_seq()`, `get_latest_seq()`, `get_ops_since()` |
 | `pagination.rs` | Cursor/keyset pagination — all list queries | `Cursor`, `PageRequest`, `PageResponse`, `list_children()`, `list_by_type()`, `list_trash()`, `list_by_tag()`, `list_agenda()` |
 | `recovery.rs` | Crash recovery at boot (ADR-07) | `RecoveryReport` (duration_ms, draft_errors), `recover_at_boot()` |
 | `soft_delete.rs` | Cascade soft-delete, restore, purge (ADR-06) | `soft_delete_block()`, `cascade_soft_delete()` (returns count), `restore_block()`, `purge_block()` (batch O(k)), `is_deleted()`, `get_descendants()` |
 | `ulid.rs` | ID generation and validation | `BlockId`, `AttachmentId`, `SnapshotId` |
+| `integration_tests.rs` | Cross-module pipeline tests (16 tests, test-only) | Op chains, recovery sim, cascade delete, pagination, materializer |
 
 ## Database
 
@@ -130,7 +138,7 @@ npm run test:coverage    # Vitest with v8 coverage
 
 # Backend (source cargo env first: . "$HOME/.cargo/env")
 cd src-tauri && cargo check    # Type check Rust
-cd src-tauri && cargo test     # Run Rust tests (189 tests)
+cd src-tauri && cargo test     # Run Rust tests (230 tests)
 cd src-tauri && cargo fmt --check  # Rust formatting
 cd src-tauri && cargo clippy -- -D warnings  # Lint Rust
 cargo sqlx prepare             # Update .sqlx/ offline cache
@@ -287,11 +295,11 @@ When launching a review subagent, include:
 - [x] p1-t22: Pagination — cursor-based (CRITICAL)
 - [x] p1-t23: Soft-delete cascade
 
-### Wave 4: Commands + Tests — NEXT
-- [ ] p1-t24: Tauri command: create_block
-- [ ] p1-t25: Tauri command: edit_block
-- [ ] p1-t26: Tauri command: delete_block / restore_block / purge_block
-- [ ] p1-t27: Tauri command: list_blocks (paginated)
-- [ ] p1-t28: Boot state machine (Zustand)
-- [ ] p1-t29: cargo test suite (CRITICAL)
-- [ ] p1-t31: sqlx CI validation
+### Wave 4: Commands + Tests — DONE
+- [x] p1-t24: Tauri command: create_block
+- [x] p1-t25: Tauri command: edit_block
+- [x] p1-t26: Tauri command: delete_block / restore_block / purge_block
+- [x] p1-t27: Tauri command: list_blocks (paginated)
+- [x] p1-t28: Boot state machine (Zustand)
+- [x] p1-t29: cargo test suite (CRITICAL)
+- [x] p1-t31: sqlx CI validation

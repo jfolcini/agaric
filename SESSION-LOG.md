@@ -185,6 +185,59 @@
 
 ---
 
+## Session 3 — 2026-03-28
+
+### Status: Phase 1 — Wave 4 (Commands + Tests)
+
+---
+
+### Log Entries
+
+#### [14:40] Wave 4 start
+- Read all module APIs, ADRs, schema, and frontend state
+- Planned 4 batches: backend commands, frontend boot, integration tests, sqlx CI
+
+#### [14:45] Batch 1: Tauri Commands — COMPLETED
+- **Task IDs:** p1-t24, p1-t25, p1-t26, p1-t27
+- **Status:** completed
+- **What it does:** Creates commands.rs with 7 Tauri command handlers (create_block, edit_block, delete_block, restore_block, purge_block, list_blocks, get_block). Wires materializer into lib.rs setup with crash recovery at boot.
+- **Architecture:** Commands write to both op_log AND blocks table directly. Materializer dispatch_background() handles only cache rebuilds. Avoids race conditions and double-writes.
+- **Result:** 25 new command tests (214 total). Fixed SQLite busy_timeout (was 0, now 5s).
+- **Files created:** src-tauri/src/commands.rs
+- **Files modified:** src-tauri/src/{lib.rs, materializer.rs, db.rs}
+- **Commit:** a9a85ea
+
+#### [14:55] Batch 2+3+4: Frontend + Integration Tests + CI — COMPLETED (parallel)
+- **Task IDs:** p1-t28, p1-t29, p1-t31
+- **Status:** completed (3 parallel subagents)
+
+**Frontend (p1-t28):**
+- Zustand boot store: booting → ready | error state machine
+- BootGate component: blocks UI during boot, retry on error
+- Type-safe Tauri invoke wrappers (src/lib/tauri.ts)
+- Replaced Vite boilerplate with minimal app shell
+- 4 new Vitest tests (5 frontend tests total)
+
+**Integration tests (p1-t29):**
+- 16 cross-module integration tests in integration_tests.rs
+- Covers: op ordering & hash chains, crash recovery simulation, cascade delete, pagination e2e, position handling, materializer dispatch
+
+**CI (p1-t31):**
+- Enabled sqlx offline cache check in GitHub Actions
+- Fixed flaky "database is locked" test with multi_thread tokio
+
+- **Commit:** f4b9e10
+
+#### [15:10] Wave 4 Complete — Summary
+- **All 7 Wave 4 tasks done:** p1-t24 through p1-t29, p1-t31
+- **Total Rust tests:** 230 (all passing in ~0.75s)
+- **Total frontend tests:** 5
+- **Total tests:** 235
+- **Modules:** 11 Rust source modules + 1 test-only module + 3 frontend modules
+- **Phase 1 is COMPLETE**
+
+---
+
 <!-- Template for subagent entries:
 
 #### [HH:MM] Subagent: <title>
