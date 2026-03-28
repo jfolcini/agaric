@@ -28,6 +28,9 @@ pub enum AppError {
 
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
+
+    #[error("Channel error: {0}")]
+    Channel(String),
 }
 
 /// Tauri 2 requires command error types to implement `Serialize`.
@@ -47,6 +50,7 @@ impl Serialize for AppError {
             AppError::Ulid(_) => "ulid",
             AppError::NotFound(_) => "not_found",
             AppError::InvalidOperation(_) => "invalid_operation",
+            AppError::Channel(_) => "channel",
         };
 
         let mut state = serializer.serialize_struct("AppError", 2)?;
@@ -75,6 +79,7 @@ impl From<AppError> for CommandError {
             AppError::Ulid(_) => "ulid",
             AppError::NotFound(_) => "not_found",
             AppError::InvalidOperation(_) => "invalid_operation",
+            AppError::Channel(_) => "channel",
         };
         CommandError {
             message: err.to_string(),

@@ -72,6 +72,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
         ├── draft.rs                   # Block draft writer — save/flush/delete (ADR-07)
         ├── error.rs                   # AppError enum + Serialize for Tauri 2
         ├── hash.rs                    # blake3 op hash computation (ADR-07)
+        ├── materializer.rs            # Foreground + background queues (ADR-08)
         ├── op.rs                      # Op payload types + OpType enum (ADR-07)
         ├── op_log.rs                  # Op log writer — append_local_op (ADR-07)
         ├── recovery.rs                # Crash recovery at boot (ADR-07)
@@ -88,6 +89,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 | `draft.rs` | Block draft save/flush/delete (ADR-07) | `Draft`, `save_draft()`, `flush_draft()`, `delete_draft()` |
 | `error.rs` | Error types for commands | `AppError`, `CommandError` |
 | `hash.rs` | blake3 hash for op log entries (ADR-07) | `compute_op_hash()` |
+| `materializer.rs` | Foreground + background materializer queues (ADR-08) | `Materializer`, `MaterializeTask`, `dispatch_op()` |
 | `op.rs` | Op payload types — 12 op types (ADR-07) | `OpType`, `OpPayload`, all payload structs |
 | `op_log.rs` | Op log writer — append local ops | `OpRecord`, `append_local_op()` |
 | `recovery.rs` | Crash recovery at boot (ADR-07) | `RecoveryReport`, `recover_at_boot()` |
@@ -255,8 +257,8 @@ When launching a review subagent, include:
 - [x] p1-t13: Op payload serde structs
 - [x] p1-t14: Block draft writer
 - [x] p1-t15: Crash recovery (CRITICAL)
-- [ ] p1-t16: Foreground queue (CRITICAL)
-- [ ] p1-t17: Background queue
+- [x] p1-t16: Foreground queue (CRITICAL)
+- [x] p1-t17: Background queue
 - [ ] p1-t18: tags_cache materializer
 - [ ] p1-t19: pages_cache materializer
 - [ ] p1-t20: agenda_cache materializer

@@ -3,6 +3,7 @@ mod device;
 mod draft;
 mod error;
 mod hash;
+mod materializer;
 mod op;
 mod op_log;
 mod recovery;

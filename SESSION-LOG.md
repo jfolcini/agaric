@@ -113,6 +113,19 @@
   - 23 tests total, all pass. prek all green.
 - **Files created:** src-tauri/src/{draft,recovery}.rs
 - **Files modified:** src-tauri/src/lib.rs
+- **Commit:** 31cefd3
+
+#### [13:05] Subagent F: Materializer Queues — COMPLETED
+- **Task IDs:** p1-t16 (foreground queue), p1-t17 (background queue)
+- **Status:** completed
+- **What it does:** tokio mpsc channels for foreground (low-latency viewport) and background (cache rebuilds) materializer processing
+- **Result:**
+  - materializer.rs: Materializer struct (Clone-able), MaterializeTask enum (5 variants), dispatch_op() with correct ADR-08 routing for all 12 op types, stub handlers, 10 tests
+  - error.rs: Added Channel(String) variant
+  - Cargo.toml: Added tokio (sync feature) to regular deps
+  - 34 tests total, all pass. prek all green.
+- **Files created:** src-tauri/src/materializer.rs
+- **Files modified:** src-tauri/{Cargo.toml,src/lib.rs,src/error.rs}
 
 ---
 
