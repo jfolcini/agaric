@@ -34,7 +34,8 @@
       "!**/node_modules",
       "!**/src-tauri/target",
       "!**/src-tauri/gen",
-      "!**/.sqlx"
+      "!**/.sqlx",
+      "!src/lib/bindings.ts"
     ]
   }
 }

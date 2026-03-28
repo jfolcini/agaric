@@ -6,30 +6,17 @@
  *  - Cursor-based pagination (Load More button)
  *  - Empty state and loading states
  *  - Page selection callback
+ *  - a11y compliance
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 import { PageBrowser } from '../PageBrowser'
 
 const mockedInvoke = vi.mocked(invoke)
-
-let container: HTMLDivElement
-let root: ReturnType<typeof createRoot>
-
-beforeEach(() => {
-  vi.clearAllMocks()
-  container = document.createElement('div')
-  document.body.appendChild(container)
-  root = createRoot(container)
-})
-
-afterEach(() => {
-  root.unmount()
-  container.remove()
-})
 
 function makePage(id: string, content: string) {
   return {
@@ -46,22 +33,26 @@ function makePage(id: string, content: string) {
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }
 
+beforeEach(() => {
+  vi.clearAllMocks()
+})
+
 describe('PageBrowser', () => {
   it('calls listBlocks with blockType=page on mount', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
-    await act(async () => {
-      root.render(createElement(PageBrowser))
-    })
+    render(<PageBrowser />)
 
-    expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-      parentId: null,
-      blockType: 'page',
-      tagId: null,
-      showDeleted: null,
-      agendaDate: null,
-      cursor: null,
-      limit: 50,
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
+        parentId: null,
+        blockType: 'page',
+        tagId: null,
+        showDeleted: null,
+        agendaDate: null,
+        cursor: null,
+        limit: 50,
+      })
     })
   })
 
@@ -73,24 +64,18 @@ describe('PageBrowser', () => {
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
-    await act(async () => {
-      root.render(createElement(PageBrowser))
-    })
+    render(<PageBrowser />)
 
-    const items = container.querySelectorAll('.page-browser-item')
-    expect(items.length).toBe(2)
-    expect(items[0].textContent).toBe('First page')
-    expect(items[1].textContent).toBe('Second page')
+    expect(await screen.findByText('First page')).toBeInTheDocument()
+    expect(screen.getByText('Second page')).toBeInTheDocument()
   })
 
   it('renders empty state when no pages exist', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
-    await act(async () => {
-      root.render(createElement(PageBrowser))
-    })
+    render(<PageBrowser />)
 
-    expect(container.querySelector('.page-browser-empty')?.textContent).toContain('No pages yet')
+    expect(await screen.findByText(/No pages yet/)).toBeInTheDocument()
   })
 
   it('shows Untitled for pages with null content', async () => {
@@ -106,15 +91,13 @@ describe('PageBrowser', () => {
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
-    await act(async () => {
-      root.render(createElement(PageBrowser))
-    })
+    render(<PageBrowser />)
 
-    const item = container.querySelector('.page-browser-item-title')
-    expect(item?.textContent).toBe('Untitled')
+    expect(await screen.findByText('Untitled')).toBeInTheDocument()
   })
 
   it('uses cursor-based pagination with Load More', async () => {
+    const user = userEvent.setup()
     const page1 = {
       items: [makePage('P1', 'Page 1')],
       next_cursor: 'cursor_abc',
@@ -127,37 +110,37 @@ describe('PageBrowser', () => {
     }
     mockedInvoke.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2)
 
-    await act(async () => {
-      root.render(createElement(PageBrowser))
-    })
+    render(<PageBrowser />)
 
-    // Load More button should be visible
-    const loadMoreBtn = container.querySelector('.page-browser-load-more') as HTMLButtonElement
-    expect(loadMoreBtn).toBeTruthy()
+    // Load More button should be visible after initial load
+    const loadMoreBtn = await screen.findByRole('button', { name: /Load more/i })
+    expect(loadMoreBtn).toBeInTheDocument()
 
-    await act(async () => {
-      loadMoreBtn.click()
-    })
+    await user.click(loadMoreBtn)
 
     // Should call with the cursor from page 1
-    expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-      parentId: null,
-      blockType: 'page',
-      tagId: null,
-      showDeleted: null,
-      agendaDate: null,
-      cursor: 'cursor_abc',
-      limit: 50,
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
+        parentId: null,
+        blockType: 'page',
+        tagId: null,
+        showDeleted: null,
+        agendaDate: null,
+        cursor: 'cursor_abc',
+        limit: 50,
+      })
     })
 
     // Both pages should be rendered (accumulated)
-    expect(container.querySelectorAll('.page-browser-item').length).toBe(2)
+    expect(await screen.findByText('Page 1')).toBeInTheDocument()
+    expect(screen.getByText('Page 2')).toBeInTheDocument()
 
     // Load More should disappear after last page
-    expect(container.querySelector('.page-browser-load-more')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Load more/i })).not.toBeInTheDocument()
   })
 
   it('fires onPageSelect callback when a page is clicked', async () => {
+    const user = userEvent.setup()
     const onPageSelect = vi.fn()
     const page = {
       items: [makePage('P1', 'Click me')],
@@ -166,15 +149,27 @@ describe('PageBrowser', () => {
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
-    await act(async () => {
-      root.render(createElement(PageBrowser, { onPageSelect }))
-    })
+    render(<PageBrowser onPageSelect={onPageSelect} />)
 
-    const item = container.querySelector('.page-browser-item') as HTMLButtonElement
-    await act(async () => {
-      item.click()
-    })
+    const item = await screen.findByRole('button', { name: /Click me/i })
+    await user.click(item)
 
     expect(onPageSelect).toHaveBeenCalledWith('P1')
+  })
+
+  it('has no a11y violations', async () => {
+    const page = {
+      items: [makePage('P1', 'Accessible page')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    const { container } = render(<PageBrowser />)
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 })
