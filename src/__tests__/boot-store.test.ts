@@ -2,11 +2,6 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useBootStore } from '../stores/boot'
 
-// Mock @tauri-apps/api/core before importing the store
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
-}))
-
 const mockedInvoke = vi.mocked(invoke)
 
 describe('useBootStore', () => {
