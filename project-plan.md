@@ -111,7 +111,7 @@ These tasks block everything downstream. Ship them before moving on.
 | p15-t2 | Serializer: parse() — Markdown → ProseMirror doc | frontend | **YES** | [REVIEWED] Single-pass hand-rolled parser. Regex for token ID only. Mark stack — unclosed marks become plain text, never error. |
 | p15-t3 | Serializer: serialize() — ProseMirror doc → Markdown | frontend | **YES** | [REVIEWED] hardBreak → \n. paragraph wrapper → content only. Unknown nodes stripped + warn. Never emits \n\n. |
 | p15-t4 | Serializer escape rules | frontend | | [REVIEWED] \* for literal asterisk, \` for literal backtick. #[ without valid 26-char ULID passes through unescaped. |
-| p15-t5 | Serializer test suite (Vitest) | testing | **YES** | [REVIEWED] Round-trip identity. Mark nesting (bold-in-italic, code adjacent to bold). Token at string boundaries. hardBreak / paragraph paste normalization. Empty + whitespace-only strings. NO exceptions before Phase 2. |
+| p15-t5 | Serializer test suite (Vitest) | testing | **YES** | [REVIEWED] 110 tests, 100% coverage. Round-trip identity. Mark nesting (bold-in-italic, code adjacent to bold). Token at string boundaries. Unclosed mark revert. Known limitation: bold-inside-italic mark merging (REVIEW-LATER). |
 
 ### TipTap + Roving Instance
 

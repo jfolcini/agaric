@@ -205,18 +205,47 @@
 
 #### Retroactive Review — 5 Parallel Subagents in Worktrees [REVIEWED]
 - **Scope:** All Phase 1.5 code (p15-t1..t25)
-- **Group A (serializer):** Review in progress (subagent stuck, retried)
+- **Group A (serializer):** Fixed unclosed-italic revert dropping nested bold `**` delimiter. Found bold-inside-italic data-loss limitation (see REVIEW-LATER.md). 100% coverage (stmts/branch/funcs/lines). +26 tests (84→110).
 - **Group B (editor):** clearHistory on mount via state.reconfigure (ADR-01 undo leak fix). Extracted testable `handleBlockKeyDown` pure function. +47 tests.
 - **Group C (components):** Fixed captured `activeBlockId` before `unmount()` in EditableBlock + BlockTree (content loss on focus-switch). +45 tests.
 - **Group D (Rust):** TOCTOU fix — moved validation inside `BEGIN IMMEDIATE` for move_block, add_tag, remove_tag. +23 Rust tests (421 total).
 - **Group E (views):** JournalPage missing cursor pagination (ADR violation — fixed). PageBrowser sort comment fix. +32 tests.
 - **Also fixed:** Materializer `tokio::spawn` → `cfg(test)`/`cfg(not(test))` split to fix Tauri setup hook panic.
-- **Tests after review:** 421 Rust + 213 Vitest = 634 total.
+- **Tests after review:** 421 Rust + 239 Vitest = 660 total.
 - **Commit:** dbfbf65
 
 #### App Layout — Collapsible Sidebar [BUILT]
 - **Result:** Sidebar with Journal/Pages/Tags/Trash navigation. Opens Journal by default. Replaced Tauri template CSS.
 - **Commit:** dbfbf65 (same commit as review)
+
+---
+
+## Session 7 — 2026-03-28
+
+### UI Modernization — shadcn/ui + Tailwind CSS v4 + Slate Theme
+
+#### shadcn/ui Foundation [BUILT]
+- Installed Tailwind CSS v4 + `@tailwindcss/vite` plugin
+- Installed shadcn/ui dependencies (CVA, clsx, tailwind-merge, lucide-react, radix-ui)
+- Set up `index.css` with **slate** theme CSS variables (light + dark mode via oklch)
+- Created `cn()` utility (`src/lib/utils.ts`) and `components.json` config
+- 10 shadcn components installed: sidebar, button, badge, card, input, scroll-area, separator, tooltip, sheet, skeleton
+
+#### Sidebar + Views → shadcn Components (3 parallel subagents) [BUILT]
+- **App.tsx:** Rewrote with `SidebarProvider` > `Sidebar collapsible="icon"` + `SidebarRail`. Lucide icons (Calendar, FileText, Tag, Trash2). Header bar with `SidebarTrigger` + breadcrumb view title. Gutted App.css.
+- **JournalPage:** shadcn `Button` (outline/ghost) for date nav, `Badge` for block types, Lucide chevrons
+- **PageBrowser:** shadcn `Button` for load-more, `FileText` icon per page item
+- **TagPanel:** shadcn `Badge` for tag chips, `Input` for search, `Button` for add/create/cancel, Lucide `Plus`/`X` icons
+- **TrashView:** shadcn `Badge` for block types, `Button` for restore/purge, `AlertTriangle` + `RotateCcw` icons
+
+#### Remaining Components → shadcn/Tailwind (3 parallel subagents) [BUILT]
+- **BootGate:** Spinning `Loader2` icon, shadcn `Button variant="outline"` for retry, Tailwind layout classes
+- **SuggestionList:** Popover-styled with `bg-popover`, `shadow-md`, `rounded-lg border`, accent highlight via `cn()`
+- **BlockTree:** Tailwind for loading/empty states, dashed border empty state
+- **StaticBlock:** Tailwind hover/focus styling, muted italic placeholder
+
+**Result:** Zero custom components using inline styles or raw HTML buttons. All UI uses shadcn components + Tailwind utilities on the slate theme. 213/213 Vitest tests passing, tsc clean.
+- **Commit:** (pending)
 
 ---
 

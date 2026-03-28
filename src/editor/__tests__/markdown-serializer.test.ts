@@ -37,6 +37,11 @@ describe('serialize', () => {
     it('whitespace-only', () => {
       expect(serialize(doc(paragraph(text('   '))))).toBe('   ')
     })
+
+    it('paragraph with empty content array', () => {
+      const p: ParagraphNode = { type: 'paragraph', content: [] }
+      expect(serialize({ type: 'doc', content: [p] })).toBe('')
+    })
   })
 
   describe('marks', () => {
@@ -68,6 +73,16 @@ describe('serialize', () => {
 
     it('code does not escape contents', () => {
       expect(serialize(doc(paragraph(code('**not bold**'))))).toBe('`**not bold**`')
+    })
+
+    it('bold+code marks — code wins, bold dropped', () => {
+      const node = text('x', [{ type: 'bold' }, { type: 'code' }])
+      expect(serialize(doc(paragraph(node)))).toBe('`x`')
+    })
+
+    it('mark ordering: italic-before-bold still produces ***text***', () => {
+      const node = text('both', [{ type: 'italic' }, { type: 'bold' }])
+      expect(serialize(doc(paragraph(node)))).toBe('***both***')
     })
   })
 
@@ -163,6 +178,14 @@ describe('serialize', () => {
     it('multiple escapes in one string', () => {
       expect(serialize(doc(paragraph(text('*`#['))))).toBe('\\*\\`\\#[')
     })
+
+    it('lone # without [ is not escaped', () => {
+      expect(serialize(doc(paragraph(text('a # b'))))).toBe('a # b')
+    })
+
+    it('lone [ without [[ is not escaped', () => {
+      expect(serialize(doc(paragraph(text('a [ b'))))).toBe('a [ b')
+    })
   })
 })
 
@@ -231,6 +254,14 @@ describe('parse', () => {
         doc(paragraph(code('#[01ARZ3NDEKTSV4RRFFQ69G5FAV]'))),
       )
     })
+
+    it('italic inside bold', () => {
+      expect(parse('**a *b* c**')).toEqual(doc(paragraph(bold('a '), boldItalic('b'), bold(' c'))))
+    })
+
+    it('bold then italic (different marks adjacent)', () => {
+      expect(parse('**a***b*')).toEqual(doc(paragraph(bold('a'), italic('b'))))
+    })
   })
 
   describe('unclosed marks', () => {
@@ -252,6 +283,34 @@ describe('parse', () => {
 
     it('unclosed italic after closed bold', () => {
       expect(parse('**ok** *unclosed')).toEqual(doc(paragraph(bold('ok'), text(' *unclosed'))))
+    })
+
+    it('unclosed bold containing unclosed italic', () => {
+      expect(parse('**bold *italic')).toEqual(doc(paragraph(text('**bold *italic'))))
+    })
+
+    it('unclosed italic containing unclosed bold', () => {
+      expect(parse('*italic **bold')).toEqual(doc(paragraph(text('*italic **bold'))))
+    })
+
+    it('unclosed code with bold syntax inside', () => {
+      expect(parse('`**stuff')).toEqual(doc(paragraph(text('`**stuff'))))
+    })
+
+    it('empty bold **** produces empty paragraph', () => {
+      expect(parse('****')).toEqual(doc(paragraph()))
+    })
+
+    it('unclosed bold containing tag_ref reverts to plain text', () => {
+      expect(parse('**see #[01ARZ3NDEKTSV4RRFFQ69G5FAV]')).toEqual(
+        doc(paragraph(text('**see #[01ARZ3NDEKTSV4RRFFQ69G5FAV]'))),
+      )
+    })
+
+    it('unclosed bold containing block_link reverts to plain text', () => {
+      expect(parse('**see [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]')).toEqual(
+        doc(paragraph(text('**see [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]'))),
+      )
     })
   })
 
@@ -294,6 +353,12 @@ describe('parse', () => {
       expect(parse('[[short]]')).toEqual(doc(paragraph(text('[[short]]'))))
     })
 
+    it('[[ with 26 non-ULID chars passes through as text', () => {
+      expect(parse('[[abcdefghijklmnopqrstuvwxyz]]')).toEqual(
+        doc(paragraph(text('[[abcdefghijklmnopqrstuvwxyz]]'))),
+      )
+    })
+
     it('token at start of line', () => {
       expect(parse('#[01ARZ3NDEKTSV4RRFFQ69G5FAV] end')).toEqual(
         doc(paragraph(tagRef('01ARZ3NDEKTSV4RRFFQ69G5FAV'), text(' end'))),
@@ -309,6 +374,18 @@ describe('parse', () => {
     it('token inside bold', () => {
       expect(parse('**#[01ARZ3NDEKTSV4RRFFQ69G5FAV]**')).toEqual(
         doc(paragraph(tagRef('01ARZ3NDEKTSV4RRFFQ69G5FAV'))),
+      )
+    })
+
+    it('consecutive tokens without separator', () => {
+      expect(parse('#[01ARZ3NDEKTSV4RRFFQ69G5FAV]#[01ARZ3NDEKTSV4RRFFQ69G5FAV]')).toEqual(
+        doc(paragraph(tagRef('01ARZ3NDEKTSV4RRFFQ69G5FAV'), tagRef('01ARZ3NDEKTSV4RRFFQ69G5FAV'))),
+      )
+    })
+
+    it('token immediately after mark close', () => {
+      expect(parse('**x**#[01ARZ3NDEKTSV4RRFFQ69G5FAV]')).toEqual(
+        doc(paragraph(bold('x'), tagRef('01ARZ3NDEKTSV4RRFFQ69G5FAV'))),
       )
     })
   })
@@ -332,6 +409,14 @@ describe('parse', () => {
 
     it('escaped [[', () => {
       expect(parse('use \\[[not a link')).toEqual(doc(paragraph(text('use [[not a link'))))
+    })
+
+    it('backslash at end of line is literal', () => {
+      expect(parse('end\\')).toEqual(doc(paragraph(text('end\\'))))
+    })
+
+    it('backslash before non-special char is literal', () => {
+      expect(parse('\\a')).toEqual(doc(paragraph(text('\\a'))))
     })
   })
 
@@ -376,6 +461,11 @@ describe('round-trip: serialize(parse(s)) === s', () => {
     ['marks adjacent to tokens', '**look: **#[01ARZ3NDEKTSV4RRFFQ69G5FAV]'],
     ['code with special chars inside', '`**not \\* bold**`'],
     ['multiple tokens', '#[01ARZ3NDEKTSV4RRFFQ69G5FAV] and [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]'],
+    ['consecutive tokens', '#[01ARZ3NDEKTSV4RRFFQ69G5FAV]#[01ARZ3NDEKTSV4RRFFQ69G5FAV]'],
+    ['bold+italic with surrounding text', 'before ***both*** after'],
+    ['escaped backslash before bold', '\\\\**bold**'],
+    ['token after mark close', '**x**#[01ARZ3NDEKTSV4RRFFQ69G5FAV]'],
+    ['bold then italic adjacent', '**a***b*'],
   ]
 
   for (const [name, input] of cases) {
@@ -383,4 +473,36 @@ describe('round-trip: serialize(parse(s)) === s', () => {
       expect(serialize(parse(input))).toBe(input)
     })
   }
+})
+
+// -- known limitations --------------------------------------------------------
+// These tests document current behavior for edge cases that don't round-trip.
+// The serializer wraps each TextNode independently, so when italic spans across
+// adjacent nodes with differing bold marks, the * delimiters become ambiguous.
+// See REVIEW-LATER.md for the tracking item.
+
+describe('known limitations: bold-inside-italic mark merging', () => {
+  it('italic(a)+boldItalic(b)+italic(c) loses bold on serialize→parse', () => {
+    const input = doc(paragraph(italic('a'), boldItalic('b'), italic('c')))
+    const md = serialize(input)
+    expect(md).toBe('*a****b****c*')
+    // Bold is lost: the *-close + *-open between nodes creates ** which parses as bold
+    expect(parse(md)).toEqual(doc(paragraph(italic('a'), italic('b'), italic('c'))))
+  })
+
+  it('italic(a)+boldItalic(b) loses bold on serialize→parse', () => {
+    const input = doc(paragraph(italic('a'), boldItalic('b')))
+    const md = serialize(input)
+    expect(md).toBe('*a****b***')
+    // Bold is lost; trailing ** becomes stray text
+    const reparsed = parse(md)
+    expect(reparsed).not.toEqual(input)
+  })
+
+  it('bold(a)+boldItalic(b)+bold(c) round-trips correctly', () => {
+    // When bold is the outer mark, ** delimiters are unambiguous
+    const input = doc(paragraph(bold('a'), boldItalic('b'), bold('c')))
+    const md = serialize(input)
+    expect(parse(md)).toEqual(input)
+  })
 })

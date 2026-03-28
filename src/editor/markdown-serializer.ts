@@ -58,7 +58,10 @@ function escapeText(s: string): string {
 
 function sortedMarks(marks: readonly PMMark[]): readonly PMMark[] {
   if (marks.length <= 1) return marks
-  return [...marks].sort((a, b) => (MARK_ORDER[a.type] ?? 99) - (MARK_ORDER[b.type] ?? 99))
+  return [...marks].sort(
+    /* v8 ignore next -- PMMark union is exhaustive; ?? 99 is defensive */
+    (a, b) => (MARK_ORDER[a.type] ?? 99) - (MARK_ORDER[b.type] ?? 99),
+  )
 }
 
 function serializeTextNode(node: TextNode): string {
@@ -75,7 +78,11 @@ function serializeTextNode(node: TextNode): string {
   for (let i = marks.length - 1; i >= 0; i--) {
     const m = marks[i]
     if (m.type === 'bold') result = `**${result}**`
-    else if (m.type === 'italic') result = `*${result}*`
+    /* v8 ignore start -- code mark returns early; only bold/italic reach here */ else if (
+      m.type === 'italic'
+    )
+      result = `*${result}*`
+    /* v8 ignore stop */
   }
   return result
 }
@@ -283,11 +290,17 @@ export function parse(markdown: string): DocNode {
 
     if (inItalic) {
       const revertedNodes = nodes.splice(italicOpenNodeLen)
-      buf = `*${revertedNodes.map(nodeToPlainText).join('')}${buf}`
-      inItalic = false
       if (inBold && boldOpenPos > italicOpenPos) {
+        // Bold was opened inside this italic — reconstruct the ** delimiter
+        const splitAt = boldOpenNodeLen - italicOpenNodeLen
+        const before = revertedNodes.slice(0, splitAt)
+        const after = revertedNodes.slice(splitAt)
+        buf = `*${before.map(nodeToPlainText).join('')}**${after.map(nodeToPlainText).join('')}${buf}`
         inBold = false
+      } else {
+        buf = `*${revertedNodes.map(nodeToPlainText).join('')}${buf}`
       }
+      inItalic = false
     }
 
     if (inBold) {
@@ -313,6 +326,7 @@ export function parse(markdown: string): DocNode {
     }
   }
 
+  /* v8 ignore next -- split('\n') always yields ≥1 element; unreachable */
   if (paragraphs.length === 0) return { type: 'doc' }
   return { type: 'doc', content: paragraphs }
 }
@@ -328,9 +342,11 @@ function nodeToPlainText(node: InlineNode): string {
       return `#[${node.attrs.id}]`
     case 'block_link':
       return `[[${node.attrs.id}]]`
+    /* v8 ignore start -- hardBreak never appears during line parsing; default is type guard */
     case 'hardBreak':
       return '\n'
     default:
       return ''
+    /* v8 ignore stop */
   }
 }
