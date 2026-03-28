@@ -1,0 +1,289 @@
+/**
+ * Tests for StaticBlock component.
+ *
+ * Validates:
+ *  - Renders plain text content
+ *  - Renders block_link tokens as clickable spans with correct classes
+ *  - Renders tag_ref tokens as spans with correct classes
+ *  - Applies block-link-deleted class for broken links
+ *  - Applies tag-ref-deleted class for deleted tags
+ *  - Click on block_link calls onNavigate (not onFocus)
+ *  - Empty content shows placeholder
+ *  - a11y compliance
+ */
+
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
+import { StaticBlock } from '../StaticBlock'
+
+// Valid 26-char ULID-format test IDs (parser requires [0-9A-Z]{26}).
+const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+const BLOCK_ID_2 = '01BRZ3NDEKTSV4RRFFQ69G5FAV'
+const TAG_ID = '01CRZ3NDEKTSV4RRFFQ69G5FAV'
+const TAG_ID_2 = '01DRZ3NDEKTSV4RRFFQ69G5FAV'
+const DEL_BLOCK = '01ERZ3NDEKTSV4RRFFQ69G5FAV'
+const ACT_BLOCK = '01FRZ3NDEKTSV4RRFFQ69G5FAV'
+const DEL_TAG = '01GRZ3NDEKTSV4RRFFQ69G5FAV'
+const ACT_TAG = '01HRZ3NDEKTSV4RRFFQ69G5FAV'
+const NAV_BLOCK = '01JRZ3NDEKTSV4RRFFQ69G5FAV'
+const MIX_PAGE = '01KRZ3NDEKTSV4RRFFQ69G5FAV'
+const MIX_TAG = '01MRZ3NDEKTSV4RRFFQ69G5FAV'
+
+describe('StaticBlock', () => {
+  it('renders plain text', () => {
+    render(<StaticBlock blockId="B1" content="Hello world" onFocus={vi.fn()} />)
+    expect(screen.getByText('Hello world')).toBeInTheDocument()
+  })
+
+  it('renders empty block placeholder when content is empty', () => {
+    render(<StaticBlock blockId="B1" content="" onFocus={vi.fn()} />)
+    expect(screen.getByText('Empty block')).toBeInTheDocument()
+  })
+
+  it('calls onFocus when the block button is clicked', async () => {
+    const onFocus = vi.fn()
+    const user = userEvent.setup()
+    render(<StaticBlock blockId="B1" content="Click me" onFocus={onFocus} />)
+
+    await user.click(screen.getByRole('button'))
+    expect(onFocus).toHaveBeenCalledWith('B1')
+  })
+
+  // -- Block link tokens ------------------------------------------------------
+
+  it('renders block_link token with block-link-chip class', () => {
+    const content = `[[${BLOCK_ID}]]`
+    render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={vi.fn()}
+        resolveBlockTitle={() => 'My Page'}
+      />,
+    )
+
+    const chip = screen.getByText('My Page')
+    expect(chip).toBeInTheDocument()
+    expect(chip.classList.contains('block-link-chip')).toBe(true)
+    expect(chip.classList.contains('cursor-pointer')).toBe(true)
+  })
+
+  it('falls back to truncated ULID when resolveBlockTitle is not provided', () => {
+    const content = `[[${BLOCK_ID_2}]]`
+    render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+
+    // Default fallback: [[01BRZ3ND...]]
+    expect(screen.getByText(`[[${BLOCK_ID_2.slice(0, 8)}...]]`)).toBeInTheDocument()
+  })
+
+  it('calls onNavigate (not onFocus) when block link is clicked', async () => {
+    const onFocus = vi.fn()
+    const onNavigate = vi.fn()
+    const user = userEvent.setup()
+    const content = `[[${NAV_BLOCK}]]`
+
+    render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={onFocus}
+        onNavigate={onNavigate}
+        resolveBlockTitle={() => 'Target Page'}
+      />,
+    )
+
+    const chip = screen.getByText('Target Page')
+    await user.click(chip)
+    expect(onNavigate).toHaveBeenCalledWith(NAV_BLOCK)
+    // onFocus should NOT be called because stopPropagation prevents it
+    expect(onFocus).not.toHaveBeenCalled()
+  })
+
+  it('applies block-link-deleted class for broken links', () => {
+    const content = `[[${DEL_BLOCK}]]`
+    render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={vi.fn()}
+        resolveBlockTitle={() => 'Gone Page'}
+        resolveBlockStatus={() => 'deleted'}
+      />,
+    )
+
+    const chip = screen.getByText('Gone Page')
+    expect(chip.classList.contains('block-link-deleted')).toBe(true)
+    expect(chip.classList.contains('block-link-chip')).toBe(true)
+  })
+
+  it('does not apply block-link-deleted class for active links', () => {
+    const content = `[[${ACT_BLOCK}]]`
+    render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={vi.fn()}
+        resolveBlockTitle={() => 'Active Page'}
+        resolveBlockStatus={() => 'active'}
+      />,
+    )
+
+    const chip = screen.getByText('Active Page')
+    expect(chip.classList.contains('block-link-deleted')).toBe(false)
+  })
+
+  // -- Tag ref tokens ---------------------------------------------------------
+
+  it('renders tag_ref token with tag-ref-chip class', () => {
+    const content = `#[${TAG_ID}]`
+    render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={vi.fn()}
+        resolveTagName={() => '#ProjectAlpha'}
+      />,
+    )
+
+    const chip = screen.getByText('#ProjectAlpha')
+    expect(chip).toBeInTheDocument()
+    expect(chip.classList.contains('tag-ref-chip')).toBe(true)
+  })
+
+  it('falls back to truncated ULID when resolveTagName is not provided', () => {
+    const content = `#[${TAG_ID_2}]`
+    render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+
+    // Default fallback: #01DRZ3ND...
+    expect(screen.getByText(`#${TAG_ID_2.slice(0, 8)}...`)).toBeInTheDocument()
+  })
+
+  it('applies tag-ref-deleted class for deleted tags', () => {
+    const content = `#[${DEL_TAG}]`
+    render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={vi.fn()}
+        resolveTagName={() => '#OldTag'}
+        resolveTagStatus={() => 'deleted'}
+      />,
+    )
+
+    const chip = screen.getByText('#OldTag')
+    expect(chip.classList.contains('tag-ref-deleted')).toBe(true)
+    expect(chip.classList.contains('tag-ref-chip')).toBe(true)
+  })
+
+  it('does not apply tag-ref-deleted class for active tags', () => {
+    const content = `#[${ACT_TAG}]`
+    render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={vi.fn()}
+        resolveTagName={() => '#LiveTag'}
+        resolveTagStatus={() => 'active'}
+      />,
+    )
+
+    const chip = screen.getByText('#LiveTag')
+    expect(chip.classList.contains('tag-ref-deleted')).toBe(false)
+  })
+
+  // -- Mixed content ----------------------------------------------------------
+
+  it('renders text mixed with block_link and tag_ref tokens', () => {
+    const content = `See [[${MIX_PAGE}]] and #[${MIX_TAG}] for details`
+    const { container } = render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={vi.fn()}
+        resolveBlockTitle={() => 'Page One'}
+        resolveTagName={() => '#ImportantTag'}
+      />,
+    )
+
+    expect(screen.getByText('Page One')).toBeInTheDocument()
+    expect(screen.getByText('#ImportantTag')).toBeInTheDocument()
+    // Verify the full text content includes all parts
+    const button = container.querySelector('.block-static')
+    expect(button).not.toBeNull()
+    expect(button?.textContent).toContain('See')
+    expect(button?.textContent).toContain('Page One')
+    expect(button?.textContent).toContain('and')
+    expect(button?.textContent).toContain('#ImportantTag')
+    expect(button?.textContent).toContain('for details')
+  })
+
+  it('renders both deleted block_link and deleted tag_ref with correct classes', () => {
+    const content = `[[${DEL_BLOCK}]] and #[${DEL_TAG}]`
+    render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={vi.fn()}
+        resolveBlockTitle={() => 'Dead Page'}
+        resolveTagName={() => '#DeadTag'}
+        resolveBlockStatus={() => 'deleted'}
+        resolveTagStatus={() => 'deleted'}
+      />,
+    )
+
+    const linkChip = screen.getByText('Dead Page')
+    expect(linkChip.classList.contains('block-link-deleted')).toBe(true)
+    expect(linkChip.classList.contains('block-link-chip')).toBe(true)
+
+    const tagChip = screen.getByText('#DeadTag')
+    expect(tagChip.classList.contains('tag-ref-deleted')).toBe(true)
+    expect(tagChip.classList.contains('tag-ref-chip')).toBe(true)
+  })
+
+  it('does not call onNavigate when onNavigate is not provided', async () => {
+    const onFocus = vi.fn()
+    const user = userEvent.setup()
+    const content = `[[${NAV_BLOCK}]]`
+
+    render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={onFocus}
+        resolveBlockTitle={() => 'Some Page'}
+      />,
+    )
+
+    const chip = screen.getByText('Some Page')
+    await user.click(chip)
+    // onNavigate is undefined — click should not throw and onFocus should NOT
+    // be called because stopPropagation is called regardless
+    expect(onFocus).not.toHaveBeenCalled()
+  })
+
+  // -- a11y -------------------------------------------------------------------
+
+  it('has no a11y violations with plain content', async () => {
+    const { container } = render(
+      <StaticBlock blockId="B1" content="Simple text" onFocus={vi.fn()} />,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('has no a11y violations with token content', async () => {
+    const { container } = render(
+      <StaticBlock
+        blockId="B1"
+        content={`See [[${BLOCK_ID}]] and #[${TAG_ID}]`}
+        onFocus={vi.fn()}
+        resolveBlockTitle={() => 'Linked Page'}
+        resolveTagName={() => '#MyTag'}
+      />,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})

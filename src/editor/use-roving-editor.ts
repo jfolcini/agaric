@@ -36,6 +36,12 @@ export interface RovingEditorOptions {
   searchTags?: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Return pages matching query (for [[ picker). */
   searchPages?: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  /** Called when user clicks a [[block link]] chip to navigate. */
+  onNavigate?: (id: string) => void
+  /** Check whether a linked block is active or deleted (broken link). */
+  resolveBlockStatus?: (id: string) => 'active' | 'deleted'
+  /** Check whether a referenced tag is active or deleted. */
+  resolveTagStatus?: (id: string) => 'active' | 'deleted'
 }
 
 export interface RovingEditorHandle {
@@ -75,10 +81,27 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     placeholder = 'Type something...',
     searchTags = () => [],
     searchPages = () => [],
+    onNavigate,
+    resolveBlockStatus,
+    resolveTagStatus,
   } = options
 
   const activeBlockIdRef = useRef<string | null>(null)
   const originalMarkdownRef = useRef<string>('')
+
+  // Refs to hold latest callbacks — extensions capture these at creation
+  // time but the refs always point to the current versions, preventing
+  // stale closures inside NodeViews.
+  const resolveTagNameRef = useRef(resolveTagName)
+  resolveTagNameRef.current = resolveTagName
+  const resolveBlockTitleRef = useRef(resolveBlockTitle)
+  resolveBlockTitleRef.current = resolveBlockTitle
+  const onNavigateRef = useRef(onNavigate)
+  onNavigateRef.current = onNavigate
+  const resolveBlockStatusRef = useRef(resolveBlockStatus)
+  resolveBlockStatusRef.current = resolveBlockStatus
+  const resolveTagStatusRef = useRef(resolveTagStatus)
+  resolveTagStatusRef.current = resolveTagStatus
 
   const editor = useEditor({
     extensions: [
@@ -91,8 +114,15 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       HardBreak,
       History,
       Placeholder.configure({ placeholder }),
-      TagRef.configure({ resolveName: resolveTagName }),
-      BlockLink.configure({ resolveTitle: resolveBlockTitle }),
+      TagRef.configure({
+        resolveName: (id: string) => resolveTagNameRef.current(id),
+        resolveStatus: (id: string) => resolveTagStatusRef.current?.(id) ?? 'active',
+      }),
+      BlockLink.configure({
+        resolveTitle: (id: string) => resolveBlockTitleRef.current(id),
+        onNavigate: (id: string) => onNavigateRef.current?.(id),
+        resolveStatus: (id: string) => resolveBlockStatusRef.current?.(id) ?? 'active',
+      }),
       TagPicker.configure({ items: searchTags }),
       BlockLinkPicker.configure({ items: searchPages }),
     ],

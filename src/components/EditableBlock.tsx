@@ -18,6 +18,16 @@ interface EditableBlockProps {
   content: string
   isFocused: boolean
   rovingEditor: RovingEditorHandle
+  /** Called when the user clicks a block-link chip to navigate. */
+  onNavigate?: (id: string) => void
+  /** Resolve a block/page ULID → display title. */
+  resolveBlockTitle?: (id: string) => string
+  /** Resolve a tag ULID → display name. */
+  resolveTagName?: (id: string) => string
+  /** Check whether a linked block is active or deleted. */
+  resolveBlockStatus?: (id: string) => 'active' | 'deleted'
+  /** Check whether a referenced tag is active or deleted. */
+  resolveTagStatus?: (id: string) => 'active' | 'deleted'
 }
 
 export function EditableBlock({
@@ -25,6 +35,11 @@ export function EditableBlock({
   content,
   isFocused,
   rovingEditor,
+  onNavigate,
+  resolveBlockTitle,
+  resolveTagName,
+  resolveBlockStatus,
+  resolveTagStatus,
 }: EditableBlockProps): React.ReactElement {
   const { setFocused, edit, splitBlock } = useBlockStore()
 
@@ -64,7 +79,18 @@ export function EditableBlock({
   }, [rovingEditor, blockId, edit, splitBlock, setFocused])
 
   if (!isFocused) {
-    return <StaticBlock blockId={blockId} content={content} onFocus={handleFocus} />
+    return (
+      <StaticBlock
+        blockId={blockId}
+        content={content}
+        onFocus={handleFocus}
+        onNavigate={onNavigate}
+        resolveBlockTitle={resolveBlockTitle}
+        resolveTagName={resolveTagName}
+        resolveBlockStatus={resolveBlockStatus}
+        resolveTagStatus={resolveTagStatus}
+      />
+    )
   }
 
   return (

@@ -8,12 +8,19 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
 import { useViewportObserver } from '../hooks/useViewportObserver'
+import { getBlock } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { EditableBlock } from './EditableBlock'
+
+/** Cached info about a block/tag for resolve callbacks. */
+interface BlockInfo {
+  title: string
+  deleted: boolean
+}
 
 export function BlockTree(): React.ReactElement {
   const {
@@ -28,7 +35,50 @@ export function BlockTree(): React.ReactElement {
     indent,
     dedent,
   } = useBlockStore()
-  const rovingEditor = useRovingEditor()
+
+  // ── Resolve cache ──────────────────────────────────────────────────
+  // Simple in-memory cache of block/tag info for resolve callbacks.
+  // Populated by handleNavigate and async lookups; avoids repeated IPC
+  // calls during render.
+  const blockInfoCache = useRef<Map<string, BlockInfo>>(new Map())
+
+  const resolveBlockTitle = useCallback((id: string): string => {
+    const cached = blockInfoCache.current.get(id)
+    if (cached) return cached.title
+    return `[[${id.slice(0, 8)}...]]`
+  }, [])
+
+  const resolveBlockStatus = useCallback((id: string): 'active' | 'deleted' => {
+    const cached = blockInfoCache.current.get(id)
+    if (cached) return cached.deleted ? 'deleted' : 'active'
+    return 'active'
+  }, [])
+
+  const resolveTagName = useCallback((id: string): string => {
+    const cached = blockInfoCache.current.get(id)
+    if (cached) return cached.title
+    return `#${id.slice(0, 8)}...`
+  }, [])
+
+  const resolveTagStatus = useCallback((id: string): 'active' | 'deleted' => {
+    const cached = blockInfoCache.current.get(id)
+    if (cached) return cached.deleted ? 'deleted' : 'active'
+    return 'active'
+  }, [])
+
+  // ── Roving editor ──────────────────────────────────────────────────
+  // handleNavigate is defined below but referenced via ref to avoid
+  // circular dependency with rovingEditor.
+  const handleNavigateRef = useRef<(id: string) => void>(() => {})
+
+  const rovingEditor = useRovingEditor({
+    resolveBlockTitle,
+    resolveTagName,
+    onNavigate: (id: string) => handleNavigateRef.current(id),
+    resolveBlockStatus,
+    resolveTagStatus,
+  })
+
   const viewport = useViewportObserver()
 
   useEffect(() => {
@@ -49,6 +99,32 @@ export function BlockTree(): React.ReactElement {
     }
     return changed
   }, [rovingEditor, edit, splitBlock])
+
+  // ── Navigate to a block link target ────────────────────────────────
+  const handleNavigate = useCallback(
+    async (targetId: string) => {
+      // Flush current editor state before navigating
+      handleFlush()
+      try {
+        const targetBlock = await getBlock(targetId)
+        // Populate cache with the fetched block info
+        blockInfoCache.current.set(targetId, {
+          title: targetBlock.content?.slice(0, 60) || `[[${targetId.slice(0, 8)}...]]`,
+          deleted: targetBlock.deleted_at !== null,
+        })
+        // Load the parent's children so the target block is in the list
+        await load(targetBlock.parent_id ?? undefined)
+        setFocused(targetId)
+        rovingEditor.mount(targetId, targetBlock.content ?? '')
+      } catch {
+        // Block not found (deleted/purged) — no-op, don't crash
+      }
+    },
+    [handleFlush, load, setFocused, rovingEditor],
+  )
+
+  // Keep the ref in sync with the latest handleNavigate
+  handleNavigateRef.current = handleNavigate
 
   const handleFocusPrev = useCallback(() => {
     const idx = blocks.findIndex((b) => b.id === focusedBlockId)
@@ -141,6 +217,11 @@ export function BlockTree(): React.ReactElement {
               content={block.content ?? ''}
               isFocused={isFocused}
               rovingEditor={rovingEditor}
+              onNavigate={handleNavigate}
+              resolveBlockTitle={resolveBlockTitle}
+              resolveTagName={resolveTagName}
+              resolveBlockStatus={resolveBlockStatus}
+              resolveTagStatus={resolveTagStatus}
             />
           </div>
         )
