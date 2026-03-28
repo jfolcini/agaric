@@ -321,6 +321,36 @@
 
 ---
 
+## Session 9 — 2026-03-28
+
+### Button Fix + RTL Tests + Insta Snapshots + Specta Bindings
+
+#### Button Icon Spacing Fix [BUILT]
+- **Problem:** Button icon spacing used negative margin hacks (`-ml-1`, `-mr-1`).
+- **Fix:** Changed default button gap from `gap-2` to `gap-1.5`, removed negative margins.
+- **Commit:** `d279180`
+
+#### RTL Component Tests + vitest-axe a11y [REVIEWED]
+- Rewrote PageBrowser and TrashView tests from raw `createRoot`/`act()` to `@testing-library/react`.
+- New test files: JournalPage (11 tests), TagList (7 tests), App (8 tests).
+- Added `vitest-axe` for a11y testing in all component test files.
+- New deps: `@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event`, `vitest-axe`.
+- Created `src/vitest-axe.d.ts` for TypeScript type augmentation.
+- Updated `src/test-setup.ts` with RTL cleanup, ResizeObserver polyfill, matchMedia stub.
+- Excluded `src/lib/bindings.ts` from `tsconfig.app.json` and `biome.json`.
+- **Tests:** 279 Vitest frontend tests, zero act() warnings.
+- **Commit:** `c943f1c`
+
+#### Insta Snapshot Tests + Specta/Tauri-Specta TypeScript Bindings [REVIEWED]
+- **Insta snapshots (19 files):** Op payload serialization (12 variants), op log (2), commands (3), pagination (2).
+- **Specta integration:** `specta::Type` derives on all response structs, `#[specta::specta]` on 10 commands, `AppErrorSchema` proxy, `tauri-specta Builder` replaces `generate_handler!`.
+- **Binding test split:** `ts_bindings_up_to_date` (runs in CI, compares temp file) + `regenerate_ts_bindings` (`#[ignore]`, writes to disk).
+- **Config fixes:** Added RUSTSEC-2024-0436 (paste) to deny.toml ignore, excluded bindings.ts from biome prek hook.
+- **Tests:** 430 Rust tests pass.
+- **Commit:** `f530837`
+
+---
+
 <!-- Template:
 #### [HH:MM] Subagent: <title> [BUILT|REVIEWED]
 - **Tasks:** <task IDs>

@@ -96,7 +96,8 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
         ├── recovery.rs                # Crash recovery at boot (ADR-07)
         ├── soft_delete.rs             # Cascade soft-delete, restore, purge (ADR-06)
         ├── ulid.rs                    # BlockId newtype (ULID, case-normalized)
-        └── integration_tests.rs       # Cross-module integration tests (test-only)
+        ├── integration_tests.rs       # Cross-module integration tests (test-only)
+        └── snapshots/                 # Insta snapshot files (19 .snap files)
 ```
 
 ## Rust Modules (src-tauri/src/)
@@ -122,12 +123,64 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 
 ## Test Coverage
 
-- **385 Rust tests** + **5 Vitest frontend tests** = 390 total
+- **430 Rust tests** + **279 Vitest frontend tests** = 709 total
 - **Tarpaulin coverage: 99.64%** (839/842 lines)
 - Per-module coverage: cache 100%, commands 100%, db 100%, device 100%, draft 100%, hash 96%, materializer 100%, op 100%, op_log 100%, pagination 99%, recovery 100%, soft_delete 100%, ulid 100%
 - Untestable Tauri bootstrap (lib.rs::run, main.rs::main, 7 command wrappers) excluded via `#[cfg(not(tarpaulin_include))]`
 - Defensive error handlers in materializer + recovery + device extracted into `#[cfg(not(tarpaulin_include))]` annotated helpers
 - Remaining 3 uncovered lines: tarpaulin instrumentation artifacts on non-executable structural lines (error.rs:41 impl header, hash.rs:39 block-expr open, pagination.rs:147 struct field)
+
+## Test Tooling Guide
+
+### When to use which tool
+
+| Tool | Layer | Use for | Run with |
+|------|-------|---------|----------|
+| **Vitest** | Frontend | Unit tests, store logic, pure functions | `npx vitest run` |
+| **@testing-library/react** | Frontend | Component render + interaction tests | Via vitest (jsdom) |
+| **vitest-axe** | Frontend | Accessibility audits (WCAG violations) | Via vitest — `axe(container)` in any test |
+| **fast-check** | Frontend | Property-based / fuzz testing (serializer) | Via vitest — `fc.assert(fc.property(...))` |
+| **insta** | Rust | Snapshot tests (JSON/YAML structure assertions) | `cargo test` — `insta::assert_yaml_snapshot!()` |
+| **Criterion** | Rust | Benchmarks (perf regression detection) | `cargo bench` — never in CI or pre-commit |
+| **cargo-tarpaulin** | Rust | Line coverage reporting | `cargo tarpaulin` — expensive (~60s), on-demand only |
+| **specta binding test** | Rust→TS | Verify bindings.ts matches Rust types | `cargo test specta_tests` — runs in pre-commit via cargo-test |
+
+### Rules
+
+- **vitest-axe tests ARE vitest tests.** No separate hook needed — the `vitest` prek hook runs them all. Every new component test should include an `axe(container)` a11y check.
+- **insta snapshots ARE cargo tests.** No separate hook — the `cargo-test` prek hook runs them. Use `insta::assert_yaml_snapshot!()` for any structured data you want to guard against accidental changes.
+- **fast-check tests ARE vitest tests.** Use for any serializer/parser work or when you want to fuzz input boundaries.
+- **Criterion benches are never run in CI or pre-commit.** Run manually with `cd src-tauri && cargo bench` when optimizing hot paths.
+- **Tarpaulin is expensive.** Only run when specifically working on coverage gaps. Never in pre-commit.
+- **Specta binding test (`ts_bindings_up_to_date`)** compares a temp-generated file against the committed `src/lib/bindings.ts`. If Rust types change, this test fails → regenerate with `cd src-tauri && cargo test -- specta_tests --ignored`.
+
+### Writing new tests
+
+| Scenario | Tool | Example |
+|----------|------|---------|
+| New Rust function | `#[cfg(test)] mod tests` + `#[test]` | Happy path + error path minimum |
+| New Rust struct serialization | insta `assert_yaml_snapshot!()` | Catches field renames/reorders |
+| New React component | `@testing-library/react` + `vitest-axe` | Render, interact, check a11y |
+| New store action | Vitest unit test | Call action, assert state |
+| Serializer / parser changes | fast-check property tests | Fuzz with random inputs |
+| Cross-module Rust workflow | `integration_tests.rs` | Op → materialize → query pipeline |
+| Performance-sensitive code | Criterion bench in `benches/` | Compare before/after |
+
+## TypeScript Bindings (specta / tauri-specta)
+
+`src/lib/bindings.ts` is auto-generated from Rust types via specta. It provides:
+- Type definitions derived directly from Rust structs (`BlockResponse`, `BlockRow`, `PageResponse<T>`, etc.)
+- Command wrappers on a `commands` object with `Result<T, E>` return types
+- Event infrastructure (unused currently)
+
+**Current setup:** The app imports from `src/lib/tauri.ts` (hand-written wrappers with ergonomic APIs — object params, default nulls). `bindings.ts` exists as a type-safety verification layer.
+
+**Why not switch yet:** `bindings.ts` uses positional args (e.g., `listBlocks(null, null, null, null, null, null, null)`) — less readable than the object-style API in `tauri.ts`. Migration is Phase 2 work: either adopt bindings.ts directly and adjust call sites, or re-export types from bindings.ts while keeping tauri.ts wrappers.
+
+**The `ts_bindings_up_to_date` test** ensures bindings.ts stays in sync with Rust types. If you change a command signature or response struct, the test fails at commit time. Regenerate with:
+```bash
+cd src-tauri && cargo test -- specta_tests --ignored
+```
 
 ## Database
 
@@ -151,7 +204,7 @@ npm run test:watch       # Vitest watch mode
 npm run test:coverage    # Vitest with v8 coverage
 
 # Backend (source cargo env first: . "$HOME/.cargo/env")
-cd src-tauri && cargo test     # Run Rust tests (385 tests)
+cd src-tauri && cargo test     # Run Rust tests (430 tests)
 cd src-tauri && cargo fmt --check  # Rust formatting
 cd src-tauri && cargo clippy -- -D warnings  # Lint Rust
 
@@ -251,7 +304,7 @@ Config: `prek.toml`. Installed via `prek install`. Runs on every `git commit`. *
 | check-merge-conflict | No conflict markers | all files |
 | check-added-large-files | No files > 500KB | all files |
 | no-commit-to-branch | Block direct push to main | pre-push only |
-| biome-check | Biome lint + format | .js/.ts/.tsx/.json |
+| biome-check | Biome lint + format (excludes bindings.ts) | .js/.ts/.tsx/.json |
 | tsc | TypeScript type checking | .ts/.tsx |
 | vitest | Run frontend tests | .ts/.tsx |
 | cargo-fmt | Rust formatting check | .rs |
@@ -299,7 +352,7 @@ Measured timings (incremental, no code changes):
 | Command | Time | Notes |
 |---------|------|-------|
 | `cargo fmt --check` | 0.1s | No compilation |
-| `cargo test` | 1.2s | 385 tests in 0.8s |
+| `cargo test` | 1.2s | 430 tests in 0.8s |
 | `cargo clippy` | 2.0s | Separate analysis pass |
 | `biome check` | 0.2s | |
 | `tsc -b --noEmit` | 1.0s | |
