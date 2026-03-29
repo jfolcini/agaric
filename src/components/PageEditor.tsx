@@ -5,13 +5,16 @@
  * Loads children of the given pageId via BlockTree's parentId prop.
  */
 
-import { ArrowLeft, Plus } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, History, Link, Plus, Tag } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { editBlock } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
+import { BacklinksPanel } from './BacklinksPanel'
 import { BlockTree } from './BlockTree'
+import { HistoryPanel } from './HistoryPanel'
+import { TagPanel } from './TagPanel'
 
 export interface PageEditorProps {
   pageId: string
@@ -19,6 +22,8 @@ export interface PageEditorProps {
   onBack?: () => void
   onNavigateToPage?: (pageId: string, title: string) => void
 }
+
+type DetailTab = 'backlinks' | 'history' | 'tags'
 
 export function PageEditor({
   pageId,
@@ -29,6 +34,25 @@ export function PageEditor({
   const [editableTitle, setEditableTitle] = useState(title)
   const titleRef = useRef<HTMLDivElement>(null)
   const { blocks, createBelow, setFocused } = useBlockStore()
+
+  // Detail panel state
+  const focusedBlockId = useBlockStore((s) => s.focusedBlockId)
+  const [activeTab, setActiveTab] = useState<DetailTab | null>(null)
+  const [panelCollapsed, setPanelCollapsed] = useState(false)
+  const lastBlockIdRef = useRef<string | null>(null)
+
+  // Track the last non-null focusedBlockId so the panel persists when focus clears
+  useEffect(() => {
+    if (focusedBlockId != null) {
+      lastBlockIdRef.current = focusedBlockId
+      // Auto-open backlinks tab when first focusing a block
+      if (activeTab == null) {
+        setActiveTab('backlinks')
+      }
+    }
+  }, [focusedBlockId, activeTab])
+
+  const effectiveBlockId = focusedBlockId ?? lastBlockIdRef.current
 
   // Sync editableTitle when the title prop changes (e.g. parent re-renders)
   useEffect(() => {
@@ -106,6 +130,75 @@ export function PageEditor({
 
       {/* Block tree — loads children of pageId */}
       <BlockTree parentId={pageId} />
+
+      {/* Detail panel — shown when a block has been focused */}
+      {effectiveBlockId != null && activeTab != null && (
+        <div className="detail-panel rounded-lg border" data-testid="detail-panel">
+          {/* Tab bar + collapse toggle */}
+          <div className="detail-panel-header flex items-center gap-1 border-b px-2 py-1">
+            <Button
+              variant={activeTab === 'backlinks' ? 'default' : 'ghost'}
+              size="sm"
+              className="detail-tab-backlinks gap-1"
+              onClick={() => {
+                setActiveTab('backlinks')
+                setPanelCollapsed(false)
+              }}
+            >
+              <Link className="h-3.5 w-3.5" />
+              Backlinks
+            </Button>
+            <Button
+              variant={activeTab === 'history' ? 'default' : 'ghost'}
+              size="sm"
+              className="detail-tab-history gap-1"
+              onClick={() => {
+                setActiveTab('history')
+                setPanelCollapsed(false)
+              }}
+            >
+              <History className="h-3.5 w-3.5" />
+              History
+            </Button>
+            <Button
+              variant={activeTab === 'tags' ? 'default' : 'ghost'}
+              size="sm"
+              className="detail-tab-tags gap-1"
+              onClick={() => {
+                setActiveTab('tags')
+                setPanelCollapsed(false)
+              }}
+            >
+              <Tag className="h-3.5 w-3.5" />
+              Tags
+            </Button>
+
+            <div className="flex-1" />
+
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={panelCollapsed ? 'Expand detail panel' : 'Collapse detail panel'}
+              onClick={() => setPanelCollapsed((c) => !c)}
+            >
+              {panelCollapsed ? (
+                <ChevronUp className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+
+          {/* Panel content */}
+          {!panelCollapsed && (
+            <div className="detail-panel-content p-3">
+              {activeTab === 'backlinks' && <BacklinksPanel blockId={effectiveBlockId} />}
+              {activeTab === 'history' && <HistoryPanel blockId={effectiveBlockId} />}
+              {activeTab === 'tags' && <TagPanel blockId={effectiveBlockId} />}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Add block button */}
       <div>
