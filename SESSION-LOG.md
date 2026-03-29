@@ -431,6 +431,21 @@
 - **Tests:** 18 Playwright + 390 Vitest = 408 frontend, 452 Rust = 860 total
 - **Commit:** `d3026ec`
 
+### Phase 3 — Wave 1 (FTS5 Backend)
+
+#### [23:30] Subagent: P3 Wave 1 Build — FTS5 backend [BUILT]
+- **Tasks:** p3-t1, p3-t2, p3-t3, p3-t4
+- **Result:** FTS5 virtual table (0002_fts5.sql), fts.rs module with strip pass + search + optimize, materializer routing for 4 new task variants, search_blocks command, cursor pagination on (rank, rowid)
+- **New files:** `src-tauri/migrations/0002_fts5.sql`, `src-tauri/src/fts.rs`
+- **Modified:** lib.rs, materializer.rs, commands.rs, pagination.rs, bindings.ts
+- **Tests:** 484 passing (33 new FTS tests)
+
+#### [23:45] Subagent: P3 Wave 1 Review — FTS5 backend [REVIEWED]
+- **Tasks:** p3-t1, p3-t2, p3-t3, p3-t4
+- **Fixes:** Defense-in-depth empty query guard in search_fts, 10 additional tests (2 search edge cases, 4 command handler, 4 materializer dedup)
+- **Tests:** 494 Rust + 390 Vitest + 18 Playwright = 902 total
+- **Commit:** `36239ed`
+
 ---
 
 <!-- Template:
