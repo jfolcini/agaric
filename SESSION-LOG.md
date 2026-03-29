@@ -406,6 +406,16 @@
 - **Tests:** 368 frontend tests passing
 - **Commit:** `bca657c`
 
+### Phase 2 Wave 3 — Move, Merge, Indent
+
+#### [01:18] Subagent: DnD reorder + block merge [REVIEWED]
+- **Tasks:** p2-t9 (drag-to-reorder), p2-t10 (move to parent — already done via indent/dedent), p2-t11 (block merge on Backspace)
+- **Build:** @dnd-kit/core+sortable, SortableBlock wrapper, reorder store action, onMergeWithPrev keyboard handler, handleMergeWithPrev in BlockTree
+- **Review:** Fixed 3 bugs: splice off-by-one (critical), position calc for forward moves (critical), redundant unmount (minor). Added 4 tests.
+- **Known limitation:** Position collision with consecutive integer positions → tracked in REVIEW-LATER.md
+- **Tests:** 390 frontend tests passing
+- **Commit:** `3edc1a8`
+
 ---
 
 <!-- Template:

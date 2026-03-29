@@ -206,9 +206,9 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p2-t9 | Drag-to-reorder blocks | frontend | | [ADR-06] Emits batch move_block ops for position compaction. Materializer compacts siblings to 1..n after conflict. |
-| p2-t10 | Move block to different parent | frontend | | [ADR-06] Calls move_block op. UI: drag to nested position or command palette. |
-| p2-t11 | Block merge (Backspace at start of non-empty block) | frontend | | [ADR-06] Append content of current block to previous. delete_block current. edit_block previous. |
+| p2-t9 | Drag-to-reorder blocks | frontend | | Done | [ADR-06] @dnd-kit/core+sortable, SortableBlock with GripVertical handle, reorder store action. Commit `3edc1a8`. |
+| p2-t10 | Move block to different parent | frontend | | Done | [ADR-06] Indent/dedent via Tab/Shift+Tab already implemented in Phase 1.5. DnD extends this. Commit `3edc1a8`. |
+| p2-t11 | Block merge (Backspace at start of non-empty block) | frontend | | Done | [ADR-06] onMergeWithPrev: concat content, delete current, focus prev. Commit `3edc1a8`. |
 
 ### Conflict Resolution UI
 
