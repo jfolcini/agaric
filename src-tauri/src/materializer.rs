@@ -115,6 +115,10 @@ pub struct QueueMetrics {
     pub fts_edits_since_optimize: AtomicU64,
     /// Epoch milliseconds of the last FTS optimize.
     pub fts_last_optimize_ms: AtomicU64,
+    /// High-water mark: max foreground queue depth ever observed.
+    pub fg_high_water: AtomicU64,
+    /// High-water mark: max background queue depth ever observed.
+    pub bg_high_water: AtomicU64,
 }
 
 impl Default for QueueMetrics {
@@ -129,6 +133,8 @@ impl Default for QueueMetrics {
             bg_deduped: AtomicU64::new(0),
             fts_edits_since_optimize: AtomicU64::new(0),
             fts_last_optimize_ms: AtomicU64::new(now_ms),
+            fg_high_water: AtomicU64::new(0),
+            bg_high_water: AtomicU64::new(0),
         }
     }
 }
@@ -143,6 +149,8 @@ pub struct StatusInfo {
     pub background_queue_depth: usize,
     pub total_ops_dispatched: u64,
     pub total_background_dispatched: u64,
+    pub fg_high_water: u64,
+    pub bg_high_water: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -321,7 +329,13 @@ impl Materializer {
         self.fg_tx
             .send(task)
             .await
-            .map_err(|e| AppError::Channel(format!("foreground queue send failed: {e}")))
+            .map_err(|e| AppError::Channel(format!("foreground queue send failed: {e}")))?;
+        let depth = FOREGROUND_CAPACITY - self.fg_tx.capacity();
+        self.metrics
+            .fg_high_water
+            .fetch_max(depth as u64, Ordering::Relaxed);
+        self.check_queue_pressure();
+        Ok(())
     }
 
     /// Enqueue a task on the **background** (stale-while-revalidate) queue.
@@ -332,7 +346,13 @@ impl Materializer {
         self.bg_tx
             .send(task)
             .await
-            .map_err(|e| AppError::Channel(format!("background queue send failed: {e}")))
+            .map_err(|e| AppError::Channel(format!("background queue send failed: {e}")))?;
+        let depth = BACKGROUND_CAPACITY - self.bg_tx.capacity();
+        self.metrics
+            .bg_high_water
+            .fetch_max(depth as u64, Ordering::Relaxed);
+        self.check_queue_pressure();
+        Ok(())
     }
 
     /// Best-effort background enqueue: if the queue is full the task is
@@ -340,7 +360,14 @@ impl Materializer {
     /// on the next edit). Returns `Err` only if the consumer has shut down.
     pub fn try_enqueue_background(&self, task: MaterializeTask) -> Result<(), AppError> {
         match self.bg_tx.try_send(task) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                let depth = BACKGROUND_CAPACITY - self.bg_tx.capacity();
+                self.metrics
+                    .bg_high_water
+                    .fetch_max(depth as u64, Ordering::Relaxed);
+                self.check_queue_pressure();
+                Ok(())
+            }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 // Queue full — silently drop. The cache will be rebuilt on
                 // the next edit that triggers the same task type.
@@ -349,6 +376,28 @@ impl Materializer {
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 Err(AppError::Channel("background queue closed".into()))
             }
+        }
+    }
+
+    /// Log a warning when queue depth exceeds 75% of capacity.
+    ///
+    /// Called after each successful enqueue to detect unbounded growth early.
+    fn check_queue_pressure(&self) {
+        let fg_depth = FOREGROUND_CAPACITY - self.fg_tx.capacity();
+        let bg_depth = BACKGROUND_CAPACITY - self.bg_tx.capacity();
+
+        // 75% thresholds: 192 for fg (256 * 0.75), 768 for bg (1024 * 0.75)
+        if fg_depth > FOREGROUND_CAPACITY * 3 / 4 {
+            eprintln!(
+                "[materializer] WARNING: foreground queue pressure {fg_depth}/{FOREGROUND_CAPACITY} (>{pct}%)",
+                pct = 75
+            );
+        }
+        if bg_depth > BACKGROUND_CAPACITY * 3 / 4 {
+            eprintln!(
+                "[materializer] WARNING: background queue pressure {bg_depth}/{BACKGROUND_CAPACITY} (>{pct}%)",
+                pct = 75
+            );
         }
     }
 
@@ -378,6 +427,8 @@ impl Materializer {
             background_queue_depth: BACKGROUND_CAPACITY - self.bg_tx.capacity(),
             total_ops_dispatched: self.metrics.fg_processed.load(Ordering::Relaxed),
             total_background_dispatched: self.metrics.bg_processed.load(Ordering::Relaxed),
+            fg_high_water: self.metrics.fg_high_water.load(Ordering::Relaxed),
+            bg_high_water: self.metrics.bg_high_water.load(Ordering::Relaxed),
         }
     }
 
@@ -1571,5 +1622,108 @@ mod tests {
         assert!(matches!(deduped[0], MaterializeTask::FtsOptimize));
         assert!(matches!(deduped[1], MaterializeTask::RebuildFtsIndex));
         assert!(matches!(deduped[2], MaterializeTask::RebuildTagsCache));
+    }
+
+    // ======================================================================
+    // High-watermark tracking & StatusInfo fields
+    // ======================================================================
+
+    #[test]
+    fn high_water_marks_start_at_zero() {
+        let metrics = QueueMetrics::default();
+        assert_eq!(
+            metrics.fg_high_water.load(AtomicOrdering::Relaxed),
+            0,
+            "fg_high_water should start at 0"
+        );
+        assert_eq!(
+            metrics.bg_high_water.load(AtomicOrdering::Relaxed),
+            0,
+            "bg_high_water should start at 0"
+        );
+    }
+
+    #[tokio::test]
+    async fn high_water_fg_increments_after_dispatch() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "blk-hw-fg".into(),
+                block_type: "content".into(),
+                parent_id: None,
+                position: None,
+                content: "hw test".into(),
+            }),
+        )
+        .await;
+
+        // dispatch_op enqueues on the foreground queue
+        mat.dispatch_op(&record).await.unwrap();
+
+        let hw = mat.metrics().fg_high_water.load(AtomicOrdering::Relaxed);
+        assert!(
+            hw >= 1,
+            "fg_high_water should be >= 1 after dispatching an op, got {hw}"
+        );
+    }
+
+    #[tokio::test]
+    async fn high_water_bg_increments_after_enqueue() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool);
+
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .unwrap();
+
+        let hw = mat.metrics().bg_high_water.load(AtomicOrdering::Relaxed);
+        assert!(
+            hw >= 1,
+            "bg_high_water should be >= 1 after enqueuing a bg task, got {hw}"
+        );
+    }
+
+    #[tokio::test]
+    async fn status_info_includes_high_water_fields() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Allow consumer tasks to start
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let status = mat.status();
+        // New fields must exist and be accessible
+        assert_eq!(
+            status.fg_high_water, 0,
+            "fg_high_water should be 0 on fresh materializer"
+        );
+        assert_eq!(
+            status.bg_high_water, 0,
+            "bg_high_water should be 0 on fresh materializer"
+        );
+
+        // Enqueue some work and verify the marks propagate to StatusInfo
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "blk-si".into(),
+                block_type: "page".into(),
+                parent_id: None,
+                position: None,
+                content: "status info test".into(),
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&record).await.unwrap();
+
+        let status = mat.status();
+        assert!(
+            status.fg_high_water >= 1,
+            "fg_high_water in StatusInfo should be >= 1 after dispatch"
+        );
     }
 }

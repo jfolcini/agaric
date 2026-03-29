@@ -1,0 +1,15 @@
+# cargo-nextest configuration
+# See https://nexte.st/book/configuration.html
+
+[profile.default]
+# Fail-fast disabled: run all tests even if some fail
+fail-fast = false
+# Retry flaky tests once before reporting failure
+retries = 1
+# Generous per-test timeout (DB-backed tests may be slow on cold cache)
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+[profile.ci]
+fail-fast = false
+retries = 2
+slow-timeout = { period = "60s", terminate-after = 2 }

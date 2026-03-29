@@ -461,6 +461,24 @@
 - **Tests:** 409 Vitest + 494 Rust + 18 Playwright = 921 total
 - **Commit:** `4e0d7e9`
 
+### Phase 3 Wave 3 — Tag Queries
+
+#### [01:00] Subagent: P3 Wave 3 Build — Tag Query Backend [BUILT]
+- **Tasks:** p3-t7, p3-t8
+- **Result:** `tag_query.rs` — TagExpr tree (Tag, Prefix, And, Or, Not) with FxHashSet evaluation, `eval_tag_query()` paginated, `list_tags_by_prefix()`. Added `rustc-hash` dep. Commands: `query_by_tags`, `list_tags_by_prefix` in commands.rs + lib.rs.
+- **Tests:** 523 Rust (28 new: 20 tag_query + 8 commands)
+
+#### [01:00] Subagent: P3 Wave 3 Build — Tag Filter Frontend [BUILT]
+- **Tasks:** p3-t9
+- **Result:** `TagFilterPanel.tsx` — prefix search (debounced 300ms), tag selection badges, AND/OR toggle, paginated results. IPC wrappers + mocks for both commands.
+- **Tests:** 430 frontend (15 new TagFilterPanel + 8 tauri wrapper)
+
+#### [01:30] Subagent: P3 Wave 3 Review — Backend + Frontend [REVIEWED]
+- **Tasks:** p3-t7, p3-t8, p3-t9
+- **Bug fixed:** SQL LIKE injection — `%` and `_` in prefix not escaped. Added `escape_like()` helper + `ESCAPE '\'` clause in both LIKE queries. 7 new tests.
+- **Tests:** 531 Rust + 430 Vitest + 18 Playwright = 979 total
+- **Commit:** `c3f160b`
+
 ---
 
 <!-- Template:

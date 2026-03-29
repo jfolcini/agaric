@@ -75,8 +75,8 @@ types = ["rust"]
 repo = "local"
 [[repos.hooks]]
 id = "cargo-test"
-name = "cargo test"
-entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo test'"
+name = "cargo nextest run"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo nextest run'"
 language = "system"
 pass_filenames = false
 types = ["rust"]

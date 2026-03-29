@@ -62,3 +62,7 @@ harness = false
 [[bench]]
 name = "commands_bench"
 harness = false
+
+[[bench]]
+name = "fts_bench"
+harness = false

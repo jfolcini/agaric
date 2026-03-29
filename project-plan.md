@@ -258,9 +258,9 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p3-t7 | TagExpr tree + FxHashSet (Rust) | backend | | [ADR-08] Boolean tag queries: AND, OR, NOT. FxHashSet for set operations on block_ids. LIKE for prefix queries. |
-| p3-t8 | Prefix-aware tag search (#work/ → all sub-tags) | backend | | [ADR-08, ADR-18] LIKE 'work/%' on tags_cache.name. No graph traversal. This is the org-mode use case (ADR-18). |
-| p3-t9 | Tag filter panel in UI | frontend | | [ADR-08] Combine multiple tag filters. AND/OR toggle. Results paginated. Reads tag query materializer. |
+| p3-t7 | TagExpr tree + FxHashSet (Rust) | backend | | Done | [ADR-08] Boolean tag queries: AND, OR, NOT. FxHashSet for set operations on block_ids. LIKE for prefix queries. |
+| p3-t8 | Prefix-aware tag search (#work/ → all sub-tags) | backend | | Done | [ADR-08, ADR-18] LIKE 'work/%' on tags_cache.name. No graph traversal. This is the org-mode use case (ADR-18). |
+| p3-t9 | Tag filter panel in UI | frontend | | Done | [ADR-08] Combine multiple tag filters. AND/OR toggle. Results paginated. Reads tag query materializer. |
 
 ### Performance & Tooling
 

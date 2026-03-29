@@ -7,3 +7,5 @@ foreground_queue_depth: 0
 background_queue_depth: 0
 total_ops_dispatched: 0
 total_background_dispatched: 0
+fg_high_water: 0
+bg_high_water: 0
