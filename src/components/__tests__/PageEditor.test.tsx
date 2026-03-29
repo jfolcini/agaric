@@ -9,10 +9,15 @@
  *  - Add block button creates a new block
  *  - a11y compliance
  *  - Reloads blocks when pageId prop changes
+ *  - Detail panel: hidden when no block focused
+ *  - Detail panel: renders when a block is focused
+ *  - Detail panel: tab switching between backlinks/history/tags
+ *  - Detail panel: persists when focusedBlockId becomes null
+ *  - Detail panel: collapsible
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -30,10 +35,43 @@ vi.mock('../BlockTree', () => ({
   },
 }))
 
+// ── Mock panel components ───────────────────────────────────────────
+// Panels are tested independently; here we just verify they receive
+// the correct blockId prop.
+let capturedBacklinksBlockId: string | null = null
+let capturedHistoryBlockId: string | null = null
+let capturedTagBlockId: string | null = null
+
+vi.mock('../BacklinksPanel', () => ({
+  BacklinksPanel: (props: { blockId: string | null }) => {
+    capturedBacklinksBlockId = props.blockId
+    return <div data-testid="backlinks-panel" data-block-id={props.blockId ?? ''} />
+  },
+}))
+
+vi.mock('../HistoryPanel', () => ({
+  HistoryPanel: (props: { blockId: string | null }) => {
+    capturedHistoryBlockId = props.blockId
+    return <div data-testid="history-panel" data-block-id={props.blockId ?? ''} />
+  },
+}))
+
+vi.mock('../TagPanel', () => ({
+  TagPanel: (props: { blockId: string | null }) => {
+    capturedTagBlockId = props.blockId
+    return <div data-testid="tag-panel" data-block-id={props.blockId ?? ''} />
+  },
+}))
+
 // ── Mock lucide-react ───────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
+  ChevronDown: () => <svg data-testid="chevron-down-icon" />,
+  ChevronUp: () => <svg data-testid="chevron-up-icon" />,
+  History: () => <svg data-testid="history-icon" />,
+  Link: () => <svg data-testid="link-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
+  Tag: () => <svg data-testid="tag-icon" />,
 }))
 
 import { useBlockStore } from '../../stores/blocks'
@@ -57,6 +95,9 @@ function makeBlock(id: string, content: string, parentId: string | null = null, 
 beforeEach(() => {
   vi.clearAllMocks()
   capturedParentId = undefined
+  capturedBacklinksBlockId = null
+  capturedHistoryBlockId = null
+  capturedTagBlockId = null
   // Reset the Zustand store to a clean state before each test
   useBlockStore.setState({
     blocks: [],
@@ -260,6 +301,149 @@ describe('PageEditor', () => {
 
   it('has no a11y violations without back button', async () => {
     const { container } = render(<PageEditor pageId="PAGE_1" title="No Back Page" />)
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+})
+
+describe('PageEditor detail panel', () => {
+  it('does not show detail panel when no block has been focused', () => {
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    expect(screen.queryByTestId('detail-panel')).not.toBeInTheDocument()
+  })
+
+  it('shows detail panel with backlinks tab when a block is focused', () => {
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    const panel = screen.getByTestId('detail-panel')
+    expect(panel).toBeInTheDocument()
+
+    // Backlinks panel should be rendered by default
+    const backlinksPanel = screen.getByTestId('backlinks-panel')
+    expect(backlinksPanel).toBeInTheDocument()
+    expect(capturedBacklinksBlockId).toBe('BLOCK_1')
+  })
+
+  it('passes correct blockId to panel components', () => {
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_42' })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    expect(capturedBacklinksBlockId).toBe('BLOCK_42')
+  })
+
+  it('switches between backlinks, history, and tags tabs', async () => {
+    const user = userEvent.setup()
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Default tab is backlinks
+    expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
+
+    // Switch to History tab
+    await user.click(screen.getByRole('button', { name: /history/i }))
+    expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('history-panel')).toBeInTheDocument()
+    expect(capturedHistoryBlockId).toBe('BLOCK_1')
+
+    // Switch to Tags tab
+    await user.click(screen.getByRole('button', { name: /tags/i }))
+    expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('tag-panel')).toBeInTheDocument()
+    expect(capturedTagBlockId).toBe('BLOCK_1')
+
+    // Switch back to Backlinks tab
+    await user.click(screen.getByRole('button', { name: /backlinks/i }))
+    expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
+  })
+
+  it('persists panel when focusedBlockId becomes null', () => {
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+
+    const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Panel visible with BLOCK_1
+    expect(screen.getByTestId('detail-panel')).toBeInTheDocument()
+    expect(capturedBacklinksBlockId).toBe('BLOCK_1')
+
+    // Clear focus — panel should persist with last block
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: null })
+    })
+    rerender(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    expect(screen.getByTestId('detail-panel')).toBeInTheDocument()
+    expect(capturedBacklinksBlockId).toBe('BLOCK_1')
+  })
+
+  it('updates panel when focusedBlockId changes to a different block', () => {
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+
+    const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    expect(capturedBacklinksBlockId).toBe('BLOCK_1')
+
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'BLOCK_2' })
+    })
+    rerender(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    expect(capturedBacklinksBlockId).toBe('BLOCK_2')
+  })
+
+  it('collapses and expands the detail panel', async () => {
+    const user = userEvent.setup()
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Panel content is visible
+    expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
+
+    // Collapse the panel
+    const collapseBtn = screen.getByRole('button', { name: /collapse detail panel/i })
+    await user.click(collapseBtn)
+
+    // Panel header still visible but content hidden
+    expect(screen.getByTestId('detail-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
+
+    // Expand the panel
+    const expandBtn = screen.getByRole('button', { name: /expand detail panel/i })
+    await user.click(expandBtn)
+
+    expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
+  })
+
+  it('clicking a tab while collapsed expands the panel', async () => {
+    const user = userEvent.setup()
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Collapse
+    await user.click(screen.getByRole('button', { name: /collapse detail panel/i }))
+    expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
+
+    // Click History tab — should expand and switch tab
+    await user.click(screen.getByRole('button', { name: /history/i }))
+    expect(screen.getByTestId('history-panel')).toBeInTheDocument()
+  })
+
+  it('has no a11y violations when detail panel is visible', async () => {
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+
+    const { container } = render(<PageEditor pageId="PAGE_1" title="A11y Page" onBack={() => {}} />)
 
     await waitFor(async () => {
       const results = await axe(container)
