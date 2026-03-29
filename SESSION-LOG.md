@@ -446,6 +446,21 @@
 - **Tests:** 494 Rust + 390 Vitest + 18 Playwright = 902 total
 - **Commit:** `36239ed`
 
+### Phase 3 — Wave 2 (Search UI + CJK Notice)
+
+#### [00:30] Subagent: P3 Wave 2 Build — Search UI [BUILT]
+- **Tasks:** p3-t5, p3-t6
+- **Result:** SearchPanel component with debounced input (300ms), cursor pagination, block type badges, CJK notice. searchBlocks IPC wrapper + mock. Search view in sidebar nav.
+- **New files:** `src/components/SearchPanel.tsx`, `src/components/__tests__/SearchPanel.test.tsx`
+- **Modified:** App.tsx, tauri.ts, tauri-mock.ts, tauri.test.ts
+- **Tests:** 406 frontend passing (16 new)
+
+#### [00:45] Subagent: P3 Wave 2 Review — Search UI [REVIEWED]
+- **Tasks:** p3-t5, p3-t6
+- **Fixes:** A11y (role="search" on form, aria-label on input), 3 new tests (whitespace guard, error handling, search landmark). Biome lint fixes (import formatting, non-null assertions → optional chain).
+- **Tests:** 409 Vitest + 494 Rust + 18 Playwright = 921 total
+- **Commit:** `4e0d7e9`
+
 ---
 
 <!-- Template:

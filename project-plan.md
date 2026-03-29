@@ -251,8 +251,8 @@ These tasks block everything downstream. Ship them before moving on.
 | p3-t2 | FTS5 strip pass in materializer | backend | **YES** | Done | [ADR-12, ADR-20] fts.rs strip_for_fts: removes **, *, ` delimiters, resolves #[ULID] → tag name, [[ULID]] → page title. Batch variant for rebuild. |
 | p3-t3 | FTS5 scheduled optimize | backend | | Done | [ADR-08, ADR-12] 500-edit/60-min threshold in materializer. FtsOptimize task variant. |
 | p3-t4 | Full-text search Tauri command | backend | | Done | [ADR-12] search_blocks command, cursor-based pagination on (rank, rowid). |
-| p3-t5 | Search UI — input + results | frontend | | [ADR-12] Debounced input. Paginated results. Highlight matching tokens. Skeleton on stale-while-revalidate. |
-| p3-t6 | CJK limitation notice in UI | frontend | | [ADR-19] If user input contains CJK codepoints: non-blocking notice 'CJK search is limited in v1.' Not an error. |
+| p3-t5 | Search UI — input + results | frontend | | Done | [ADR-12] SearchPanel with debounced input (300ms), cursor pagination, block type badges. |
+| p3-t6 | CJK limitation notice in UI | frontend | | Done | [ADR-19] hasCJK() detects CJK codepoints, blue info banner when present. |
 
 ### Tag Queries
 
