@@ -248,6 +248,95 @@ impl OpPayload {
             OpPayload::DeleteAttachment(_) => None,
         }
     }
+
+    /// Normalize all ULID-typed String fields to uppercase Crockford base32.
+    ///
+    /// This ensures that payloads received from external sources (sync, import)
+    /// have canonical IDs before being hashed or stored. Affects:
+    /// - `block_id` (all variants except DeleteAttachment)
+    /// - `parent_id` (CreateBlock, MoveBlock)
+    /// - `tag_id` (AddTag, RemoveTag)
+    /// - `attachment_id` (AddAttachment, DeleteAttachment)
+    /// - `value_ref` (SetProperty)
+    ///
+    /// Non-ULID fields (content, key, etc.) are left untouched.
+    pub fn normalize_block_ids(&mut self) {
+        fn norm(s: &mut String) {
+            if let Ok(parsed) = ulid::Ulid::from_str(s) {
+                let upper = parsed.to_string();
+                if *s != upper {
+                    *s = upper;
+                }
+            }
+        }
+        fn norm_opt(s: &mut Option<String>) {
+            if let Some(inner) = s.as_mut() {
+                norm(inner);
+            }
+        }
+
+        match self {
+            OpPayload::CreateBlock(p) => {
+                norm(&mut p.block_id);
+                norm_opt(&mut p.parent_id);
+            }
+            OpPayload::EditBlock(p) => norm(&mut p.block_id),
+            OpPayload::DeleteBlock(p) => norm(&mut p.block_id),
+            OpPayload::RestoreBlock(p) => norm(&mut p.block_id),
+            OpPayload::PurgeBlock(p) => norm(&mut p.block_id),
+            OpPayload::MoveBlock(p) => {
+                norm(&mut p.block_id);
+                norm_opt(&mut p.new_parent_id);
+            }
+            OpPayload::AddTag(p) => {
+                norm(&mut p.block_id);
+                norm(&mut p.tag_id);
+            }
+            OpPayload::RemoveTag(p) => {
+                norm(&mut p.block_id);
+                norm(&mut p.tag_id);
+            }
+            OpPayload::SetProperty(p) => {
+                norm(&mut p.block_id);
+                norm_opt(&mut p.value_ref);
+            }
+            OpPayload::DeleteProperty(p) => norm(&mut p.block_id),
+            OpPayload::AddAttachment(p) => {
+                norm(&mut p.attachment_id);
+                norm(&mut p.block_id);
+            }
+            OpPayload::DeleteAttachment(p) => norm(&mut p.attachment_id),
+        }
+    }
+}
+
+/// Validate that a [`SetPropertyPayload`] has exactly one non-null value field.
+///
+/// The schema allows multiple value columns (text, num, date, ref) but the
+/// domain invariant is that exactly one must be set per operation. This
+/// function enforces that invariant at the command layer, before the payload
+/// is appended to the op log.
+///
+/// Returns `Ok(())` if exactly one is `Some`, or an `AppError::Validation`
+/// describing the violation.
+pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error::AppError> {
+    let count = [
+        p.value_text.is_some(),
+        p.value_num.is_some(),
+        p.value_date.is_some(),
+        p.value_ref.is_some(),
+    ]
+    .iter()
+    .filter(|&&b| b)
+    .count();
+
+    if count == 1 {
+        Ok(())
+    } else {
+        Err(crate::error::AppError::Validation(format!(
+            "SetProperty must have exactly 1 non-null value field, found {count}"
+        )))
+    }
 }
 
 // ===========================================================================
@@ -293,7 +382,7 @@ mod tests {
                 block_id: "B1".into(),
                 block_type: "content".into(),
                 parent_id: Some("P1".into()),
-                position: Some(0),
+                position: Some(1),
                 content: "hello".into(),
             }),
             OpPayload::EditBlock(EditBlockPayload {
@@ -329,7 +418,7 @@ mod tests {
                 block_id: "B1".into(),
                 key: "priority".into(),
                 value_text: Some("high".into()),
-                value_num: Some(1.0),
+                value_num: None,
                 value_date: None,
                 value_ref: None,
             }),
@@ -718,13 +807,13 @@ mod tests {
     }
 
     #[test]
-    fn set_property_with_mixed_value_types_roundtrips() {
+    fn set_property_with_numeric_value_roundtrips() {
         let payload = OpPayload::SetProperty(SetPropertyPayload {
             block_id: "B1".into(),
             key: "score".into(),
             value_text: None,
             value_num: Some(42.5),
-            value_date: Some("2024-01-15".into()),
+            value_date: None,
             value_ref: None,
         });
         let json = serde_json::to_string(&payload).unwrap();
@@ -734,11 +823,7 @@ mod tests {
         };
         assert!(inner.value_text.is_none(), "value_text should be None");
         assert_eq!(inner.value_num, Some(42.5), "value_num mismatch");
-        assert_eq!(
-            inner.value_date.as_deref(),
-            Some("2024-01-15"),
-            "value_date mismatch"
-        );
+        assert!(inner.value_date.is_none(), "value_date should be None");
         assert!(inner.value_ref.is_none(), "value_ref should be None");
     }
 
@@ -781,5 +866,165 @@ mod tests {
             inner.new_parent_id.is_none(),
             "deserialized parent should be None for root move"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // 12. F02: normalize_block_ids
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn normalize_block_ids_uppercases_lowercase_block_id() {
+        let lower = "01arz3ndektsv4rrffq69g5fav";
+        let upper = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let mut payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: lower.into(),
+            block_type: "content".into(),
+            parent_id: Some(lower.into()),
+            position: Some(1),
+            content: "test".into(),
+        });
+        payload.normalize_block_ids();
+        assert_eq!(payload.block_id(), Some(upper));
+        let OpPayload::CreateBlock(inner) = &payload else {
+            panic!("expected CreateBlock");
+        };
+        assert_eq!(inner.parent_id.as_deref(), Some(upper));
+    }
+
+    #[test]
+    fn normalize_block_ids_handles_all_variant_fields() {
+        let lower = "01arz3ndektsv4rrffq69g5fav";
+        let upper = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+        // AddTag — normalizes both block_id and tag_id
+        let mut tag_payload = OpPayload::AddTag(AddTagPayload {
+            block_id: lower.into(),
+            tag_id: lower.into(),
+        });
+        tag_payload.normalize_block_ids();
+        let OpPayload::AddTag(inner) = &tag_payload else {
+            panic!("expected AddTag");
+        };
+        assert_eq!(inner.block_id, upper);
+        assert_eq!(inner.tag_id, upper);
+
+        // SetProperty — normalizes block_id and value_ref
+        let mut prop_payload = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: lower.into(),
+            key: "ref".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: Some(lower.into()),
+        });
+        prop_payload.normalize_block_ids();
+        let OpPayload::SetProperty(inner) = &prop_payload else {
+            panic!("expected SetProperty");
+        };
+        assert_eq!(inner.block_id, upper);
+        assert_eq!(inner.value_ref.as_deref(), Some(upper));
+    }
+
+    #[test]
+    fn normalize_block_ids_leaves_non_ulid_strings_unchanged() {
+        let mut payload = OpPayload::EditBlock(EditBlockPayload {
+            block_id: "not-a-ulid".into(),
+            to_text: "content not touched".into(),
+            prev_edit: None,
+        });
+        payload.normalize_block_ids();
+        let OpPayload::EditBlock(inner) = &payload else {
+            panic!("expected EditBlock");
+        };
+        assert_eq!(inner.block_id, "not-a-ulid");
+        assert_eq!(inner.to_text, "content not touched");
+    }
+
+    // -----------------------------------------------------------------------
+    // 13. F04: validate_set_property
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_set_property_accepts_exactly_one_value() {
+        let p = SetPropertyPayload {
+            block_id: "B1".into(),
+            key: "k".into(),
+            value_text: Some("v".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        };
+        assert!(validate_set_property(&p).is_ok());
+    }
+
+    #[test]
+    fn validate_set_property_rejects_zero_values() {
+        let p = SetPropertyPayload {
+            block_id: "B1".into(),
+            key: "k".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        };
+        let err = validate_set_property(&p).unwrap_err();
+        assert!(
+            matches!(err, crate::error::AppError::Validation(_)),
+            "expected Validation error, got: {err:?}"
+        );
+        assert!(err.to_string().contains("found 0"));
+    }
+
+    #[test]
+    fn validate_set_property_rejects_multiple_values() {
+        let p = SetPropertyPayload {
+            block_id: "B1".into(),
+            key: "k".into(),
+            value_text: Some("v".into()),
+            value_num: Some(1.0),
+            value_date: None,
+            value_ref: None,
+        };
+        let err = validate_set_property(&p).unwrap_err();
+        assert!(
+            matches!(err, crate::error::AppError::Validation(_)),
+            "expected Validation error, got: {err:?}"
+        );
+        assert!(err.to_string().contains("found 2"));
+    }
+
+    // -----------------------------------------------------------------------
+    // 14. F09: OpType Display/FromStr exhaustive
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn op_type_display_from_str_roundtrip_all_variants() {
+        for variant in all_op_types() {
+            let displayed = variant.to_string();
+            let parsed: OpType = displayed
+                .parse()
+                .unwrap_or_else(|e| panic!("FromStr failed for '{displayed}': {e}"));
+            assert_eq!(
+                parsed, variant,
+                "Display → FromStr round-trip failed for {variant:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn op_type_as_str_display_from_str_all_consistent() {
+        for variant in all_op_types() {
+            let as_str = variant.as_str();
+            let display = format!("{variant}");
+            let from_str: OpType = as_str.parse().unwrap();
+            assert_eq!(
+                as_str, display,
+                "as_str vs Display mismatch for {variant:?}"
+            );
+            assert_eq!(
+                from_str, variant,
+                "FromStr(as_str) mismatch for {variant:?}"
+            );
+        }
     }
 }

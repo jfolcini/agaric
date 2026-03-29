@@ -83,12 +83,16 @@ pub async fn soft_delete_block(
 ///
 /// Returns `(timestamp, affected_count)` — the shared timestamp used and the
 /// number of rows that were newly deleted.
+///
+/// **Note:** This function exists primarily for benchmarks and test setup.
+/// Production code uses the corresponding command in `commands.rs`, which
+/// also appends an op-log entry and dispatches materializer tasks.
 pub async fn cascade_soft_delete(
     pool: &SqlitePool,
     block_id: &str,
 ) -> Result<(String, u64), AppError> {
     let now = Utc::now().to_rfc3339();
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     let result = sqlx::query(
         "WITH RECURSIVE descendants(id) AS ( \
@@ -115,17 +119,21 @@ pub async fn cascade_soft_delete(
 /// Restore a soft-deleted block and descendants sharing the same `deleted_at`
 /// timestamp.
 ///
-/// Descendants that were independently deleted (different timestamp) remain
-/// deleted because the CTE only traverses through blocks matching
-/// `deleted_at_ref`.
+/// The CTE traverses ALL descendants regardless of their `deleted_at` value,
+/// but the UPDATE only clears `deleted_at` on blocks matching `deleted_at_ref`.
+/// This preserves independently deleted descendants.
 ///
 /// Returns the number of rows restored.
+///
+/// **Note:** This function exists primarily for benchmarks and test setup.
+/// Production code uses the corresponding command in `commands.rs`, which
+/// also appends an op-log entry and dispatches materializer tasks.
 pub async fn restore_block(
     pool: &SqlitePool,
     block_id: &str,
     deleted_at_ref: &str,
 ) -> Result<u64, AppError> {
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     let result = sqlx::query(
         "WITH RECURSIVE descendants(id) AS ( \
@@ -133,14 +141,12 @@ pub async fn restore_block(
              UNION ALL \
              SELECT b.id FROM blocks b \
              INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at = ? \
          ) \
          UPDATE blocks SET deleted_at = NULL \
          WHERE id IN (SELECT id FROM descendants) \
            AND deleted_at = ?",
     )
     .bind(block_id)
-    .bind(deleted_at_ref)
     .bind(deleted_at_ref)
     .execute(&mut *tx)
     .await?;
@@ -158,7 +164,7 @@ pub async fn restore_block(
 /// **WARNING**: Irreversible.  Only for explicit user action or 30-day trash
 /// cleanup.
 pub async fn purge_block(pool: &SqlitePool, block_id: &str) -> Result<u64, AppError> {
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // Defer FK checks until commit — the entire subtree will be gone by then
     // so no constraints will be violated.  The pragma resets automatically at
@@ -268,6 +274,15 @@ pub async fn purge_block(pool: &SqlitePool, block_id: &str) -> Result<u64, AppEr
     sqlx::query(&format!(
         "{DESC_CTE} UPDATE blocks SET conflict_source = NULL \
          WHERE conflict_source IN (SELECT id FROM descendants)"
+    ))
+    .bind(block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // fts_blocks (FTS5 virtual table — no FK, must be cleaned explicitly)
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM fts_blocks \
+         WHERE block_id IN (SELECT id FROM descendants)"
     ))
     .bind(block_id)
     .execute(&mut *tx)
@@ -886,6 +901,174 @@ mod tests {
 
         let count = purge_block(&pool, "DOES_NOT_EXIST").await.unwrap();
         assert_eq!(count, 0, "purging a nonexistent block should affect 0 rows");
+    }
+
+    // ======================================================================
+    // purge_block: related table cleanup (F14)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn purge_block_cleans_agenda_cache() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, BLOCK_A, "content", "task with date", None, None).await;
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
+            .bind(BLOCK_A)
+            .bind("due")
+            .bind("2025-06-01")
+            .execute(&pool)
+            .await
+            .unwrap();
+        crate::cache::rebuild_agenda_cache(&pool).await.unwrap();
+
+        let before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache WHERE block_id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            before.0 > 0,
+            "agenda_cache should have an entry before purge"
+        );
+
+        purge_block(&pool, BLOCK_A).await.unwrap();
+
+        let after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache WHERE block_id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after.0, 0, "agenda_cache rows should be purged");
+    }
+
+    #[tokio::test]
+    async fn purge_block_cleans_tags_cache() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PTAG01", "tag", "purge-me-tag", None, None).await;
+        crate::cache::rebuild_tags_cache(&pool).await.unwrap();
+
+        let before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags_cache WHERE tag_id = ?")
+            .bind("PTAG01")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(before.0 > 0, "tags_cache should have an entry before purge");
+
+        purge_block(&pool, "PTAG01").await.unwrap();
+
+        let after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags_cache WHERE tag_id = ?")
+            .bind("PTAG01")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after.0, 0, "tags_cache rows should be purged");
+    }
+
+    #[tokio::test]
+    async fn purge_block_cleans_pages_cache() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PPAGE1", "page", "Purge Page", None, None).await;
+        crate::cache::rebuild_pages_cache(&pool).await.unwrap();
+
+        let before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pages_cache WHERE page_id = ?")
+            .bind("PPAGE1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            before.0 > 0,
+            "pages_cache should have an entry before purge"
+        );
+
+        purge_block(&pool, "PPAGE1").await.unwrap();
+
+        let after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pages_cache WHERE page_id = ?")
+            .bind("PPAGE1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after.0, 0, "pages_cache rows should be purged");
+    }
+
+    #[tokio::test]
+    async fn purge_block_cleans_attachments() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, BLOCK_A, "content", "has attachment", None, None).await;
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("ATT001")
+        .bind(BLOCK_A)
+        .bind("image/png")
+        .bind("photo.png")
+        .bind(1024_i64)
+        .bind("/tmp/photo.png")
+        .bind("2025-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        purge_block(&pool, BLOCK_A).await.unwrap();
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM attachments WHERE block_id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0, "attachments rows should be purged");
+    }
+
+    #[tokio::test]
+    async fn purge_block_cleans_block_drafts() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, BLOCK_A, "content", "has draft", None, None).await;
+        sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+            .bind(BLOCK_A)
+            .bind("draft content")
+            .bind("2025-01-01T00:00:00Z")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        purge_block(&pool, BLOCK_A).await.unwrap();
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_drafts WHERE block_id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0, "block_drafts rows should be purged");
+    }
+
+    #[tokio::test]
+    async fn purge_block_cleans_fts_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, BLOCK_A, "content", "searchable text", None, None).await;
+        crate::fts::update_fts_for_block(&pool, BLOCK_A)
+            .await
+            .unwrap();
+
+        let before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(before.0 > 0, "fts_blocks should have an entry before purge");
+
+        purge_block(&pool, BLOCK_A).await.unwrap();
+
+        let after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after.0, 0, "fts_blocks rows should be purged");
     }
 
     // ======================================================================

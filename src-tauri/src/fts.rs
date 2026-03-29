@@ -40,6 +40,14 @@ static ITALIC_RE: LazyLock<Regex> =
 static CODE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"`(.+?)`").expect("invalid code regex"));
 
+/// Matches strikethrough: `~~text~~`
+static STRIKETHROUGH_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"~~(.+?)~~").expect("invalid strikethrough regex"));
+
+/// Matches footnote references: `[fn:label]` or `[fn:label:inline def]`
+static FOOTNOTE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[fn:[^\]]*\]").expect("invalid footnote regex"));
+
 /// Matches tag references: `#[ULID]`
 static TAG_REF_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"#\[([0-9A-Z]{26})\]").expect("invalid tag ref regex"));
@@ -57,15 +65,33 @@ static PAGE_LINK_RE: LazyLock<Regex> =
 /// 1. Remove bold `**text**` → `text`
 /// 2. Remove italic `*text*` → `text` (after bold)
 /// 3. Remove inline code `` `text` `` → `text`
-/// 4. Replace `#[ULID]` → tag name (or empty string)
-/// 5. Replace `[[ULID]]` → page title (or empty string)
+/// 4. Remove strikethrough `~~text~~` → `text`
+/// 5. Remove footnote references `[fn:label]` → (empty)
+/// 6. Replace `#[ULID]` → tag name (or empty string)
+/// 7. Replace `[[ULID]]` → page title (or empty string)
+/// 8. Unescape backslash sequences: `\*` → `*`, `` \` `` → `` ` ``
+///
+/// ## Known limitations
+///
+/// The following Org-mode / markup constructs are **not** stripped and will
+/// appear as-is in the FTS index (they still tokenize correctly for search
+/// because the `unicode61` tokenizer treats most punctuation as separators):
+///
+/// - Macro invocations: `{{{macro(args)}}}`
+/// - Radio targets: `<<<target>>>`
+/// - Export snippets: `@@backend:content@@`
+/// - Inline source blocks: `src_lang{code}`
+/// - Table pipe delimiters (`|`) — cell content is indexed, pipes become
+///   token separators.
 pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, AppError> {
-    // Step 1-3: Remove markdown formatting
+    // Steps 1-5: Remove markdown / markup formatting
     let mut result = BOLD_RE.replace_all(content, "$1").to_string();
     result = ITALIC_RE.replace_all(&result, "$1").to_string();
     result = CODE_RE.replace_all(&result, "$1").to_string();
+    result = STRIKETHROUGH_RE.replace_all(&result, "$1").to_string();
+    result = FOOTNOTE_RE.replace_all(&result, "").to_string();
 
-    // Step 4: Replace tag references
+    // Step 6: Replace tag references
     let mut tag_ids: Vec<String> = Vec::new();
     for cap in TAG_REF_RE.captures_iter(&result) {
         tag_ids.push(cap[1].to_string());
@@ -82,7 +108,7 @@ pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, A
         result = result.replace(&pattern, &replacement);
     }
 
-    // Step 5: Replace page links
+    // Step 7: Replace page links
     let mut page_ids: Vec<String> = Vec::new();
     for cap in PAGE_LINK_RE.captures_iter(&result) {
         page_ids.push(cap[1].to_string());
@@ -99,6 +125,9 @@ pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, A
         result = result.replace(&pattern, &replacement);
     }
 
+    // Step 8: Unescape backslash sequences (ADR-20: \* -> *, \` -> `)
+    result = result.replace("\\*", "*").replace("\\`", "`");
+
     Ok(result)
 }
 
@@ -111,12 +140,14 @@ fn strip_for_fts_with_maps(
     tag_names: &HashMap<String, String>,
     page_titles: &HashMap<String, String>,
 ) -> String {
-    // Steps 1-3: Remove markdown formatting
+    // Steps 1-5: Remove markdown / markup formatting
     let mut result = BOLD_RE.replace_all(content, "$1").to_string();
     result = ITALIC_RE.replace_all(&result, "$1").to_string();
     result = CODE_RE.replace_all(&result, "$1").to_string();
+    result = STRIKETHROUGH_RE.replace_all(&result, "$1").to_string();
+    result = FOOTNOTE_RE.replace_all(&result, "").to_string();
 
-    // Step 4: Replace tag references
+    // Step 6: Replace tag references
     result = TAG_REF_RE
         .replace_all(&result, |caps: &regex::Captures| {
             let ulid = &caps[1];
@@ -124,13 +155,16 @@ fn strip_for_fts_with_maps(
         })
         .to_string();
 
-    // Step 5: Replace page links
+    // Step 7: Replace page links
     result = PAGE_LINK_RE
         .replace_all(&result, |caps: &regex::Captures| {
             let ulid = &caps[1];
             page_titles.get(ulid).cloned().unwrap_or_default()
         })
         .to_string();
+
+    // Step 8: Unescape backslash sequences (ADR-20: \* -> *, \` -> `)
+    result = result.replace("\\*", "*").replace("\\`", "`");
 
     result
 }
@@ -202,6 +236,15 @@ pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
 /// Full rebuild: clear fts_blocks, re-index all non-deleted, non-conflict blocks with content.
 ///
 /// Batches tag/page lookups by loading all names/titles into HashMaps first.
+///
+/// ## Performance
+///
+/// This is an O(n) operation over all active blocks — it loads every block's
+/// content into memory, strips it, and re-inserts into the FTS table inside a
+/// single transaction.  This is **expected and intentional**: the function is
+/// only called at application boot and on explicit user request (e.g. "rebuild
+/// search index"), never incrementally.  Single-block updates go through
+/// [`update_fts_for_block`] instead.
 pub async fn rebuild_fts_index(pool: &SqlitePool) -> Result<(), AppError> {
     // Load all tag names
     let tag_rows: Vec<(String, Option<String>)> = sqlx::query_as(
@@ -273,6 +316,28 @@ pub async fn fts_optimize(pool: &SqlitePool) -> Result<(), AppError> {
 // FTS5 search
 // ---------------------------------------------------------------------------
 
+/// Maximum number of results returned from a single search query, regardless
+/// of the client-supplied page limit.  Prevents unbounded result sets.
+const MAX_SEARCH_RESULTS: i64 = 100;
+
+/// Sanitize a raw user query for safe use in an FTS5 MATCH expression.
+///
+/// Each whitespace-delimited token is wrapped in double quotes with any
+/// internal double quotes escaped by doubling (`"` → `""`).  This prevents
+/// FTS5 operators (`OR`, `AND`, `NOT`, `*`, `NEAR`, column filters, etc.)
+/// from being interpreted as query syntax while still allowing multi-term
+/// implicit-AND matching.
+fn sanitize_fts_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .map(|term| {
+            let escaped = term.replace('"', "\"\"");
+            format!("\"{escaped}\"")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Row from the FTS5 search query (private; mapped to BlockRow for response).
 #[derive(Debug, sqlx::FromRow)]
 struct FtsSearchRow {
@@ -294,6 +359,24 @@ struct FtsSearchRow {
 ///
 /// Results are ordered by FTS5 rank (best match first) with rowid as tiebreaker.
 /// Empty/whitespace queries return an empty response (no error).
+///
+/// The search limit is capped at [`MAX_SEARCH_RESULTS`] (100) per page,
+/// regardless of the client-supplied limit.
+///
+/// ## Query sanitization
+///
+/// User input is sanitized before passing to FTS5 MATCH: each whitespace-
+/// delimited term is wrapped in double quotes with internal quotes escaped.
+/// This prevents FTS5 operators from being interpreted as query syntax.
+///
+/// ## Known limitation: CJK tokenization
+///
+/// The FTS5 table uses the default `unicode61` tokenizer, which splits tokens
+/// on Unicode-defined word boundaries.  This works well for Latin, Cyrillic,
+/// and most scripts, but may split CJK (Chinese/Japanese/Korean) text
+/// incorrectly — individual characters may become separate tokens instead of
+/// multi-character words.  Proper CJK support requires a dedicated tokenizer
+/// (e.g., ICU or jieba) and is planned for a future phase.
 pub async fn search_fts(
     pool: &SqlitePool,
     query: &str,
@@ -308,7 +391,12 @@ pub async fn search_fts(
         });
     }
 
-    let fetch_limit = page.limit + 1;
+    // Sanitize user input for safe FTS5 MATCH (F01: prevent operator injection)
+    let sanitized = sanitize_fts_query(query);
+
+    // Cap page limit to MAX_SEARCH_RESULTS
+    let effective_limit = page.limit.min(MAX_SEARCH_RESULTS);
+    let fetch_limit = effective_limit + 1;
 
     let (cursor_flag, cursor_rank, cursor_rowid): (Option<i64>, f64, i64) =
         match page.after.as_ref() {
@@ -328,7 +416,7 @@ pub async fn search_fts(
          ORDER BY fts.rank, fts.rowid \
          LIMIT ?5",
     )
-    .bind(query) // ?1
+    .bind(&sanitized) // ?1 -- sanitized FTS5 query
     .bind(cursor_flag) // ?2
     .bind(cursor_rank) // ?3
     .bind(cursor_rowid) // ?4
@@ -336,10 +424,10 @@ pub async fn search_fts(
     .fetch_all(pool)
     .await
     .map_err(|e| {
-        // FTS5 syntax errors come through as database errors.
-        // Map them to Validation for a friendlier user experience.
+        // Map any SQLite error from the MATCH query to a validation error.
+        // With query sanitization this should be rare, but acts as defense-in-depth.
         let msg = e.to_string();
-        if msg.contains("fts5: syntax error") || msg.contains("parse error") {
+        if msg.contains("fts5:") || msg.contains("parse error") {
             AppError::Validation(format!(
                 "Invalid search query: check for unmatched quotes or special characters. \
                  Details: {msg}"
@@ -349,7 +437,7 @@ pub async fn search_fts(
         }
     })?;
 
-    let has_more = rows.len() as i64 > page.limit;
+    let has_more = rows.len() as i64 > effective_limit;
     let mut block_rows: Vec<BlockRow> = rows
         .iter()
         .map(|r| BlockRow {
@@ -365,11 +453,11 @@ pub async fn search_fts(
         .collect();
 
     if has_more {
-        block_rows.truncate(page.limit as usize);
+        block_rows.truncate(effective_limit as usize);
     }
 
     let next_cursor = if has_more {
-        let last_fts = &rows[page.limit as usize - 1];
+        let last_fts = &rows[effective_limit as usize - 1];
         Some(
             Cursor {
                 id: last_fts.id.clone(),
@@ -1068,15 +1156,14 @@ mod tests {
         rebuild_fts_index(&pool).await.unwrap();
 
         let page = PageRequest::new(None, Some(50)).unwrap();
-        // Unmatched quotes are a common FTS5 syntax error
+        // With query sanitization, unmatched quotes are escaped and no longer
+        // produce syntax errors.  The query succeeds (returns 0 results since
+        // the literal token does not match any content).
         let result = search_fts(&pool, "\"unclosed quote", &page).await;
-        assert!(result.is_err(), "FTS5 syntax error should produce an error");
-        if let Err(e) = result {
-            assert!(
-                matches!(e, AppError::Validation(_)) || matches!(e, AppError::Database(_)),
-                "should be Validation or Database error, got: {e:?}"
-            );
-        }
+        assert!(
+            result.is_ok(),
+            "sanitized query should not produce a syntax error"
+        );
     }
 
     #[tokio::test]
@@ -1112,5 +1199,314 @@ mod tests {
         let rust_only = search_fts(&pool, "rust", &page).await.unwrap();
         assert_eq!(rust_only.items.len(), 1);
         assert_eq!(rust_only.items[0].id, BLOCK_A);
+    }
+
+    // ======================================================================
+    // F09: SQL injection / FTS5 operator injection tests
+    // ======================================================================
+
+    #[tokio::test]
+    async fn search_sql_injection_attempt_no_crash() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(
+            &pool,
+            BLOCK_A,
+            "content",
+            "normal searchable content",
+            None,
+            Some(0),
+        )
+        .await;
+        rebuild_fts_index(&pool).await.unwrap();
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+
+        // Classic SQL injection attempts -- should not crash or inject
+        let injections = vec![
+            "'; DROP TABLE blocks; --",
+            "\" OR 1=1 --",
+            "Robert'); DROP TABLE fts_blocks;--",
+            "1 UNION SELECT * FROM blocks",
+        ];
+        for injection in injections {
+            let result = search_fts(&pool, injection, &page).await;
+            assert!(
+                result.is_ok(),
+                "SQL injection attempt should not crash: {injection}"
+            );
+        }
+
+        // Verify the database is intact
+        let check = search_fts(&pool, "normal", &page).await.unwrap();
+        assert_eq!(
+            check.items.len(),
+            1,
+            "database should be intact after injection attempts"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_fts5_operators_are_sanitized() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, BLOCK_A, "content", "hello world", None, Some(0)).await;
+        insert_block(&pool, BLOCK_B, "content", "hello OR world", None, Some(1)).await;
+        rebuild_fts_index(&pool).await.unwrap();
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+
+        // "OR" should be treated as a literal word, not an FTS5 boolean operator.
+        let result = search_fts(&pool, "OR", &page).await;
+        assert!(result.is_ok(), "OR as query should not crash");
+
+        // "NOT" should be treated as a literal word
+        let not_result = search_fts(&pool, "NOT hello", &page).await;
+        assert!(not_result.is_ok(), "NOT as query should not crash");
+
+        // NEAR() should be treated as a literal word
+        let near_result = search_fts(&pool, "NEAR(hello world)", &page).await;
+        assert!(near_result.is_ok(), "NEAR() as query should not crash");
+    }
+
+    // ======================================================================
+    // F10: Special FTS5 characters (*, +, -, etc.)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn search_special_fts5_characters_no_crash() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, BLOCK_A, "content", "test content", None, Some(0)).await;
+        rebuild_fts_index(&pool).await.unwrap();
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+
+        let special_queries = vec![
+            "*",
+            "test*",
+            "+test",
+            "-test",
+            "test + content",
+            "(test)",
+            "test AND content",
+            "^test",
+            "block_id:something",
+            "\"exact phrase\"",
+            "col1 : col2",
+        ];
+        for q in special_queries {
+            let result = search_fts(&pool, q, &page).await;
+            assert!(
+                result.is_ok(),
+                "Special FTS5 character query should not crash: {q}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn search_unmatched_quotes_no_crash() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, BLOCK_A, "content", "test content", None, Some(0)).await;
+        rebuild_fts_index(&pool).await.unwrap();
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+
+        // With sanitization, unmatched quotes are escaped -- should succeed
+        let result = search_fts(&pool, "\"unclosed quote", &page).await;
+        assert!(
+            result.is_ok(),
+            "unmatched quotes should not crash after sanitization"
+        );
+    }
+
+    // ======================================================================
+    // F11: strip_for_fts with complex Org-mode input
+    // ======================================================================
+
+    #[tokio::test]
+    async fn strip_strikethrough() {
+        let (pool, _dir) = test_pool().await;
+        let result = strip_for_fts("~~removed~~ and kept", &pool).await.unwrap();
+        assert_eq!(result, "removed and kept");
+    }
+
+    #[tokio::test]
+    async fn strip_footnote_reference() {
+        let (pool, _dir) = test_pool().await;
+        let result = strip_for_fts("text[fn:1] here", &pool).await.unwrap();
+        assert_eq!(result, "text here");
+    }
+
+    #[tokio::test]
+    async fn strip_footnote_with_inline_definition() {
+        let (pool, _dir) = test_pool().await;
+        let result = strip_for_fts("text[fn:note:inline def] here", &pool)
+            .await
+            .unwrap();
+        assert_eq!(result, "text here");
+    }
+
+    #[tokio::test]
+    async fn strip_escaped_asterisk() {
+        let (pool, _dir) = test_pool().await;
+        let result = strip_for_fts(r"use \*args", &pool).await.unwrap();
+        assert_eq!(result, "use *args");
+    }
+
+    #[tokio::test]
+    async fn strip_escaped_backtick() {
+        let (pool, _dir) = test_pool().await;
+        // A single (unpaired) escaped backtick is not matched by CODE_RE,
+        // so it passes through to the unescape step.
+        // Paired `\`...\`` would be consumed by CODE_RE first (known limitation).
+        let result = strip_for_fts("it costs 5\\` USD", &pool).await.unwrap();
+        assert_eq!(result, "it costs 5` USD");
+    }
+
+    #[tokio::test]
+    async fn strip_complex_nested_markup() {
+        let (pool, _dir) = test_pool().await;
+        let result = strip_for_fts("**bold *nested*** rest", &pool)
+            .await
+            .unwrap();
+        assert_eq!(result, "bold nested rest");
+    }
+
+    #[tokio::test]
+    async fn strip_table_content_passes_through() {
+        let (pool, _dir) = test_pool().await;
+        // Table pipe delimiters are not stripped -- they become token separators
+        let result = strip_for_fts("| col1 | col2 |", &pool).await.unwrap();
+        assert_eq!(result, "| col1 | col2 |");
+    }
+
+    #[tokio::test]
+    async fn strip_mixed_formatting_and_refs() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, TAG_ULID, "tag", "urgent", None, None).await;
+
+        let input = format!("**bold** and ~~struck~~ with #[{TAG_ULID}][fn:1]");
+        let result = strip_for_fts(&input, &pool).await.unwrap();
+        assert_eq!(result, "bold and struck with urgent");
+    }
+
+    #[test]
+    fn strip_with_maps_handles_new_patterns() {
+        let tag_names = HashMap::new();
+        let page_titles = HashMap::new();
+
+        // Verify the sync batch path also handles strikethrough, footnotes, unescape.
+        // Use a single \* (unpaired) so ITALIC_RE doesn't consume it.
+        let result = strip_for_fts_with_maps(
+            r"**bold** ~~struck~~ `code`[fn:1] \*args",
+            &tag_names,
+            &page_titles,
+        );
+        assert_eq!(result, "bold struck code *args");
+    }
+
+    // ======================================================================
+    // F12: Search excludes deleted blocks (verifies JOIN filter)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn search_excludes_soft_deleted_blocks_after_index() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(
+            &pool,
+            BLOCK_A,
+            "content",
+            "findable unique word",
+            None,
+            Some(0),
+        )
+        .await;
+        insert_block(
+            &pool,
+            BLOCK_B,
+            "content",
+            "deleted unique word",
+            None,
+            Some(1),
+        )
+        .await;
+        // Index both blocks
+        update_fts_for_block(&pool, BLOCK_A).await.unwrap();
+        update_fts_for_block(&pool, BLOCK_B).await.unwrap();
+
+        // Soft-delete BLOCK_B *without* re-indexing -- the FTS entry persists
+        // but the JOIN filter in search_fts should exclude it.
+        soft_delete_block(&pool, BLOCK_B).await;
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+        let results = search_fts(&pool, "unique", &page).await.unwrap();
+        assert_eq!(
+            results.items.len(),
+            1,
+            "deleted block should be excluded by JOIN filter"
+        );
+        assert_eq!(results.items[0].id, BLOCK_A);
+    }
+
+    // ======================================================================
+    // F13: Search pagination with MAX_SEARCH_RESULTS cap
+    // ======================================================================
+
+    #[tokio::test]
+    async fn search_respects_max_results_cap() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(
+            &pool,
+            BLOCK_A,
+            "content",
+            "capped search result",
+            None,
+            Some(0),
+        )
+        .await;
+        rebuild_fts_index(&pool).await.unwrap();
+
+        // Request a limit higher than MAX_SEARCH_RESULTS (100)
+        let page = PageRequest::new(None, Some(200)).unwrap();
+        let results = search_fts(&pool, "capped", &page).await.unwrap();
+
+        // Should still find the result (not broken by capping)
+        assert_eq!(results.items.len(), 1);
+        assert_eq!(results.items[0].id, BLOCK_A);
+    }
+
+    // ======================================================================
+    // sanitize_fts_query unit tests
+    // ======================================================================
+
+    #[test]
+    fn sanitize_simple_terms() {
+        assert_eq!(sanitize_fts_query("hello world"), "\"hello\" \"world\"");
+    }
+
+    #[test]
+    fn sanitize_preserves_empty_after_trim() {
+        // split_whitespace on empty string yields no tokens
+        assert_eq!(sanitize_fts_query(""), "");
+        assert_eq!(sanitize_fts_query("   "), "");
+    }
+
+    #[test]
+    fn sanitize_escapes_internal_quotes() {
+        assert_eq!(sanitize_fts_query("say\"hello"), "\"say\"\"hello\"");
+    }
+
+    #[test]
+    fn sanitize_fts5_operators() {
+        assert_eq!(
+            sanitize_fts_query("hello OR world"),
+            "\"hello\" \"OR\" \"world\""
+        );
+        assert_eq!(sanitize_fts_query("NOT test"), "\"NOT\" \"test\"");
+    }
+
+    #[test]
+    fn sanitize_special_chars() {
+        assert_eq!(sanitize_fts_query("test*"), "\"test*\"");
+        assert_eq!(sanitize_fts_query("(group)"), "\"(group)\"");
+        assert_eq!(sanitize_fts_query("col:value"), "\"col:value\"");
     }
 }

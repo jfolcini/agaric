@@ -103,28 +103,23 @@ fn resolve_expr<'a>(
                 Ok(rows.into_iter().map(|r| r.0).collect())
             }
             TagExpr::Prefix(prefix) => {
-                // Find all tag_ids whose name matches the prefix, then union
-                // their block_ids.  Escape LIKE wildcards so user input matches
-                // literally.
-                let tag_ids: Vec<(String,)> =
-                    sqlx::query_as("SELECT tag_id FROM tags_cache WHERE name LIKE ?1 ESCAPE '\\'")
-                        .bind(format!("{}%", escape_like(prefix)))
-                        .fetch_all(pool)
-                        .await?;
+                // Single JOIN query: resolve all matching tags and collect
+                // their block_ids in one round-trip (avoids N+1 per-tag
+                // queries).
+                let escaped = format!("{}%", escape_like(prefix));
+                let rows: Vec<(String,)> = sqlx::query_as(
+                    "SELECT DISTINCT bt.block_id \
+                     FROM tags_cache tc \
+                     JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+                     JOIN blocks b ON b.id = bt.block_id \
+                     WHERE tc.name LIKE ?1 ESCAPE '\\' \
+                       AND b.deleted_at IS NULL AND b.is_conflict = 0",
+                )
+                .bind(&escaped)
+                .fetch_all(pool)
+                .await?;
 
-                let mut result: FxHashSet<String> = FxHashSet::default();
-                for (tag_id,) in tag_ids {
-                    let rows: Vec<(String,)> = sqlx::query_as(
-                        "SELECT bt.block_id FROM block_tags bt \
-                         JOIN blocks b ON b.id = bt.block_id \
-                         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
-                    )
-                    .bind(&tag_id)
-                    .fetch_all(pool)
-                    .await?;
-                    result.extend(rows.into_iter().map(|r| r.0));
-                }
-                Ok(result)
+                Ok(rows.into_iter().map(|r| r.0).collect())
             }
             TagExpr::And(exprs) => {
                 if exprs.is_empty() {
@@ -148,7 +143,9 @@ fn resolve_expr<'a>(
                 Ok(result)
             }
             TagExpr::Not(inner) => {
-                // Universal set = all non-deleted, non-conflict block ids.
+                // PERF: The universal set loads ALL non-deleted, non-conflict
+                // block ids into memory.  For a personal notes app (<100 k
+                // blocks) this is fine; at larger scale, push NOT into SQL.
                 let all: Vec<(String,)> = sqlx::query_as(
                     "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
                 )
@@ -173,6 +170,16 @@ fn resolve_expr<'a>(
 ///
 /// The result set is ordered by `id ASC` (ULID ~ chronological) with keyset
 /// cursor pagination.
+///
+/// ## Implementation note: in-memory set operations
+///
+/// The evaluation strategy collects all matching `block_id`s into in-memory
+/// `FxHashSet`s and performs AND (intersection), OR (union), NOT (complement)
+/// in Rust rather than composing a single SQL query. This is acceptable for a
+/// personal notes app where the total block count is expected to stay well
+/// under 100 k — set operations on that scale are sub-millisecond. A future
+/// optimisation could push boolean logic into SQL CTEs if profiling shows this
+/// becoming a bottleneck.
 pub async fn eval_tag_query(
     pool: &SqlitePool,
     expr: &TagExpr,
@@ -257,20 +264,29 @@ pub async fn eval_tag_query(
 // Public: list_tags_by_prefix (autocomplete / UI)
 // ---------------------------------------------------------------------------
 
+/// Maximum number of tags returned by [`list_tags_by_prefix`].
+///
+/// Prevents unbounded result sets when the prefix matches many tags.
+const MAX_TAGS_PREFIX: i64 = 200;
+
 /// List all tags whose name starts with `prefix`, ordered by name.
 ///
 /// Useful for tag autocomplete and prefix-aware browsing (p3-t8).
 /// Special LIKE characters (`%`, `_`) in the prefix are escaped so
 /// user input matches literally.
+///
+/// Results are capped at [`MAX_TAGS_PREFIX`] (200) to prevent unbounded
+/// result sets.
 pub async fn list_tags_by_prefix(
     pool: &SqlitePool,
     prefix: &str,
 ) -> Result<Vec<TagCacheRow>, AppError> {
     let rows = sqlx::query_as::<_, TagCacheRow>(
         "SELECT tag_id, name, usage_count, updated_at \
-         FROM tags_cache WHERE name LIKE ?1 ESCAPE '\\' ORDER BY name",
+         FROM tags_cache WHERE name LIKE ?1 ESCAPE '\\' ORDER BY name LIMIT ?2",
     )
     .bind(format!("{}%", escape_like(prefix)))
+    .bind(MAX_TAGS_PREFIX)
     .fetch_all(pool)
     .await?;
     Ok(rows)

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::fmt;
 use std::str::FromStr;
 
@@ -7,9 +7,24 @@ use std::str::FromStr;
 ///
 /// Primary type for block IDs. Type aliases below provide semantic names for
 /// non-block entity IDs (attachments, snapshots) that are also ULIDs.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// **Deserialization normalizes to uppercase Crockford base32** — any valid
+/// ULID string (lowercase, mixed-case) is accepted and stored in canonical
+/// uppercase form. This is critical for blake3 hash determinism (ADR-07).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct BlockId(String);
+
+impl<'de> serde::Deserialize<'de> for BlockId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let parsed = ulid::Ulid::from_str(&s).map_err(serde::de::Error::custom)?;
+        Ok(Self(parsed.to_string()))
+    }
+}
 
 /// Alias for attachment entity IDs (also ULIDs, same underlying type).
 pub type AttachmentId = BlockId;
@@ -374,6 +389,52 @@ mod tests {
             snap.as_str(),
             FIXTURE_ULID,
             "SnapshotId is a type alias for BlockId"
+        );
+    }
+
+    // --- F01: Deserialization normalization ---
+
+    #[test]
+    fn deserialize_normalizes_lowercase_to_uppercase() {
+        let json = format!("\"{FIXTURE_ULID_LOWER}\"");
+        let id: BlockId = serde_json::from_str(&json).expect("lowercase ULID should deserialize");
+        assert_eq!(
+            id.as_str(),
+            FIXTURE_ULID,
+            "deserialization must normalize lowercase to uppercase"
+        );
+    }
+
+    #[test]
+    fn deserialize_normalizes_mixed_case_to_uppercase() {
+        let mixed = "\"01Arz3NdEkTsV4RrFfQ69G5FaV\"";
+        let id: BlockId = serde_json::from_str(mixed).expect("mixed-case ULID should deserialize");
+        assert_eq!(
+            id.as_str(),
+            FIXTURE_ULID,
+            "deserialization must normalize mixed case to uppercase"
+        );
+    }
+
+    #[test]
+    fn deserialize_rejects_invalid_ulid() {
+        let bad_json = "\"not-a-ulid\"";
+        let result: Result<BlockId, _> = serde_json::from_str(bad_json);
+        assert!(
+            result.is_err(),
+            "deserialization must reject invalid ULID strings"
+        );
+    }
+
+    #[test]
+    fn deserialize_roundtrip_preserves_normalization() {
+        let lower_json = format!("\"{FIXTURE_ULID_LOWER}\"");
+        let id: BlockId = serde_json::from_str(&lower_json).unwrap();
+        let reserialized = serde_json::to_string(&id).unwrap();
+        let expected = format!("\"{FIXTURE_ULID}\"");
+        assert_eq!(
+            reserialized, expected,
+            "round-trip through serde must produce uppercase"
         );
     }
 }

@@ -17,6 +17,10 @@ use crate::op::*;
 use crate::op_log::{self, OpRecord};
 use crate::ulid::BlockId;
 
+/// Maximum number of iterations when walking prev_edit chains.
+/// Prevents infinite loops on corrupted cyclic data.           (F07)
+const MAX_CHAIN_WALK_ITERATIONS: usize = 10_000;
+
 // ---------------------------------------------------------------------------
 // Result types
 // ---------------------------------------------------------------------------
@@ -66,7 +70,13 @@ pub enum MergeOutcome {
 /// 2. Extracts text at ancestor, ours, and theirs via `dag::text_at`.
 /// 3. If no LCA is found (both trace to same `create_block` root), walks
 ///    back to find the `create_block` and uses its content as ancestor.
-/// 4. Calls `diffy::merge` for the three-way merge.
+/// 4. Calls `diffy::merge` for a **line-level** three-way merge.
+///
+/// **Important:** `diffy::merge` operates at line-level granularity (splits
+/// on `\n` boundaries), *not* word-level.  Because auto-split on blur turns
+/// each paragraph into its own block, most blocks contain a single line.
+/// Any concurrent edit to a single-line block will therefore produce a
+/// conflict, even if the changes affect different words.  (See F03.)
 pub async fn merge_text(
     pool: &SqlitePool,
     block_id: &str,
@@ -74,7 +84,7 @@ pub async fn merge_text(
     op_theirs: &(String, i64),
 ) -> Result<MergeResult, AppError> {
     // 1. Find the Lowest Common Ancestor
-    let lca = dag::find_lca(pool, block_id, op_ours, op_theirs).await?;
+    let lca = dag::find_lca(pool, op_ours, op_theirs).await?;
 
     // 2. Get the text content at each point
     let text_ours = dag::text_at(pool, &op_ours.0, op_ours.1).await?;
@@ -87,7 +97,16 @@ pub async fn merge_text(
             // Walk back from op_ours to find the root create_block.
             let mut current: Option<(String, i64)> = Some(op_ours.clone());
             let mut root_text = String::new();
+            let mut iterations = 0usize;
             while let Some(key) = current.take() {
+                iterations += 1;
+                if iterations > MAX_CHAIN_WALK_ITERATIONS {
+                    return Err(AppError::InvalidOperation(format!(
+                        "prev_edit chain for block '{}' exceeded {} iterations \
+                         — possible cycle in corrupted data",
+                        block_id, MAX_CHAIN_WALK_ITERATIONS,
+                    )));
+                }
                 let record = op_log::get_op_by_seq(pool, &key.0, key.1).await?;
                 match record.op_type.as_str() {
                     "create_block" => {
@@ -111,7 +130,9 @@ pub async fn merge_text(
         }
     };
 
-    // 3. Three-way merge via diffy
+    // 3. Line-level three-way merge via diffy.
+    //    Note: diffy splits on `\n` boundaries (line-level, NOT word-level).
+    //    For single-line blocks, any concurrent edit produces a conflict.
     match diffy::merge(&text_ancestor, &text_ours, &text_theirs) {
         Ok(merged) => Ok(MergeResult::Clean(merged)),
         Err(_conflict_text) => Ok(MergeResult::Conflict {
@@ -151,6 +172,11 @@ pub async fn create_conflict_copy(
 
     // 2. Generate a new block ID
     let new_block_id = BlockId::new();
+    // NOTE (F08 \u2014 known limitation): `position + 1` may collide with an
+    // existing sibling.  We do NOT shift siblings here; ADR-06 specifies
+    // that the materializer compacts positions to contiguous 1..n on sync,
+    // which resolves the duplicate.  Between creation and the next
+    // materializer run, two blocks may share the same position.
     let new_position = position.map(|p| p + 1);
 
     // 3. Build the CreateBlock payload
@@ -190,8 +216,13 @@ pub async fn create_conflict_copy(
 /// Last-Writer-Wins resolution for concurrent property changes.
 ///
 /// Compares two `set_property` ops and returns the winning op's info.
-/// - Primary: later `created_at` timestamp wins (ISO 8601 sorts lexicographically).
-/// - Tiebreaker: lexicographically larger `device_id` wins.
+/// - Primary: later `created_at` timestamp wins (parsed as RFC 3339).
+/// - Tiebreaker 1: lexicographically larger `device_id` wins.
+/// - Tiebreaker 2: larger `seq` wins.
+///
+/// Timestamps are parsed via `chrono::DateTime::parse_from_rfc3339` so that
+/// different UTC representations (`+00:00` vs `Z`) compare correctly.  Falls
+/// back to lexicographic string comparison only if parsing fails.   (F05)
 pub fn resolve_property_conflict(
     op_a: &OpRecord,
     op_b: &OpRecord,
@@ -250,7 +281,15 @@ pub fn resolve_property_conflict(
 /// 1. If heads are identical, returns `AlreadyUpToDate`.
 /// 2. Calls `merge_text()` for three-way merge.
 /// 3. On clean merge: creates an `edit_block` op via `dag::append_merge_op`.
-/// 4. On conflict: creates a conflict copy with "theirs" content.
+/// 4. On conflict: creates a conflict copy with "theirs" content, then
+///    creates a merge op on the original to unify the DAG and set its
+///    content to the ancestor text (ADR-06).
+///
+/// **TODO (F04):** This orchestrator handles **text** conflicts only.
+/// `resolve_property_conflict` (LWW) exists but is not called here \u2014 the
+/// sync orchestrator (not yet implemented) must iterate concurrent
+/// `set_property` ops per block and call `resolve_property_conflict` for
+/// each conflicting `(block_id, key)` pair.
 pub async fn merge_block(
     pool: &SqlitePool,
     device_id: &str,
@@ -283,13 +322,29 @@ pub async fn merge_block(
         MergeResult::Conflict {
             ours: _,
             theirs,
-            ancestor: _,
+            ancestor,
         } => {
             // 4. Create conflict copy with "theirs" content
             let conflict_op = create_conflict_copy(pool, device_id, block_id, &theirs).await?;
 
+            // 5. Create a merge op on the ORIGINAL block to unify the two
+            //    divergent heads in the DAG.  The original block retains the
+            //    common-ancestor content per ADR-06 ("Original block retains
+            //    the common ancestor content").  Without this merge op the two
+            //    heads would remain unresolved and `get_block_edit_heads`
+            //    would re-detect divergence on the next sync, potentially
+            //    creating duplicate conflict copies.          (fixes F01+F02)
+            let merge_payload = OpPayload::EditBlock(EditBlockPayload {
+                block_id: block_id.to_owned(),
+                to_text: ancestor,
+                prev_edit: Some(our_head.clone()),
+            });
+            let parent_entries = vec![our_head.clone(), their_head.clone()];
+            let _merge_record =
+                dag::append_merge_op(pool, device_id, merge_payload, parent_entries).await?;
+
             Ok(MergeOutcome::ConflictCopy {
-                original_kept_ancestor: false,
+                original_kept_ancestor: true,
                 conflict_block_op: conflict_op,
             })
         }
@@ -960,7 +1015,10 @@ mod tests {
                 original_kept_ancestor,
                 conflict_block_op,
             } => {
-                assert!(!original_kept_ancestor);
+                assert!(
+                    original_kept_ancestor,
+                    "original should now retain ancestor content (F01+F02)"
+                );
                 assert_eq!(conflict_block_op.op_type, "create_block");
 
                 // The conflict copy should have "theirs" content
@@ -1261,5 +1319,199 @@ mod tests {
             "different-device resolution must be commutative"
         );
         assert_eq!(result_ab.winner_device, DEV_B, "device-B > device-A");
+    }
+
+    // =====================================================================
+    // 7. Tests added for review findings F09, F10 (fast-forward), F11, F19
+    // =====================================================================
+
+    /// F09: resolve_property_conflict with all-NULL property values.
+    /// Verifies LWW works even when every value field is `None`
+    /// ("property clear" semantics).  Also checks commutativity.
+    #[test]
+    fn resolve_property_conflict_all_null_values_commutative() {
+        // Build payloads where every value field is None
+        let null_payload = |block_id: &str, key: &str| -> String {
+            serde_json::to_string(&SetPropertyPayload {
+                block_id: block_id.into(),
+                key: key.into(),
+                value_text: None,
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            })
+            .unwrap()
+        };
+
+        let p_a = null_payload("B1", "status");
+        let p_b = null_payload("B1", "status");
+        let hash_a = compute_op_hash(DEV_A, 1, None, "set_property", &p_a);
+        let hash_b = compute_op_hash(DEV_B, 2, None, "set_property", &p_b);
+
+        let op_a = OpRecord {
+            device_id: DEV_A.into(),
+            seq: 1,
+            parent_seqs: None,
+            hash: hash_a,
+            op_type: "set_property".into(),
+            payload: p_a,
+            created_at: FIXED_TS.into(),
+        };
+        let op_b = OpRecord {
+            device_id: DEV_B.into(),
+            seq: 2,
+            parent_seqs: None,
+            hash: hash_b,
+            op_type: "set_property".into(),
+            payload: p_b,
+            created_at: FIXED_TS.into(),
+        };
+
+        // Verify winner is selected and all values are None
+        let result = resolve_property_conflict(&op_a, &op_b).unwrap();
+        assert!(result.winner_value.value_text.is_none());
+        assert!(result.winner_value.value_num.is_none());
+        assert!(result.winner_value.value_date.is_none());
+        assert!(result.winner_value.value_ref.is_none());
+
+        // Commutativity
+        let result_ab = resolve_property_conflict(&op_a, &op_b).unwrap();
+        let result_ba = resolve_property_conflict(&op_b, &op_a).unwrap();
+        assert_eq!(
+            result_ab.winner_device, result_ba.winner_device,
+            "all-NULL resolution must be commutative"
+        );
+    }
+
+    /// F11 (identical ops): When device_id, seq, AND created_at are all
+    /// equal the two OpRecords represent the same physical op.  The
+    /// winner value is identical regardless of argument order.
+    #[test]
+    fn resolve_property_conflict_identical_ops_commutative() {
+        let op = make_prop_record(DEV_A, 5, FIXED_TS, "B1", "priority", "medium");
+
+        let result_ab = resolve_property_conflict(&op, &op).unwrap();
+        let result_ba = resolve_property_conflict(&op, &op).unwrap();
+
+        // Same physical op => winner value is always the same.
+        assert_eq!(
+            result_ab.winner_value.value_text, result_ba.winner_value.value_text,
+            "identical ops must produce the same winner value regardless of arg order"
+        );
+        assert_eq!(result_ab.winner_value.value_text, Some("medium".into()));
+    }
+
+    /// F10 (fast-forward): One head is a direct ancestor of the other.
+    /// LCA == our_head, so diffy sees ours==ancestor and produces a clean
+    /// merge whose content equals "theirs" (the descendant).
+    #[tokio::test]
+    async fn merge_text_fast_forward_one_side_no_edits() {
+        let (pool, _dir) = test_pool().await;
+
+        // Device A creates B1
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_create("B1", "original\n"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B edits B1 (prev_edit = A,1 = the create)
+        let b_payload =
+            r#"{"block_id":"B1","to_text":"updated by B\n","prev_edit":["device-A",1]}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        crate::dag::insert_remote_op(&pool, &b_record)
+            .await
+            .unwrap();
+
+        // our_head = (A,1) = create, their_head = (B,1) = edit
+        // LCA = (A,1) => ancestor == ours => fast-forward to "theirs"
+        let result = merge_text(&pool, "B1", &(DEV_A.into(), 1), &(DEV_B.into(), 1))
+            .await
+            .unwrap();
+
+        match result {
+            MergeResult::Clean(merged) => {
+                assert_eq!(merged, "updated by B\n", "fast-forward should adopt theirs");
+            }
+            MergeResult::Conflict { .. } => {
+                panic!("expected clean fast-forward merge, got conflict");
+            }
+        }
+    }
+
+    /// F19: Actually exercise the no-LCA fallback path.
+    ///
+    /// Constructs disjoint prev_edit chains: device A has
+    /// create->edit, device B has an edit_block with `prev_edit: null`
+    /// (abnormal but possible with crafted remote ops).  `find_lca`
+    /// returns `None`, so merge_text falls back to walking the chain
+    /// from op_ours to find the `create_block` root.
+    #[tokio::test]
+    async fn merge_text_no_lca_fallback_actually_exercised() {
+        let (pool, _dir) = test_pool().await;
+
+        // Device A: create B1 with known content
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_create("B1", "root content\n"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device A: edit B1 (prev_edit -> A,1)
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "root content\nedited by A\n", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B: edit_block for B1 with prev_edit = null.
+        // This makes chain B a single node with no link back to A's chain,
+        // so find_lca will return None.
+        let b_payload =
+            r#"{"block_id":"B1","to_text":"root content\nedited by B\n","prev_edit":null}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        crate::dag::insert_remote_op(&pool, &b_record)
+            .await
+            .unwrap();
+
+        // Merge: find_lca will return None because chains are disjoint.
+        // Fallback walks from op_ours (A,2) -> (A,1) = create_block => ancestor = "root content\n"
+        let result = merge_text(&pool, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 1))
+            .await
+            .unwrap();
+
+        // Both add a different line after "root content\n", starting from ancestor "root content\n".
+        // diffy may resolve this as clean or conflict depending on insertion position.
+        match result {
+            MergeResult::Clean(merged) => {
+                assert!(
+                    merged.contains("edited by A") && merged.contains("edited by B"),
+                    "clean merge should contain both additions: {merged}"
+                );
+            }
+            MergeResult::Conflict {
+                ours,
+                theirs,
+                ancestor,
+            } => {
+                // The ancestor must be the create_block content, proving
+                // the fallback walk found the root.
+                assert_eq!(
+                    ancestor, "root content\n",
+                    "ancestor must come from create_block via fallback walk"
+                );
+                assert_eq!(ours, "root content\nedited by A\n");
+                assert_eq!(theirs, "root content\nedited by B\n");
+            }
+        }
     }
 }

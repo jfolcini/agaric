@@ -320,6 +320,16 @@ async fn recovery_on_empty_database_is_noop() {
 async fn recovery_flushes_unflushed_draft_as_edit_op() {
     let (pool, _dir) = test_pool().await;
 
+    // F07: recovery now checks that the block exists before recovering a draft
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'content', ?, 0)",
+    )
+    .bind("DRAFT-BLOCK-001")
+    .bind("old content")
+    .execute(&pool)
+    .await
+    .unwrap();
+
     sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
         .bind("DRAFT-BLOCK-001")
         .bind("draft content")
@@ -361,6 +371,16 @@ async fn recovery_flushes_unflushed_draft_as_edit_op() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn recovery_skips_already_flushed_draft_without_duplicate() {
     let (pool, _dir) = test_pool().await;
+
+    // F07: recovery now checks that the block exists before recovering a draft
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'content', ?, 0)",
+    )
+    .bind("FLUSHED-BLOCK")
+    .bind("flushed content")
+    .execute(&pool)
+    .await
+    .unwrap();
 
     sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
         .bind("FLUSHED-BLOCK")

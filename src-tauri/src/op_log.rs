@@ -88,8 +88,11 @@ pub async fn append_local_op_in_tx(
     let parent_seqs: Option<String> = if seq > 1 {
         let prev_seq = seq - 1;
         // Sorted by (device_id, seq) for deterministic blake3 hashes.
-        // Phase 1 has exactly one parent; Phase 4 multi-parent DAG will
-        // extend this to multiple entries.
+        // The sort is on (&str, i64) tuples — str sorts lexicographically,
+        // i64 sorts numerically. This is correct and intentional: i64's Ord
+        // impl gives us numeric order (not stringified), which is what we want
+        // for sequence numbers. Phase 1 has exactly one parent; Phase 4
+        // multi-parent DAG will extend this to multiple entries.
         let mut parents = vec![(device_id, prev_seq)];
         parents.sort();
         Some(serde_json::to_string(&parents)?)
@@ -260,7 +263,7 @@ mod tests {
             block_id: block_id.into(),
             block_type: "content".into(),
             parent_id: None,
-            position: Some(0),
+            position: Some(1),
             content: "test".into(),
         })
     }
@@ -274,7 +277,7 @@ mod tests {
                     block_id: "BLK001".into(),
                     block_type: "content".into(),
                     parent_id: None,
-                    position: Some(0),
+                    position: Some(1),
                     content: "hello".into(),
                 }),
             ),
@@ -290,7 +293,7 @@ mod tests {
                 "delete_block",
                 OpPayload::DeleteBlock(DeleteBlockPayload {
                     block_id: "BLK001".into(),
-                    cascade: false,
+                    cascade: true,
                 }),
             ),
             (

@@ -1,11 +1,12 @@
 ---
 source: src/op.rs
+assertion_line: 845
 expression: json
 ---
 block_id: B1
 key: priority
 op_type: set_property
 value_date: ~
-value_num: 1
+value_num: ~
 value_ref: ~
 value_text: high

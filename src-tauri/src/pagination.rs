@@ -65,6 +65,10 @@ pub struct HistoryEntry {
 /// A single cursor type is shared across all queries:
 /// - `position` — set by `list_children` (keyset on `position, id`).
 /// - `deleted_at` — set by `list_trash` (keyset on `deleted_at, id`).
+/// - `seq` — set by `list_block_history` (keyset on `seq, device_id`).
+///   For history queries `id` stores `device_id` as the tie-breaker
+///   because the op_log PK is `(device_id, seq)`.
+/// - `rank` + `seq` — set by `search_fts` (`seq` stores `fts_rowid`).
 /// - `id` — always present; serves as the tie-breaker in every keyset.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Cursor {
@@ -279,11 +283,12 @@ pub async fn list_trash(
 
     let (cursor_flag, cursor_del, cursor_id): (Option<i64>, String, String) =
         match page.after.as_ref() {
-            Some(c) => (
-                Some(1),
-                c.deleted_at.clone().unwrap_or_default(),
-                c.id.clone(),
-            ),
+            Some(c) => {
+                let del = c.deleted_at.clone().ok_or_else(|| {
+                    AppError::Validation("cursor missing deleted_at for trash query".into())
+                })?;
+                (Some(1), del, c.id.clone())
+            }
             None => (None, String::new(), String::new()),
         };
 
@@ -315,7 +320,8 @@ pub async fn list_trash(
 
 /// List blocks that carry a specific tag, paginated.
 ///
-/// Ordered by `id ASC` (ULID ≈ chronological).
+/// Ordered by `id ASC` (ULID ≈ chronological).  Excludes soft-deleted and
+/// conflict blocks, consistent with `eval_tag_query`.
 /// Uses index `idx_block_tags_tag(tag_id)`.
 pub async fn list_by_tag(
     pool: &SqlitePool,
@@ -334,7 +340,7 @@ pub async fn list_by_tag(
                 b.deleted_at, b.archived_at, b.is_conflict \
          FROM block_tags bt \
          JOIN blocks b ON b.id = bt.block_id \
-         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL \
+         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
            AND (?2 IS NULL OR b.id > ?3) \
          ORDER BY b.id ASC \
          LIMIT ?4",
@@ -444,7 +450,13 @@ pub async fn list_backlinks(
 /// List op-log history for a specific block, paginated.
 ///
 /// Returns all ops whose payload contains the given `block_id`, ordered by
-/// `seq DESC` (newest first).  Cursor is the `seq` number.
+/// `(seq DESC, device_id DESC)` (newest first).  The cursor stores `seq` and
+/// `device_id` (in the `id` field) for correct keyset pagination across
+/// multiple devices — the op_log PK is `(device_id, seq)` and `seq` alone
+/// is not globally unique.
+///
+/// A `LIKE` pre-filter narrows candidates before `json_extract` to avoid
+/// full-table JSON parsing (same pattern as `recovery.rs`).
 ///
 /// Note: This queries ALL op types for a block (create, edit, add_tag,
 /// remove_tag, move, set_property, etc.).
@@ -455,28 +467,34 @@ pub async fn list_block_history(
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_seq): (Option<i64>, i64) = match page.after.as_ref() {
-        Some(c) => (Some(1), c.seq.unwrap_or(0)),
-        None => (None, 0),
-    };
+    // `id` in the cursor stores `device_id` for history queries — it is the
+    // tie-breaker because the op_log PK is `(device_id, seq)`.
+    let (cursor_flag, cursor_seq, cursor_device_id): (Option<i64>, i64, String) =
+        match page.after.as_ref() {
+            Some(c) => (Some(1), c.seq.unwrap_or(0), c.id.clone()),
+            None => (None, 0, String::new()),
+        };
 
     let rows = sqlx::query_as::<_, HistoryEntry>(
         "SELECT device_id, seq, op_type, payload, created_at \
          FROM op_log \
-         WHERE json_extract(payload, '$.block_id') = ?1 \
-           AND (?2 IS NULL OR seq < ?3) \
-         ORDER BY seq DESC \
+         WHERE payload LIKE '%\"block_id\":\"' || ?1 || '\"%' \
+           AND json_extract(payload, '$.block_id') = ?1 \
+           AND (?2 IS NULL OR (\
+                seq < ?3 OR (seq = ?3 AND device_id < ?5))) \
+         ORDER BY seq DESC, device_id DESC \
          LIMIT ?4",
     )
     .bind(block_id) // ?1
     .bind(cursor_flag) // ?2
     .bind(cursor_seq) // ?3
     .bind(fetch_limit) // ?4
+    .bind(&cursor_device_id) // ?5
     .fetch_all(pool)
     .await?;
 
     build_page_response(rows, page.limit, |last| Cursor {
-        id: String::new(),
+        id: last.device_id.clone(), // device_id as tie-breaker
         position: None,
         deleted_at: None,
         seq: Some(last.seq),
@@ -1500,6 +1518,32 @@ mod tests {
         assert_eq!(r3.items[0].id, "BLOCK005");
     }
 
+    #[tokio::test]
+    async fn list_agenda_excludes_soft_deleted() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLOCK001", "content", "meeting", None, None).await;
+        insert_block(&pool, "BLOCK002", "content", "cancelled", None, None).await;
+        insert_block(&pool, "BLOCK003", "content", "deadline", None, None).await;
+
+        insert_agenda_entry(&pool, "2025-01-15", "BLOCK001", "property:scheduled").await;
+        insert_agenda_entry(&pool, "2025-01-15", "BLOCK002", "property:scheduled").await;
+        insert_agenda_entry(&pool, "2025-01-15", "BLOCK003", "property:deadline").await;
+
+        soft_delete_block(&pool, "BLOCK002", FIXED_DELETED_AT).await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_agenda(&pool, "2025-01-15", &page).await.unwrap();
+
+        assert_eq!(
+            resp.items.len(),
+            2,
+            "soft-deleted block must be excluded from agenda"
+        );
+        assert_eq!(resp.items[0].id, "BLOCK001");
+        assert_eq!(resp.items[1].id, "BLOCK003");
+    }
+
     // ====================================================================
     // insta snapshot tests — BlockRow and PageResponse
     // ====================================================================
@@ -2033,5 +2077,146 @@ mod tests {
         let resp = list_block_history(&pool, "SNAP_HIS", &page).await.unwrap();
 
         insta::assert_yaml_snapshot!(resp);
+    }
+
+    // ====================================================================
+    // F01-fix: multi-device list_block_history
+    // ====================================================================
+
+    #[tokio::test]
+    async fn test_list_block_history_multi_device_pagination() {
+        let (pool, _dir) = test_pool().await;
+
+        // Two devices with OVERLAPPING seq values for the same block.
+        // PK is (device_id, seq), so seq alone is NOT globally unique.
+        let payload = r#"{"block_id":"MULTI_BLK","block_type":"content","content":"hello"}"#;
+
+        // device-A: seq 1, 2
+        insert_op_log_entry(
+            &pool,
+            "device-A",
+            1,
+            "create_block",
+            payload,
+            "2025-01-01T00:00:00Z",
+        )
+        .await;
+        insert_op_log_entry(
+            &pool,
+            "device-A",
+            2,
+            "edit_block",
+            r#"{"block_id":"MULTI_BLK","to_text":"v2"}"#,
+            "2025-01-01T01:00:00Z",
+        )
+        .await;
+
+        // device-B: seq 1, 2 (same seq values, different device)
+        insert_op_log_entry(
+            &pool,
+            "device-B",
+            1,
+            "edit_block",
+            r#"{"block_id":"MULTI_BLK","to_text":"v3"}"#,
+            "2025-01-01T02:00:00Z",
+        )
+        .await;
+        insert_op_log_entry(
+            &pool,
+            "device-B",
+            2,
+            "edit_block",
+            r#"{"block_id":"MULTI_BLK","to_text":"v4"}"#,
+            "2025-01-01T03:00:00Z",
+        )
+        .await;
+
+        // Paginate with limit=1 so every op lands on its own page.
+        // Expected order: (seq DESC, device_id DESC) → (2,B), (2,A), (1,B), (1,A)
+        let mut all_entries: Vec<(i64, String)> = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = PageRequest::new(cursor, Some(1)).unwrap();
+            let resp = list_block_history(&pool, "MULTI_BLK", &page).await.unwrap();
+            for entry in &resp.items {
+                all_entries.push((entry.seq, entry.device_id.clone()));
+            }
+            if !resp.has_more {
+                break;
+            }
+            cursor = resp.next_cursor;
+        }
+
+        assert_eq!(
+            all_entries.len(),
+            4,
+            "all 4 ops must be returned (2 devices × 2 seq values)"
+        );
+        // Ordered by (seq DESC, device_id DESC)
+        assert_eq!(all_entries[0], (2, "device-B".into()));
+        assert_eq!(all_entries[1], (2, "device-A".into()));
+        assert_eq!(all_entries[2], (1, "device-B".into()));
+        assert_eq!(all_entries[3], (1, "device-A".into()));
+    }
+
+    // ====================================================================
+    // F08-fix: cursor validation for list_trash
+    // ====================================================================
+
+    #[tokio::test]
+    async fn list_trash_rejects_cursor_without_deleted_at() {
+        let (pool, _dir) = test_pool().await;
+
+        // A cursor that has no deleted_at — e.g. from a non-trash query.
+        let bad_cursor = Cursor {
+            id: "BLOCK001".into(),
+            position: None,
+            deleted_at: None, // missing!
+            seq: None,
+            rank: None,
+        }
+        .encode()
+        .unwrap();
+
+        let page = PageRequest::new(Some(bad_cursor), Some(10)).unwrap();
+        let result = list_trash(&pool, &page).await;
+
+        assert!(
+            result.is_err(),
+            "cursor without deleted_at must be rejected for trash query"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("cursor missing deleted_at"),
+            "error message must mention missing deleted_at, got: {err_msg}"
+        );
+    }
+
+    // ====================================================================
+    // F07-fix: list_by_tag excludes conflict blocks
+    // ====================================================================
+
+    #[tokio::test]
+    async fn list_by_tag_excludes_conflict_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG00001", "tag", "important", None, None).await;
+        insert_block(&pool, "BLOCK001", "content", "normal", None, None).await;
+        insert_block(&pool, "BLOCK002", "content", "conflict", None, None).await;
+
+        insert_tag_association(&pool, "BLOCK001", "TAG00001").await;
+        insert_tag_association(&pool, "BLOCK002", "TAG00001").await;
+
+        set_conflict(&pool, "BLOCK002").await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = list_by_tag(&pool, "TAG00001", &page).await.unwrap();
+
+        assert_eq!(
+            resp.items.len(),
+            1,
+            "conflict blocks must be excluded from list_by_tag"
+        );
+        assert_eq!(resp.items[0].id, "BLOCK001");
     }
 }

@@ -20,7 +20,7 @@
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::BTreeMap;
 
 use crate::error::AppError;
@@ -138,33 +138,36 @@ pub fn decode_snapshot(data: &[u8]) -> Result<SnapshotData, AppError> {
 // ---------------------------------------------------------------------------
 
 /// Read all core table rows from the database.
-async fn collect_tables(pool: &SqlitePool) -> Result<SnapshotTables, AppError> {
+///
+/// Accepts a `&mut SqliteConnection` (typically from a read transaction) so
+/// that all SELECT queries see a consistent point-in-time view of the database.
+async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTables, AppError> {
     let blocks: Vec<BlockSnapshot> = sqlx::query_as(
         "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source FROM blocks",
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
 
     let block_tags: Vec<BlockTagSnapshot> =
         sqlx::query_as("SELECT block_id, tag_id FROM block_tags")
-            .fetch_all(pool)
+            .fetch_all(&mut *conn)
             .await?;
 
     let block_properties: Vec<BlockPropertySnapshot> = sqlx::query_as(
         "SELECT block_id, key, value_text, value_num, value_date, value_ref FROM block_properties",
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
 
     let block_links: Vec<BlockLinkSnapshot> =
         sqlx::query_as("SELECT source_id, target_id FROM block_links")
-            .fetch_all(pool)
+            .fetch_all(&mut *conn)
             .await?;
 
     let attachments: Vec<AttachmentSnapshot> = sqlx::query_as(
         "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at FROM attachments",
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
 
     Ok(SnapshotTables {
@@ -180,10 +183,12 @@ async fn collect_tables(pool: &SqlitePool) -> Result<SnapshotTables, AppError> {
 ///
 /// Returns [`AppError::Snapshot`] if the op_log is empty — a snapshot without
 /// any ops to reference is meaningless.
-async fn collect_frontier(pool: &SqlitePool) -> Result<(BTreeMap<String, i64>, String), AppError> {
+async fn collect_frontier(
+    conn: &mut SqliteConnection,
+) -> Result<(BTreeMap<String, i64>, String), AppError> {
     let rows: Vec<(String, i64)> =
         sqlx::query_as("SELECT device_id, MAX(seq) as max_seq FROM op_log GROUP BY device_id")
-            .fetch_all(pool)
+            .fetch_all(&mut *conn)
             .await?;
 
     if rows.is_empty() {
@@ -202,7 +207,7 @@ async fn collect_frontier(pool: &SqlitePool) -> Result<(BTreeMap<String, i64>, S
     let latest_hash: (String,) = sqlx::query_as(
         "SELECT hash FROM op_log ORDER BY created_at DESC, device_id DESC, seq DESC LIMIT 1",
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
 
     Ok((frontier, latest_hash.0))
@@ -214,12 +219,20 @@ async fn collect_frontier(pool: &SqlitePool) -> Result<(BTreeMap<String, i64>, S
 
 /// Create a snapshot of all core tables. Crash-safe: pending → write → complete.
 /// Returns the snapshot ULID on success.
+///
+/// Table and frontier collection is wrapped in a **read transaction** (F01) so
+/// that all SELECT queries see a consistent point-in-time view, even if
+/// concurrent writes occur.
 pub async fn create_snapshot(pool: &SqlitePool, device_id: &str) -> Result<String, AppError> {
     let snapshot_id = crate::ulid::SnapshotId::new().into_string();
 
-    // Collect tables and frontier
-    let tables = collect_tables(pool).await?;
-    let (up_to_seqs, up_to_hash) = collect_frontier(pool).await?;
+    // F01: Read transaction for consistent snapshot collection.
+    // A DEFERRED tx is fine here — it only needs read isolation. SQLite
+    // promotes to a read-lock on the first SELECT and holds it until commit.
+    let mut read_tx = pool.begin().await?;
+    let tables = collect_tables(&mut read_tx).await?;
+    let (up_to_seqs, up_to_hash) = collect_frontier(&mut read_tx).await?;
+    read_tx.commit().await?;
 
     let data = SnapshotData {
         schema_version: SCHEMA_VERSION,
@@ -256,14 +269,26 @@ pub async fn create_snapshot(pool: &SqlitePool, device_id: &str) -> Result<Strin
 /// Apply a snapshot (RESET path). Wipes all core + cache tables and inserts
 /// snapshot data. Caller is responsible for triggering cache rebuilds and FTS
 /// optimize after this returns.
+///
+/// Uses `BEGIN IMMEDIATE` (F04) to acquire the write lock upfront and
+/// `PRAGMA defer_foreign_keys = ON` (F02) so that block inserts succeed
+/// regardless of parent/child ordering in the snapshot data.
 pub async fn apply_snapshot(
     pool: &SqlitePool,
     compressed_data: &[u8],
 ) -> Result<SnapshotData, AppError> {
     let data = decode_snapshot(compressed_data)?;
 
-    // Use a transaction for atomicity
-    let mut tx = pool.begin().await?;
+    // F04: BEGIN IMMEDIATE — acquire write lock upfront (consistent with
+    // every other write path in the codebase).
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // F02: Defer FK checks until COMMIT — snapshot block order is arbitrary,
+    // so a child block may be inserted before its parent. All FK references
+    // will be satisfied by commit time.
+    sqlx::query("PRAGMA defer_foreign_keys = ON")
+        .execute(&mut *tx)
+        .await?;
 
     // Wipe all tables (order matters for FK constraints — children first)
     // Cache tables
@@ -384,7 +409,9 @@ pub async fn compact_op_log(
     retention_days: u64,
 ) -> Result<Option<String>, AppError> {
     let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days as i64);
-    let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    // Use to_rfc3339_opts with millis + Z-suffix for consistent comparison
+    // with op_log.created_at timestamps (F03).
+    let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
     // Check if any ops exist before the cutoff
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE created_at < ?")
@@ -1200,5 +1227,258 @@ mod tests {
             result.is_err(),
             "FK violation should cause apply_snapshot to fail"
         );
+    }
+
+    // =======================================================================
+    // 18. apply_snapshot_full_all_5_tables (F13)
+    // =======================================================================
+
+    /// Verify that apply_snapshot correctly restores all 5 core table types:
+    /// blocks, block_tags, block_properties, block_links, and attachments.
+    #[tokio::test]
+    async fn apply_snapshot_full_all_5_tables() {
+        let (pool, _dir) = test_pool().await;
+
+        // Build a snapshot with all 5 table types populated.
+        // Note: block_tags.tag_id references blocks(id), so the "tag" must
+        // exist as a block too.
+        let data = SnapshotData {
+            schema_version: SCHEMA_VERSION,
+            snapshot_device_id: "dev-1".to_string(),
+            up_to_seqs: BTreeMap::new(),
+            up_to_hash: "h".to_string(),
+            tables: SnapshotTables {
+                blocks: vec![
+                    BlockSnapshot {
+                        id: "blk-parent".to_string(),
+                        block_type: "content".to_string(),
+                        content: Some("Parent block".to_string()),
+                        parent_id: None,
+                        position: Some(1),
+                        deleted_at: None,
+                        archived_at: None,
+                        is_conflict: 0,
+                        conflict_source: None,
+                    },
+                    BlockSnapshot {
+                        id: "blk-child".to_string(),
+                        block_type: "content".to_string(),
+                        content: Some("Child block".to_string()),
+                        parent_id: Some("blk-parent".to_string()),
+                        position: Some(1),
+                        deleted_at: None,
+                        archived_at: None,
+                        is_conflict: 0,
+                        conflict_source: None,
+                    },
+                    // Tag block — needed for FK on block_tags.tag_id
+                    BlockSnapshot {
+                        id: "tag-urgent".to_string(),
+                        block_type: "tag".to_string(),
+                        content: Some("urgent".to_string()),
+                        parent_id: None,
+                        position: None,
+                        deleted_at: None,
+                        archived_at: None,
+                        is_conflict: 0,
+                        conflict_source: None,
+                    },
+                ],
+                block_tags: vec![BlockTagSnapshot {
+                    block_id: "blk-parent".to_string(),
+                    tag_id: "tag-urgent".to_string(),
+                }],
+                block_properties: vec![BlockPropertySnapshot {
+                    block_id: "blk-child".to_string(),
+                    key: "due".to_string(),
+                    value_text: None,
+                    value_num: None,
+                    value_date: Some("2025-06-01".to_string()),
+                    value_ref: None,
+                }],
+                block_links: vec![BlockLinkSnapshot {
+                    source_id: "blk-child".to_string(),
+                    target_id: "blk-parent".to_string(),
+                }],
+                attachments: vec![AttachmentSnapshot {
+                    id: "att-1".to_string(),
+                    block_id: "blk-parent".to_string(),
+                    mime_type: "text/plain".to_string(),
+                    filename: "notes.txt".to_string(),
+                    size_bytes: 256,
+                    fs_path: "attachments/notes.txt".to_string(),
+                    created_at: "2025-01-01T00:00:00Z".to_string(),
+                    deleted_at: None,
+                }],
+            },
+        };
+
+        let encoded = encode_snapshot(&data).unwrap();
+        let restored = apply_snapshot(&pool, &encoded).await.unwrap();
+
+        // Verify all tables populated
+        assert_eq!(restored.tables.blocks.len(), 3);
+        assert_eq!(restored.tables.block_tags.len(), 1);
+        assert_eq!(restored.tables.block_properties.len(), 1);
+        assert_eq!(restored.tables.block_links.len(), 1);
+        assert_eq!(restored.tables.attachments.len(), 1);
+
+        // Verify DB state for each table
+        let (blk_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(blk_count, 3);
+
+        let (tag_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_tags")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tag_count, 1);
+
+        let (prop_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_properties")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(prop_count, 1);
+
+        let (link_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(link_count, 1);
+
+        let (att_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM attachments")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(att_count, 1);
+
+        // Verify specific content
+        let (tag_id,): (String,) =
+            sqlx::query_as("SELECT tag_id FROM block_tags WHERE block_id = 'blk-parent'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(tag_id, "tag-urgent");
+
+        let (due,): (Option<String>,) =
+            sqlx::query_as("SELECT value_date FROM block_properties WHERE block_id = 'blk-child'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(due.as_deref(), Some("2025-06-01"));
+    }
+
+    // =======================================================================
+    // 19. double_compaction (F14)
+    // =======================================================================
+
+    /// Verify that calling compact_op_log twice produces correct behavior:
+    /// first call compacts, second call is a no-op (no old ops remain).
+    #[tokio::test]
+    async fn double_compaction() {
+        let (pool, _dir) = test_pool().await;
+        let device_id = "dev-1";
+
+        // Insert an old op (200 days ago)
+        insert_block(&pool, "block-old", "old").await;
+        insert_op_at(&pool, device_id, "block-old", "2024-01-01T00:00:00Z").await;
+
+        // First compaction — should create snapshot and purge
+        let first = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
+            .await
+            .unwrap();
+        assert!(first.is_some(), "first compaction should create a snapshot");
+
+        let (snap_count_1,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(snap_count_1, 1);
+
+        // Second compaction — no old ops remain, should be no-op
+        let second = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
+            .await
+            .unwrap();
+        assert!(
+            second.is_none(),
+            "second compaction should be no-op (no old ops remain)"
+        );
+
+        // Still only 1 snapshot (second compaction didn't create another)
+        let (snap_count_2,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(snap_count_2, 1);
+    }
+
+    // =======================================================================
+    // 20. compact_op_log_timestamp_format_consistency (F03)
+    // =======================================================================
+
+    /// Verify that the cutoff timestamp uses a consistent format for comparison
+    /// with op_log.created_at. This tests the edge case where timestamps use
+    /// the `+00:00` suffix (from to_rfc3339) vs `.000Z` suffix.
+    #[tokio::test]
+    async fn compact_op_log_timestamp_format_consistency() {
+        let (pool, _dir) = test_pool().await;
+        let device_id = "dev-1";
+
+        // Insert an old op using a zero-subsecond timestamp (the edge case
+        // that was previously problematic with format() vs to_rfc3339()).
+        insert_block(&pool, "block-old", "old").await;
+        insert_op_at(&pool, device_id, "block-old", "2024-01-15T12:00:00+00:00").await;
+
+        // Compact with 90-day retention — the old op should be purged
+        let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
+            .await
+            .unwrap();
+        assert!(
+            result.is_some(),
+            "old op with +00:00 suffix should still be detected as old"
+        );
+
+        let (remaining,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining, 0, "old op should be purged");
+    }
+
+    // =======================================================================
+    // 21. old_snapshots_accumulate (F22)
+    // =======================================================================
+
+    /// Document that old complete snapshots accumulate without cleanup.
+    /// Each call to create_snapshot adds a new row; old ones are never deleted.
+    #[tokio::test]
+    async fn old_snapshots_accumulate() {
+        let (pool, _dir) = test_pool().await;
+        let device_id = "dev-1";
+
+        // Need block + op for snapshots
+        insert_block(&pool, "block-1", "content").await;
+        insert_op_at(&pool, device_id, "block-1", "2025-01-01T00:00:00Z").await;
+
+        // Create 3 snapshots
+        let _snap1 = create_snapshot(&pool, device_id).await.unwrap();
+        let _snap2 = create_snapshot(&pool, device_id).await.unwrap();
+        let snap3 = create_snapshot(&pool, device_id).await.unwrap();
+
+        // All 3 should exist in the DB
+        let (total,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(total, 3, "old snapshots accumulate (no cleanup)");
+
+        // get_latest_snapshot returns only the most recent
+        let (latest_id, _) = get_latest_snapshot(&pool).await.unwrap().unwrap();
+        assert_eq!(latest_id, snap3);
     }
 }

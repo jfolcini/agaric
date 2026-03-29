@@ -24,7 +24,7 @@ use crate::op::{
 };
 use crate::op_log;
 use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
-use crate::recovery;
+#[cfg(test)]
 use crate::soft_delete;
 use crate::tag_query::{self, TagCacheRow, TagExpr};
 use crate::ulid::BlockId;
@@ -79,6 +79,14 @@ pub struct TagResponse {
 // Inner functions (testable without Tauri State)
 // ---------------------------------------------------------------------------
 
+/// Create a new block.
+///
+/// # Rate limiting (F07)
+///
+/// No server-side rate limiting is implemented. This is acceptable for a
+/// single-user desktop app where the caller is always the local UI. If the
+/// app ever gains a network-facing API, rate limiting should be added at the
+/// transport layer.
 pub async fn create_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -101,18 +109,6 @@ pub async fn create_block_inner(
     // 2. Generate new BlockId
     let block_id = BlockId::new();
 
-    // 3. If parent_id is Some, validate it exists and is not deleted
-    if let Some(ref pid) = parent_id {
-        let exists: Option<(i64,)> =
-            sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
-                .bind(pid)
-                .fetch_optional(pool)
-                .await?;
-        if exists.is_none() {
-            return Err(AppError::NotFound(format!("parent block '{pid}'")));
-        }
-    }
-
     // 3. Build OpPayload
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
         block_id: block_id.as_str().to_owned(),
@@ -127,6 +123,21 @@ pub async fn create_block_inner(
     //    SQLITE_BUSY_SNAPSHOT when a background cache rebuild commits
     //    between our first read and first write.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // F01: Validate parent_id inside the transaction to prevent TOCTOU race.
+    // A concurrent purge_block could physically delete the parent between
+    // our check and the INSERT, violating the FK constraint.
+    if let Some(ref pid) = parent_id {
+        let exists: Option<(i64,)> =
+            sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
+                .bind(pid)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if exists.is_none() {
+            return Err(AppError::NotFound(format!("parent block '{pid}'")));
+        }
+    }
+
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
 
@@ -166,14 +177,21 @@ pub async fn edit_block_inner(
     block_id: String,
     to_text: String,
 ) -> Result<BlockResponse, AppError> {
-    // 1. Validate block exists and is not deleted
+    // F02: Begin IMMEDIATE transaction for atomic validation + op_log + blocks write.
+    // All reads (block existence, prev_edit lookup) happen inside the tx
+    // to prevent TOCTOU races (a concurrent delete_block could soft-delete
+    // the block between validation and update, and another edit could make
+    // the prev_edit reference stale).
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as(
         "SELECT id, block_type, content, parent_id, position, \
                 deleted_at, archived_at, is_conflict \
          FROM blocks WHERE id = ? AND deleted_at IS NULL",
     )
     .bind(&block_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?;
 
     let existing = existing
@@ -182,8 +200,17 @@ pub async fn edit_block_inner(
     let parent_id = existing.parent_id;
     let position = existing.position;
 
-    // 2. Find prev_edit
-    let prev_edit = recovery::find_prev_edit(pool, &block_id).await?;
+    // 2. Find prev_edit inside transaction (inlined from recovery::find_prev_edit)
+    let prev_edit: Option<(String, i64)> = sqlx::query_as(
+        "SELECT device_id, seq FROM op_log \
+         WHERE json_extract(payload, '$.block_id') = ? \
+         AND op_type IN ('edit_block', 'create_block') \
+         ORDER BY created_at DESC \
+         LIMIT 1",
+    )
+    .bind(&block_id)
+    .fetch_optional(&mut *tx)
+    .await?;
 
     // 3. Build OpPayload
     let payload = OpPayload::EditBlock(EditBlockPayload {
@@ -192,16 +219,13 @@ pub async fn edit_block_inner(
         prev_edit,
     });
 
-    // 4. Begin IMMEDIATE transaction for atomic op_log + blocks write.
-    //    IMMEDIATE eagerly acquires the write lock, avoiding
-    //    SQLITE_BUSY_SNAPSHOT when a background cache rebuild commits
-    //    between our first read and first write.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
 
-    // 5. Update blocks table within same transaction
-    sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+    // 4. Update blocks table within same transaction.
+    // `AND deleted_at IS NULL` guard prevents overwriting content on a
+    // block that was concurrently soft-deleted.
+    sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
         .bind(&to_text)
         .bind(&block_id)
         .execute(&mut *tx)
@@ -209,10 +233,10 @@ pub async fn edit_block_inner(
 
     tx.commit().await?;
 
-    // 6. Dispatch background cache tasks (fire-and-forget)
+    // 5. Dispatch background cache tasks (fire-and-forget)
     let _ = materializer.dispatch_background(&op_record);
 
-    // 7. Return response
+    // 6. Return response
     Ok(BlockResponse {
         id: block_id,
         block_type,
@@ -368,10 +392,10 @@ pub async fn purge_block_inner(
     materializer: &Materializer,
     block_id: String,
 ) -> Result<PurgeResponse, AppError> {
-    // Single IMMEDIATE transaction: validation + op_log.
-    // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
-    // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
-    // and the actual mutation.
+    // F03: Single IMMEDIATE transaction for validation + op_log + physical purge.
+    // Previously the op_log write and the physical purge were split across two
+    // transactions, meaning a crash between them left the op_log recording a
+    // purge that never happened.  Now everything is in one atomic tx.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // Validate inside transaction (TOCTOU-safe)
@@ -383,11 +407,11 @@ pub async fn purge_block_inner(
 
     match row {
         None => {
-            return Err(AppError::NotFound(format!("block '{block_id}'")));
+            return Err(AppError::NotFound(format!("block \'{block_id}\'")));
         }
         Some((None,)) => {
             return Err(AppError::InvalidOperation(format!(
-                "block '{block_id}' must be soft-deleted before purging"
+                "block \'{block_id}\' must be soft-deleted before purging"
             )));
         }
         Some((Some(_),)) => {} // block is deleted, proceed with purge
@@ -401,13 +425,134 @@ pub async fn purge_block_inner(
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
 
-    tx.commit().await?;
+    // --- Inline physical purge (previously soft_delete::purge_block) ---
+    // Defer FK checks until commit — the entire subtree will be gone by then
+    // so no constraints will be violated.
+    sqlx::query("PRAGMA defer_foreign_keys = ON")
+        .execute(&mut *tx)
+        .await?;
 
-    // Purge block physically (uses its own transaction internally).
-    // TODO(Phase 2): Inline purge logic into the main transaction above
-    // for full atomicity. Currently the validation + op_log are atomic,
-    // but the physical purge is a separate transaction.
-    let count = soft_delete::purge_block(pool, &block_id).await?;
+    // Recursive CTE reused in every batch operation below.
+    const DESC_CTE: &str = "WITH RECURSIVE descendants(id) AS ( \
+        SELECT id FROM blocks WHERE id = ? \
+        UNION ALL \
+        SELECT b.id FROM blocks b \
+        INNER JOIN descendants d ON b.parent_id = d.id \
+    )";
+
+    // block_tags: either column may reference a descendant
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM block_tags \
+         WHERE block_id IN (SELECT id FROM descendants) \
+            OR tag_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // block_properties: owned by descendants
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM block_properties \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // block_properties: value_ref pointing into the subtree (NULLify)
+    sqlx::query(&format!(
+        "{DESC_CTE} UPDATE block_properties SET value_ref = NULL \
+         WHERE value_ref IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // block_links: either end may be in the subtree
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM block_links \
+         WHERE source_id IN (SELECT id FROM descendants) \
+            OR target_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // agenda_cache
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM agenda_cache \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // tags_cache
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM tags_cache \
+         WHERE tag_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // pages_cache
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM pages_cache \
+         WHERE page_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // attachments
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM attachments \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // block_drafts
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM block_drafts \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // Nullify conflict_source refs from blocks outside the subtree
+    sqlx::query(&format!(
+        "{DESC_CTE} UPDATE blocks SET conflict_source = NULL \
+         WHERE conflict_source IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // fts_blocks (FTS5 virtual table — no FK, must be cleaned explicitly)
+    sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM fts_blocks \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // Delete blocks (deferred FK allows single-statement batch)
+    let result = sqlx::query(&format!(
+        "{DESC_CTE} DELETE FROM blocks \
+         WHERE id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .execute(&mut *tx)
+    .await?;
+
+    let count = result.rows_affected();
+
+    tx.commit().await?;
 
     // Fire-and-forget background cache dispatch
     let _ = materializer.dispatch_background(&op_record);
@@ -508,7 +653,10 @@ pub async fn list_blocks_inner(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    let page = pagination::PageRequest::new(cursor, limit)?;
+    // F06: Clamp page_size to [1, 100] to prevent oversized result sets
+    // or nonsensical zero/negative limits.
+    let clamped_limit = limit.map(|l| l.clamp(1, 100));
+    let page = pagination::PageRequest::new(cursor, clamped_limit)?;
 
     if show_deleted == Some(true) {
         pagination::list_trash(pool, &page).await
@@ -779,6 +927,21 @@ pub async fn list_tags_by_prefix_inner(
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
+/// F09/F10: Sanitize internal errors before they reach the frontend.
+/// Database errors may contain table/column names or query fragments
+/// that leak implementation details. We replace them with a generic
+/// message while logging the original for debugging.
+#[cfg(not(tarpaulin_include))]
+fn sanitize_internal_error(err: AppError) -> AppError {
+    match &err {
+        AppError::Database(_) | AppError::Migration(_) | AppError::Io(_) | AppError::Json(_) => {
+            eprintln!("[sanitize] internal error suppressed: {err}");
+            AppError::InvalidOperation("an internal error occurred".into())
+        }
+        _ => err,
+    }
+}
+
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -801,6 +964,7 @@ pub async fn create_block(
         position,
     )
     .await
+    .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -813,7 +977,9 @@ pub async fn edit_block(
     block_id: String,
     to_text: String,
 ) -> Result<BlockResponse, AppError> {
-    edit_block_inner(&pool, &device_id.0, &materializer, block_id, to_text).await
+    edit_block_inner(&pool, &device_id.0, &materializer, block_id, to_text)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -825,7 +991,9 @@ pub async fn delete_block(
     materializer: State<'_, Materializer>,
     block_id: String,
 ) -> Result<DeleteResponse, AppError> {
-    delete_block_inner(&pool, &device_id.0, &materializer, block_id).await
+    delete_block_inner(&pool, &device_id.0, &materializer, block_id)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -838,7 +1006,9 @@ pub async fn restore_block(
     block_id: String,
     deleted_at_ref: String,
 ) -> Result<RestoreResponse, AppError> {
-    restore_block_inner(&pool, &device_id.0, &materializer, block_id, deleted_at_ref).await
+    restore_block_inner(&pool, &device_id.0, &materializer, block_id, deleted_at_ref)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -850,7 +1020,9 @@ pub async fn purge_block(
     materializer: State<'_, Materializer>,
     block_id: String,
 ) -> Result<PurgeResponse, AppError> {
-    purge_block_inner(&pool, &device_id.0, &materializer, block_id).await
+    purge_block_inner(&pool, &device_id.0, &materializer, block_id)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -873,6 +1045,7 @@ pub async fn move_block(
         new_position,
     )
     .await
+    .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -900,6 +1073,7 @@ pub async fn list_blocks(
         limit,
     )
     .await
+    .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -909,7 +1083,9 @@ pub async fn get_block(
     pool: State<'_, SqlitePool>,
     block_id: String,
 ) -> Result<BlockRow, AppError> {
-    get_block_inner(&pool, block_id).await
+    get_block_inner(&pool, block_id)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -922,7 +1098,9 @@ pub async fn add_tag(
     block_id: String,
     tag_id: String,
 ) -> Result<TagResponse, AppError> {
-    add_tag_inner(&pool, &device_id.0, &materializer, block_id, tag_id).await
+    add_tag_inner(&pool, &device_id.0, &materializer, block_id, tag_id)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -935,7 +1113,9 @@ pub async fn remove_tag(
     block_id: String,
     tag_id: String,
 ) -> Result<TagResponse, AppError> {
-    remove_tag_inner(&pool, &device_id.0, &materializer, block_id, tag_id).await
+    remove_tag_inner(&pool, &device_id.0, &materializer, block_id, tag_id)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -947,7 +1127,9 @@ pub async fn get_backlinks(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    get_backlinks_inner(&pool, block_id, cursor, limit).await
+    get_backlinks_inner(&pool, block_id, cursor, limit)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -959,7 +1141,9 @@ pub async fn get_block_history(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
-    get_block_history_inner(&pool, block_id, cursor, limit).await
+    get_block_history_inner(&pool, block_id, cursor, limit)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -970,7 +1154,9 @@ pub async fn get_conflicts(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    get_conflicts_inner(&pool, cursor, limit).await
+    get_conflicts_inner(&pool, cursor, limit)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -989,7 +1175,9 @@ pub async fn search_blocks(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    search_blocks_inner(&pool, query, cursor, limit).await
+    search_blocks_inner(&pool, query, cursor, limit)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -1003,7 +1191,9 @@ pub async fn query_by_tags(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    query_by_tags_inner(&pool, tag_ids, prefixes, mode, cursor, limit).await
+    query_by_tags_inner(&pool, tag_ids, prefixes, mode, cursor, limit)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
@@ -1013,7 +1203,9 @@ pub async fn list_tags_by_prefix(
     pool: State<'_, SqlitePool>,
     prefix: String,
 ) -> Result<Vec<TagCacheRow>, AppError> {
-    list_tags_by_prefix_inner(&pool, prefix).await
+    list_tags_by_prefix_inner(&pool, prefix)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -2764,5 +2956,240 @@ mod tests {
             .unwrap();
 
         assert!(result.is_empty());
+    }
+
+    // ======================================================================
+    // F11: Concurrent edit race condition (verifies TOCTOU fix)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn f11_concurrent_edits_do_not_corrupt() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block, then spawn 2 concurrent edits.
+        // Both should succeed (SQLite serializes via IMMEDIATE tx).
+        // Final state should be one of the two edits.
+        let created = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "original".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let block_id = created.id.clone();
+        let pool1 = pool.clone();
+        let pool2 = pool.clone();
+        let mat1 = Materializer::new(pool.clone());
+        let mat2 = Materializer::new(pool.clone());
+        let bid1 = block_id.clone();
+        let bid2 = block_id.clone();
+
+        let h1 = tokio::spawn(async move {
+            edit_block_inner(&pool1, DEV, &mat1, bid1, "edit-A".into()).await
+        });
+        let h2 = tokio::spawn(async move {
+            edit_block_inner(&pool2, DEV, &mat2, bid2, "edit-B".into()).await
+        });
+
+        let (r1, r2) = tokio::join!(h1, h2);
+        assert!(r1.unwrap().is_ok(), "first concurrent edit should succeed");
+        assert!(r2.unwrap().is_ok(), "second concurrent edit should succeed");
+
+        // Final DB state should be one of the two edits
+        let row = get_block_inner(&pool, block_id.clone()).await.unwrap();
+        assert!(
+            row.content == Some("edit-A".into()) || row.content == Some("edit-B".into()),
+            "final content should be one of the concurrent edits, got: {:?}",
+            row.content
+        );
+
+        // Verify exactly 2 edit ops in the log
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block' \
+             AND json_extract(payload, '$.block_id') = ?",
+        )
+        .bind(&block_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count.0, 2, "exactly 2 edit ops should be logged");
+    }
+
+    // ======================================================================
+    // F12: Purge of already-purged block
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn f12_purge_already_purged_block_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "PURGE_TWICE", "content", "purge me", None, Some(1)).await;
+
+        // Soft-delete first
+        soft_delete::cascade_soft_delete(&pool, "PURGE_TWICE")
+            .await
+            .unwrap();
+
+        // First purge succeeds
+        let resp = purge_block_inner(&pool, DEV, &mat, "PURGE_TWICE".into())
+            .await
+            .unwrap();
+        assert_eq!(resp.purged_count, 1);
+
+        // Second purge should return NotFound (block is physically gone)
+        let result = purge_block_inner(&pool, DEV, &mat, "PURGE_TWICE".into()).await;
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "purging an already-purged block should return NotFound, got: {result:?}"
+        );
+    }
+
+    // ======================================================================
+    // F13: Create block with invalid block_type values
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn f13_empty_block_type_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result =
+            create_block_inner(&pool, DEV, &mat, "".into(), "hello".into(), None, None).await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "empty block_type should return Validation error, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn f13_sql_injection_block_type_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "'; DROP TABLE blocks; --".into(),
+            "hello".into(),
+            None,
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "SQL injection in block_type should return Validation error, got: {result:?}"
+        );
+
+        // Verify blocks table still exists
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(count.0 >= 0, "blocks table should still exist");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn f13_case_sensitive_block_type_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // "Content" (uppercase C) should be rejected -- only "content" is valid
+        let result = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "Content".into(),
+            "hello".into(),
+            None,
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "case-variant block_type should return Validation error, got: {result:?}"
+        );
+    }
+
+    // ======================================================================
+    // F14: list_blocks with edge-case page_size values
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn f14_page_size_zero_clamped_to_one() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PS_BLK1", "content", "a", None, Some(1)).await;
+        insert_block(&pool, "PS_BLK2", "content", "b", None, Some(2)).await;
+
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, Some(0))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.items.len(),
+            1,
+            "page_size=0 should be clamped to 1, returning exactly 1 item"
+        );
+        assert!(resp.has_more, "should indicate more items available");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn f14_page_size_negative_clamped_to_one() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PS_N1", "content", "a", None, Some(1)).await;
+        insert_block(&pool, "PS_N2", "content", "b", None, Some(2)).await;
+
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, Some(-1))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.items.len(),
+            1,
+            "page_size=-1 should be clamped to 1, returning exactly 1 item"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn f14_page_size_1000_clamped_to_100() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert 3 blocks -- enough to verify clamping but not 100+
+        insert_block(&pool, "PS_L1", "content", "a", None, Some(1)).await;
+        insert_block(&pool, "PS_L2", "content", "b", None, Some(2)).await;
+        insert_block(&pool, "PS_L3", "content", "c", None, Some(3)).await;
+
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, Some(1000))
+            .await
+            .unwrap();
+
+        // With only 3 items and clamped limit=100, all 3 should be returned
+        assert_eq!(resp.items.len(), 3);
+        assert!(!resp.has_more, "no more items should remain");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn f14_page_size_none_uses_default() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PS_D1", "content", "a", None, Some(1)).await;
+
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(resp.items.len(), 1);
     }
 }

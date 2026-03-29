@@ -60,11 +60,15 @@ pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
         .await?;
 
     sqlx::query(
-        "INSERT INTO tags_cache (tag_id, name, usage_count, updated_at)
+        "INSERT OR IGNORE INTO tags_cache (tag_id, name, usage_count, updated_at)
          SELECT b.id, b.content, COALESCE(t.cnt, 0), ?
          FROM blocks b
          LEFT JOIN (
-             SELECT tag_id, COUNT(*) AS cnt FROM block_tags GROUP BY tag_id
+             SELECT bt.tag_id, COUNT(*) AS cnt
+             FROM block_tags bt
+             JOIN blocks blk ON blk.id = bt.block_id
+             WHERE blk.deleted_at IS NULL
+             GROUP BY bt.tag_id
          ) t ON t.tag_id = b.id
          WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL
            AND b.is_conflict = 0
@@ -98,7 +102,8 @@ pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
         "INSERT INTO pages_cache (page_id, title, updated_at)
          SELECT id, content, ?
          FROM blocks
-         WHERE block_type = 'page' AND deleted_at IS NULL AND content IS NOT NULL",
+         WHERE block_type = 'page' AND deleted_at IS NULL AND content IS NOT NULL
+           AND is_conflict = 0",
     )
     .bind(&now)
     .execute(&mut *tx)
@@ -134,6 +139,7 @@ pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
          FROM block_properties bp
          JOIN blocks b ON b.id = bp.block_id
          WHERE bp.value_date IS NOT NULL AND b.deleted_at IS NULL
+           AND b.is_conflict = 0
          UNION ALL
          SELECT SUBSTR(t.content, 6), bt.block_id, 'tag:' || bt.tag_id
          FROM block_tags bt
@@ -143,7 +149,8 @@ pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
            AND t.content LIKE 'date/%'
            AND LENGTH(t.content) = 15
            AND b.deleted_at IS NULL
-           AND t.deleted_at IS NULL",
+           AND t.deleted_at IS NULL
+           AND b.is_conflict = 0",
     )
     .execute(&mut *tx)
     .await?;
@@ -1171,6 +1178,104 @@ mod tests {
             count_rows(&pool, "agenda_cache").await,
             1,
             "agenda populated"
+        );
+    }
+
+    // ====================================================================
+    // Audit findings: F03, F04, F05, F23
+    // ====================================================================
+
+    #[tokio::test]
+    async fn tags_cache_usage_excludes_deleted_tagged_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG01", "tag", "popular").await;
+        insert_block(&pool, "BLK01", "content", "alive note").await;
+        insert_block(&pool, "BLK02", "content", "deleted note").await;
+        add_tag(&pool, "BLK01", "TAG01").await;
+        add_tag(&pool, "BLK02", "TAG01").await;
+        soft_delete_block(&pool, "BLK02").await;
+
+        rebuild_tags_cache(&pool).await.unwrap();
+
+        let row: (i64,) =
+            sqlx::query_as("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG01'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            row.0, 1,
+            "usage_count should exclude soft-deleted tagged blocks"
+        );
+    }
+
+    #[tokio::test]
+    async fn tags_cache_handles_duplicate_tag_names() {
+        let (pool, _dir) = test_pool().await;
+
+        // Two tag blocks with the same content (name). INSERT OR IGNORE
+        // should keep the first and skip the duplicate.
+        insert_block(&pool, "TAG01", "tag", "duplicate-name").await;
+        insert_block(&pool, "TAG02", "tag", "duplicate-name").await;
+
+        rebuild_tags_cache(&pool).await.unwrap();
+
+        let count = count_rows(&pool, "tags_cache").await;
+        assert_eq!(
+            count, 1,
+            "INSERT OR IGNORE should handle duplicate tag names"
+        );
+    }
+
+    #[tokio::test]
+    async fn pages_cache_excludes_conflict_pages() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "PAGE01", "page", "Normal Page").await;
+        insert_block(&pool, "PAGE02", "page", "Conflict Page").await;
+        mark_conflict(&pool, "PAGE02").await;
+
+        rebuild_pages_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "pages_cache").await,
+            1,
+            "conflict page (is_conflict = 1) must be excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn agenda_cache_excludes_conflict_blocks_property_source() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLK01", "content", "conflict task").await;
+        mark_conflict(&pool, "BLK01").await;
+        set_property(&pool, "BLK01", "due", Some("2025-06-01")).await;
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            0,
+            "conflict block must be excluded from agenda (property source)"
+        );
+    }
+
+    #[tokio::test]
+    async fn agenda_cache_excludes_conflict_blocks_tag_source() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "DTAG1", "tag", "date/2025-06-01").await;
+        insert_block(&pool, "BLK01", "content", "conflict event").await;
+        mark_conflict(&pool, "BLK01").await;
+        add_tag(&pool, "BLK01", "DTAG1").await;
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            0,
+            "conflict block must be excluded from agenda (tag source)"
         );
     }
 }

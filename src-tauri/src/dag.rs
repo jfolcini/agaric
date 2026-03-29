@@ -163,9 +163,16 @@ pub async fn append_merge_op(
 ///
 /// Returns `None` if both chains trace back to their roots with no overlap
 /// (should not happen for ops targeting the same block).
+///
+/// # Compaction limitation
+///
+/// If historical ops in the edit chain have been purged by
+/// [`crate::snapshot::compact_op_log`], the chain walk will encounter
+/// `AppError::NotFound` for the missing op and propagate the error.
+/// **Callers must ensure both ops' chains are fully intact** (i.e., no
+/// compaction has purged ops between the roots and the given heads).
 pub async fn find_lca(
     pool: &SqlitePool,
-    _block_id: &str,
     op_a: &(String, i64),
     op_b: &(String, i64),
 ) -> Result<Option<(String, i64)>, AppError> {
@@ -558,7 +565,7 @@ mod tests {
         );
         insert_remote_op(&pool, &b_record).await.unwrap();
 
-        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 1))
+        let lca = find_lca(&pool, &(DEV_A.into(), 2), &(DEV_B.into(), 1))
             .await
             .unwrap();
 
@@ -599,7 +606,7 @@ mod tests {
         .await
         .unwrap();
 
-        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 2), &(DEV_A.into(), 3))
+        let lca = find_lca(&pool, &(DEV_A.into(), 2), &(DEV_A.into(), 3))
             .await
             .unwrap();
         assert_eq!(lca, Some((DEV_A.to_owned(), 2)));
@@ -646,7 +653,7 @@ mod tests {
         let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
         insert_remote_op(&pool, &b_record).await.unwrap();
 
-        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 3), &(DEV_B.into(), 1))
+        let lca = find_lca(&pool, &(DEV_A.into(), 3), &(DEV_B.into(), 1))
             .await
             .unwrap();
         assert_eq!(lca, Some((DEV_A.to_owned(), 2)));
@@ -669,7 +676,7 @@ mod tests {
         .await
         .unwrap();
 
-        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 2), &(DEV_A.into(), 2))
+        let lca = find_lca(&pool, &(DEV_A.into(), 2), &(DEV_A.into(), 2))
             .await
             .unwrap();
         assert_eq!(lca, Some((DEV_A.to_owned(), 2)));
@@ -685,7 +692,7 @@ mod tests {
             .await
             .unwrap();
 
-        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 1), &(DEV_A.into(), 1))
+        let lca = find_lca(&pool, &(DEV_A.into(), 1), &(DEV_A.into(), 1))
             .await
             .unwrap();
         assert_eq!(lca, Some((DEV_A.to_owned(), 1)));
@@ -717,7 +724,7 @@ mod tests {
         .unwrap();
 
         // op_a is create, op_b is edit
-        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 1), &(DEV_A.into(), 2))
+        let lca = find_lca(&pool, &(DEV_A.into(), 1), &(DEV_A.into(), 2))
             .await
             .unwrap();
         assert_eq!(lca, Some((DEV_A.to_owned(), 1)));
@@ -744,7 +751,7 @@ mod tests {
         .unwrap();
 
         // op_a is edit, op_b is create
-        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 2), &(DEV_A.into(), 1))
+        let lca = find_lca(&pool, &(DEV_A.into(), 2), &(DEV_A.into(), 1))
             .await
             .unwrap();
         assert_eq!(lca, Some((DEV_A.to_owned(), 1)));
@@ -943,5 +950,97 @@ mod tests {
 
         let heads = get_block_edit_heads(&pool, "nonexistent").await.unwrap();
         assert!(heads.is_empty());
+    }
+
+    // ── F15: find_lca after compaction (ops purged from chain) ──────────
+
+    /// When historical ops have been purged by compaction, `find_lca` should
+    /// propagate `AppError::NotFound` for the missing op. This test documents
+    /// the current behavior.
+    #[tokio::test]
+    async fn find_lca_after_compaction_produces_not_found() {
+        use crate::snapshot::compact_op_log;
+
+        let (pool, _dir) = test_pool().await;
+
+        // Insert block into blocks table (needed for snapshot collection)
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, is_conflict) \
+             VALUES ('B1', 'content', 'v1', 1, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Old create_block op (200 days ago)
+        let _create = append_local_op_at(
+            &pool,
+            DEV_A,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "B1".to_owned(),
+                block_type: "content".to_owned(),
+                parent_id: None,
+                position: Some(0),
+                content: "v1".to_owned(),
+            }),
+            "2024-01-01T00:00:00Z".to_owned(),
+        )
+        .await
+        .unwrap();
+
+        // Old edit (also 200 days ago) with prev_edit pointing to seq 1
+        let _edit1 = append_local_op_at(
+            &pool,
+            DEV_A,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: "B1".to_owned(),
+                prev_edit: Some((DEV_A.to_owned(), 1)),
+                to_text: "v2".to_owned(),
+            }),
+            "2024-01-01T00:01:00Z".to_owned(),
+        )
+        .await
+        .unwrap();
+
+        // Recent edit (now) with prev_edit pointing to seq 2
+        let now = chrono::Utc::now().to_rfc3339();
+        let edit2 = append_local_op_at(
+            &pool,
+            DEV_A,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: "B1".to_owned(),
+                prev_edit: Some((DEV_A.to_owned(), 2)),
+                to_text: "v3".to_owned(),
+            }),
+            now,
+        )
+        .await
+        .unwrap();
+
+        // Compact with 90-day retention → purges seq 1 and 2 (old), keeps seq 3
+        compact_op_log(&pool, DEV_A, 90).await.unwrap();
+
+        // Verify seq 3 survived
+        assert_eq!(edit2.seq, 3);
+        let (remaining,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining, 1, "only the recent op should survive");
+
+        // find_lca with seq 3 (recent) should fail because it tries to walk
+        // the prev_edit chain to seq 2 which was purged.
+        let result = find_lca(&pool, &(DEV_A.into(), 3), &(DEV_A.into(), 3)).await;
+        assert!(
+            result.is_err(),
+            "find_lca should fail when chain walk hits purged ops"
+        );
+
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.to_lowercase().contains("not found"),
+            "expected NotFound error, got: {msg}"
+        );
     }
 }

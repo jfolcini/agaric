@@ -14,6 +14,13 @@
 /// blake3(device_id \0 seq \0 parent_seqs_canonical \0 op_type \0 payload_canonical)
 /// ```
 ///
+/// **Wire format contract:** The `\0` delimiter layout above is the
+/// cross-implementation hash contract. Any future client (mobile, web, sync
+/// server) **must** produce the same byte sequence for the same inputs, or
+/// hash verification will fail during sync. Do not change the field order,
+/// delimiter, or encoding without a coordinated migration across all
+/// implementations.
+///
 /// - `parent_seqs`: The raw JSON string from the `parent_seqs` column, or `None`
 ///   for the genesis op (seq 1). When `None`, the empty string is used in the
 ///   hash input. When `Some`, the JSON array should already have entries sorted

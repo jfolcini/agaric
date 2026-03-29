@@ -253,13 +253,8 @@ impl Materializer {
                 None => break, // All senders dropped
             };
 
-            // Check shutdown flag after waking — `shutdown()` sends a wake-up
-            // task so we don't block forever on recv.
-            if shutdown_flag.load(Ordering::Acquire) {
-                break;
-            }
-
-            // Spawn a sub-task for panic isolation — await preserves FIFO.
+            // Process the received task FIRST — even if shutdown has been
+            // signalled, the task was already dequeued and must not be lost.
             let pool_clone = pool.clone();
             let result =
                 tokio::task::spawn(async move { handle_foreground_task(&pool_clone, &task).await })
@@ -268,6 +263,12 @@ impl Materializer {
             Self::log_consumer_result("fg", result);
 
             metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
+
+            // Check shutdown flag AFTER processing — `shutdown()` sends a
+            // wake-up task so we don't block forever on recv.
+            if shutdown_flag.load(Ordering::Acquire) {
+                break;
+            }
         }
         eprintln!("[materializer:fg] Queue closed");
     }
@@ -287,10 +288,6 @@ impl Materializer {
                 None => break, // All senders dropped
             };
 
-            if shutdown_flag.load(Ordering::Acquire) {
-                break;
-            }
-
             // Drain all additionally pending tasks without blocking.
             let mut batch = vec![first];
             while let Ok(task) = rx.try_recv() {
@@ -301,6 +298,8 @@ impl Materializer {
             let deduped = dedup_tasks(batch);
             let dedup_count = (total_before - deduped.len()) as u64;
 
+            // Process ALL deduped tasks FIRST — even if shutdown has been
+            // signalled, these tasks were already dequeued and must not be lost.
             for task in deduped {
                 let pool_clone = pool.clone();
                 let result =
@@ -315,6 +314,11 @@ impl Materializer {
             }
 
             metrics.bg_deduped.fetch_add(dedup_count, Ordering::Relaxed);
+
+            // Check shutdown flag AFTER processing the batch.
+            if shutdown_flag.load(Ordering::Acquire) {
+                break;
+            }
         }
         eprintln!("[materializer:bg] Queue closed");
     }
