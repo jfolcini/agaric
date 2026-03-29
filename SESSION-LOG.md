@@ -553,6 +553,22 @@
 - **Tests:** 794 Rust (753 lib + 41 serializer integration) + 430 Vitest = 1224 total
 - **Commit:** `e4531ea`
 
+### Code Audit Round 2
+
+#### [23:05] Phase 1: 10 Explore subagents (re-audit all domains)
+- **Domains:** Schema+DataModel, Op Log Core, Drafts+Recovery, DAG+Snapshots, Materializer+Cache, Pagination+Tags, Merge, FTS5, Commands, Serialization
+- **Result:** 8 of 10 domains pass clean. 2 critical findings in Op Log Core domain.
+
+#### [23:30] Phase 2: Fix critical findings [REVIEWED]
+- **F-01 (CRITICAL):** `normalize_block_ids()` not called before serialization in `append_local_op_in_tx` — added call before `serialize_inner_payload()`. Ensures deterministic blake3 hashes for Phase 4 sync.
+- **F-02 (CRITICAL):** `validate_set_property()` never called in production — added validation in `append_local_op_in_tx` for SetProperty ops.
+- **F-04 (MEDIUM):** Updated `hash.rs` docs to document ULID normalization requirement.
+- **Deferred:** F-03 (json_extract O(n)), recovery timestamps, merge docs → REVIEW-LATER.md
+- **5 new tests:** ULID normalization, hash determinism, SetProperty validation (3 tests)
+- **Review:** Separate review subagent confirmed all fixes correct, no issues found
+- **Tests:** 759 Rust (758 passed + 1 ignored specta) + 41 serializer integration + 430 Vitest = 1230 total
+- **Commit:** `e5d048c`
+
 ---
 
 <!-- Template:
