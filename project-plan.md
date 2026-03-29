@@ -191,8 +191,8 @@ These tasks block everything downstream. Ship them before moving on.
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
 | p2-t3 | Backlinks panel — per-block | frontend | | Done | [ADR-06, ADR-08] Backend: list_backlinks query. Frontend: BacklinksPanel component with pagination. Commit `4c755bd`. |
-| p2-t4 | [[link]] chip navigation | frontend | | [ADR-01] Click chip → navigate to linked block/page. Scroll into view + focus. |
-| p2-t5 | Broken link decoration | frontend | | [ADR-01, ADR-06] block_link node whose target is deleted → render as 'deleted block' chip, distinct visual style. |
+| p2-t4 | [[link]] chip navigation | frontend | | Done | [ADR-01] BlockLink NodeView with click handler → onNavigate. BlockTree handleNavigate (flush → getBlock → load → focus). Commit `bca657c`. |
+| p2-t5 | Broken link decoration | frontend | | Done | [ADR-01, ADR-06] resolveStatus callback → .block-link-deleted CSS class (opacity + strikethrough). Commit `bca657c`. |
 
 ### History Panel
 
@@ -216,7 +216,7 @@ These tasks block everything downstream. Ship them before moving on.
 |----|------|------|----------|-------|
 | p2-t12 | Conflict copy display | frontend | | Done | [ADR-06, ADR-10] ConflictList component: list_conflicts query, paginated display. Commit `4c755bd`. |
 | p2-t13 | Conflict resolution actions | frontend | | Done | [ADR-06, ADR-10] Keep (edit_block original + delete conflict) and Discard (delete conflict) actions in ConflictList. Commit `4c755bd`. |
-| p2-t14 | 'Deleted tag' token decoration | frontend | | [ADR-06] tag_ref node whose tag_id is deleted → render as greyed chip with tooltip. Not an error. |
+| p2-t14 | 'Deleted tag' token decoration | frontend | | Done | [ADR-06] TagRef NodeView with resolveStatus → .tag-ref-deleted CSS class (opacity + strikethrough). Commit `bca657c`. |
 
 ### Status View
 

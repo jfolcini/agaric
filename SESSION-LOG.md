@@ -397,6 +397,15 @@
 - **Tests:** 330 frontend tests passing
 - **Commit:** `4c755bd`
 
+### Phase 2 Wave 2 — Link Navigation + Decorations
+
+#### [00:55] Subagent: Link nav + broken link + deleted tag [REVIEWED]
+- **Tasks:** p2-t4 (link chip navigation), p2-t5 (broken link decoration), p2-t14 (deleted tag decoration)
+- **Build:** BlockLink/TagRef NodeViews with resolveStatus, ref-based callback wiring, handleNavigate in BlockTree, renderRichContent in StaticBlock
+- **Review:** Clean pass, added 8 tests (NodeView update/destroy, both deleted decorations, missing onNavigate)
+- **Tests:** 368 frontend tests passing
+- **Commit:** `bca657c`
+
 ---
 
 <!-- Template:
