@@ -45,6 +45,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 ├── prek.toml                          # Pre-commit hooks config (prek)
 ├── biome.json                         # Biome 2 lint/format config
 ├── vitest.config.ts                   # Vitest config (jsdom, v8 coverage)
+├── playwright.config.ts               # Playwright E2E config
 ├── index.html                         # Vite entry
 ├── package.json                       # Node deps + scripts
 ├── tsconfig.json                      # TS project references
@@ -53,19 +54,57 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 ├── vite.config.ts                     # Vite config (@ alias, Tauri env)
 ├── .github/workflows/ci.yml           # GitHub Actions CI
 ├── public/                            # Static assets
+├── e2e/                               # Playwright E2E tests
+│   ├── smoke.spec.ts                  # Navigation, sidebar, CRUD smoke
+│   └── editor-lifecycle.spec.ts       # Editor create/edit/delete flows
 ├── src/                               # React source
 │   ├── main.tsx                       # React entry
-│   ├── App.tsx                        # Root component (BootGate wrapper)
+│   ├── App.tsx                        # Root component (sidebar + router)
 │   ├── App.css / index.css            # Styles
-│   ├── components/BootGate.tsx        # Boot gate — blocks UI until ready
-│   ├── components/SearchPanel.tsx    # FTS5 search UI (debounced, paginated)
-│   ├── components/TagFilterPanel.tsx # Boolean tag filter (AND/OR toggle)
-│   ├── components/TagList.tsx        # Tag management panel
-│   ├── stores/boot.ts                 # Zustand boot state machine
-│   ├── lib/tauri.ts                   # Type-safe Tauri invoke wrappers
-│   ├── lib/tauri-mock.ts              # Browser IPC mock (auto-loaded outside Tauri)
-│   ├── __tests__/smoke.test.ts        # Vitest smoke test
-│   ├── __tests__/boot-store.test.ts   # Vitest boot store tests
+│   ├── components/                    # UI components
+│   │   ├── BootGate.tsx               # Boot gate — blocks UI until ready
+│   │   ├── BlockTree.tsx              # Recursive block tree renderer
+│   │   ├── EditableBlock.tsx          # TipTap roving editor wrapper
+│   │   ├── StaticBlock.tsx            # Static block display (non-editing)
+│   │   ├── SortableBlock.tsx          # Drag-and-drop block wrapper
+│   │   ├── SearchPanel.tsx            # FTS5 search UI (debounced, paginated)
+│   │   ├── TagFilterPanel.tsx         # Boolean tag filter (AND/OR toggle)
+│   │   ├── TagList.tsx                # Tag management panel
+│   │   ├── TagPanel.tsx               # Tag detail view
+│   │   ├── PageBrowser.tsx            # Page list + navigation
+│   │   ├── JournalPage.tsx            # Daily journal view
+│   │   ├── BacklinksPanel.tsx         # Backlink reference list
+│   │   ├── HistoryPanel.tsx           # Op log history viewer
+│   │   ├── ConflictList.tsx           # Merge conflict viewer
+│   │   ├── TrashView.tsx              # Soft-deleted blocks view
+│   │   ├── StatusPanel.tsx            # System status dashboard
+│   │   ├── ui/                        # shadcn/ui primitives (badge, button, card, input, etc.)
+│   │   └── __tests__/                 # Component tests (13 test files)
+│   ├── editor/                        # TipTap editor integration
+│   │   ├── index.ts                   # Editor factory + config
+│   │   ├── markdown-serializer.ts     # Org-mode ↔ TipTap serializer
+│   │   ├── use-roving-editor.ts       # Roving editor hook
+│   │   ├── use-block-keyboard.ts      # Block-level keyboard shortcuts
+│   │   ├── SuggestionList.tsx         # Autocomplete suggestion dropdown
+│   │   ├── suggestion-renderer.ts     # Suggestion popup renderer
+│   │   ├── types.ts                   # Editor type definitions
+│   │   ├── extensions/                # TipTap extensions (tag-ref, block-link, pickers)
+│   │   └── __tests__/                 # Editor tests (7 test files)
+│   ├── hooks/                         # Custom React hooks
+│   │   ├── useViewportObserver.ts     # Intersection observer for virtualization
+│   │   └── use-mobile.ts             # Mobile breakpoint detection
+│   ├── stores/                        # Zustand state management
+│   │   ├── boot.ts                    # Boot state machine
+│   │   └── blocks.ts                  # Block CRUD + tree state
+│   ├── lib/                           # Shared utilities
+│   │   ├── tauri.ts                   # Type-safe Tauri invoke wrappers
+│   │   ├── tauri-mock.ts              # Browser IPC mock (auto-loaded outside Tauri)
+│   │   ├── bindings.ts                # Auto-generated specta bindings
+│   │   └── utils.ts                   # Shared helpers (cn, etc.)
+│   ├── __tests__/                     # Root-level tests
+│   │   ├── smoke.test.ts              # Vitest smoke test
+│   │   └── boot-store.test.ts         # Boot store tests
+│   ├── test-setup.ts                  # Vitest global setup
 │   └── vite-env.d.ts                  # Vite type declarations
 └── src-tauri/                         # Rust backend (Tauri 2)
     ├── Cargo.toml                     # Rust crate config
@@ -79,17 +118,21 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
     ├── capabilities/default.json      # Tauri 2 ACL permissions
     ├── icons/                         # App icons (placeholders)
     ├── gen/                           # Auto-generated (schemas, ACL)
+    ├── tests/                         # Integration test binaries
+    │   └── serializer_tests.rs        # Org-mode serializer integration tests (41 tests)
     ├── benches/                       # Criterion benchmarks
     │   ├── hash_bench.rs              # blake3 hash benchmarks
     │   ├── op_log_bench.rs            # Op log append benchmarks
     │   ├── cache_bench.rs             # Cache rebuild benchmarks
+    │   ├── commands_bench.rs          # Command handler benchmarks
     │   ├── pagination_bench.rs        # Pagination query benchmarks
     │   ├── soft_delete_bench.rs       # Soft-delete/purge benchmarks
     │   └── fts_bench.rs              # FTS5 perf benchmark
     └── src/
         ├── main.rs                    # Binary entry
         ├── lib.rs                     # Library with Tauri setup + commands
-        ├── commands.rs                # Tauri command handlers (p1-t24..t27)
+        ├── commands.rs                # Tauri command handlers (18 commands)
+        ├── command_integration_tests.rs # Command handler integration tests (test-only)
         ├── cache.rs                   # Cache rebuild functions (ADR-08, p1-t18..t21)
         ├── dag.rs                     # DAG traversal — LCA, text_at, remote ops (ADR-07, Phase 4)
         ├── db.rs                      # SQLite pool init (WAL, FK pragma, busy_timeout, migrations)
@@ -102,14 +145,17 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
         ├── merge.rs                   # Three-way merge with diffy (ADR-10, Phase 4)
         ├── op.rs                      # Op payload types + OpType enum (ADR-07)
         ├── op_log.rs                  # Op log writer — append_local_op (ADR-07)
+        ├── org_emitter.rs             # Org-mode inline emitter — AST to string (ADR-20)
+        ├── org_parser.rs              # Org-mode inline parser — string to AST (ADR-20)
         ├── pagination.rs              # Cursor/keyset pagination (ADR critical)
         ├── recovery.rs                # Crash recovery at boot (ADR-07)
+        ├── serializer.rs              # Org-mode serializer config, entity maps (ADR-20)
         ├── soft_delete.rs             # Cascade soft-delete, restore, purge (ADR-06)
         ├── snapshot.rs                # Snapshot encoding, RESET apply, compaction (ADR-07)
         ├── tag_query.rs               # Boolean tag queries with FxHashSet (ADR-08)
         ├── ulid.rs                    # BlockId newtype (ULID, case-normalized)
         ├── integration_tests.rs       # Cross-module integration tests (test-only)
-        └── snapshots/                 # Insta snapshot files (19 .snap files)
+        └── snapshots/                 # Insta snapshot files (22 .snap files)
 ```
 
 ## Rust Modules (src-tauri/src/)
@@ -117,7 +163,8 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 | Module | Purpose | Key types |
 |--------|---------|-----------|
 | `lib.rs` | Tauri app entry, setup hook (pool + device + recovery + materializer) | `run()` |
-| `commands.rs` | Tauri command handlers — 12 commands (p1-t24..t27, search, tags, status) | `create_block`, `edit_block`, `delete_block`, `restore_block`, `purge_block`, `list_blocks`, `get_block`, `search_blocks`, `query_by_tags`, `list_tags_by_prefix`, `get_status` |
+| `commands.rs` | Tauri command handlers — 18 commands (CRUD, search, tags, status, snapshot, history, sync) | `create_block`, `edit_block`, `delete_block`, `restore_block`, `purge_block`, `list_blocks`, `get_block`, `search_blocks`, `query_by_tags`, `list_tags_by_prefix`, `get_status`, `create_snapshot`, `get_history`, `move_block`, `reorder_block`, `set_property`, `get_conflicts`, `resolve_conflict` |
+| `command_integration_tests.rs` | Command handler integration tests (test-only) | Full command pipeline tests |
 | `cache.rs` | Cache rebuild: tags, pages, agenda, block_links (ADR-08) | `rebuild_tags_cache()`, `rebuild_pages_cache()`, `rebuild_agenda_cache()`, `reindex_block_links()`, `rebuild_all_caches()` |
 | `dag.rs` | DAG traversal primitives (ADR-07, Phase 4) | `insert_remote_op()`, `append_merge_op()`, `find_lca()`, `text_at()`, `get_block_edit_heads()` |
 | `db.rs` | SQLite pool with WAL + FK pragma + busy_timeout(5s) | `init_pool()` |
@@ -129,18 +176,21 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 | `materializer.rs` | Foreground + background materializer queues, FTS tasks, high-water mark monitoring (ADR-08) | `Materializer`, `MaterializeTask`, `dispatch_op()`, `dispatch_background()`, `dedup_tasks()`, `QueueMetrics`, `shutdown()` |
 | `merge.rs` | Three-way merge with diffy (ADR-10) | `merge_text()`, `create_conflict_copy()`, `resolve_property_conflict()`, `merge_block()`, `MergeResult`, `MergeOutcome` |
 | `op.rs` | Op payload types — 12 op types (ADR-07) | `OpType` (Display, FromStr, non_exhaustive), `OpPayload`, all payload structs |
-| `op_log.rs` | Op log writer — append local ops | `OpRecord` (FromRow), `append_local_op()`, `append_local_op_at()`, `append_local_op_in_tx()`, `get_op_by_seq()`, `get_latest_seq()`, `get_ops_since()` |
+| `op_log.rs` | Op log writer — append local ops (validates + normalizes ULIDs before hashing) | `OpRecord` (FromRow), `append_local_op()`, `append_local_op_at()`, `append_local_op_in_tx()`, `get_op_by_seq()`, `get_latest_seq()`, `get_ops_since()` |
+| `org_emitter.rs` | Org-mode inline emitter — AST nodes to org-mode string (ADR-20) | `emit_inline()`, `InlineNode` rendering |
+| `org_parser.rs` | Org-mode inline parser — org-mode string to AST nodes (ADR-20) | `parse_inline()`, org-mode syntax recognition |
 | `pagination.rs` | Cursor/keyset pagination — all list queries | `Cursor`, `PageRequest`, `PageResponse`, `list_children()`, `list_by_type()`, `list_trash()`, `list_by_tag()`, `list_agenda()` |
 | `recovery.rs` | Crash recovery at boot (ADR-07) | `RecoveryReport` (duration_ms, draft_errors), `recover_at_boot()` |
 | `snapshot.rs` | Snapshot encoding, RESET apply, compaction (ADR-07) | `SnapshotData`, `encode_snapshot()`, `decode_snapshot()`, `create_snapshot()`, `apply_snapshot()`, `compact_op_log()`, `get_latest_snapshot()` |
 | `soft_delete.rs` | Cascade soft-delete, restore, purge (ADR-06) | `soft_delete_block()`, `cascade_soft_delete()` (returns count), `restore_block()`, `purge_block()` (batch O(k)), `is_deleted()`, `get_descendants()` |
+| `serializer.rs` | Org-mode serializer config, entity maps, round-trip pipeline (ADR-20) | `serialize_to_org()`, `parse_from_org()`, entity/special char maps |
 | `tag_query.rs` | Boolean tag queries (ADR-08) | `TagExpr`, `eval_tag_query()`, `list_tags_by_prefix()`, `escape_like()` |
 | `ulid.rs` | ID generation and validation | `BlockId`, `AttachmentId`, `SnapshotId` |
 | `integration_tests.rs` | Cross-module pipeline tests (16 tests, test-only) | Op chains, recovery sim, cascade delete, pagination, materializer |
 
 ## Test Coverage
 
-- **602 Rust tests** + **430 Vitest frontend tests** + **18 Playwright E2E tests** = 1050 total
+- **800 Rust tests** (759 lib + 41 serializer integration) + **430 Vitest frontend tests** + **18 Playwright E2E tests** = 1,248 total
 - Phases 1–3 complete + Phase 4 Waves 1-2 (DAG + merge + snapshots/compaction)
 - Untestable Tauri bootstrap (lib.rs::run, main.rs::main, command wrappers) excluded via `#[cfg(not(tarpaulin_include))]`
 
@@ -222,7 +272,7 @@ npm run test:coverage    # Vitest with v8 coverage
 npx playwright test     # Playwright E2E tests (18 tests)
 
 # Backend (source cargo env first: . "$HOME/.cargo/env")
-cd src-tauri && cargo nextest run  # Run Rust tests (602 tests)
+cd src-tauri && cargo nextest run  # Run Rust tests (800 tests)
 cd src-tauri && cargo fmt --check  # Rust formatting
 cd src-tauri && cargo clippy -- -D warnings  # Lint Rust
 
@@ -371,7 +421,7 @@ Measured timings (incremental, no code changes):
 | Command | Time | Notes |
 |---------|------|-------|
 | `cargo fmt --check` | 0.1s | No compilation |
-| `cargo nextest run` | 3.3s | 602 tests in parallel |
+| `cargo nextest run` | ~1.3s | 800 tests in parallel |
 | `cargo clippy` | 2.0s | Separate analysis pass |
 | `biome check` | 0.2s | |
 | `tsc -b --noEmit` | 1.0s | |
