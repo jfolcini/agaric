@@ -12,6 +12,7 @@ pub mod op_log;
 pub mod pagination;
 pub mod recovery;
 pub mod soft_delete;
+pub mod tag_query;
 pub mod ulid;
 
 #[cfg(test)]
@@ -44,6 +45,8 @@ mod specta_tests {
             crate::commands::get_conflicts,
             crate::commands::get_status,
             crate::commands::search_blocks,
+            crate::commands::query_by_tags,
+            crate::commands::list_tags_by_prefix,
         ])
     }
 
@@ -142,6 +145,8 @@ pub fn run() {
         commands::get_conflicts,
         commands::get_status,
         commands::search_blocks,
+        commands::query_by_tags,
+        commands::list_tags_by_prefix,
     ]);
 
     tauri::Builder::default()

@@ -149,3 +149,27 @@ export async function searchBlocks(params?: {
 export async function getStatus(): Promise<StatusInfo> {
   return invoke('get_status')
 }
+
+export async function queryByTags(params: {
+  tagIds: string[]
+  prefixes: string[]
+  mode: string // 'and' | 'or'
+  cursor?: string
+  limit?: number
+}): Promise<PageResponse<BlockRow>> {
+  return invoke('query_by_tags', {
+    tagIds: params.tagIds,
+    prefixes: params.prefixes,
+    mode: params.mode,
+    cursor: params.cursor ?? null,
+    limit: params.limit ?? null,
+  })
+}
+
+export async function listTagsByPrefix(params: {
+  prefix: string
+}): Promise<Array<{ tag_id: string; name: string; usage_count: number; updated_at: string }>> {
+  return invoke('list_tags_by_prefix', {
+    prefix: params.prefix,
+  })
+}

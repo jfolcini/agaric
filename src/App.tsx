@@ -15,6 +15,7 @@ import { JournalPage } from './components/JournalPage'
 import { PageBrowser } from './components/PageBrowser'
 import { SearchPanel } from './components/SearchPanel'
 import { StatusPanel } from './components/StatusPanel'
+import { TagFilterPanel } from './components/TagFilterPanel'
 import { TagList } from './components/TagList'
 import { TrashView } from './components/TrashView'
 import {
@@ -111,7 +112,13 @@ function App() {
             {view === 'journal' && <JournalPage />}
             {view === 'search' && <SearchPanel />}
             {view === 'pages' && <PageBrowser onPageSelect={() => {}} />}
-            {view === 'tags' && <TagList />}
+            {view === 'tags' && (
+              <div className="space-y-8">
+                <TagList />
+                <hr className="border-border" />
+                <TagFilterPanel />
+              </div>
+            )}
             {view === 'trash' && <TrashView />}
             {view === 'status' && <StatusPanel />}
             {view === 'conflicts' && <ConflictList />}

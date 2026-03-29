@@ -125,6 +125,22 @@ async searchBlocks(query: string, cursor: string | null, limit: number | null) :
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async queryByTags(tagIds: string[], prefixes: string[], mode: string, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, cursor, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listTagsByPrefix(prefix: string) : Promise<Result<TagCacheRow[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_tags_by_prefix", { prefix }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -164,6 +180,10 @@ export type RestoreResponse = { block_id: string; restored_count: number }
  * Exposed by the `get_status` command.
  */
 export type StatusInfo = { foreground_queue_depth: number; background_queue_depth: number; total_ops_dispatched: number; total_background_dispatched: number }
+/**
+ * Row from `tags_cache`, used by `list_tags_by_prefix`.
+ */
+export type TagCacheRow = { tag_id: string; name: string; usage_count: number; updated_at: string }
 export type TagResponse = { block_id: string; tag_id: string }
 
 /** tauri-specta globals **/

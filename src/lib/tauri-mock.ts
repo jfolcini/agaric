@@ -139,6 +139,30 @@ export function setupMock(): void {
         }
       }
 
+      case 'query_by_tags': {
+        // Simplified mock: return all non-deleted blocks as fallback
+        // (real backend filters by block_tags join table)
+        const items = [...blocks.values()].filter((b) => !(b.deleted_at as string | null))
+        return { items, next_cursor: null, has_more: false }
+      }
+
+      case 'list_tags_by_prefix': {
+        const a = args as Record<string, unknown>
+        const prefix = ((a.prefix as string) ?? '').toLowerCase()
+        const tagBlocks = [...blocks.values()].filter(
+          (b) =>
+            b.block_type === 'tag' &&
+            !(b.deleted_at as string | null) &&
+            ((b.content as string) ?? '').toLowerCase().startsWith(prefix),
+        )
+        return tagBlocks.map((b) => ({
+          tag_id: b.id as string,
+          name: (b.content as string) ?? '',
+          usage_count: 0,
+          updated_at: new Date().toISOString(),
+        }))
+      }
+
       default:
         return null
     }

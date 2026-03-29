@@ -26,6 +26,7 @@ use crate::op_log;
 use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
 use crate::recovery;
 use crate::soft_delete;
+use crate::tag_query::{self, TagCacheRow, TagExpr};
 use crate::ulid::BlockId;
 
 // ---------------------------------------------------------------------------
@@ -729,6 +730,51 @@ pub async fn search_blocks_inner(
     fts::search_fts(pool, &query, &page).await
 }
 
+/// Query blocks by boolean tag expression.
+///
+/// Builds a `TagExpr` from the provided tag_ids, prefixes, and mode.
+/// `mode` is `"and"` for intersection, anything else defaults to `"or"` (union).
+pub async fn query_by_tags_inner(
+    pool: &SqlitePool,
+    tag_ids: Vec<String>,
+    prefixes: Vec<String>,
+    mode: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    let mut exprs = Vec::new();
+    for tag_id in tag_ids {
+        exprs.push(TagExpr::Tag(tag_id));
+    }
+    for prefix in prefixes {
+        exprs.push(TagExpr::Prefix(prefix));
+    }
+
+    if exprs.is_empty() {
+        return Ok(PageResponse {
+            items: vec![],
+            next_cursor: None,
+            has_more: false,
+        });
+    }
+
+    let expr = match mode.as_str() {
+        "and" => TagExpr::And(exprs),
+        _ => TagExpr::Or(exprs), // default to OR
+    };
+
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    tag_query::eval_tag_query(pool, &expr, &page).await
+}
+
+/// List all tags matching a name prefix (autocomplete / UI).
+pub async fn list_tags_by_prefix_inner(
+    pool: &SqlitePool,
+    prefix: String,
+) -> Result<Vec<TagCacheRow>, AppError> {
+    tag_query::list_tags_by_prefix(pool, &prefix).await
+}
+
 // ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
@@ -944,6 +990,30 @@ pub async fn search_blocks(
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     search_blocks_inner(&pool, query, cursor, limit).await
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn query_by_tags(
+    pool: State<'_, SqlitePool>,
+    tag_ids: Vec<String>,
+    prefixes: Vec<String>,
+    mode: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    query_by_tags_inner(&pool, tag_ids, prefixes, mode, cursor, limit).await
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_tags_by_prefix(
+    pool: State<'_, SqlitePool>,
+    prefix: String,
+) -> Result<Vec<TagCacheRow>, AppError> {
+    list_tags_by_prefix_inner(&pool, prefix).await
 }
 
 // ---------------------------------------------------------------------------
@@ -2540,5 +2610,159 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.items.len(), 0);
+    }
+
+    // ======================================================================
+    // query_by_tags_inner
+    // ======================================================================
+
+    /// Helper: insert a tag_cache entry for command-level tests.
+    async fn insert_tag_cache(pool: &SqlitePool, tag_id: &str, name: &str, usage_count: i64) {
+        sqlx::query(
+            "INSERT INTO tags_cache (tag_id, name, usage_count, updated_at) \
+             VALUES (?, ?, ?, '2025-01-01T00:00:00Z')",
+        )
+        .bind(tag_id)
+        .bind(name)
+        .bind(usage_count)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Helper: associate a block with a tag.
+    async fn insert_tag_assoc(pool: &SqlitePool, block_id: &str, tag_id: &str) {
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(block_id)
+            .bind(tag_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn query_by_tags_inner_empty_inputs_returns_empty() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = query_by_tags_inner(&pool, vec![], vec![], "or".into(), None, None)
+            .await
+            .unwrap();
+
+        assert!(result.items.is_empty());
+        assert!(!result.has_more);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn query_by_tags_inner_or_mode_unions_tag_ids() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG_A", "tag", "a", None, None).await;
+        insert_block(&pool, "TAG_B", "tag", "b", None, None).await;
+        insert_block(&pool, "BLK_1", "content", "one", None, Some(1)).await;
+        insert_block(&pool, "BLK_2", "content", "two", None, Some(2)).await;
+
+        insert_tag_assoc(&pool, "BLK_1", "TAG_A").await;
+        insert_tag_assoc(&pool, "BLK_2", "TAG_B").await;
+
+        let result = query_by_tags_inner(
+            &pool,
+            vec!["TAG_A".into(), "TAG_B".into()],
+            vec![],
+            "or".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.items.len(), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn query_by_tags_inner_and_mode_intersects_tag_ids() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG_A", "tag", "a", None, None).await;
+        insert_block(&pool, "TAG_B", "tag", "b", None, None).await;
+        insert_block(&pool, "BLK_1", "content", "both", None, Some(1)).await;
+        insert_block(&pool, "BLK_2", "content", "only-a", None, Some(2)).await;
+
+        insert_tag_assoc(&pool, "BLK_1", "TAG_A").await;
+        insert_tag_assoc(&pool, "BLK_1", "TAG_B").await;
+        insert_tag_assoc(&pool, "BLK_2", "TAG_A").await;
+
+        let result = query_by_tags_inner(
+            &pool,
+            vec!["TAG_A".into(), "TAG_B".into()],
+            vec![],
+            "and".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].id, "BLK_1");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn query_by_tags_inner_with_prefix() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG_WM", "tag", "work/meeting", None, None).await;
+        insert_block(&pool, "TAG_WE", "tag", "work/email", None, None).await;
+
+        insert_tag_cache(&pool, "TAG_WM", "work/meeting", 1).await;
+        insert_tag_cache(&pool, "TAG_WE", "work/email", 1).await;
+
+        insert_block(&pool, "BLK_1", "content", "meeting notes", None, Some(1)).await;
+        insert_block(&pool, "BLK_2", "content", "email draft", None, Some(2)).await;
+
+        insert_tag_assoc(&pool, "BLK_1", "TAG_WM").await;
+        insert_tag_assoc(&pool, "BLK_2", "TAG_WE").await;
+
+        let result =
+            query_by_tags_inner(&pool, vec![], vec!["work/".into()], "or".into(), None, None)
+                .await
+                .unwrap();
+
+        assert_eq!(result.items.len(), 2);
+    }
+
+    // ======================================================================
+    // list_tags_by_prefix_inner
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_tags_by_prefix_inner_returns_matching() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG_WM", "tag", "work/meeting", None, None).await;
+        insert_block(&pool, "TAG_WE", "tag", "work/email", None, None).await;
+        insert_block(&pool, "TAG_P", "tag", "personal", None, None).await;
+
+        insert_tag_cache(&pool, "TAG_WM", "work/meeting", 5).await;
+        insert_tag_cache(&pool, "TAG_WE", "work/email", 3).await;
+        insert_tag_cache(&pool, "TAG_P", "personal", 10).await;
+
+        let result = list_tags_by_prefix_inner(&pool, "work/".into())
+            .await
+            .unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].name, "work/email");
+        assert_eq!(result[1].name, "work/meeting");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_tags_by_prefix_inner_empty_returns_empty() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = list_tags_by_prefix_inner(&pool, "nonexistent/".into())
+            .await
+            .unwrap();
+
+        assert!(result.is_empty());
     }
 }

@@ -18,8 +18,10 @@ import {
   editBlock,
   getBlock,
   listBlocks,
+  listTagsByPrefix,
   moveBlock,
   purgeBlock,
+  queryByTags,
   removeTag,
   restoreBlock,
   searchBlocks,
@@ -431,6 +433,116 @@ describe('searchBlocks', () => {
 })
 
 // ---------------------------------------------------------------------------
+// queryByTags
+// ---------------------------------------------------------------------------
+
+describe('queryByTags', () => {
+  const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+  it('invokes query_by_tags with required params and null defaults', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    const result = await queryByTags({
+      tagIds: ['TAG01', 'TAG02'],
+      prefixes: ['work'],
+      mode: 'and',
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('query_by_tags', {
+      tagIds: ['TAG01', 'TAG02'],
+      prefixes: ['work'],
+      mode: 'and',
+      cursor: null,
+      limit: null,
+    })
+    expect(result).toEqual(emptyPage)
+  })
+
+  it('passes all optional parameters through', async () => {
+    const pageResp = {
+      items: [
+        {
+          id: 'B1',
+          block_type: 'content',
+          content: 'found',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        },
+      ],
+      next_cursor: 'next123',
+      has_more: true,
+    }
+    mockedInvoke.mockResolvedValueOnce(pageResp)
+
+    const result = await queryByTags({
+      tagIds: ['TAG01'],
+      prefixes: [],
+      mode: 'or',
+      cursor: 'cursor123',
+      limit: 25,
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('query_by_tags', {
+      tagIds: ['TAG01'],
+      prefixes: [],
+      mode: 'or',
+      cursor: 'cursor123',
+      limit: 25,
+    })
+    expect(result).toEqual(pageResp)
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('query failed'))
+    await expect(queryByTags({ tagIds: ['TAG01'], prefixes: [], mode: 'and' })).rejects.toThrow(
+      'query failed',
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listTagsByPrefix
+// ---------------------------------------------------------------------------
+
+describe('listTagsByPrefix', () => {
+  it('invokes list_tags_by_prefix with prefix', async () => {
+    const expected = [
+      { tag_id: 'TAG01', name: 'work', usage_count: 5, updated_at: '2025-01-15T00:00:00Z' },
+      { tag_id: 'TAG02', name: 'work/meeting', usage_count: 3, updated_at: '2025-01-15T00:00:00Z' },
+    ]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listTagsByPrefix({ prefix: 'work' })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_tags_by_prefix', {
+      prefix: 'work',
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('returns empty array for no matches', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    const result = await listTagsByPrefix({ prefix: 'nonexistent' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('list_tags_by_prefix', {
+      prefix: 'nonexistent',
+    })
+    expect(result).toEqual([])
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('list failed'))
+    await expect(listTagsByPrefix({ prefix: 'fail' })).rejects.toThrow('list failed')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Cross-cutting concerns
 // ---------------------------------------------------------------------------
 
@@ -450,6 +562,8 @@ describe('cross-cutting', () => {
     await addTag('id', 'tag')
     await removeTag('id', 'tag')
     await searchBlocks({ query: 'test' })
+    await queryByTags({ tagIds: ['t'], prefixes: [], mode: 'and' })
+    await listTagsByPrefix({ prefix: 'w' })
 
     const commandNames = mockedInvoke.mock.calls.map((call) => call[0])
     expect(commandNames).toEqual([
@@ -464,6 +578,8 @@ describe('cross-cutting', () => {
       'add_tag',
       'remove_tag',
       'search_blocks',
+      'query_by_tags',
+      'list_tags_by_prefix',
     ])
   })
 })
