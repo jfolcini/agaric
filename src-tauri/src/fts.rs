@@ -28,6 +28,8 @@ use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse};
 // Regex patterns for stripping
 // ---------------------------------------------------------------------------
 
+// Hardcoded regex patterns — compilation cannot fail for these constant strings.
+
 /// Matches bold markdown: `**text**`
 static BOLD_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\*\*(.+?)\*\*").expect("invalid bold regex"));

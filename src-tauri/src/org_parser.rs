@@ -24,6 +24,7 @@ use crate::serializer::{
     InlineNode, OrgDoc, OrgMark, OrgParagraph, OrgTimestamp, TextNode, ENTITIES,
 };
 
+// Hardcoded regex patterns — compilation cannot fail for these constant strings.
 static ULID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9A-Z]{26}$").unwrap());
 static ACTIVE_TS_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^<(\d{4}-\d{2}-\d{2})\s+[A-Za-z]{2,3}(?:\s+(\d{2}:\d{2}))?>$").unwrap()
@@ -117,6 +118,9 @@ fn try_consume_entity(s: &mut Scanner) -> Option<InlineNode> {
         return None;
     }
     let rest = &s.rest()[1..];
+    // Count ASCII-alphabetic characters. Since is_ascii_alphabetic matches only
+    // single-byte ASCII chars, character count == byte count, so the slice below
+    // is safe and will never split a multi-byte UTF-8 sequence.
     let name_len = rest.chars().take_while(|c| c.is_ascii_alphabetic()).count();
     if name_len < 2 {
         return None;

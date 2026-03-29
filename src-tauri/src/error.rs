@@ -7,6 +7,7 @@ use thiserror::Error;
 /// `Serialize` impl below.
 #[derive(specta::Type)]
 #[specta(rename = "AppError")]
+#[allow(dead_code)] // Fields are read by specta's Type derive macro, not directly
 struct AppErrorSchema {
     kind: String,
     message: String,

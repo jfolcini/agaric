@@ -126,6 +126,7 @@ fn resolve_expr<'a>(
                     return Ok(FxHashSet::default());
                 }
                 let mut iter = exprs.iter();
+                // Safe: is_empty() check above ensures at least one element
                 let mut result: FxHashSet<String> =
                     resolve_expr(pool, iter.next().unwrap()).await?;
                 for e in iter {

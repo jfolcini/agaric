@@ -92,10 +92,15 @@ fn compute_day_abbrev(date: &str) -> Option<String> {
     let y: i32 = parts[0].parse().ok()?;
     let m: u32 = parts[1].parse().ok()?;
     let d: u32 = parts[2].parse().ok()?;
+    if !(1..=12).contains(&m) || d == 0 || d > 31 {
+        return None;
+    }
     let t = [0u32, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
     let y_adj = if m < 3 { y - 1 } else { y };
+    // rem_euclid ensures non-negative result (Rust `%` can be negative for negative dividends)
     let dow =
-        (y_adj + y_adj / 4 - y_adj / 100 + y_adj / 400 + t[(m - 1) as usize] as i32 + d as i32) % 7;
+        (y_adj + y_adj / 4 - y_adj / 100 + y_adj / 400 + t[(m - 1) as usize] as i32 + d as i32)
+            .rem_euclid(7);
     let days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     Some(days[dow as usize].to_string())
 }
@@ -246,6 +251,22 @@ mod tests {
     fn day_computation() {
         assert_eq!(compute_day_abbrev("2024-01-15"), Some("Mon".into()));
         assert_eq!(compute_day_abbrev("2024-01-14"), Some("Sun".into()));
+    }
+    #[test]
+    fn day_computation_invalid_month() {
+        assert_eq!(compute_day_abbrev("2024-00-15"), None);
+        assert_eq!(compute_day_abbrev("2024-13-15"), None);
+    }
+    #[test]
+    fn day_computation_invalid_day() {
+        assert_eq!(compute_day_abbrev("2024-01-00"), None);
+        assert_eq!(compute_day_abbrev("2024-01-32"), None);
+    }
+    #[test]
+    fn day_computation_malformed() {
+        assert_eq!(compute_day_abbrev("not-a-date"), None);
+        assert_eq!(compute_day_abbrev("2024-01"), None);
+        assert_eq!(compute_day_abbrev(""), None);
     }
     #[test]
     fn unicode_to_entity_known() {

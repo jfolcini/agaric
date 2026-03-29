@@ -192,5 +192,8 @@ pub fn run() {
         })
         .invoke_handler(builder.invoke_handler())
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            eprintln!("Fatal: failed to run Tauri application: {e}");
+            std::process::exit(1);
+        });
 }
