@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod commands;
+pub mod dag;
 pub mod db;
 pub mod device;
 pub mod draft;
@@ -7,6 +8,7 @@ pub mod error;
 pub mod fts;
 pub mod hash;
 pub mod materializer;
+pub mod merge;
 pub mod op;
 pub mod op_log;
 pub mod pagination;

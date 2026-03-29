@@ -1,0 +1,947 @@
+//! DAG traversal primitives for the op log (ADR-07, Phase 4).
+//!
+//! Building blocks for the merge system (Wave 1B). Provides:
+//! - Remote op insertion with hash verification
+//! - Merge op creation with multi-parent parent_seqs
+//! - Lowest Common Ancestor (LCA) for edit chains
+//! - Text extraction at a given op
+//! - Edit head discovery across devices
+
+#![allow(dead_code)]
+
+use std::collections::HashSet;
+
+use chrono::Utc;
+use sqlx::SqlitePool;
+
+use crate::error::AppError;
+use crate::hash::{compute_op_hash, verify_op_hash};
+use crate::op::*;
+use crate::op_log::{get_op_by_seq, serialize_inner_payload, OpRecord};
+
+/// Extract the `prev_edit` pointer from an op record's payload.
+///
+/// - `edit_block` → returns `payload.prev_edit` (may be `None`)
+/// - `create_block` → returns `None` (root of the edit chain)
+/// - anything else → `AppError::InvalidOperation`
+fn extract_prev_edit(record: &OpRecord) -> Result<Option<(String, i64)>, AppError> {
+    match record.op_type.as_str() {
+        "edit_block" => {
+            let payload: EditBlockPayload = serde_json::from_str(&record.payload)?;
+            Ok(payload.prev_edit)
+        }
+        "create_block" => Ok(None),
+        _ => Err(AppError::InvalidOperation(format!(
+            "expected edit_block or create_block, got {}",
+            record.op_type
+        ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Insert an op received from a remote device into the op_log.
+///
+/// Uses `INSERT OR IGNORE` on the composite PK `(device_id, seq)` so that
+/// duplicate delivery is idempotent (ADR-09). Rejects ops whose hash does
+/// not match the recomputed hash of the record fields.
+pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> {
+    // Verify the hash matches the record contents
+    if !verify_op_hash(
+        &record.hash,
+        &record.device_id,
+        record.seq,
+        record.parent_seqs.as_deref(),
+        &record.op_type,
+        &record.payload,
+    ) {
+        return Err(AppError::InvalidOperation(
+            "hash mismatch on remote op".into(),
+        ));
+    }
+
+    // INSERT OR IGNORE — duplicate delivery is a no-op
+    sqlx::query(
+        "INSERT OR IGNORE INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&record.device_id)
+    .bind(record.seq)
+    .bind(&record.parent_seqs)
+    .bind(&record.hash)
+    .bind(&record.op_type)
+    .bind(&record.payload)
+    .bind(&record.created_at)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Create a merge op whose `parent_seqs` contains entries from multiple
+/// devices (one per syncing device at the merge point).
+///
+/// `parent_entries` must contain at least 2 entries. They are sorted
+/// lexicographically by `(device_id, seq)` for deterministic hashing.
+pub async fn append_merge_op(
+    pool: &SqlitePool,
+    device_id: &str,
+    op_payload: OpPayload,
+    parent_entries: Vec<(String, i64)>,
+) -> Result<OpRecord, AppError> {
+    if parent_entries.len() < 2 {
+        return Err(AppError::InvalidOperation(
+            "merge op requires at least 2 parent entries".into(),
+        ));
+    }
+
+    // Sort lexicographically for deterministic hashing
+    let mut sorted_parents = parent_entries;
+    sorted_parents.sort();
+
+    let parent_seqs_json = serde_json::to_string(&sorted_parents)?;
+    let op_type = op_payload.op_type_str().to_owned();
+    let payload_json = serialize_inner_payload(&op_payload)?;
+    let created_at = Utc::now().to_rfc3339();
+
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    let row: (i64,) =
+        sqlx::query_as("SELECT COALESCE(MAX(seq), 0) + 1 FROM op_log WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let seq = row.0;
+
+    let hash = compute_op_hash(
+        device_id,
+        seq,
+        Some(&parent_seqs_json),
+        &op_type,
+        &payload_json,
+    );
+
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(device_id)
+    .bind(seq)
+    .bind(&parent_seqs_json)
+    .bind(&hash)
+    .bind(&op_type)
+    .bind(&payload_json)
+    .bind(&created_at)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(OpRecord {
+        device_id: device_id.to_owned(),
+        seq,
+        parent_seqs: Some(parent_seqs_json),
+        hash,
+        op_type,
+        payload: payload_json,
+        created_at,
+    })
+}
+
+/// Find the Lowest Common Ancestor of two edit chains for a specific block.
+///
+/// Walks backward from `op_a` and `op_b` following `prev_edit` pointers in
+/// `EditBlockPayload`. For `create_block` ops the chain terminates (no
+/// `prev_edit`).
+///
+/// Algorithm: build a visited set from chain A, then walk chain B until
+/// finding a match.
+///
+/// Returns `None` if both chains trace back to their roots with no overlap
+/// (should not happen for ops targeting the same block).
+pub async fn find_lca(
+    pool: &SqlitePool,
+    _block_id: &str,
+    op_a: &(String, i64),
+    op_b: &(String, i64),
+) -> Result<Option<(String, i64)>, AppError> {
+    // Build visited set from chain A (including op_a itself)
+    let mut visited: HashSet<(String, i64)> = HashSet::new();
+    let mut current: Option<(String, i64)> = Some(op_a.clone());
+    while let Some(key) = current.take() {
+        visited.insert(key.clone());
+        let record = get_op_by_seq(pool, &key.0, key.1).await?;
+        current = extract_prev_edit(&record)?;
+    }
+
+    // Walk chain B, checking each step against the visited set
+    let mut current: Option<(String, i64)> = Some(op_b.clone());
+    while let Some(key) = current.take() {
+        if visited.contains(&key) {
+            return Ok(Some(key));
+        }
+        let record = get_op_by_seq(pool, &key.0, key.1).await?;
+        current = extract_prev_edit(&record)?;
+    }
+
+    Ok(None)
+}
+
+/// Extract the text content at a given op.
+///
+/// - `edit_block` → `to_text`
+/// - `create_block` → `content`
+/// - anything else → `AppError::InvalidOperation`
+pub async fn text_at(pool: &SqlitePool, device_id: &str, seq: i64) -> Result<String, AppError> {
+    let record = get_op_by_seq(pool, device_id, seq).await?;
+    match record.op_type.as_str() {
+        "edit_block" => {
+            let payload: EditBlockPayload = serde_json::from_str(&record.payload)?;
+            Ok(payload.to_text)
+        }
+        "create_block" => {
+            let payload: CreateBlockPayload = serde_json::from_str(&record.payload)?;
+            Ok(payload.content)
+        }
+        _ => Err(AppError::InvalidOperation(format!(
+            "text_at only works for content-producing ops, got {}",
+            record.op_type
+        ))),
+    }
+}
+
+/// Get the latest `edit_block` ops for a block across all devices.
+///
+/// Returns the `(device_id, seq)` of the highest-seq `edit_block` op per
+/// device for the given `block_id`. These are the "heads" of the edit DAG —
+/// useful for detecting divergence that requires merging.
+pub async fn get_block_edit_heads(
+    pool: &SqlitePool,
+    block_id: &str,
+) -> Result<Vec<(String, i64)>, AppError> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT device_id, MAX(seq) AS seq \
+         FROM op_log \
+         WHERE op_type = 'edit_block' \
+           AND json_extract(payload, '$.block_id') = ? \
+         GROUP BY device_id \
+         ORDER BY device_id",
+    )
+    .bind(block_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
+// ===========================================================================
+// Tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::init_pool;
+    use crate::hash::compute_op_hash;
+    use crate::op_log::append_local_op_at;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    // ── Test fixture constants ──────────────────────────────────────────
+
+    const FIXED_TS: &str = "2025-01-15T12:00:00+00:00";
+    const DEV_A: &str = "device-A";
+    const DEV_B: &str = "device-B";
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+
+    /// Create a temp-file-backed SQLite pool with migrations applied.
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Build a `CreateBlock` payload.
+    fn make_create(block_id: &str, content: &str) -> OpPayload {
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: block_id.into(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(0),
+            content: content.into(),
+        })
+    }
+
+    /// Build an `EditBlock` payload with a `prev_edit` pointer.
+    fn make_edit(block_id: &str, to_text: &str, prev_edit: Option<(String, i64)>) -> OpPayload {
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: block_id.into(),
+            to_text: to_text.into(),
+            prev_edit,
+        })
+    }
+
+    /// Build a `DeleteBlock` payload.
+    fn make_delete(block_id: &str) -> OpPayload {
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: block_id.into(),
+            cascade: false,
+        })
+    }
+
+    /// Build a valid remote `OpRecord` with a correct hash.
+    fn make_remote_record(
+        device_id: &str,
+        seq: i64,
+        parent_seqs: Option<String>,
+        op_type: &str,
+        payload: &str,
+    ) -> OpRecord {
+        let hash = compute_op_hash(device_id, seq, parent_seqs.as_deref(), op_type, payload);
+        OpRecord {
+            device_id: device_id.to_owned(),
+            seq,
+            parent_seqs,
+            hash,
+            op_type: op_type.to_owned(),
+            payload: payload.to_owned(),
+            created_at: FIXED_TS.to_owned(),
+        }
+    }
+
+    // =====================================================================
+    // 1. insert_remote_op
+    // =====================================================================
+
+    #[tokio::test]
+    async fn insert_remote_op_happy_path() {
+        let (pool, _dir) = test_pool().await;
+
+        let record = make_remote_record(
+            "remote-dev",
+            1,
+            None,
+            "create_block",
+            r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"hello"}"#,
+        );
+
+        insert_remote_op(&pool, &record).await.unwrap();
+
+        // Verify it landed in the DB
+        let fetched = get_op_by_seq(&pool, "remote-dev", 1).await.unwrap();
+        assert_eq!(fetched.device_id, "remote-dev");
+        assert_eq!(fetched.seq, 1);
+        assert_eq!(fetched.hash, record.hash);
+        assert_eq!(fetched.op_type, "create_block");
+    }
+
+    #[tokio::test]
+    async fn insert_remote_op_duplicate_is_ignored() {
+        let (pool, _dir) = test_pool().await;
+
+        let record = make_remote_record(
+            "remote-dev",
+            1,
+            None,
+            "create_block",
+            r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"hello"}"#,
+        );
+
+        // Insert twice — second should be silently ignored
+        insert_remote_op(&pool, &record).await.unwrap();
+        insert_remote_op(&pool, &record).await.unwrap();
+
+        // Verify only one row exists
+        let fetched = get_op_by_seq(&pool, "remote-dev", 1).await.unwrap();
+        assert_eq!(fetched.hash, record.hash);
+    }
+
+    #[tokio::test]
+    async fn insert_remote_op_hash_mismatch_rejected() {
+        let (pool, _dir) = test_pool().await;
+
+        let mut record = make_remote_record(
+            "remote-dev",
+            1,
+            None,
+            "create_block",
+            r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"hello"}"#,
+        );
+        // Tamper with the hash
+        record.hash = "0".repeat(64);
+
+        let err = insert_remote_op(&pool, &record).await;
+        assert!(err.is_err());
+        let msg = err.unwrap_err().to_string();
+        assert!(
+            msg.contains("hash mismatch"),
+            "expected hash mismatch error, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn insert_remote_op_with_parent_seqs() {
+        let (pool, _dir) = test_pool().await;
+
+        // First insert the genesis op
+        let r1 = make_remote_record(
+            "remote-dev",
+            1,
+            None,
+            "create_block",
+            r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"v1"}"#,
+        );
+        insert_remote_op(&pool, &r1).await.unwrap();
+
+        // Then insert an op that references the first as parent
+        let parent_seqs = Some(r#"[["remote-dev",1]]"#.to_owned());
+        let r2 = make_remote_record(
+            "remote-dev",
+            2,
+            parent_seqs.clone(),
+            "edit_block",
+            r#"{"block_id":"B1","to_text":"v2","prev_edit":["remote-dev",1]}"#,
+        );
+        insert_remote_op(&pool, &r2).await.unwrap();
+
+        let fetched = get_op_by_seq(&pool, "remote-dev", 2).await.unwrap();
+        assert_eq!(fetched.parent_seqs, parent_seqs);
+    }
+
+    // =====================================================================
+    // 2. append_merge_op
+    // =====================================================================
+
+    #[tokio::test]
+    async fn append_merge_op_creates_multi_parent_op() {
+        let (pool, _dir) = test_pool().await;
+
+        // Set up some prior ops so the local device has a seq
+        append_local_op_at(&pool, DEV_A, make_create("B1", "hello"), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        let merge_payload = make_edit("B1", "merged text", None);
+        let parents = vec![(DEV_A.to_owned(), 1), (DEV_B.to_owned(), 3)];
+
+        let record = append_merge_op(&pool, DEV_A, merge_payload, parents)
+            .await
+            .unwrap();
+
+        // seq should be 2 (after the create at seq 1)
+        assert_eq!(record.seq, 2);
+        assert_eq!(record.device_id, DEV_A);
+        assert_eq!(record.op_type, "edit_block");
+
+        // parent_seqs should be sorted and contain both entries
+        let parent_seqs: Vec<(String, i64)> =
+            serde_json::from_str(record.parent_seqs.as_ref().unwrap()).unwrap();
+        assert_eq!(parent_seqs.len(), 2);
+        // Sorted lexicographically: device-A < device-B
+        assert_eq!(parent_seqs[0], (DEV_A.to_owned(), 1));
+        assert_eq!(parent_seqs[1], (DEV_B.to_owned(), 3));
+    }
+
+    #[tokio::test]
+    async fn append_merge_op_sorts_parents_deterministically() {
+        let (pool, _dir) = test_pool().await;
+
+        let merge_payload = make_edit("B1", "merged", None);
+        // Pass parents in reverse order
+        let parents = vec![("zzz-device".to_owned(), 5), ("aaa-device".to_owned(), 10)];
+
+        let record = append_merge_op(&pool, "local", merge_payload, parents)
+            .await
+            .unwrap();
+
+        let parent_seqs: Vec<(String, i64)> =
+            serde_json::from_str(record.parent_seqs.as_ref().unwrap()).unwrap();
+        // Must be sorted: aaa < zzz
+        assert_eq!(parent_seqs[0].0, "aaa-device");
+        assert_eq!(parent_seqs[1].0, "zzz-device");
+    }
+
+    #[tokio::test]
+    async fn append_merge_op_rejects_fewer_than_2_parents() {
+        let (pool, _dir) = test_pool().await;
+
+        let payload = make_edit("B1", "text", None);
+        let err = append_merge_op(&pool, DEV_A, payload, vec![(DEV_A.to_owned(), 1)]).await;
+
+        assert!(err.is_err());
+        let msg = err.unwrap_err().to_string();
+        assert!(
+            msg.contains("at least 2"),
+            "expected 'at least 2' error, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn append_merge_op_rejects_empty_parents() {
+        let (pool, _dir) = test_pool().await;
+
+        let payload = make_edit("B1", "text", None);
+        let err = append_merge_op(&pool, DEV_A, payload, vec![]).await;
+
+        assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    async fn append_merge_op_hash_verifies() {
+        let (pool, _dir) = test_pool().await;
+
+        let payload = make_edit("B1", "merged", None);
+        let parents = vec![(DEV_A.to_owned(), 1), (DEV_B.to_owned(), 2)];
+
+        let record = append_merge_op(&pool, DEV_A, payload, parents)
+            .await
+            .unwrap();
+
+        // Recompute hash and verify
+        let recomputed = compute_op_hash(
+            &record.device_id,
+            record.seq,
+            record.parent_seqs.as_deref(),
+            &record.op_type,
+            &record.payload,
+        );
+        assert_eq!(record.hash, recomputed);
+    }
+
+    // =====================================================================
+    // 3. find_lca
+    // =====================================================================
+
+    /// Two edits diverge from the same create.
+    ///
+    /// ```text
+    /// (A,1) create_block B1
+    ///   ├── (A,2) edit_block B1, prev_edit=(A,1)
+    ///   └── (B,1) edit_block B1, prev_edit=(A,1)
+    /// ```
+    ///
+    /// LCA of (A,2) and (B,1) should be (A,1).
+    #[tokio::test]
+    async fn find_lca_two_edits_diverge_from_create() {
+        let (pool, _dir) = test_pool().await;
+
+        // Device A: create B1
+        append_local_op_at(&pool, DEV_A, make_create("B1", "initial"), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        // Device A: edit B1 with prev_edit pointing to the create
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "edit-A", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B: edit B1 also pointing to (A,1) as prev_edit
+        // Insert as remote op since it's a different device
+        let b_edit_payload = r#"{"block_id":"B1","to_text":"edit-B","prev_edit":["device-A",1]}"#;
+        let b_record = make_remote_record(
+            DEV_B,
+            1,
+            None, // genesis for device B
+            "edit_block",
+            b_edit_payload,
+        );
+        insert_remote_op(&pool, &b_record).await.unwrap();
+
+        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 1))
+            .await
+            .unwrap();
+
+        assert_eq!(lca, Some((DEV_A.to_owned(), 1)));
+    }
+
+    /// Linear chain: A creates, then edits twice.
+    ///
+    /// ```text
+    /// (A,1) create → (A,2) edit → (A,3) edit
+    /// ```
+    ///
+    /// LCA of (A,2) and (A,3) is (A,2).
+    #[tokio::test]
+    async fn find_lca_linear_chain() {
+        let (pool, _dir) = test_pool().await;
+
+        // create
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+        // edit 1
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v1", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+        // edit 2
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v2", Some((DEV_A.into(), 2))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 2), &(DEV_A.into(), 3))
+            .await
+            .unwrap();
+        assert_eq!(lca, Some((DEV_A.to_owned(), 2)));
+    }
+
+    /// Divergent edits from a common edit (not the create).
+    ///
+    /// ```text
+    /// (A,1) create → (A,2) edit
+    ///                  ├── (A,3) edit, prev_edit=(A,2)
+    ///                  └── (B,1) edit, prev_edit=(A,2)
+    /// ```
+    ///
+    /// LCA of (A,3) and (B,1) is (A,2).
+    #[tokio::test]
+    async fn find_lca_divergent_from_common_edit() {
+        let (pool, _dir) = test_pool().await;
+
+        // create
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+        // edit 1
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v1", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+        // edit 2 (continues on A)
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v2-A", Some((DEV_A.into(), 2))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B diverges from (A,2)
+        let b_payload = r#"{"block_id":"B1","to_text":"v2-B","prev_edit":["device-A",2]}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        insert_remote_op(&pool, &b_record).await.unwrap();
+
+        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 3), &(DEV_B.into(), 1))
+            .await
+            .unwrap();
+        assert_eq!(lca, Some((DEV_A.to_owned(), 2)));
+    }
+
+    /// Edge case: LCA of an op with itself.
+    #[tokio::test]
+    async fn find_lca_same_op() {
+        let (pool, _dir) = test_pool().await;
+
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v1", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 2), &(DEV_A.into(), 2))
+            .await
+            .unwrap();
+        assert_eq!(lca, Some((DEV_A.to_owned(), 2)));
+    }
+
+    /// Edge case: find_lca with only the create_block (no edits).
+    /// Both ops point to the same create.
+    #[tokio::test]
+    async fn find_lca_only_create_block() {
+        let (pool, _dir) = test_pool().await;
+
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 1), &(DEV_A.into(), 1))
+            .await
+            .unwrap();
+        assert_eq!(lca, Some((DEV_A.to_owned(), 1)));
+    }
+
+    /// Edge case: op_a is a `create_block` and op_b is an `edit_block`
+    /// whose chain traces back to that create.
+    ///
+    /// ```text
+    /// (A,1) create_block B1
+    ///   └── (A,2) edit_block B1, prev_edit=(A,1)
+    /// ```
+    ///
+    /// LCA of (A,1) and (A,2) should be (A,1).
+    #[tokio::test]
+    async fn find_lca_op_a_is_create_block() {
+        let (pool, _dir) = test_pool().await;
+
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v1", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // op_a is create, op_b is edit
+        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 1), &(DEV_A.into(), 2))
+            .await
+            .unwrap();
+        assert_eq!(lca, Some((DEV_A.to_owned(), 1)));
+    }
+
+    /// Edge case: op_b is a `create_block` and op_a is an `edit_block`.
+    /// Mirror of the above — ensures B-chain handling is correct for creates.
+    ///
+    /// LCA of (A,2) and (A,1) should be (A,1).
+    #[tokio::test]
+    async fn find_lca_op_b_is_create_block() {
+        let (pool, _dir) = test_pool().await;
+
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v1", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // op_a is edit, op_b is create
+        let lca = find_lca(&pool, "B1", &(DEV_A.into(), 2), &(DEV_A.into(), 1))
+            .await
+            .unwrap();
+        assert_eq!(lca, Some((DEV_A.to_owned(), 1)));
+    }
+
+    // =====================================================================
+    // 4. text_at
+    // =====================================================================
+
+    #[tokio::test]
+    async fn text_at_returns_content_from_create_block() {
+        let (pool, _dir) = test_pool().await;
+
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_create("B1", "hello world"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        let text = text_at(&pool, DEV_A, 1).await.unwrap();
+        assert_eq!(text, "hello world");
+    }
+
+    #[tokio::test]
+    async fn text_at_returns_to_text_from_edit_block() {
+        let (pool, _dir) = test_pool().await;
+
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "updated text", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        let text = text_at(&pool, DEV_A, 2).await.unwrap();
+        assert_eq!(text, "updated text");
+    }
+
+    #[tokio::test]
+    async fn text_at_rejects_delete_block() {
+        let (pool, _dir) = test_pool().await;
+
+        append_local_op_at(&pool, DEV_A, make_delete("B1"), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        let err = text_at(&pool, DEV_A, 1).await;
+        assert!(err.is_err());
+        let msg = err.unwrap_err().to_string();
+        assert!(
+            msg.contains("content-producing"),
+            "expected 'content-producing' error, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn text_at_not_found_for_missing_op() {
+        let (pool, _dir) = test_pool().await;
+
+        let err = text_at(&pool, DEV_A, 999).await;
+        assert!(err.is_err());
+        let msg = err.unwrap_err().to_string();
+        assert!(
+            msg.contains("Not found"),
+            "expected NotFound error, got: {msg}"
+        );
+    }
+
+    // =====================================================================
+    // 5. get_block_edit_heads
+    // =====================================================================
+
+    #[tokio::test]
+    async fn get_block_edit_heads_single_device() {
+        let (pool, _dir) = test_pool().await;
+
+        // create block
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+        // two edits
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v1", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v2", Some((DEV_A.into(), 2))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        let heads = get_block_edit_heads(&pool, "B1").await.unwrap();
+        assert_eq!(heads.len(), 1, "single device should have 1 head");
+        assert_eq!(heads[0], (DEV_A.to_owned(), 3));
+    }
+
+    #[tokio::test]
+    async fn get_block_edit_heads_multiple_devices() {
+        let (pool, _dir) = test_pool().await;
+
+        // Device A: create + edit
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v1-A", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B: edit (inserted as remote)
+        let b_payload = r#"{"block_id":"B1","to_text":"v1-B","prev_edit":["device-A",1]}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        insert_remote_op(&pool, &b_record).await.unwrap();
+
+        let heads = get_block_edit_heads(&pool, "B1").await.unwrap();
+        assert_eq!(heads.len(), 2, "two devices should have 2 heads");
+        // Sorted by device_id: device-A < device-B
+        assert_eq!(heads[0], (DEV_A.to_owned(), 2));
+        assert_eq!(heads[1], (DEV_B.to_owned(), 1));
+    }
+
+    #[tokio::test]
+    async fn get_block_edit_heads_no_edits() {
+        let (pool, _dir) = test_pool().await;
+
+        // Only a create, no edits
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        let heads = get_block_edit_heads(&pool, "B1").await.unwrap();
+        assert!(heads.is_empty(), "no edits means no heads");
+    }
+
+    #[tokio::test]
+    async fn get_block_edit_heads_different_blocks_isolated() {
+        let (pool, _dir) = test_pool().await;
+
+        // Edits for B1
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v1", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Edits for B2
+        append_local_op_at(&pool, DEV_A, make_create("B2", "other"), FIXED_TS.into())
+            .await
+            .unwrap();
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B2", "other-v1", Some((DEV_A.into(), 3))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        let heads_b1 = get_block_edit_heads(&pool, "B1").await.unwrap();
+        assert_eq!(heads_b1.len(), 1);
+        assert_eq!(heads_b1[0], (DEV_A.to_owned(), 2));
+
+        let heads_b2 = get_block_edit_heads(&pool, "B2").await.unwrap();
+        assert_eq!(heads_b2.len(), 1);
+        assert_eq!(heads_b2[0], (DEV_A.to_owned(), 4));
+    }
+
+    #[tokio::test]
+    async fn get_block_edit_heads_nonexistent_block() {
+        let (pool, _dir) = test_pool().await;
+
+        let heads = get_block_edit_heads(&pool, "nonexistent").await.unwrap();
+        assert!(heads.is_empty());
+    }
+}

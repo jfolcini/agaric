@@ -160,7 +160,7 @@ pub async fn append_local_op_at(
 /// Since [`OpPayload`] uses `#[serde(tag = "op_type")]`, serializing it directly
 /// embeds the tag. We want the `op_log.payload` column to store *only* the
 /// operation-specific data — the `op_type` is already in its own column.
-fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, AppError> {
+pub(crate) fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, AppError> {
     serialize_variant!(op_payload;
         CreateBlock, EditBlock, DeleteBlock, RestoreBlock,
         PurgeBlock, MoveBlock, AddTag, RemoveTag,
