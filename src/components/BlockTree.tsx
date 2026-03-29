@@ -24,10 +24,11 @@ import {
 } from '@dnd-kit/sortable'
 import type React from 'react'
 import { useCallback, useEffect, useRef } from 'react'
+import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
 import { useViewportObserver } from '../hooks/useViewportObserver'
-import { getBlock } from '../lib/tauri'
+import { getBlock, listBlocks, listTagsByPrefix } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { SortableBlock } from './SortableBlock'
 
@@ -87,6 +88,26 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     return 'active'
   }, [])
 
+  // ── Picker callbacks ────────────────────────────────────────────────
+  const searchTags = useCallback(async (query: string): Promise<PickerItem[]> => {
+    const tags = await listTagsByPrefix({ prefix: query })
+    return tags.map((tag) => ({
+      id: tag.tag_id,
+      label: tag.name,
+    }))
+  }, [])
+
+  const searchPages = useCallback(async (query: string): Promise<PickerItem[]> => {
+    const resp = await listBlocks({ blockType: 'page', limit: 20 })
+    const q = query.toLowerCase()
+    return resp.items
+      .filter((p) => (p.content ?? '').toLowerCase().includes(q))
+      .map((p) => ({
+        id: p.id,
+        label: p.content ?? 'Untitled',
+      }))
+  }, [])
+
   // ── Roving editor ──────────────────────────────────────────────────
   // handleNavigate is defined below but referenced via ref to avoid
   // circular dependency with rovingEditor.
@@ -98,6 +119,8 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     onNavigate: (id: string) => handleNavigateRef.current(id),
     resolveBlockStatus,
     resolveTagStatus,
+    searchTags,
+    searchPages,
   })
 
   const viewport = useViewportObserver()
