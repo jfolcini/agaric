@@ -416,6 +416,21 @@
 - **Tests:** 390 frontend tests passing
 - **Commit:** `3edc1a8`
 
+### Phase 2 — Wave 4 (E2E Testing)
+
+#### [23:05] Subagent: P2 Wave 4 Build — Playwright E2E setup [BUILT]
+- **Tasks:** p2-t18, p2-t19
+- **Result:** Playwright config with Vite webServer auto-start, 15 E2E tests (3 smoke + 12 editor lifecycle), `@playwright/test` devDep, npm scripts
+- **New files:** `playwright.config.ts`, `e2e/smoke.spec.ts`, `e2e/editor-lifecycle.spec.ts`
+- **Tests:** 15 Playwright + 390 Vitest passing
+
+#### [23:15] Subagent: P2 Wave 4 Review — Playwright E2E tests [REVIEWED]
+- **Tasks:** p2-t18, p2-t19
+- **Fixes:** aria-label on delete button (a11y), fragile CSS selectors → semantic roles, 3 new edge-case tests, tsconfig.node.json includes playwright.config.ts
+- **CI:** Added Playwright install + run steps to `.github/workflows/ci.yml`, added Playwright artifacts to `.gitignore`
+- **Tests:** 18 Playwright + 390 Vitest = 408 frontend, 452 Rust = 860 total
+- **Commit:** `d3026ec`
+
 ---
 
 <!-- Template:

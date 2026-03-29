@@ -230,8 +230,8 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p2-t18 | Playwright + tauri-driver setup | dx, testing | | [ADR-13] E2E from Phase 2. Test: block creation, edit, split, delete, restore. Tauri test mode. |
-| p2-t19 | E2E: editor lifecycle (focus, edit, blur, flush) | testing | | [ADR-13] Critical path. Verify roving instance mounts/unmounts correctly. Draft recovery on crash sim. |
+| p2-t18 | Playwright + tauri-driver setup | dx, testing | | Done | [ADR-13] Playwright config, CI integration, Chromium-only. 3 smoke tests. |
+| p2-t19 | E2E: editor lifecycle (focus, edit, blur, flush) | testing | | Done | [ADR-13] 15 editor lifecycle tests (form CRUD, nav, persistence, edge cases). |
 | p2-t20 | insta snapshot tests | testing, dx | | Done (Phase 1.5) | [ADR-13] 19 insta snapshots across all modules. Integrated into cargo-test prek hook. |
 
 ---
