@@ -13,7 +13,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { BlockRow } from '../lib/tauri'
-import { listTagsByPrefix, queryByTags } from '../lib/tauri'
+import { getBlock, listTagsByPrefix, queryByTags } from '../lib/tauri'
+import { useNavigationStore } from '../stores/navigation'
 
 interface SelectedTag {
   id: string
@@ -36,6 +37,7 @@ export function TagFilterPanel(): React.ReactElement {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
   // Debounced prefix search
   const searchTags = useCallback(async (p: string) => {
@@ -135,6 +137,24 @@ export function TagFilterPanel(): React.ReactElement {
   const loadMore = useCallback(() => {
     if (nextCursor) executeQuery(nextCursor)
   }, [nextCursor, executeQuery])
+
+  const handleResultClick = useCallback(
+    async (block: BlockRow) => {
+      if (block.block_type === 'page') {
+        navigateToPage(block.id, block.content ?? 'Untitled')
+        return
+      }
+      if (block.parent_id) {
+        try {
+          const parent = await getBlock(block.parent_id)
+          navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
+        } catch {
+          // Silently fail — parent lookup failed
+        }
+      }
+    },
+    [navigateToPage],
+  )
 
   // Filter out already-selected tags from matching results
   const filteredMatching = matchingTags.filter((t) => !selectedTags.some((s) => s.id === t.tag_id))
@@ -241,7 +261,12 @@ export function TagFilterPanel(): React.ReactElement {
         <div className="tag-filter-results space-y-2">
           <h4 className="text-xs font-medium text-muted-foreground">Results ({results.length})</h4>
           {results.map((block) => (
-            <div key={block.id} className="rounded-lg border bg-card p-3">
+            <button
+              key={block.id}
+              type="button"
+              className="w-full cursor-pointer rounded-lg border bg-card p-3 text-left hover:bg-accent/50"
+              onClick={() => handleResultClick(block)}
+            >
               <div className="flex items-center gap-2">
                 <span className="flex-1 text-sm whitespace-pre-wrap">
                   {block.content || '(empty)'}
@@ -252,7 +277,7 @@ export function TagFilterPanel(): React.ReactElement {
                   </span>
                 )}
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}

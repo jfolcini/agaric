@@ -13,7 +13,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { BlockRow } from '../lib/tauri'
-import { searchBlocks } from '../lib/tauri'
+import { getBlock, searchBlocks } from '../lib/tauri'
+import { useNavigationStore } from '../stores/navigation'
 
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
@@ -30,6 +31,7 @@ export function SearchPanel(): React.ReactElement {
   const [hasMore, setHasMore] = useState(false)
   const [searched, setSearched] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
   const executeSearch = useCallback(async (q: string, cursor?: string) => {
     setLoading(true)
@@ -95,6 +97,24 @@ export function SearchPanel(): React.ReactElement {
     }
   }
 
+  const handleResultClick = useCallback(
+    async (block: BlockRow) => {
+      if (block.block_type === 'page') {
+        navigateToPage(block.id, block.content ?? 'Untitled')
+        return
+      }
+      if (block.parent_id) {
+        try {
+          const parent = await getBlock(block.parent_id)
+          navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
+        } catch {
+          // Silently fail — parent lookup failed
+        }
+      }
+    },
+    [navigateToPage],
+  )
+
   return (
     <div className="search-panel space-y-4">
       {/* biome-ignore lint/a11y/useSemanticElements: jsdom doesn't support <search> element */}
@@ -131,7 +151,12 @@ export function SearchPanel(): React.ReactElement {
       {results.length > 0 && (
         <div className="search-results space-y-2">
           {results.map((block) => (
-            <div key={block.id} className="rounded-lg border bg-card p-3">
+            <button
+              key={block.id}
+              type="button"
+              className="w-full cursor-pointer rounded-lg border bg-card p-3 text-left hover:bg-accent/50"
+              onClick={() => handleResultClick(block)}
+            >
               <div className="flex items-center gap-2">
                 <span className="flex-1 text-sm whitespace-pre-wrap">
                   {block.content || '(empty)'}
@@ -142,7 +167,7 @@ export function SearchPanel(): React.ReactElement {
                   </span>
                 )}
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}

@@ -20,6 +20,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { useNavigationStore } from '../../stores/navigation'
 import { SearchPanel } from '../SearchPanel'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -40,6 +41,11 @@ const makeSearchResult = (overrides?: Partial<Record<string, unknown>>) => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useNavigationStore.setState({
+    currentView: 'search',
+    pageStack: [],
+    selectedBlockId: null,
+  })
 })
 
 afterEach(() => {
@@ -310,5 +316,127 @@ describe('SearchPanel', () => {
     render(<SearchPanel />)
 
     expect(screen.getByRole('search')).toBeInTheDocument()
+  })
+
+  it('navigates to parent page when clicking a result with parent_id', async () => {
+    const user = userEvent.setup()
+
+    // search_blocks returns a block with parent_id
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        makeSearchResult({
+          id: 'CHILD1',
+          parent_id: 'PARENT1',
+          content: 'child content',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'child')
+
+    await waitFor(() => {
+      expect(screen.getByText('child content')).toBeInTheDocument()
+    })
+
+    // Mock get_block for parent lookup
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'PARENT1',
+      block_type: 'page',
+      content: 'Parent Page Title',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+      archived_at: null,
+      is_conflict: false,
+    })
+
+    await user.click(screen.getByText('child content'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('get_block', { blockId: 'PARENT1' })
+    })
+
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('page-editor')
+    expect(navState.pageStack[0].pageId).toBe('PARENT1')
+    expect(navState.pageStack[0].title).toBe('Parent Page Title')
+    expect(navState.selectedBlockId).toBe('CHILD1')
+  })
+
+  it('navigates directly when clicking a page-type result', async () => {
+    const user = userEvent.setup()
+
+    // search_blocks returns a page block
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        makeSearchResult({
+          id: 'PAGE1',
+          parent_id: null,
+          content: 'My Page',
+          block_type: 'page',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'page')
+
+    await waitFor(() => {
+      expect(screen.getByText('My Page')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByText('My Page'))
+
+    await waitFor(() => {
+      const navState = useNavigationStore.getState()
+      expect(navState.currentView).toBe('page-editor')
+      expect(navState.pageStack[0].pageId).toBe('PAGE1')
+      expect(navState.pageStack[0].title).toBe('My Page')
+      expect(navState.selectedBlockId).toBeNull()
+    })
+  })
+
+  it('does not navigate when clicking a root block with no parent', async () => {
+    const user = userEvent.setup()
+
+    // search_blocks returns a root block with no parent_id
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        makeSearchResult({
+          id: 'ROOT1',
+          parent_id: null,
+          content: 'root block',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'root')
+
+    await waitFor(() => {
+      expect(screen.getByText('root block')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByText('root block'))
+
+    // Navigation should not have changed
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('search')
+    expect(navState.pageStack).toHaveLength(0)
   })
 })

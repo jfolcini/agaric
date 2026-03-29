@@ -17,6 +17,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { useNavigationStore } from '../../stores/navigation'
 import { TagFilterPanel } from '../TagFilterPanel'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -57,6 +58,11 @@ async function typeAndWaitForTags(input: HTMLElement, prefix: string): Promise<v
 beforeEach(() => {
   vi.clearAllMocks()
   vi.useFakeTimers()
+  useNavigationStore.setState({
+    currentView: 'search',
+    pageStack: [],
+    selectedBlockId: null,
+  })
 })
 
 afterEach(() => {
@@ -373,5 +379,107 @@ describe('TagFilterPanel', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  it('navigates to parent page when clicking a tag filter result', async () => {
+    // list_tags_by_prefix response
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    const addBtn = screen.getByRole('button', { name: /Add/i })
+
+    // query_by_tags returns a block with parent_id
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        makeBlock({
+          id: 'CHILD1',
+          parent_id: 'PARENT1',
+          content: 'tagged content',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    await act(async () => {
+      fireEvent.click(addBtn)
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(screen.getByText('tagged content')).toBeInTheDocument()
+
+    // Mock get_block for parent lookup
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'PARENT1',
+      block_type: 'page',
+      content: 'Parent Page',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+      archived_at: null,
+      is_conflict: false,
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('tagged content'))
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('get_block', { blockId: 'PARENT1' })
+
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('page-editor')
+    expect(navState.pageStack[0].pageId).toBe('PARENT1')
+    expect(navState.pageStack[0].title).toBe('Parent Page')
+    expect(navState.selectedBlockId).toBe('CHILD1')
+  })
+
+  it('navigates directly when clicking a page-type tag filter result', async () => {
+    // list_tags_by_prefix response
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    const addBtn = screen.getByRole('button', { name: /Add/i })
+
+    // query_by_tags returns a page block
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        makeBlock({
+          id: 'PAGE1',
+          parent_id: null,
+          content: 'My Tagged Page',
+          block_type: 'page',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    await act(async () => {
+      fireEvent.click(addBtn)
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(screen.getByText('My Tagged Page')).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('My Tagged Page'))
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('page-editor')
+    expect(navState.pageStack[0].pageId).toBe('PAGE1')
+    expect(navState.pageStack[0].title).toBe('My Tagged Page')
+    expect(navState.selectedBlockId).toBeNull()
   })
 })
