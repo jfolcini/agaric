@@ -32,8 +32,12 @@ vi.mock('lucide-react', () => ({
   GripVertical: (props: { size: number }) => (
     <svg data-testid="grip-vertical-icon" width={props.size} height={props.size} />
   ),
+  Trash2: (props: { size: number }) => (
+    <svg data-testid="trash-icon" width={props.size} height={props.size} />
+  ),
 }))
 
+import userEvent from '@testing-library/user-event'
 import { SortableBlock } from '../SortableBlock'
 
 // Create a minimal mock roving editor handle
@@ -214,5 +218,84 @@ describe('SortableBlock', () => {
     const handle = screen.getByLabelText('Drag to reorder')
     expect(handle).toBeInTheDocument()
     expect(handle.tagName.toLowerCase()).toBe('button')
+  })
+
+  it('renders a delete button with trash icon', () => {
+    mockUseSortable.mockReturnValue({
+      attributes: {},
+      listeners: {},
+      setNodeRef: vi.fn(),
+      transform: null,
+      transition: undefined,
+      isDragging: false,
+    })
+
+    const onDelete = vi.fn()
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={onDelete}
+      />,
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    expect(deleteBtn).toBeInTheDocument()
+    expect(screen.getByTestId('trash-icon')).toBeInTheDocument()
+  })
+
+  it('calls onDelete with blockId when delete button is clicked', async () => {
+    const user = userEvent.setup()
+    mockUseSortable.mockReturnValue({
+      attributes: {},
+      listeners: {},
+      setNodeRef: vi.fn(),
+      transform: null,
+      transition: undefined,
+      isDragging: false,
+    })
+
+    const onDelete = vi.fn()
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_42"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={onDelete}
+      />,
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    await user.click(deleteBtn)
+
+    expect(onDelete).toHaveBeenCalledOnce()
+    expect(onDelete).toHaveBeenCalledWith('BLOCK_42')
+  })
+
+  it('does not render delete button when onDelete is not provided', () => {
+    mockUseSortable.mockReturnValue({
+      attributes: {},
+      listeners: {},
+      setNodeRef: vi.fn(),
+      transform: null,
+      transition: undefined,
+      isDragging: false,
+    })
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: /delete block/i })).not.toBeInTheDocument()
   })
 })

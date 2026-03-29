@@ -316,24 +316,51 @@ describe('PageEditor detail panel', () => {
     expect(screen.queryByTestId('detail-panel')).not.toBeInTheDocument()
   })
 
-  it('shows detail panel with backlinks tab when a block is focused', () => {
+  it('shows tab bar but NOT panel content when a block is focused (collapsed by default)', () => {
     useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
+    // Tab bar should be visible
     const panel = screen.getByTestId('detail-panel')
     expect(panel).toBeInTheDocument()
 
-    // Backlinks panel should be rendered by default
-    const backlinksPanel = screen.getByTestId('backlinks-panel')
-    expect(backlinksPanel).toBeInTheDocument()
+    // Tab buttons should be visible
+    expect(screen.getByRole('button', { name: /backlinks/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /history/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /tags/i })).toBeInTheDocument()
+
+    // Panel content should NOT be auto-opened
+    expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
+  })
+
+  it('opens backlinks panel when user explicitly clicks Backlinks tab', async () => {
+    const user = userEvent.setup()
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Panel content NOT shown yet
+    expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
+
+    // Click Backlinks tab explicitly
+    await user.click(screen.getByRole('button', { name: /backlinks/i }))
+
+    // Now panel content should be shown
+    expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
     expect(capturedBacklinksBlockId).toBe('BLOCK_1')
   })
 
-  it('passes correct blockId to panel components', () => {
+  it('passes correct blockId to panel components after tab click', async () => {
+    const user = userEvent.setup()
     useBlockStore.setState({ focusedBlockId: 'BLOCK_42' })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Click a tab to open panel
+    await user.click(screen.getByRole('button', { name: /backlinks/i }))
 
     expect(capturedBacklinksBlockId).toBe('BLOCK_42')
   })
@@ -344,7 +371,8 @@ describe('PageEditor detail panel', () => {
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
-    // Default tab is backlinks
+    // Open Backlinks tab first (panel is collapsed by default)
+    await user.click(screen.getByRole('button', { name: /backlinks/i }))
     expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
     expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
@@ -367,10 +395,14 @@ describe('PageEditor detail panel', () => {
     expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
   })
 
-  it('persists panel when focusedBlockId becomes null', () => {
+  it('persists panel when focusedBlockId becomes null', async () => {
+    const user = userEvent.setup()
     useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
 
     const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Open tab explicitly
+    await user.click(screen.getByRole('button', { name: /backlinks/i }))
 
     // Panel visible with BLOCK_1
     expect(screen.getByTestId('detail-panel')).toBeInTheDocument()
@@ -386,11 +418,14 @@ describe('PageEditor detail panel', () => {
     expect(capturedBacklinksBlockId).toBe('BLOCK_1')
   })
 
-  it('updates panel when focusedBlockId changes to a different block', () => {
+  it('updates panel when focusedBlockId changes to a different block', async () => {
+    const user = userEvent.setup()
     useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
 
     const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
+    // Open tab explicitly
+    await user.click(screen.getByRole('button', { name: /backlinks/i }))
     expect(capturedBacklinksBlockId).toBe('BLOCK_1')
 
     act(() => {
@@ -406,6 +441,9 @@ describe('PageEditor detail panel', () => {
     useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Open tab explicitly
+    await user.click(screen.getByRole('button', { name: /backlinks/i }))
 
     // Panel content is visible
     expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
@@ -431,7 +469,8 @@ describe('PageEditor detail panel', () => {
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
-    // Collapse
+    // Open and then collapse
+    await user.click(screen.getByRole('button', { name: /backlinks/i }))
     await user.click(screen.getByRole('button', { name: /collapse detail panel/i }))
     expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
 

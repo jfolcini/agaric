@@ -6,17 +6,28 @@
  *  - Cursor-based pagination (Load More button)
  *  - Empty state and loading states
  *  - Page selection callback
+ *  - Page deletion with confirmation dialog
+ *  - Error feedback via toast on failed operations
  *  - a11y compliance
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { PageBrowser } from '../PageBrowser'
 
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}))
+
 const mockedInvoke = vi.mocked(invoke)
+const mockedToastError = vi.mocked(toast.error)
 
 function makePage(id: string, content: string) {
   return {
@@ -32,6 +43,11 @@ function makePage(id: string, content: string) {
 }
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+/** Find the trash (delete) button within a page row via its aria-label. */
+function findTrashButton(row: HTMLElement): HTMLButtonElement {
+  return within(row).getByRole('button', { name: /delete page/i })
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -151,10 +167,190 @@ describe('PageBrowser', () => {
 
     render(<PageBrowser onPageSelect={onPageSelect} />)
 
-    const item = await screen.findByRole('button', { name: /Click me/i })
-    await user.click(item)
+    const pageTitle = await screen.findByText('Click me')
+    await user.click(pageTitle)
 
     expect(onPageSelect).toHaveBeenCalledWith('P1', 'Click me')
+  })
+
+  // UX #2: Page delete from PageBrowser
+  describe('page deletion', () => {
+    it('shows trash icon on page item hover area', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage('P1', 'My Page')],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('My Page')
+
+      // The page row should have a group class with both a select button and a trash button
+      const pageRow = screen.getByText('My Page').closest('.group') as HTMLElement
+      expect(pageRow).toBeTruthy()
+      // There should be at least 2 buttons: page select and trash
+      const allButtons = pageRow.querySelectorAll('button')
+      expect(allButtons.length).toBeGreaterThanOrEqual(2)
+      // The trash button has an aria-label
+      const trashBtn = findTrashButton(pageRow)
+      expect(trashBtn).toBeTruthy()
+    })
+
+    it('shows AlertDialog when trash icon is clicked', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage('P1', 'Deletable Page')],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Deletable Page')
+
+      // Find and click the trash button (has aria-label)
+      const pageRow = screen.getByText('Deletable Page').closest('.group') as HTMLElement
+      const trashBtn = findTrashButton(pageRow)
+      await user.click(trashBtn)
+
+      // AlertDialog should appear with title and page name in description
+      expect(await screen.findByText(/Delete page\?/i)).toBeInTheDocument()
+      // The page name appears both in the list (aria-hidden) and dialog description
+      expect(screen.getAllByText(/Deletable Page/).length).toBeGreaterThanOrEqual(1)
+      expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^Delete$/i })).toBeInTheDocument()
+    })
+
+    it('cancelling the dialog keeps the page', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage('P1', 'Keep This Page')],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Keep This Page')
+
+      // Open dialog
+      const pageRow = screen.getByText('Keep This Page').closest('.group') as HTMLElement
+      const trashBtn = findTrashButton(pageRow)
+      await user.click(trashBtn)
+
+      // Click Cancel
+      const cancelBtn = await screen.findByRole('button', { name: /Cancel/i })
+      await user.click(cancelBtn)
+
+      // Page should still be there
+      expect(screen.getByText('Keep This Page')).toBeInTheDocument()
+      expect(screen.queryByText(/Delete page\?/i)).not.toBeInTheDocument()
+    })
+
+    it('confirming the dialog deletes the page', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage('P1', 'To Be Deleted')],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('To Be Deleted')
+
+      // Mock delete_block response
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'P1',
+        deleted_at: '2025-01-15T00:00:00Z',
+        descendants_affected: 0,
+      })
+
+      // Open dialog
+      const pageRow = screen.getByText('To Be Deleted').closest('.group') as HTMLElement
+      const trashBtn = findTrashButton(pageRow)
+      await user.click(trashBtn)
+
+      // Click Delete
+      const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
+      await user.click(confirmBtn)
+
+      // Page should be removed
+      await waitFor(() => {
+        expect(screen.queryByText('To Be Deleted')).not.toBeInTheDocument()
+      })
+
+      // Verify delete_block was called
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'P1' })
+    })
+  })
+
+  // UX #8: Error feedback on failed operations
+  describe('error feedback', () => {
+    it('shows toast on failed page load', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('Network error'))
+
+      render(<PageBrowser />)
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to load pages'),
+        )
+      })
+    })
+
+    it('shows toast on failed page creation', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
+      })
+
+      // Mock create_block to fail
+      mockedInvoke.mockRejectedValueOnce(new Error('Create failed'))
+
+      const newPageBtn = screen.getByRole('button', { name: /New Page/i })
+      await user.click(newPageBtn)
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to create page'),
+        )
+      })
+    })
+
+    it('shows toast on failed page deletion', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage('P1', 'Fail Delete')],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Fail Delete')
+
+      // Mock delete_block to fail
+      mockedInvoke.mockRejectedValueOnce(new Error('Delete failed'))
+
+      // Open dialog and confirm
+      const pageRow = screen.getByText('Fail Delete').closest('.group') as HTMLElement
+      const trashBtn = findTrashButton(pageRow)
+      await user.click(trashBtn)
+      const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
+      await user.click(confirmBtn)
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to delete page'),
+        )
+      })
+    })
   })
 
   it('has no a11y violations', async () => {

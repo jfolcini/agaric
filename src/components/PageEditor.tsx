@@ -45,12 +45,8 @@ export function PageEditor({
   useEffect(() => {
     if (focusedBlockId != null) {
       lastBlockIdRef.current = focusedBlockId
-      // Auto-open backlinks tab when first focusing a block
-      if (activeTab == null) {
-        setActiveTab('backlinks')
-      }
     }
-  }, [focusedBlockId, activeTab])
+  }, [focusedBlockId])
 
   const effectiveBlockId = focusedBlockId ?? lastBlockIdRef.current
 
@@ -131,8 +127,8 @@ export function PageEditor({
       {/* Block tree — loads children of pageId */}
       <BlockTree parentId={pageId} />
 
-      {/* Detail panel — shown when a block has been focused */}
-      {effectiveBlockId != null && activeTab != null && (
+      {/* Detail panel — tab bar shown when a block has been focused, content shown when tab selected */}
+      {effectiveBlockId != null && (
         <div className="detail-panel rounded-lg border" data-testid="detail-panel">
           {/* Tab bar + collapse toggle */}
           <div className="detail-panel-header flex items-center gap-1 border-b px-2 py-1">
@@ -175,22 +171,24 @@ export function PageEditor({
 
             <div className="flex-1" />
 
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={panelCollapsed ? 'Expand detail panel' : 'Collapse detail panel'}
-              onClick={() => setPanelCollapsed((c) => !c)}
-            >
-              {panelCollapsed ? (
-                <ChevronUp className="h-4 w-4" />
-              ) : (
-                <ChevronDown className="h-4 w-4" />
-              )}
-            </Button>
+            {activeTab != null && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={panelCollapsed ? 'Expand detail panel' : 'Collapse detail panel'}
+                onClick={() => setPanelCollapsed((c) => !c)}
+              >
+                {panelCollapsed ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </Button>
+            )}
           </div>
 
           {/* Panel content */}
-          {!panelCollapsed && (
+          {activeTab != null && !panelCollapsed && (
             <div className="detail-panel-content p-3">
               {activeTab === 'backlinks' && <BacklinksPanel blockId={effectiveBlockId} />}
               {activeTab === 'history' && <HistoryPanel blockId={effectiveBlockId} />}

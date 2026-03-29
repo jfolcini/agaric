@@ -7,7 +7,7 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { GripVertical } from 'lucide-react'
+import { GripVertical, Trash2 } from 'lucide-react'
 import type React from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { EditableBlock } from './EditableBlock'
@@ -18,6 +18,7 @@ interface SortableBlockProps {
   isFocused: boolean
   rovingEditor: RovingEditorHandle
   onNavigate?: (id: string) => void
+  onDelete?: (blockId: string) => void
   resolveBlockTitle?: (id: string) => string
   resolveTagName?: (id: string) => string
   resolveBlockStatus?: (id: string) => 'active' | 'deleted'
@@ -30,6 +31,7 @@ export function SortableBlock({
   isFocused,
   rovingEditor,
   onNavigate,
+  onDelete,
   resolveBlockTitle,
   resolveTagName,
   resolveBlockStatus,
@@ -61,6 +63,16 @@ export function SortableBlock({
       >
         <GripVertical size={16} />
       </button>
+      {onDelete && (
+        <button
+          type="button"
+          className="delete-handle flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-destructive"
+          aria-label="Delete block"
+          onClick={() => onDelete(blockId)}
+        >
+          <Trash2 size={16} />
+        </button>
+      )}
       <div className="flex-1 min-w-0">
         <EditableBlock
           blockId={blockId}

@@ -329,6 +329,7 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
                   isFocused={isFocused}
                   rovingEditor={rovingEditor}
                   onNavigate={handleNavigate}
+                  onDelete={(id) => remove(id)}
                   resolveBlockTitle={resolveBlockTitle}
                   resolveTagName={resolveTagName}
                   resolveBlockStatus={resolveBlockStatus}

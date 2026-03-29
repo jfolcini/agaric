@@ -42,6 +42,13 @@ describe('StaticBlock', () => {
     expect(screen.getByText('Empty block')).toBeInTheDocument()
   })
 
+  it('empty block has min-height class for visibility', () => {
+    const { container } = render(<StaticBlock blockId="B1" content="" onFocus={vi.fn()} />)
+    const button = container.querySelector('.block-static')
+    expect(button).not.toBeNull()
+    expect(button?.classList.contains('min-h-[2rem]')).toBe(true)
+  })
+
   it('calls onFocus when the block button is clicked', async () => {
     const onFocus = vi.fn()
     const user = userEvent.setup()

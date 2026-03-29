@@ -66,8 +66,9 @@ function CollapseButton() {
 /** Resolve the header label from the current navigation state. */
 function useHeaderLabel(): string {
   const { currentView, pageStack } = useNavigationStore()
+  // page-editor has its own editable title — don't duplicate it in the header
   if (currentView === 'page-editor' && pageStack.length > 0) {
-    return pageStack[pageStack.length - 1].title
+    return ''
   }
   return NAV_ITEMS.find((item) => item.id === currentView)?.label ?? ''
 }
@@ -125,7 +126,9 @@ function App() {
         <SidebarInset>
           <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
             <SidebarTrigger className="md:hidden" />
-            <span className="font-medium">{headerLabel}</span>
+            <span className="font-medium" data-testid="header-label">
+              {headerLabel}
+            </span>
           </header>
           <div className="flex-1 overflow-y-auto p-6">
             {currentView === 'journal' && <JournalPage onNavigateToPage={handlePageSelect} />}
@@ -133,7 +136,7 @@ function App() {
             {currentView === 'pages' && <PageBrowser onPageSelect={handlePageSelect} />}
             {currentView === 'tags' && (
               <div className="space-y-8">
-                <TagList />
+                <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
                 <hr className="border-border" />
                 <TagFilterPanel />
               </div>

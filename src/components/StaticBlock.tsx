@@ -125,7 +125,7 @@ export function StaticBlock({
   return (
     <button
       type="button"
-      className="block-static flex w-full cursor-text rounded-md px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent/50"
+      className="block-static flex w-full min-h-[2rem] cursor-text rounded-md px-3 py-1.5 text-left text-sm transition-colors hover:bg-accent/50"
       data-block-id={blockId}
       onClick={() => onFocus(blockId)}
     >

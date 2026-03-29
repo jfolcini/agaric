@@ -223,4 +223,24 @@ describe('App', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  it('shows empty header label for page-editor view (title is in PageEditor)', async () => {
+    // Navigate to page-editor via the navigation store
+    useNavigationStore.setState({
+      currentView: 'page-editor',
+      pageStack: [{ pageId: 'PAGE_1', title: 'My Test Page' }],
+      selectedBlockId: null,
+    })
+
+    render(<App />)
+
+    // Wait for boot
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+
+    // The header should NOT show the page title (it's shown in PageEditor itself)
+    const headerLabel = screen.getByTestId('header-label')
+    expect(headerLabel.textContent).toBe('')
+  })
 })

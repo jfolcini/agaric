@@ -95,7 +95,7 @@ export function EditableBlock({
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: wrapper div catches blur from TipTap contenteditable
-    <div className="block-editor" data-block-id={blockId} onBlur={handleBlur}>
+    <div className="block-editor min-h-[2rem]" data-block-id={blockId} onBlur={handleBlur}>
       <EditorContent editor={rovingEditor.editor} />
     </div>
   )

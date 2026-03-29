@@ -21,6 +21,20 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   } as unknown as typeof globalThis.ResizeObserver
 }
 
+if (typeof globalThis.IntersectionObserver === 'undefined') {
+  globalThis.IntersectionObserver = class IntersectionObserver {
+    readonly root = null
+    readonly rootMargin = '0px'
+    readonly thresholds: readonly number[] = [0]
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return []
+    }
+  } as unknown as typeof globalThis.IntersectionObserver
+}
+
 if (typeof window.matchMedia !== 'function') {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
