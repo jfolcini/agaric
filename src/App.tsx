@@ -35,6 +35,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from './components/ui/sidebar'
+import { Toaster } from './components/ui/sonner'
 import { useNavigationStore, type View } from './stores/navigation'
 
 /** Sidebar nav items — page-editor is not listed here (it's navigated to programmatically). */
@@ -151,6 +152,7 @@ function App() {
           </div>
         </SidebarInset>
       </SidebarProvider>
+      <Toaster position="bottom-right" richColors closeButton />
     </BootGate>
   )
 }
