@@ -36,6 +36,9 @@ interface BlockStore {
    */
   splitBlock: (blockId: string, markdown: string) => Promise<void>
 
+  /** Reorder: move block to a new index within its sibling list. */
+  reorder: (blockId: string, newIndex: number) => Promise<void>
+
   /** Indent: make block a child of its previous sibling. */
   indent: (blockId: string) => Promise<void>
   /** Dedent: move block up one level to grandparent. */
@@ -131,6 +134,69 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     for (const line of rest) {
       const newId = await get().createBelow(lastId, line)
       if (newId) lastId = newId
+    }
+  },
+
+  reorder: async (blockId: string, newIndex: number) => {
+    const { blocks } = get()
+    const oldIndex = blocks.findIndex((b) => b.id === blockId)
+    if (oldIndex < 0 || oldIndex === newIndex) return
+
+    const block = blocks[oldIndex]
+    const parentId = block.parent_id
+
+    // Calculate new position based on where the block will end up after
+    // arrayMove semantics (splice-remove at oldIndex, splice-insert at newIndex).
+    //
+    // Forward move (newIndex > oldIndex): block ends up AFTER blocks[newIndex]
+    //   in the original array, because removing it from before shifts everything left.
+    // Backward move (newIndex < oldIndex): block ends up BEFORE blocks[newIndex].
+    let newPosition: number
+    if (newIndex > oldIndex) {
+      // Forward move: block lands after blocks[newIndex]
+      if (newIndex >= blocks.length - 1) {
+        // After the last block
+        newPosition = (blocks[blocks.length - 1].position ?? 0) + 1
+      } else {
+        // Between blocks[newIndex] and blocks[newIndex + 1]
+        const beforePos = blocks[newIndex].position ?? 0
+        const afterPos = blocks[newIndex + 1].position ?? 0
+        newPosition = Math.floor((beforePos + afterPos) / 2)
+        // If floor lands on beforePos (consecutive integers), nudge up
+        if (newPosition <= beforePos) {
+          newPosition = beforePos + 1
+        }
+      }
+    } else {
+      // Backward move: block lands before blocks[newIndex]
+      if (newIndex === 0) {
+        // Before the first block
+        newPosition = (blocks[0].position ?? 0) - 1
+      } else {
+        // Between blocks[newIndex - 1] and blocks[newIndex]
+        const beforePos = blocks[newIndex - 1].position ?? 0
+        const afterPos = blocks[newIndex].position ?? 0
+        newPosition = Math.floor((beforePos + afterPos) / 2)
+        // If floor lands on beforePos (consecutive integers), nudge up
+        if (newPosition <= beforePos) {
+          newPosition = beforePos + 1
+        }
+      }
+    }
+
+    try {
+      await moveBlock(blockId, parentId, newPosition)
+      // Reorder the local array using arrayMove semantics:
+      // splice-remove at oldIndex, splice-insert at newIndex.
+      const newBlocks = [...blocks]
+      const [moved] = newBlocks.splice(oldIndex, 1)
+      newBlocks.splice(newIndex, 0, {
+        ...moved,
+        position: newPosition,
+      })
+      set({ blocks: newBlocks })
+    } catch {
+      // Silently fail
     }
   },
 

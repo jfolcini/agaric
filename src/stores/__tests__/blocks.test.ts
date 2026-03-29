@@ -599,4 +599,199 @@ describe('useBlockStore', () => {
       })
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // reorder
+  // ---------------------------------------------------------------------------
+  describe('reorder', () => {
+    it('calls moveBlock and reorders the local array', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null })
+      const blockC = makeBlock({ id: 'C', position: 2, parent_id: null })
+      useBlockStore.setState({ blocks: [blockA, blockB, blockC] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'C',
+        new_parent_id: null,
+        new_position: 0,
+      })
+
+      await useBlockStore.getState().reorder('C', 0)
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'move_block',
+        expect.objectContaining({ blockId: 'C', newParentId: null }),
+      )
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks[0].id).toBe('C')
+      expect(blocks[1].id).toBe('A')
+      expect(blocks[2].id).toBe('B')
+    })
+
+    it('is no-op when same index', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1 })
+      useBlockStore.setState({ blocks: [blockA, blockB] })
+
+      await useBlockStore.getState().reorder('A', 0)
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('is no-op when blockId not found', async () => {
+      useBlockStore.setState({ blocks: [makeBlock({ id: 'A' })] })
+
+      await useBlockStore.getState().reorder('NONEXISTENT', 0)
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('does not update state on backend error', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null })
+      useBlockStore.setState({ blocks: [blockA, blockB] })
+
+      mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
+
+      await useBlockStore.getState().reorder('B', 0)
+
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks[0].id).toBe('A')
+      expect(blocks[1].id).toBe('B')
+    })
+
+    it('moves block down in the list (arrayMove semantics)', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null })
+      const blockC = makeBlock({ id: 'C', position: 2, parent_id: null })
+      useBlockStore.setState({ blocks: [blockA, blockB, blockC] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'A',
+        new_parent_id: null,
+        new_position: 3,
+      })
+
+      // Move A to index 2 (where C is) → [B, C, A] via arrayMove
+      await useBlockStore.getState().reorder('A', 2)
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'move_block',
+        expect.objectContaining({ blockId: 'A', newParentId: null }),
+      )
+      const blocks = useBlockStore.getState().blocks
+      // arrayMove([A,B,C], 0, 2) → [B, C, A]
+      expect(blocks[0].id).toBe('B')
+      expect(blocks[1].id).toBe('C')
+      expect(blocks[2].id).toBe('A')
+    })
+
+    it('preserves parent_id when reordering', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: 'PARENT' })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: 'PARENT' })
+      useBlockStore.setState({ blocks: [blockA, blockB] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        new_parent_id: 'PARENT',
+        new_position: -1,
+      })
+
+      await useBlockStore.getState().reorder('B', 0)
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'move_block',
+        expect.objectContaining({ blockId: 'B', newParentId: 'PARENT' }),
+      )
+    })
+
+    it('handles consecutive positions (collision avoidance) for backward move', async () => {
+      // Positions 10, 11, 12 — consecutive, no room for Math.floor average
+      const blockA = makeBlock({ id: 'A', position: 10, parent_id: null })
+      const blockB = makeBlock({ id: 'B', position: 11, parent_id: null })
+      const blockC = makeBlock({ id: 'C', position: 12, parent_id: null })
+      useBlockStore.setState({ blocks: [blockA, blockB, blockC] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'C',
+        new_parent_id: null,
+        new_position: 11,
+      })
+
+      // Move C (idx 2) to idx 1 → between A(10) and B(11)
+      // floor((10+11)/2) = 10, which <= 10, so nudge up → 11
+      // Position 11 collides with B but local array order is correct
+      await useBlockStore.getState().reorder('C', 1)
+
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks.map((b) => b.id)).toEqual(['A', 'C', 'B'])
+      // Position is nudged to beforePos + 1
+      expect(blocks[1].position).toBe(11)
+    })
+
+    it('handles consecutive positions for forward move', async () => {
+      const blockA = makeBlock({ id: 'A', position: 10, parent_id: null })
+      const blockB = makeBlock({ id: 'B', position: 11, parent_id: null })
+      const blockC = makeBlock({ id: 'C', position: 12, parent_id: null })
+      useBlockStore.setState({ blocks: [blockA, blockB, blockC] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'A',
+        new_parent_id: null,
+        new_position: 12,
+      })
+
+      // Move A (idx 0) to idx 1 → between B(11) and C(12)
+      // floor((11+12)/2) = 11, which <= 11, so nudge up → 12
+      await useBlockStore.getState().reorder('A', 1)
+
+      const blocks = useBlockStore.getState().blocks
+      // arrayMove([A,B,C], 0, 1) → [B, A, C]
+      expect(blocks.map((b) => b.id)).toEqual(['B', 'A', 'C'])
+      expect(blocks[1].position).toBe(12)
+    })
+
+    it('assigns position after last block when moving forward to last index', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null })
+      const blockB = makeBlock({ id: 'B', position: 5, parent_id: null })
+      const blockC = makeBlock({ id: 'C', position: 10, parent_id: null })
+      useBlockStore.setState({ blocks: [blockA, blockB, blockC] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'A',
+        new_parent_id: null,
+        new_position: 11,
+      })
+
+      // Move A to last index (2) — hits newIndex >= blocks.length - 1 branch
+      await useBlockStore.getState().reorder('A', 2)
+
+      const blocks = useBlockStore.getState().blocks
+      // arrayMove([A,B,C], 0, 2) → [B, C, A]
+      expect(blocks.map((b) => b.id)).toEqual(['B', 'C', 'A'])
+      // Position = last block's position + 1
+      expect(blocks[2].position).toBe(11)
+    })
+
+    it('uses average position when there is room between positions', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null })
+      const blockB = makeBlock({ id: 'B', position: 10, parent_id: null })
+      const blockC = makeBlock({ id: 'C', position: 20, parent_id: null })
+      useBlockStore.setState({ blocks: [blockA, blockB, blockC] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'C',
+        new_parent_id: null,
+        new_position: 5,
+      })
+
+      // Move C (idx 2) to idx 1 → between A(0) and B(10)
+      // floor((0+10)/2) = 5, which > 0, so no nudge needed
+      await useBlockStore.getState().reorder('C', 1)
+
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks.map((b) => b.id)).toEqual(['A', 'C', 'B'])
+      expect(blocks[1].position).toBe(5)
+    })
+  })
 })

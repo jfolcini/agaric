@@ -22,6 +22,8 @@ export interface BlockKeyboardCallbacks {
   onDedent: () => void
   /** Flush current content before navigation. Returns new markdown or null. */
   onFlush: () => string | null
+  /** Merge current block with previous (Backspace at start of non-empty block). */
+  onMergeWithPrev: () => void
 }
 
 /** Minimal editor shape needed by the key handler (for testability). */
@@ -85,10 +87,18 @@ export function handleBlockKeyDown(
     callbacks.onDeleteBlock()
     return
   }
+
+  // Backspace at start of non-empty block → merge with previous block (p2-t11)
+  if (key === 'Backspace' && atStart && !isEmpty) {
+    event.preventDefault()
+    callbacks.onMergeWithPrev()
+    return
+  }
 }
 
 export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboardCallbacks): void {
-  const { onFocusPrev, onFocusNext, onDeleteBlock, onIndent, onDedent, onFlush } = callbacks
+  const { onFocusPrev, onFocusNext, onDeleteBlock, onIndent, onDedent, onFlush, onMergeWithPrev } =
+    callbacks
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -100,9 +110,10 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onIndent,
         onDedent,
         onFlush,
+        onMergeWithPrev,
       })
     },
-    [editor, onFocusPrev, onFocusNext, onDeleteBlock, onIndent, onDedent, onFlush],
+    [editor, onFocusPrev, onFocusNext, onDeleteBlock, onIndent, onDedent, onFlush, onMergeWithPrev],
   )
 
   useEffect(() => {

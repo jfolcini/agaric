@@ -41,6 +41,7 @@ function makeCallbacks(): BlockKeyboardCallbacks & { _calls: Record<string, numb
       _calls.onFlush = (_calls.onFlush ?? 0) + 1
       return null
     },
+    onMergeWithPrev: track('onMergeWithPrev'),
     _calls,
   }
 }
@@ -219,7 +220,7 @@ describe('handleBlockKeyDown', () => {
       expect(cbs._calls.onDeleteBlock).toBe(1)
     })
 
-    it('Backspace on non-empty block does nothing', () => {
+    it('Backspace on non-empty block at middle does nothing', () => {
       const editor = makeEditor({ isEmpty: false, from: 5, to: 5, docSize: 20 })
       const cbs = makeCallbacks()
       const event = makeEvent('Backspace')
@@ -228,6 +229,7 @@ describe('handleBlockKeyDown', () => {
 
       expect(event.preventDefault).not.toHaveBeenCalled()
       expect(cbs._calls.onDeleteBlock).toBeUndefined()
+      expect(cbs._calls.onMergeWithPrev).toBeUndefined()
     })
 
     it('Backspace on empty does not flush (nothing to flush)', () => {
@@ -298,6 +300,91 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(cbs._calls.onFocusNext).toBe(1)
+    })
+  })
+
+  describe('Backspace merge with previous (p2-t11)', () => {
+    it('Backspace at start of non-empty block calls onMergeWithPrev', () => {
+      // Non-empty, cursor at position 1 (start of text), docSize > 2
+      const editor = makeEditor({
+        isEmpty: false,
+        from: 1,
+        to: 1,
+        selectionEmpty: true,
+        docSize: 10,
+      })
+      const cbs = makeCallbacks()
+      const event = makeEvent('Backspace')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onMergeWithPrev).toBe(1)
+      expect(cbs._calls.onDeleteBlock).toBeUndefined()
+    })
+
+    it('Backspace at position 0 of non-empty block calls onMergeWithPrev', () => {
+      const editor = makeEditor({
+        isEmpty: false,
+        from: 0,
+        to: 0,
+        selectionEmpty: true,
+        docSize: 10,
+      })
+      const cbs = makeCallbacks()
+      const event = makeEvent('Backspace')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onMergeWithPrev).toBe(1)
+    })
+
+    it('Backspace on empty block still calls onDeleteBlock (no regression)', () => {
+      const editor = makeEditor({ isEmpty: true, from: 1, to: 1, docSize: 2 })
+      const cbs = makeCallbacks()
+      const event = makeEvent('Backspace')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onDeleteBlock).toBe(1)
+      expect(cbs._calls.onMergeWithPrev).toBeUndefined()
+    })
+
+    it('Backspace in middle of text does NOT trigger merge', () => {
+      const editor = makeEditor({
+        isEmpty: false,
+        from: 5,
+        to: 5,
+        selectionEmpty: true,
+        docSize: 20,
+      })
+      const cbs = makeCallbacks()
+      const event = makeEvent('Backspace')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls.onMergeWithPrev).toBeUndefined()
+      expect(cbs._calls.onDeleteBlock).toBeUndefined()
+    })
+
+    it('Backspace at start with selection does NOT trigger merge', () => {
+      const editor = makeEditor({
+        isEmpty: false,
+        from: 1,
+        to: 5,
+        selectionEmpty: false,
+        docSize: 20,
+      })
+      const cbs = makeCallbacks()
+      const event = makeEvent('Backspace')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls.onMergeWithPrev).toBeUndefined()
     })
   })
 })
