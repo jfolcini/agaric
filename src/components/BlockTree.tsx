@@ -37,7 +37,12 @@ interface BlockInfo {
   deleted: boolean
 }
 
-export function BlockTree(): React.ReactElement {
+interface BlockTreeProps {
+  /** Optional parent block ID — when set, loads children of this block. */
+  parentId?: string
+}
+
+export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement {
   const {
     blocks,
     focusedBlockId,
@@ -105,8 +110,8 @@ export function BlockTree(): React.ReactElement {
   )
 
   useEffect(() => {
-    load()
-  }, [load])
+    load(parentId)
+  }, [load, parentId])
 
   // Keyboard callbacks
   const handleFlush = useCallback((): string | null => {
