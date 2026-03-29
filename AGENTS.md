@@ -21,6 +21,7 @@
 | cargo-deny | 0.19.0 | ~/.cargo/bin/cargo-deny |
 | cargo-machete | 0.9.1 | ~/.cargo/bin/cargo-machete |
 | cargo-tarpaulin | (latest) | ~/.cargo/bin/cargo-tarpaulin |
+| cargo-nextest | 0.9.132 | ~/.cargo/bin/cargo-nextest |
 
 ### Tauri 2.0 System Dependencies (confirmed installed)
 
@@ -57,6 +58,9 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 │   ├── App.tsx                        # Root component (BootGate wrapper)
 │   ├── App.css / index.css            # Styles
 │   ├── components/BootGate.tsx        # Boot gate — blocks UI until ready
+│   ├── components/SearchPanel.tsx    # FTS5 search UI (debounced, paginated)
+│   ├── components/TagFilterPanel.tsx # Boolean tag filter (AND/OR toggle)
+│   ├── components/TagList.tsx        # Tag management panel
 │   ├── stores/boot.ts                 # Zustand boot state machine
 │   ├── lib/tauri.ts                   # Type-safe Tauri invoke wrappers
 │   ├── lib/tauri-mock.ts              # Browser IPC mock (auto-loaded outside Tauri)
@@ -69,7 +73,9 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
     ├── tauri.conf.json                # Tauri config
     ├── build.rs                       # Tauri build script
     ├── .env                           # DATABASE_URL for sqlx-cli
+    ├── .config/nextest.toml           # nextest config
     ├── migrations/0001_initial.sql    # Full schema (13 tables, 7 indexes)
+    ├── migrations/0002_fts5.sql       # FTS5 virtual table + triggers
     ├── capabilities/default.json      # Tauri 2 ACL permissions
     ├── icons/                         # App icons (placeholders)
     ├── gen/                           # Auto-generated (schemas, ACL)
@@ -78,23 +84,28 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
     │   ├── op_log_bench.rs            # Op log append benchmarks
     │   ├── cache_bench.rs             # Cache rebuild benchmarks
     │   ├── pagination_bench.rs        # Pagination query benchmarks
-    │   └── soft_delete_bench.rs       # Soft-delete/purge benchmarks
+    │   ├── soft_delete_bench.rs       # Soft-delete/purge benchmarks
+    │   └── fts_bench.rs              # FTS5 perf benchmark
     └── src/
         ├── main.rs                    # Binary entry
         ├── lib.rs                     # Library with Tauri setup + commands
         ├── commands.rs                # Tauri command handlers (p1-t24..t27)
         ├── cache.rs                   # Cache rebuild functions (ADR-08, p1-t18..t21)
+        ├── dag.rs                     # DAG traversal — LCA, text_at, remote ops (ADR-07, Phase 4)
         ├── db.rs                      # SQLite pool init (WAL, FK pragma, busy_timeout, migrations)
         ├── device.rs                  # Device UUID persistence (ADR-07)
         ├── draft.rs                   # Block draft writer — save/flush/delete (ADR-07)
         ├── error.rs                   # AppError enum + Serialize for Tauri 2
+        ├── fts.rs                     # FTS5 full-text search backend (ADR-12)
         ├── hash.rs                    # blake3 op hash computation (ADR-07)
         ├── materializer.rs            # Foreground + background queues (ADR-08)
+        ├── merge.rs                   # Three-way merge with diffy (ADR-10, Phase 4)
         ├── op.rs                      # Op payload types + OpType enum (ADR-07)
         ├── op_log.rs                  # Op log writer — append_local_op (ADR-07)
         ├── pagination.rs              # Cursor/keyset pagination (ADR critical)
         ├── recovery.rs                # Crash recovery at boot (ADR-07)
         ├── soft_delete.rs             # Cascade soft-delete, restore, purge (ADR-06)
+        ├── tag_query.rs               # Boolean tag queries with FxHashSet (ADR-08)
         ├── ulid.rs                    # BlockId newtype (ULID, case-normalized)
         ├── integration_tests.rs       # Cross-module integration tests (test-only)
         └── snapshots/                 # Insta snapshot files (19 .snap files)
@@ -105,30 +116,31 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 | Module | Purpose | Key types |
 |--------|---------|-----------|
 | `lib.rs` | Tauri app entry, setup hook (pool + device + recovery + materializer) | `run()` |
-| `commands.rs` | Tauri command handlers — 7 commands (p1-t24..t27) | `create_block`, `edit_block`, `delete_block`, `restore_block`, `purge_block`, `list_blocks`, `get_block` |
+| `commands.rs` | Tauri command handlers — 12 commands (p1-t24..t27, search, tags, status) | `create_block`, `edit_block`, `delete_block`, `restore_block`, `purge_block`, `list_blocks`, `get_block`, `search_blocks`, `query_by_tags`, `list_tags_by_prefix`, `get_status` |
 | `cache.rs` | Cache rebuild: tags, pages, agenda, block_links (ADR-08) | `rebuild_tags_cache()`, `rebuild_pages_cache()`, `rebuild_agenda_cache()`, `reindex_block_links()`, `rebuild_all_caches()` |
+| `dag.rs` | DAG traversal primitives (ADR-07, Phase 4) | `insert_remote_op()`, `append_merge_op()`, `find_lca()`, `text_at()`, `get_block_edit_heads()` |
 | `db.rs` | SQLite pool with WAL + FK pragma + busy_timeout(5s) | `init_pool()` |
 | `device.rs` | Device UUID generation + file persistence | `DeviceId`, `get_or_create_device_id()` |
 | `draft.rs` | Block draft save/flush/delete (ADR-07) | `Draft`, `save_draft()`, `flush_draft()`, `delete_draft()`, `get_draft()`, `draft_count()`, `save_draft_if_changed()` |
 | `error.rs` | Error types for commands | `AppError` (Db, Io, Ulid, Serde, Blake3, Tauri, Validation, InvalidOperation, Channel, NotFound) |
+| `fts.rs` | FTS5 full-text search (ADR-12) | `strip_for_fts()`, `update_fts_for_block()`, `rebuild_fts_index()`, `fts_optimize()`, `search_fts()` |
 | `hash.rs` | blake3 hash for op log entries (ADR-07) | `compute_op_hash()`, `verify_op_hash()` |
-| `materializer.rs` | Foreground + background materializer queues (ADR-08) | `Materializer`, `MaterializeTask`, `dispatch_op()`, `dispatch_background()`, `dedup_tasks()`, `QueueMetrics`, `shutdown()` |
+| `materializer.rs` | Foreground + background materializer queues, FTS tasks, high-water mark monitoring (ADR-08) | `Materializer`, `MaterializeTask`, `dispatch_op()`, `dispatch_background()`, `dedup_tasks()`, `QueueMetrics`, `shutdown()` |
+| `merge.rs` | Three-way merge with diffy (ADR-10) | `merge_text()`, `create_conflict_copy()`, `resolve_property_conflict()`, `merge_block()`, `MergeResult`, `MergeOutcome` |
 | `op.rs` | Op payload types — 12 op types (ADR-07) | `OpType` (Display, FromStr, non_exhaustive), `OpPayload`, all payload structs |
 | `op_log.rs` | Op log writer — append local ops | `OpRecord` (FromRow), `append_local_op()`, `append_local_op_at()`, `append_local_op_in_tx()`, `get_op_by_seq()`, `get_latest_seq()`, `get_ops_since()` |
 | `pagination.rs` | Cursor/keyset pagination — all list queries | `Cursor`, `PageRequest`, `PageResponse`, `list_children()`, `list_by_type()`, `list_trash()`, `list_by_tag()`, `list_agenda()` |
 | `recovery.rs` | Crash recovery at boot (ADR-07) | `RecoveryReport` (duration_ms, draft_errors), `recover_at_boot()` |
 | `soft_delete.rs` | Cascade soft-delete, restore, purge (ADR-06) | `soft_delete_block()`, `cascade_soft_delete()` (returns count), `restore_block()`, `purge_block()` (batch O(k)), `is_deleted()`, `get_descendants()` |
+| `tag_query.rs` | Boolean tag queries (ADR-08) | `TagExpr`, `eval_tag_query()`, `list_tags_by_prefix()`, `escape_like()` |
 | `ulid.rs` | ID generation and validation | `BlockId`, `AttachmentId`, `SnapshotId` |
 | `integration_tests.rs` | Cross-module pipeline tests (16 tests, test-only) | Op chains, recovery sim, cascade delete, pagination, materializer |
 
 ## Test Coverage
 
-- **430 Rust tests** + **279 Vitest frontend tests** = 709 total
-- **Tarpaulin coverage: 99.64%** (839/842 lines)
-- Per-module coverage: cache 100%, commands 100%, db 100%, device 100%, draft 100%, hash 96%, materializer 100%, op 100%, op_log 100%, pagination 99%, recovery 100%, soft_delete 100%, ulid 100%
-- Untestable Tauri bootstrap (lib.rs::run, main.rs::main, 7 command wrappers) excluded via `#[cfg(not(tarpaulin_include))]`
-- Defensive error handlers in materializer + recovery + device extracted into `#[cfg(not(tarpaulin_include))]` annotated helpers
-- Remaining 3 uncovered lines: tarpaulin instrumentation artifacts on non-executable structural lines (error.rs:41 impl header, hash.rs:39 block-expr open, pagination.rs:147 struct field)
+- **584 Rust tests** + **430 Vitest frontend tests** + **18 Playwright E2E tests** = 1032 total
+- Phases 1–3 complete + Phase 4 Wave 1 (DAG + merge)
+- Untestable Tauri bootstrap (lib.rs::run, main.rs::main, command wrappers) excluded via `#[cfg(not(tarpaulin_include))]`
 
 ## Test Tooling Guide
 
@@ -143,6 +155,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 | **insta** | Rust | Snapshot tests (JSON/YAML structure assertions) | `cargo test` — `insta::assert_yaml_snapshot!()` |
 | **Criterion** | Rust | Benchmarks (perf regression detection) | `cargo bench` — never in CI or pre-commit |
 | **cargo-tarpaulin** | Rust | Line coverage reporting | `cargo tarpaulin` — expensive (~60s), on-demand only |
+| **Playwright** | E2E | Full user flows in browser (mock backend) | `npx playwright test` |
 | **specta binding test** | Rust→TS | Verify bindings.ts matches Rust types | `cargo test specta_tests` — runs in pre-commit via cargo-test |
 
 ### Rules
@@ -164,6 +177,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 | New store action | Vitest unit test | Call action, assert state |
 | Serializer / parser changes | fast-check property tests | Fuzz with random inputs |
 | Cross-module Rust workflow | `integration_tests.rs` | Op → materialize → query pipeline |
+| E2E user flow | Playwright in `e2e/` | Navigation, CRUD, cross-view persistence |
 | Performance-sensitive code | Criterion bench in `benches/` | Compare before/after |
 
 ## TypeScript Bindings (specta / tauri-specta)
@@ -188,7 +202,8 @@ cd src-tauri && cargo test -- specta_tests --ignored
 - **WAL mode** with `PRAGMA foreign_keys = ON` on every connection
 - **Pool:** max 5 connections (1 writer + 4 readers under WAL)
 - **Migrations:** `src-tauri/migrations/` — run automatically on pool init
-- **Schema:** 13 tables, 7 indexes (see `0001_initial.sql` and ADR-05)
+- **Schema:** 13 tables + 1 FTS5 virtual table, 8 indexes (see `0001_initial.sql`, `0002_fts5.sql`, and ADR-05)
+- **FTS5:** `fts_blocks` virtual table for full-text search (migration 0002)
 
 ## Build Commands
 
@@ -202,9 +217,10 @@ npm run format           # Biome format --write
 npm run test             # Vitest run
 npm run test:watch       # Vitest watch mode
 npm run test:coverage    # Vitest with v8 coverage
+npx playwright test     # Playwright E2E tests (18 tests)
 
 # Backend (source cargo env first: . "$HOME/.cargo/env")
-cd src-tauri && cargo test     # Run Rust tests (430 tests)
+cd src-tauri && cargo nextest run  # Run Rust tests (584 tests)
 cd src-tauri && cargo fmt --check  # Rust formatting
 cd src-tauri && cargo clippy -- -D warnings  # Lint Rust
 
@@ -309,14 +325,15 @@ Config: `prek.toml`. Installed via `prek install`. Runs on every `git commit`. *
 | vitest | Run frontend tests | .ts/.tsx |
 | cargo-fmt | Rust formatting check | .rs |
 | cargo-clippy | Rust linting (warnings = errors) | .rs |
-| cargo-test | Rust tests | .rs |
+| cargo-test | Rust tests (nextest) | .rs |
 | cargo-deny | Security advisories, licenses | Cargo.toml/lock only |
 | cargo-machete | Unused dependency detection | Cargo.toml/lock only |
 
 ## CI Gates
 
-- `cargo test` + `cargo fmt --check` + `cargo clippy -- -D warnings`
+- `cargo nextest run --profile ci` + `cargo fmt --check` + `cargo clippy -- -D warnings`
 - `biome check` + `tsc -b --noEmit` + `vitest run`
+- `npx playwright test`
 - `cargo sqlx prepare --check` (offline cache must not be stale)
 
 ## Key Architectural Rules
@@ -352,7 +369,7 @@ Measured timings (incremental, no code changes):
 | Command | Time | Notes |
 |---------|------|-------|
 | `cargo fmt --check` | 0.1s | No compilation |
-| `cargo test` | 1.2s | 430 tests in 0.8s |
+| `cargo nextest run` | 3.3s | 584 tests in parallel |
 | `cargo clippy` | 2.0s | Separate analysis pass |
 | `biome check` | 0.2s | |
 | `tsc -b --noEmit` | 1.0s | |

@@ -290,18 +290,18 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p4-t3 | Multi-entry parent_seqs on merge ops | backend | **YES** | [ADR-07] Schema already supports this from Phase 1. Only write + read logic changes. Merge op parent_seqs = one entry per syncing device. |
-| p4-t4 | LCA algorithm — per-block edit chain | backend | **YES** | [ADR-07] find_lca(op_a, op_b): walk prev_edit pointers. O(chain depth). Returns ancestor text_at(). No graph library needed. |
-| p4-t5 | text_at() helper | backend | | [ADR-07] op_type='edit_block' → payload.to_text. op_type='create_block' → payload.content. Edge: no prior edit → create_block content. |
+| p4-t3 | Multi-entry parent_seqs on merge ops | backend | **YES** | Done | [ADR-07] Schema already supports this from Phase 1. Only write + read logic changes. Merge op parent_seqs = one entry per syncing device. |
+| p4-t4 | LCA algorithm — per-block edit chain | backend | **YES** | Done | [ADR-07] find_lca(op_a, op_b): walk prev_edit pointers. O(chain depth). Returns ancestor text_at(). No graph library needed. |
+| p4-t5 | text_at() helper | backend | | Done | [ADR-07] op_type='edit_block' → payload.to_text. op_type='create_block' → payload.content. Edge: no prior edit → create_block content. |
 
 ### diffy Integration
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p4-t6 | diffy::merge() integration | backend | **YES** | [ADR-10] Call: diffy::merge(ancestor_text, ours, theirs). Ok(String) → new edit_block op. Err(MergeConflict) → conflict copy path. |
-| p4-t7 | Conflict copy creation on merge failure | backend | | [ADR-06, ADR-10] New block: is_conflict=1, conflict_source=original_block_id, content=conflicting version. Original retains ancestor content. |
-| p4-t8 | Property conflict LWW resolution | backend | | [ADR-10] Concurrent set_property for same (block_id, key): last-writer-wins on created_at, device_id as tiebreaker. Log to audit list. |
-| p4-t9 | diffy integration tests | testing | **YES** | [ADR-10] Test: clean merge (non-overlapping edits), conflict (overlapping), ULID token handling, Markdown mark boundaries. |
+| p4-t6 | diffy::merge() integration | backend | **YES** | Done | [ADR-10] Call: diffy::merge(ancestor_text, ours, theirs). Ok(String) → new edit_block op. Err(MergeConflict) → conflict copy path. |
+| p4-t7 | Conflict copy creation on merge failure | backend | | Done | [ADR-06, ADR-10] New block: is_conflict=1, conflict_source=original_block_id, content=conflicting version. Original retains ancestor content. |
+| p4-t8 | Property conflict LWW resolution | backend | | Done | [ADR-10] Concurrent set_property for same (block_id, key): last-writer-wins on created_at, device_id as tiebreaker. Log to audit list. |
+| p4-t9 | diffy integration tests | testing | **YES** | Done | [ADR-10] Test: clean merge (non-overlapping edits), conflict (overlapping), ULID token handling, Markdown mark boundaries. |
 
 ### mDNS Discovery + Pairing
 

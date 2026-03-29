@@ -497,6 +497,29 @@
 
 ---
 
+## Session 11 — 2026-03-29
+
+### Phase 4 Wave 1 — DAG + Merge
+
+#### [08:00] Subagent: DAG primitives build (p4-t3/t4/t5) [BUILT]
+- **Result:** `dag.rs` — insert_remote_op (idempotent, hash-verified), append_merge_op (multi-parent), find_lca (two-pointer walk), text_at, get_block_edit_heads. 23 new tests.
+- **Tests:** 557 Rust passing
+
+#### [08:15] Subagent: DAG primitives review [REVIEWED]
+- **Fixes:** Extracted shared `serialize_inner_payload` (was duplicated from op_log.rs → now `pub(crate)`). Added 2 edge-case tests (find_lca with create_block as input).
+- **Tests:** 559 Rust passing
+
+#### [08:15] Subagent: Merge logic build (p4-t6/t7/t8/t9) [BUILT]
+- **Result:** `merge.rs` — merge_text (diffy::merge), create_conflict_copy (atomic tx, is_conflict=1), resolve_property_conflict (LWW + device_id tiebreaker), merge_block orchestrator. Added `diffy` dep. 24 new tests.
+- **Tests:** 578 Rust passing
+
+#### [08:30] Subagent: Merge logic review [REVIEWED]
+- **Bug fixed:** resolve_property_conflict was non-commutative when timestamps and device_ids matched — added seq as second tiebreaker. 7 new tests (commutativity, unicode, null position, multi-paragraph).
+- **Tests:** 584 Rust + 430 Vitest + 18 Playwright = 1032 total
+- **Commit:** `aba7ed3`
+
+---
+
 <!-- Template:
 #### [HH:MM] Subagent: <title> [BUILT|REVIEWED]
 - **Tasks:** <task IDs>

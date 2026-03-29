@@ -9,7 +9,7 @@ block type.
 ---
 
 ## ADR-01 — Shell & Frontend
-**Status:** Phase 1.5 complete. Android spike (end of Phase 1.5) not started. Export (Phase 5) not started.
+**Status:** Phase 1.5 complete. Android spike complete (Phase 1.5). Phase 2 complete (DnD, backlinks, editor UI). Export (Phase 5) not started.
 
 **Decision:** Tauri 2.0, React 18 + Vite, TipTap, Biome.
 
@@ -450,7 +450,7 @@ new `edit_block` on original, conflict copy → `delete_block`.
 ---
 
 ## ADR-07 — Operation Log
-**Status:** Phase 1 complete (linear chain, blake3 hash, device UUID, drafts, crash recovery, all 12 op types). Phase 4 DAG (LCA algorithm, multi-device merge) not started.
+**Status:** Phase 1 complete (linear chain). Phase 4 Wave 1 complete (DAG traversal, LCA, multi-parent merge ops). Snapshots, compaction, and sync protocol not started.
 
 **Core principle:** Op log is strictly append-only. `block_drafts` is the only mutable scratch
 space. Nothing else bypasses this invariant.
@@ -730,7 +730,7 @@ binary data).
 ---
 
 ## ADR-08 — Materializer
-**Status:** Phase 1 complete (foreground/background queues, all 4 cache rebuilds, cursor-based pagination). FTS5 maintenance (Phase 3), Status View (Phase 2+) not started.
+**Status:** Phase 1 complete (queues, caches, pagination). Phase 3 complete (FTS5 maintenance, tag query materializer, queue monitoring). Status View exposed via get_status command.
 
 **Priority queues:**
 - Foreground queue: viewport blocks — low latency.
@@ -921,7 +921,7 @@ reference only.
 ---
 
 ## ADR-10 — CRDT / Conflict Strategy
-**Status:** Not started. prev_edit pointer stored from Phase 1 (ready for LCA). Phase 4.
+**Status:** Phase 4 Wave 1 complete (merge.rs: diffy integration, conflict copy, property LWW, merge_block orchestrator). Sync-triggered merge execution not started (Phase 4 Wave 5).
 
 **Decision:** Three-way merge via `diffy` crate at word-level granularity, not a CRDT library.
 
@@ -948,7 +948,7 @@ reference only.
 ---
 
 ## ADR-11 — Rust Libraries
-**Status:** Phase 1 complete. Phase 4 deps (diffy, zstd, ciborium) not yet added.
+**Status:** Phase 1 complete. Phase 4: diffy added. zstd, ciborium not yet added.
 
 | Library | Phase | Purpose |
 |---------|-------|---------|
@@ -973,7 +973,7 @@ reference only.
 ---
 
 ## ADR-12 — Search
-**Status:** Not started. Phase 3.
+**Status:** Phase 3 complete (FTS5 virtual table, strip pass, scheduled optimize, search command, SearchPanel UI, CJK notice). Tantivy/lindera (Phase 5) not started.
 
 **v1:** SQLite FTS5. Adequate for non-CJK text. CJK limitations documented in ADR-19.
 
@@ -983,7 +983,7 @@ bundled.
 ---
 
 ## ADR-13 — Dev Tooling
-**Status:** Phase 1.5 complete (insta snapshots). Playwright and cargo-nextest not started (Phase 2+).
+**Status:** Phase 1.5 complete (insta snapshots). Phase 2 complete (Playwright E2E). Phase 3 complete (cargo-nextest, FTS5 benchmarks).
 
 | Tool | When | Notes |
 |------|------|-------|
@@ -1141,7 +1141,7 @@ packaging constraints.
 ---
 
 ## ADR-20 — Content Storage Format
-**Status:** Phase 1.5 complete (serializer, types, TipTap integration, 110+ tests, property-based fuzzing). diffy integration (Phase 4), FTS5 stripping (Phase 3), and export (Phase 5) not started.
+**Status:** Phase 1.5 complete (serializer, types, TipTap integration). Phase 3: FTS5 strip pass complete. diffy integration complete (Phase 4). Export (Phase 5) not started.
 
 **Decision:** Markdown with a locked inline mark set and two custom ULID token extensions.
 TipTap serializes to and from this format on every focus/blur cycle via a custom serializer.
