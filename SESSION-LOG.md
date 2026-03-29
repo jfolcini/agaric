@@ -532,6 +532,29 @@
 
 ---
 
+### Comprehensive Code Audit
+
+#### [20:00] Phase 1: 10 Find-Issues subagents
+- **Scope:** All Rust modules (schema, op-log, drafts, DAG, materializer, pagination, merge, FTS, commands, serialization)
+- **Result:** 204 confirmed findings, 2 rejected, 5 new findings discovered during validation
+
+#### [20:30] Phase 2: 10 Validate-Issues subagents
+- **Result:** Validated all 204 findings. Key escalations: `reconfigure` drops all plugins (critical), escape desync (high)
+
+#### [21:00] Phase 3: 10 Fix subagents + 1 re-apply subagent [BUILT]
+- **Domains:** Schema+DataModel, Op Log Core, Drafts+Recovery, DAG+Snapshots, Materializer+Cache, Pagination+Tags, Merge, FTS5, Commands, Serialization
+- **Parallel execution:** 10 subagents in same worktree caused file conflicts; 5 domains required re-application via targeted subagent
+- **Critical fixes:** BlockId deserialization normalization, TOCTOU races in commands, FTS5 query injection, restore CTE bug, crash recovery content update, merge op creation on conflict, multi-device pagination
+- **New modules:** serializer.rs, org_parser.rs, org_emitter.rs (Org-mode parser/emitter with shared escape chars)
+
+#### [21:30] Phase 4: 2 Review subagents [REVIEWED]
+- **Review 1 (Backend Core):** Found 3 missing snapshot.rs fixes (read tx, defer_foreign_keys, BEGIN IMMEDIATE). Applied.
+- **Review 2 (Commands+FTS+Merge+Pagination+Serialization):** Found missing fts_blocks cleanup in inlined purge. Applied.
+- **Tests:** 794 Rust (753 lib + 41 serializer integration) + 430 Vitest = 1224 total
+- **Commit:** `e4531ea`
+
+---
+
 <!-- Template:
 #### [HH:MM] Subagent: <title> [BUILT|REVIEWED]
 - **Tasks:** <task IDs>
