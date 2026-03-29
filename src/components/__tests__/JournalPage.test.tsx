@@ -4,10 +4,11 @@
  * Validates:
  *  - Initial render with date navigation
  *  - Date navigation (prev/next/today)
- *  - Adding a block (form submit)
- *  - Deleting a block
- *  - Empty state
- *  - Loading state
+ *  - Renders BlockTree with correct parentId when daily page exists
+ *  - Shows empty state when no daily page
+ *  - Loading state while finding daily page
+ *  - Add block button creates page + block and refreshes BlockTree
+ *  - "Open in editor" button calls onNavigateToPage
  *  - a11y compliance
  */
 
@@ -16,6 +17,21 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
+// ── Mock BlockTree ──────────────────────────────────────────────────
+// BlockTree is heavy (DnD, TipTap, viewport observer). Mock it to a
+// simple div that exposes the parentId prop for verification.
+let capturedParentId: string | undefined
+vi.mock('../BlockTree', () => ({
+  BlockTree: (props: { parentId?: string }) => {
+    capturedParentId = props.parentId
+    return (
+      <div data-testid="block-tree" data-parent-id={props.parentId ?? ''} className="block-tree" />
+    )
+  },
+}))
+
+import { useBlockStore } from '../../stores/blocks'
 import { JournalPage } from '../JournalPage'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -43,26 +59,20 @@ function makeDailyPage(id: string, dateStr: string) {
   }
 }
 
-function makeBlock(id: string, content: string, parentId: string, position: number) {
-  return {
-    id,
-    block_type: 'text',
-    content,
-    parent_id: parentId,
-    position,
-    deleted_at: null,
-    archived_at: null,
-    is_conflict: false,
-  }
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
+  capturedParentId = undefined
+  // Reset the Zustand store to a clean state before each test
+  useBlockStore.setState({
+    blocks: [],
+    focusedBlockId: null,
+    loading: false,
+  })
 })
 
 describe('JournalPage', () => {
   it("renders initial state with today's date", async () => {
-    // First call: listBlocks({ blockType: 'page' }) — no daily page found
+    // listBlocks({ blockType: 'page' }) — no daily page found
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     render(<JournalPage />)
@@ -80,11 +90,11 @@ describe('JournalPage', () => {
       expect(screen.getByText(expectedDisplay)).toBeInTheDocument()
     })
 
-    // Should show the add block input
-    expect(screen.getByPlaceholderText('Write something...')).toBeInTheDocument()
+    // Should show the Add block button
+    expect(screen.getByRole('button', { name: /add block/i })).toBeInTheDocument()
   })
 
-  it('shows empty state when no blocks for current date', async () => {
+  it('shows empty state when no daily page for current date', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     render(<JournalPage />)
@@ -92,9 +102,12 @@ describe('JournalPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/No blocks for/)).toBeInTheDocument()
     })
+
+    // BlockTree should NOT be rendered
+    expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
   })
 
-  it('shows loading state while fetching', async () => {
+  it('shows loading state while finding daily page', async () => {
     // Make the mock never resolve to keep loading state visible
     mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
 
@@ -103,27 +116,25 @@ describe('JournalPage', () => {
     expect(screen.getByText('Loading...')).toBeInTheDocument()
   })
 
-  it('renders blocks for the current date', async () => {
+  it('renders BlockTree with correct parentId when daily page exists', async () => {
     const today = formatDate(new Date())
     const dailyPage = makeDailyPage('DP1', today)
 
-    // First call: listBlocks({ blockType: 'page' }) — finds daily page
+    // listBlocks({ blockType: 'page' }) — finds daily page
     mockedInvoke.mockResolvedValueOnce({
       items: [dailyPage],
-      next_cursor: null,
-      has_more: false,
-    })
-    // Second call: listBlocks({ parentId: 'DP1' }) — child blocks
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeBlock('B1', 'First block', 'DP1', 0), makeBlock('B2', 'Second block', 'DP1', 1)],
       next_cursor: null,
       has_more: false,
     })
 
     render(<JournalPage />)
 
-    expect(await screen.findByText('First block')).toBeInTheDocument()
-    expect(screen.getByText('Second block')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+    })
+
+    expect(screen.getByTestId('block-tree')).toHaveAttribute('data-parent-id', 'DP1')
+    expect(capturedParentId).toBe('DP1')
   })
 
   it('navigates to previous day', async () => {
@@ -237,7 +248,7 @@ describe('JournalPage', () => {
     expect(screen.queryByRole('button', { name: /Today/i })).not.toBeInTheDocument()
   })
 
-  it('adds a block via the form', async () => {
+  it('add block button creates daily page and block when no page exists', async () => {
     const user = userEvent.setup()
     const today = formatDate(new Date())
 
@@ -250,7 +261,7 @@ describe('JournalPage', () => {
       expect(screen.getByText(/No blocks for/)).toBeInTheDocument()
     })
 
-    // Set up mocks for: create daily page + create block
+    // Set up mocks for: create daily page + create child block + load(pageId)
     mockedInvoke
       // create_block for daily page
       .mockResolvedValueOnce({
@@ -264,87 +275,170 @@ describe('JournalPage', () => {
       .mockResolvedValueOnce({
         id: 'B1',
         block_type: 'text',
-        content: 'My journal entry',
+        content: '',
         parent_id: 'DP1',
         position: 0,
       })
+      // load(pageId) — listBlocks({ parentId: 'DP1' })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 'B1',
+            block_type: 'text',
+            content: '',
+            parent_id: 'DP1',
+            position: 0,
+            deleted_at: null,
+            archived_at: null,
+            is_conflict: false,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
 
-    // Type in the input and submit
-    const input = screen.getByPlaceholderText('Write something...')
-    await user.type(input, 'My journal entry')
-
-    const addBtn = screen.getByRole('button', { name: /Add/i })
+    const addBtn = screen.getByRole('button', { name: /add block/i })
     await user.click(addBtn)
 
-    // Block should appear in the list
-    expect(await screen.findByText('My journal entry')).toBeInTheDocument()
-
     // Verify the create_block calls
-    expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-      blockType: 'page',
-      content: today,
-      parentId: null,
-      position: null,
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+        blockType: 'page',
+        content: today,
+        parentId: null,
+        position: null,
+      })
     })
     expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
       blockType: 'text',
-      content: 'My journal entry',
+      content: '',
       parentId: 'DP1',
-      position: 0,
+      position: null,
     })
+
+    // After adding, BlockTree should appear with correct parentId
+    await waitFor(() => {
+      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('block-tree')).toHaveAttribute('data-parent-id', 'DP1')
   })
 
-  it('deletes a block', async () => {
+  it('add block button creates block under existing page', async () => {
     const user = userEvent.setup()
     const today = formatDate(new Date())
     const dailyPage = makeDailyPage('DP1', today)
 
-    // Initial load — daily page with 1 block
+    // Initial load — daily page exists
     mockedInvoke.mockResolvedValueOnce({
       items: [dailyPage],
-      next_cursor: null,
-      has_more: false,
-    })
-    mockedInvoke.mockResolvedValueOnce({
-      items: [makeBlock('B1', 'Block to delete', 'DP1', 0)],
       next_cursor: null,
       has_more: false,
     })
 
     render(<JournalPage />)
 
-    expect(await screen.findByText('Block to delete')).toBeInTheDocument()
-
-    // Mock delete_block response (for the child block) + delete daily page (auto-cleanup)
-    mockedInvoke
-      .mockResolvedValueOnce({
-        block_id: 'B1',
-        deleted_at: '2025-01-15T00:00:00Z',
-        descendants_affected: 1,
-      })
-      .mockResolvedValueOnce({
-        block_id: 'DP1',
-        deleted_at: '2025-01-15T00:00:00Z',
-        descendants_affected: 0,
-      })
-
-    // Find and click the delete button (it's a small icon button within the block row)
-    // The button contains a Trash2 icon but no text — use the button within the block row
-    const blockRow = screen.getByText('Block to delete').closest('div.group')
-    const deleteBtn = blockRow?.querySelector('button') as HTMLButtonElement
-    expect(deleteBtn).toBeTruthy()
-    await user.click(deleteBtn)
-
-    // Block should be removed
     await waitFor(() => {
-      expect(screen.queryByText('Block to delete')).not.toBeInTheDocument()
+      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
     })
+
+    // Set up mocks for: create child block + load(pageId)
+    mockedInvoke
+      // create_block for child text block (no page creation needed)
+      .mockResolvedValueOnce({
+        id: 'B2',
+        block_type: 'text',
+        content: '',
+        parent_id: 'DP1',
+        position: 1,
+      })
+      // load(pageId) — listBlocks({ parentId: 'DP1' })
+      .mockResolvedValueOnce({
+        items: [],
+        next_cursor: null,
+        has_more: false,
+      })
+
+    const addBtn = screen.getByRole('button', { name: /add block/i })
+    await user.click(addBtn)
+
+    // Should NOT have created a daily page — only the child block
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+        blockType: 'text',
+        content: '',
+        parentId: 'DP1',
+        position: null,
+      })
+    })
+
+    // Should NOT have called create_block with blockType 'page' after initial load
+    const createPageCalls = mockedInvoke.mock.calls.filter(
+      ([cmd, args]) =>
+        cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+    )
+    expect(createPageCalls).toHaveLength(0)
+  })
+
+  it('shows "Open in editor" button when daily page exists and onNavigateToPage provided', async () => {
+    const today = formatDate(new Date())
+    const dailyPage = makeDailyPage('DP1', today)
+    const onNavigateToPage = vi.fn()
+
+    mockedInvoke.mockResolvedValueOnce({
+      items: [dailyPage],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<JournalPage onNavigateToPage={onNavigateToPage} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+    })
+
+    const openBtn = screen.getByRole('button', { name: /open in editor/i })
+    expect(openBtn).toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(openBtn)
+
+    expect(onNavigateToPage).toHaveBeenCalledWith('DP1', today)
+  })
+
+  it('does not show "Open in editor" button when no daily page', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    render(<JournalPage onNavigateToPage={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/No blocks for/)).toBeInTheDocument()
+    })
+
+    expect(screen.queryByRole('button', { name: /open in editor/i })).not.toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     const { container } = render(<JournalPage />)
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('has no a11y violations when daily page exists', async () => {
+    const today = formatDate(new Date())
+    const dailyPage = makeDailyPage('DP1', today)
+
+    mockedInvoke.mockResolvedValueOnce({
+      items: [dailyPage],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { container } = render(<JournalPage onNavigateToPage={() => {}} />)
 
     await waitFor(async () => {
       const results = await axe(container)

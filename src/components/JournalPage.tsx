@@ -1,19 +1,19 @@
 /**
- * JournalPage — daily journal with block creation and deletion.
+ * JournalPage — daily journal view backed by BlockTree.
  *
  * Each date MAY have a backing page block (blockType='page', content=dateString).
- * The page is invisible to the user — they just see child blocks.
- * Adding the first block auto-creates the daily page; deleting the last
- * block auto-deletes it.
+ * The page is invisible to the user — they just see child blocks rendered
+ * via BlockTree (with roving editor, DnD, keyboard shortcuts, markdown).
+ * The "Add block" button auto-creates the daily page if needed.
  */
 
-import { ChevronLeft, ChevronRight, ExternalLink, Plus, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ExternalLink, Plus } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import type { BlockRow } from '../lib/tauri'
-import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
+import { createBlock, listBlocks } from '../lib/tauri'
+import { useBlockStore } from '../stores/blocks'
+import { BlockTree } from './BlockTree'
 
 /** Format a Date as YYYY-MM-DD. */
 function formatDate(d: Date): string {
@@ -46,37 +46,28 @@ export function JournalPage({
 }: JournalPageProps): React.ReactElement {
   const [date, setDate] = useState(() => new Date())
   const [dailyPageId, setDailyPageId] = useState<string | null>(null)
-  const [blocks, setBlocks] = useState<BlockRow[]>([])
-  const [loading, setLoading] = useState(false)
-  const [newContent, setNewContent] = useState('')
+  const [pageLoading, setPageLoading] = useState(false)
+  const { load } = useBlockStore()
 
   const dateStr = formatDate(date)
 
-  const loadBlocks = useCallback(async () => {
-    setLoading(true)
+  /** Find the daily page for the current date (does NOT load children — BlockTree does that). */
+  const findDailyPage = useCallback(async () => {
+    setPageLoading(true)
     try {
       const resp = await listBlocks({ blockType: 'page', limit: 500 })
       const page = resp.items.find((b) => b.content === formatDate(date))
-      if (page) {
-        setDailyPageId(page.id)
-        const children = await listBlocks({ parentId: page.id })
-        setBlocks(children.items)
-      } else {
-        setDailyPageId(null)
-        setBlocks([])
-      }
+      setDailyPageId(page ? page.id : null)
     } catch {
       setDailyPageId(null)
-      setBlocks([])
     }
-    setLoading(false)
+    setPageLoading(false)
   }, [date])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset and reload when date changes
   useEffect(() => {
     setDailyPageId(null)
-    setBlocks([])
-    loadBlocks()
+    findDailyPage()
   }, [dateStr])
 
   const goToPrevDay = useCallback(() => {
@@ -101,10 +92,8 @@ export function JournalPage({
 
   const isToday = formatDate(new Date()) === dateStr
 
+  /** Add a new block under the daily page, creating the page if needed. */
   async function handleAddBlock() {
-    const content = newContent.trim()
-    if (!content) return
-
     let pageId = dailyPageId
     // Auto-create daily page if it doesn't exist
     if (!pageId) {
@@ -113,42 +102,22 @@ export function JournalPage({
       setDailyPageId(pageId)
     }
 
-    // Create child block
-    const block = await createBlock({
+    // Create an empty child block under the daily page
+    await createBlock({
       blockType: 'text',
-      content,
+      content: '',
       parentId: pageId,
-      position: blocks.length,
     })
 
-    // Add to local state
-    setBlocks((prev) => [
-      ...prev,
-      {
-        id: block.id,
-        block_type: block.block_type,
-        content: block.content,
-        parent_id: block.parent_id,
-        position: block.position,
-        deleted_at: null,
-        archived_at: null,
-        is_conflict: false,
-      },
-    ])
-    setNewContent('')
+    // Refresh BlockTree to pick up the new block
+    await load(pageId)
   }
 
-  async function handleDeleteBlock(blockId: string) {
-    await deleteBlock(blockId)
-    const remaining = blocks.filter((b) => b.id !== blockId)
-    setBlocks(remaining)
-
-    // Auto-delete empty daily page
-    if (remaining.length === 0 && dailyPageId) {
-      await deleteBlock(dailyPageId)
-      setDailyPageId(null)
-    }
-  }
+  // TODO: Auto-delete daily page when last block is deleted.
+  // BlockTree handles deletion internally via useBlockStore.remove().
+  // We could subscribe to block count changes and clean up the empty
+  // daily page, but that requires cross-component coordination.
+  // Deferred — will revisit when adding journal-specific lifecycle hooks.
 
   return (
     <div className="space-y-4">
@@ -182,59 +151,31 @@ export function JournalPage({
         </Button>
       </div>
 
-      {/* Loading */}
-      {loading && <div className="text-sm text-muted-foreground">Loading...</div>}
+      {/* Loading indicator while finding the daily page */}
+      {pageLoading && <div className="text-sm text-muted-foreground">Loading...</div>}
 
-      {/* Block list */}
-      {!loading && blocks.length > 0 && (
-        <div className="space-y-2">
-          {blocks.map((block) => (
-            <div
-              key={block.id}
-              className="group flex items-center gap-2 rounded-lg border bg-card p-3"
-            >
-              <span className="flex-1 text-sm whitespace-pre-wrap">
-                {block.content || '(empty)'}
-              </span>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Delete block"
-                className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                onClick={() => handleDeleteBlock(block.id)}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Block tree — delegates all block rendering to BlockTree */}
+      {!pageLoading && dailyPageId && <BlockTree parentId={dailyPageId} />}
 
-      {/* Empty state */}
-      {!loading && blocks.length === 0 && (
+      {/* Empty state — no daily page for this date */}
+      {!pageLoading && !dailyPageId && (
         <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           No blocks for {formatDateDisplay(date)}. Add one below.
         </div>
       )}
 
-      {/* Add block input */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault()
-          handleAddBlock()
-        }}
-        className="flex items-center gap-2"
-      >
-        <Input
-          value={newContent}
-          onChange={(e) => setNewContent(e.target.value)}
-          placeholder="Write something..."
-          className="flex-1"
-        />
-        <Button type="submit" variant="outline" disabled={!newContent.trim()}>
-          <Plus className="h-4 w-4" /> Add
+      {/* Add block button */}
+      <div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground"
+          onClick={handleAddBlock}
+        >
+          <Plus className="h-4 w-4" />
+          Add block
         </Button>
-      </form>
+      </div>
     </div>
   )
 }

@@ -81,7 +81,7 @@ describe('App', () => {
       expect(screen.getByRole('button', { name: /Prev/i })).toBeInTheDocument()
     })
     expect(screen.getByRole('button', { name: /Next/i })).toBeInTheDocument()
-    expect(screen.getByPlaceholderText('Write something...')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /add block/i })).toBeInTheDocument()
   })
 
   it('switches to Pages view', async () => {
@@ -211,7 +211,7 @@ describe('App', () => {
 
     // Journal should render again
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('Write something...')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /add block/i })).toBeInTheDocument()
     })
   })
 
