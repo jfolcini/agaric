@@ -475,34 +475,83 @@ describe('round-trip: serialize(parse(s)) === s', () => {
   }
 })
 
-// -- known limitations --------------------------------------------------------
-// These tests document current behavior for edge cases that don't round-trip.
-// The serializer wraps each TextNode independently, so when italic spans across
-// adjacent nodes with differing bold marks, the * delimiters become ambiguous.
-// See REVIEW-LATER.md for the tracking item.
+// -- mark coalescing (bold-inside-italic) -------------------------------------
+// These test the fix for the data-loss bug where the serializer wrapped each
+// TextNode independently, creating ambiguous delimiter sequences.
+// See REVIEW-LATER.md "[2026-03-28] Serializer: bold-inside-italic mark merging"
 
-describe('known limitations: bold-inside-italic mark merging', () => {
-  it('italic(a)+boldItalic(b)+italic(c) loses bold on serialize→parse', () => {
+describe('mark coalescing: nested marks across adjacent text nodes', () => {
+  it('italic(a)+boldItalic(b)+italic(c) → *a**b**c*', () => {
     const input = doc(paragraph(italic('a'), boldItalic('b'), italic('c')))
     const md = serialize(input)
-    expect(md).toBe('*a****b****c*')
-    // Bold is lost: the *-close + *-open between nodes creates ** which parses as bold
-    expect(parse(md)).toEqual(doc(paragraph(italic('a'), italic('b'), italic('c'))))
+    expect(md).toBe('*a**b**c*')
+    // Round-trip: parse should recover the original structure
+    expect(parse(md)).toEqual(input)
   })
 
-  it('italic(a)+boldItalic(b) loses bold on serialize→parse', () => {
-    const input = doc(paragraph(italic('a'), boldItalic('b')))
-    const md = serialize(input)
-    expect(md).toBe('*a****b***')
-    // Bold is lost; trailing ** becomes stray text
-    const reparsed = parse(md)
-    expect(reparsed).not.toEqual(input)
-  })
-
-  it('bold(a)+boldItalic(b)+bold(c) round-trips correctly', () => {
-    // When bold is the outer mark, ** delimiters are unambiguous
+  it('bold(a)+boldItalic(b)+bold(c) → **a*b*c**', () => {
     const input = doc(paragraph(bold('a'), boldItalic('b'), bold('c')))
     const md = serialize(input)
+    expect(md).toBe('**a*b*c**')
+    expect(parse(md)).toEqual(input)
+  })
+
+  it('italic(a)+boldItalic(b) → *a**b***', () => {
+    const input = doc(paragraph(italic('a'), boldItalic('b')))
+    const md = serialize(input)
+    expect(md).toBe('*a**b***')
+    expect(parse(md)).toEqual(input)
+  })
+
+  it('boldItalic(a)+italic(b) → ***a**b*', () => {
+    const input = doc(paragraph(boldItalic('a'), italic('b')))
+    const md = serialize(input)
+    expect(md).toBe('***a**b*')
+    expect(parse(md)).toEqual(input)
+  })
+
+  it('boldItalic(a)+bold(b) → ***a*b**', () => {
+    const input = doc(paragraph(boldItalic('a'), bold('b')))
+    const md = serialize(input)
+    expect(md).toBe('***a*b**')
+    expect(parse(md)).toEqual(input)
+  })
+
+  it('bold(a)+boldItalic(b) → **a*b***', () => {
+    const input = doc(paragraph(bold('a'), boldItalic('b')))
+    const md = serialize(input)
+    expect(md).toBe('**a*b***')
+    expect(parse(md)).toEqual(input)
+  })
+
+  it('round-trip stability: serialize→parse→serialize is idempotent', () => {
+    const input = doc(paragraph(italic('a'), boldItalic('b'), italic('c')))
+    const md1 = serialize(input)
+    const md2 = serialize(parse(md1))
+    expect(md2).toBe(md1)
+    // Third pass for extra confidence
+    const md3 = serialize(parse(md2))
+    expect(md3).toBe(md1)
+  })
+
+  it('three-segment bold-inside-italic with longer text', () => {
+    const input = doc(paragraph(italic('hello '), boldItalic('world'), italic(' end')))
+    const md = serialize(input)
+    expect(md).toBe('*hello **world** end*')
+    expect(parse(md)).toEqual(input)
+  })
+
+  it('italic→bold transition (no shared marks)', () => {
+    const input = doc(paragraph(italic('a'), bold('b')))
+    const md = serialize(input)
+    expect(md).toBe('*a***b**')
+    expect(parse(md)).toEqual(input)
+  })
+
+  it('bold→italic transition (no shared marks)', () => {
+    const input = doc(paragraph(bold('a'), italic('b')))
+    const md = serialize(input)
+    expect(md).toBe('**a***b*')
     expect(parse(md)).toEqual(input)
   })
 })

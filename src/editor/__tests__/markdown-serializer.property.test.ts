@@ -158,34 +158,6 @@ function normalizeDoc(doc: DocNode): DocNode {
 }
 
 /**
- * Detect the known bold-inside-italic limitation.
- * Returns true if the doc contains adjacent TextNodes where italic mark is
- * shared but bold mark differs — this is the case that doesn't round-trip.
- */
-function hasBoldInsideItalicIssue(doc: DocNode): boolean {
-  if (!doc.content) return false
-  for (const para of doc.content) {
-    if (!para.content) continue
-    for (let i = 0; i < para.content.length - 1; i++) {
-      const curr = para.content[i]
-      const next = para.content[i + 1]
-      if (curr.type !== 'text' || next.type !== 'text') continue
-
-      const currMarks = curr.marks ?? []
-      const nextMarks = next.marks ?? []
-      const currItalic = currMarks.some((m) => m.type === 'italic')
-      const nextItalic = nextMarks.some((m) => m.type === 'italic')
-      const currBold = currMarks.some((m) => m.type === 'bold')
-      const nextBold = nextMarks.some((m) => m.type === 'bold')
-
-      // italic shared, bold differs — this is the problematic case
-      if (currItalic && nextItalic && currBold !== nextBold) return true
-    }
-  }
-  return false
-}
-
-/**
  * Check whether a doc contains text nodes whose content has characters that
  * would be ambiguous when serialized — e.g. a text node containing `*` that
  * gets escaped, but escaping changes the round-trip structure.
@@ -277,12 +249,12 @@ describe('property: round-trip (text → doc → text stabilizes)', () => {
 })
 
 describe('property: round-trip (doc → text → doc)', () => {
-  it('parse(serialize(normalize(doc))) equals normalize(doc) for docs without known ambiguities', () => {
+  it('parse(serialize(normalize(doc))) equals normalize(doc) for docs without structural ambiguities', () => {
     fc.assert(
       fc.property(
         arbDoc.filter((d) => {
           const n = normalizeDoc(d)
-          return !hasBoldInsideItalicIssue(n) && !hasStructuralAmbiguity(n)
+          return !hasStructuralAmbiguity(n)
         }),
         (d) => {
           const normalized = normalizeDoc(d)
@@ -349,7 +321,7 @@ describe('property: structural invariants', () => {
     )
   })
 
-  it('serialize output round-trips for normalized docs without known ambiguities', () => {
+  it('serialize output round-trips for normalized docs without structural ambiguities', () => {
     fc.assert(
       fc.property(
         arbDoc.filter((d) => {
@@ -359,10 +331,8 @@ describe('property: structural invariants', () => {
         (d) => {
           const normalized = normalizeDoc(d)
           const md = serialize(normalized)
-          if (!hasBoldInsideItalicIssue(normalized)) {
-            const reparsed = parse(md)
-            expect(reparsed).toEqual(normalized)
-          }
+          const reparsed = parse(md)
+          expect(reparsed).toEqual(normalized)
         },
       ),
       { numRuns: NUM_RUNS },

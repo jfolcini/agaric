@@ -22,9 +22,6 @@ import type {
 
 const ULID_RE = /^[0-9A-Z]{26}$/
 
-/** Stable mark ordering: bold before italic before code. */
-const MARK_ORDER: Record<string, number> = { bold: 0, italic: 1, code: 2 }
-
 // -- Serialize (PM doc → Markdown) --------------------------------------------
 
 function escapeText(s: string): string {
@@ -56,58 +53,100 @@ function escapeText(s: string): string {
   return out
 }
 
-function sortedMarks(marks: readonly PMMark[]): readonly PMMark[] {
-  if (marks.length <= 1) return marks
-  return [...marks].sort(
-    /* v8 ignore next -- PMMark union is exhaustive; ?? 99 is defensive */
-    (a, b) => (MARK_ORDER[a.type] ?? 99) - (MARK_ORDER[b.type] ?? 99),
-  )
-}
-
-function serializeTextNode(node: TextNode): string {
-  const marks = node.marks ? sortedMarks(node.marks) : []
-  const hasCode = marks.some((m) => m.type === 'code')
-
-  // Code mark: content is literal (no escaping inside backticks)
-  if (hasCode) {
-    return `\`${node.text}\``
-  }
-
-  let result = escapeText(node.text)
-  // Wrap in marks from inside out (last mark in sorted order wraps first)
-  for (let i = marks.length - 1; i >= 0; i--) {
-    const m = marks[i]
-    if (m.type === 'bold') result = `**${result}**`
-    /* v8 ignore start -- code mark returns early; only bold/italic reach here */ else if (
-      m.type === 'italic'
-    )
-      result = `*${result}*`
-    /* v8 ignore stop */
-  }
+/**
+ * Emit mark delimiters to transition from one active mark state to another.
+ *
+ * The parser greedily matches `**` before `*`, so we emit close delimiters
+ * for inner marks first (italic before bold) and open delimiters for outer
+ * marks first (bold before italic). This produces `***` at boundaries where
+ * both marks change, which the parser interprets as `**` + `*` (toggle bold,
+ * then toggle italic) — matching the intended semantics.
+ */
+function emitMarkTransition(from: ReadonlySet<string>, to: ReadonlySet<string>): string {
+  let result = ''
+  // Close marks no longer needed (inner first: italic before bold)
+  if (from.has('italic') && !to.has('italic')) result += '*'
+  if (from.has('bold') && !to.has('bold')) result += '**'
+  // Open marks newly needed (outer first: bold before italic)
+  if (to.has('bold') && !from.has('bold')) result += '**'
+  if (to.has('italic') && !from.has('italic')) result += '*'
   return result
 }
 
-function serializeInlineNode(node: InlineNode): string {
-  switch (node.type) {
-    case 'text':
-      return serializeTextNode(node)
-    case 'tag_ref':
-      return `#[${node.attrs.id}]`
-    case 'block_link':
-      return `[[${node.attrs.id}]]`
-    case 'hardBreak':
-      return '\n'
-    default: {
-      const unknown = node as { type: string }
-      console.warn(`[serializer] unknown inline node type: "${unknown.type}" — stripped`)
-      return ''
-    }
-  }
+/** Close all active marks (inner first: italic before bold). */
+function emitCloseAll(active: ReadonlySet<string>): string {
+  let result = ''
+  if (active.has('italic')) result += '*'
+  if (active.has('bold')) result += '**'
+  return result
 }
 
+/**
+ * Serialize a paragraph's inline content with mark coalescing.
+ *
+ * Instead of wrapping each TextNode independently (which creates ambiguous
+ * delimiter sequences like `*a****b****c*`), this tracks which marks are
+ * currently "open" and only emits delimiters at actual mark boundaries.
+ *
+ * For `italic("a") + boldItalic("b") + italic("c")`:
+ *   open italic → "a" → open bold → "b" → close bold → "c" → close italic
+ *   = `*a**b**c*`
+ */
 function serializeParagraph(node: ParagraphNode): string {
   if (!node.content || node.content.length === 0) return ''
-  return node.content.map(serializeInlineNode).join('')
+
+  let result = ''
+  const activeMarks = new Set<string>()
+
+  for (const child of node.content) {
+    if (child.type === 'text') {
+      const marks = child.marks ?? []
+      const hasCode = marks.some((m) => m.type === 'code')
+
+      if (hasCode) {
+        // Code is exclusive — close all active marks, emit backtick-wrapped content
+        result += emitCloseAll(activeMarks)
+        activeMarks.clear()
+        result += `\`${child.text}\``
+        continue
+      }
+
+      // Compute desired bold/italic mark set for this node
+      const desired = new Set<string>()
+      for (const m of marks) {
+        if (m.type === 'bold' || m.type === 'italic') desired.add(m.type)
+      }
+
+      // Emit delimiters for any mark changes
+      result += emitMarkTransition(activeMarks, desired)
+      activeMarks.clear()
+      for (const m of desired) activeMarks.add(m)
+
+      result += escapeText(child.text)
+    } else if (child.type === 'tag_ref') {
+      result += emitCloseAll(activeMarks)
+      activeMarks.clear()
+      result += `#[${child.attrs.id}]`
+    } else if (child.type === 'block_link') {
+      result += emitCloseAll(activeMarks)
+      activeMarks.clear()
+      result += `[[${child.attrs.id}]]`
+    } else if (child.type === 'hardBreak') {
+      result += emitCloseAll(activeMarks)
+      activeMarks.clear()
+      result += '\n'
+    } else {
+      result += emitCloseAll(activeMarks)
+      activeMarks.clear()
+      const unknown = child as { type: string }
+      console.warn(`[serializer] unknown inline node type: "${unknown.type}" — stripped`)
+    }
+  }
+
+  // Close any remaining open marks
+  result += emitCloseAll(activeMarks)
+
+  return result
 }
 
 export function serialize(doc: DocNode): string {
