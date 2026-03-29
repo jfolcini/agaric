@@ -118,6 +118,18 @@ export function setupMock(): void {
         return { items: [], next_cursor: null, has_more: false }
       }
 
+      case 'search_blocks': {
+        const a = args as Record<string, unknown>
+        const query = ((a.query as string) ?? '').toLowerCase()
+        if (!query) return { items: [], next_cursor: null, has_more: false }
+        const items = [...blocks.values()].filter(
+          (b) =>
+            !(b.deleted_at as string | null) &&
+            ((b.content as string) ?? '').toLowerCase().includes(query),
+        )
+        return { items, next_cursor: null, has_more: false }
+      }
+
       case 'get_status': {
         return {
           foreground_queue_depth: 0,

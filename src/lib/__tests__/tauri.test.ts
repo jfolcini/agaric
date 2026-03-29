@@ -22,6 +22,7 @@ import {
   purgeBlock,
   removeTag,
   restoreBlock,
+  searchBlocks,
 } from '../tauri'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -363,6 +364,73 @@ describe('removeTag', () => {
 })
 
 // ---------------------------------------------------------------------------
+// searchBlocks
+// ---------------------------------------------------------------------------
+
+describe('searchBlocks', () => {
+  const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+  it('invokes search_blocks with all nulls when no optional params given', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    const result = await searchBlocks({ query: 'hello' })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
+      query: 'hello',
+      cursor: null,
+      limit: null,
+    })
+    expect(result).toEqual(emptyPage)
+  })
+
+  it('passes all optional parameters through', async () => {
+    const pageResp = {
+      items: [
+        {
+          id: 'B1',
+          block_type: 'content',
+          content: 'found',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        },
+      ],
+      next_cursor: 'next123',
+      has_more: true,
+    }
+    mockedInvoke.mockResolvedValueOnce(pageResp)
+
+    const result = await searchBlocks({
+      query: 'found',
+      cursor: 'cursor123',
+      limit: 25,
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
+      query: 'found',
+      cursor: 'cursor123',
+      limit: 25,
+    })
+    expect(result).toEqual(pageResp)
+  })
+
+  it('defaults query to empty string when no params given', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    await searchBlocks()
+
+    expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
+      query: '',
+      cursor: null,
+      limit: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Cross-cutting concerns
 // ---------------------------------------------------------------------------
 
@@ -381,6 +449,7 @@ describe('cross-cutting', () => {
     await moveBlock('id', null, 0)
     await addTag('id', 'tag')
     await removeTag('id', 'tag')
+    await searchBlocks({ query: 'test' })
 
     const commandNames = mockedInvoke.mock.calls.map((call) => call[0])
     expect(commandNames).toEqual([
@@ -394,6 +463,7 @@ describe('cross-cutting', () => {
       'move_block',
       'add_tag',
       'remove_tag',
+      'search_blocks',
     ])
   })
 })

@@ -1,9 +1,19 @@
-import { Activity, Calendar, ChevronsLeft, FileText, GitMerge, Tag, Trash2 } from 'lucide-react'
+import {
+  Activity,
+  Calendar,
+  ChevronsLeft,
+  FileText,
+  GitMerge,
+  Search,
+  Tag,
+  Trash2,
+} from 'lucide-react'
 import { useState } from 'react'
 import { BootGate } from './components/BootGate'
 import { ConflictList } from './components/ConflictList'
 import { JournalPage } from './components/JournalPage'
 import { PageBrowser } from './components/PageBrowser'
+import { SearchPanel } from './components/SearchPanel'
 import { StatusPanel } from './components/StatusPanel'
 import { TagList } from './components/TagList'
 import { TrashView } from './components/TrashView'
@@ -24,10 +34,11 @@ import {
   useSidebar,
 } from './components/ui/sidebar'
 
-type View = 'journal' | 'pages' | 'tags' | 'trash' | 'status' | 'conflicts'
+type View = 'journal' | 'search' | 'pages' | 'tags' | 'trash' | 'status' | 'conflicts'
 
 const NAV_ITEMS: { id: View; icon: React.ElementType; label: string }[] = [
   { id: 'journal', icon: Calendar, label: 'Journal' },
+  { id: 'search', icon: Search, label: 'Search' },
   { id: 'pages', icon: FileText, label: 'Pages' },
   { id: 'tags', icon: Tag, label: 'Tags' },
   { id: 'trash', icon: Trash2, label: 'Trash' },
@@ -98,6 +109,7 @@ function App() {
           </header>
           <div className="flex-1 overflow-y-auto p-6">
             {view === 'journal' && <JournalPage />}
+            {view === 'search' && <SearchPanel />}
             {view === 'pages' && <PageBrowser onPageSelect={() => {}} />}
             {view === 'tags' && <TagList />}
             {view === 'trash' && <TrashView />}

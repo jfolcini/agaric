@@ -134,6 +134,18 @@ export async function getConflicts(params?: {
   })
 }
 
+export async function searchBlocks(params?: {
+  query: string
+  cursor?: string
+  limit?: number
+}): Promise<PageResponse<BlockRow>> {
+  return invoke('search_blocks', {
+    query: params?.query ?? '',
+    cursor: params?.cursor ?? null,
+    limit: params?.limit ?? null,
+  })
+}
+
 export async function getStatus(): Promise<StatusInfo> {
   return invoke('get_status')
 }
