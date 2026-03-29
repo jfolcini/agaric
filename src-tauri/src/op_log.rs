@@ -63,9 +63,20 @@ pub async fn append_local_op(
 pub async fn append_local_op_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
-    op_payload: OpPayload,
+    mut op_payload: OpPayload,
     created_at: String,
 ) -> Result<OpRecord, AppError> {
+    // Validate SetProperty invariant: exactly one value field must be set.
+    if let OpPayload::SetProperty(ref p) = op_payload {
+        crate::op::validate_set_property(p)?;
+    }
+
+    // Normalize all ULID fields to uppercase Crockford base32 before
+    // serialization.  This ensures deterministic blake3 hashes regardless of
+    // the casing supplied by the caller (critical for Phase 4 cross-device
+    // sync — see ADR-07, ULID case normalization rule).
+    op_payload.normalize_block_ids();
+
     let op_type = op_payload.op_type_str().to_owned();
 
     // Serialize the payload to canonical JSON.
@@ -768,6 +779,168 @@ mod tests {
             parsed.get("block_id").is_some(),
             "payload column must contain block_id field"
         );
+    }
+
+    // ── F-01: ULID normalization before serialization ────────────────
+
+    /// Verify that `append_local_op_in_tx` normalizes lowercase ULIDs in
+    /// payloads to uppercase before serialization and hashing.
+    #[tokio::test]
+    async fn append_normalizes_ulid_case_in_payload() {
+        let (pool, _dir) = test_pool().await;
+
+        // Lowercase ULID — should be uppercased before storage.
+        let lower_id = "01arz3ndektsv4rrffq69g5fav";
+        let upper_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+        let record = append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: lower_id.into(),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(1),
+                content: "test".into(),
+            }),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // The stored payload must contain the uppercase form.
+        let parsed: serde_json::Value = serde_json::from_str(&record.payload).unwrap();
+        assert_eq!(parsed["block_id"].as_str().unwrap(), upper_id);
+    }
+
+    /// Two ops with the same logical ULID (different case) must produce
+    /// identical hashes — ensuring cross-device determinism.
+    #[tokio::test]
+    async fn normalized_and_unnormalized_ulid_produce_same_hash() {
+        let (pool, _dir) = test_pool().await;
+
+        let lower_id = "01arz3ndektsv4rrffq69g5fav";
+        let upper_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+        let rec_lower = append_local_op_at(
+            &pool,
+            "dev-a",
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: lower_id.into(),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(1),
+                content: "test".into(),
+            }),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        let rec_upper = append_local_op_at(
+            &pool,
+            "dev-a",
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: upper_id.into(),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(1),
+                content: "test".into(),
+            }),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // The payloads should be identical (both uppercased).
+        assert_eq!(rec_lower.payload, rec_upper.payload);
+
+        // Hashes differ only because seq differs (1 vs 2), but the payload
+        // portion of the hash input is identical.
+        let hash_lower = compute_op_hash("dev-a", 1, None, "create_block", &rec_lower.payload);
+        let hash_upper = compute_op_hash("dev-a", 1, None, "create_block", &rec_upper.payload);
+        assert_eq!(
+            hash_lower, hash_upper,
+            "same payload JSON should produce the same hash"
+        );
+    }
+
+    // ── F-02: validate_set_property enforcement ────────────────────────
+
+    /// Verify that appending a SetProperty op with zero value fields is
+    /// rejected at the op_log layer.
+    #[tokio::test]
+    async fn append_rejects_set_property_with_zero_values() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: "BLK001".into(),
+                key: "status".into(),
+                value_text: None,
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            FIXED_TS.into(),
+        )
+        .await;
+
+        assert!(result.is_err(), "zero value fields should be rejected");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "expected Validation error, got: {err:?}"
+        );
+    }
+
+    /// Verify that appending a SetProperty op with multiple value fields is
+    /// rejected at the op_log layer.
+    #[tokio::test]
+    async fn append_rejects_set_property_with_multiple_values() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: "BLK001".into(),
+                key: "status".into(),
+                value_text: Some("active".into()),
+                value_num: Some(42.0),
+                value_date: None,
+                value_ref: None,
+            }),
+            FIXED_TS.into(),
+        )
+        .await;
+
+        assert!(result.is_err(), "multiple value fields should be rejected");
+    }
+
+    /// Verify that a valid SetProperty op (exactly one value) is accepted.
+    #[tokio::test]
+    async fn append_accepts_valid_set_property() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: "BLK001".into(),
+                key: "status".into(),
+                value_text: Some("active".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            FIXED_TS.into(),
+        )
+        .await;
+
+        assert!(result.is_ok(), "valid SetProperty should be accepted");
     }
 
     // ── insta snapshot tests ───────────────────────────────────────────

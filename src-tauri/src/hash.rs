@@ -26,7 +26,10 @@
 ///   hash input. When `Some`, the JSON array should already have entries sorted
 ///   lexicographically by `[device_id, seq]`.
 /// - `payload`: The canonical JSON string of the op payload (keys ordered by
-///   serde's derive order).
+///   serde's derive order). **All ULID fields in the payload MUST be
+///   uppercase Crockford base32 before hashing** — call
+///   `OpPayload::normalize_block_ids()` before serialization.
+///   `append_local_op_in_tx` enforces this automatically.
 ///
 /// Returns the hash as a lowercase hex string (64 chars for blake3's 256-bit
 /// output).
