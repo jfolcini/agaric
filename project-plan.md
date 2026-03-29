@@ -266,9 +266,9 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p3-t10 | cargo-nextest migration | dx | | [ADR-13] Suite is large enough now. nextest run. Parallel test execution, better output, instant rerun of failed tests. |
-| p3-t11 | FTS5 perf benchmark | testing | | [ADR-12] Seed DB with 10k / 100k blocks. Measure search latency. Verify segment count doesn't degrade after optimize. |
-| p3-t12 | Materializer queue depth monitoring | dx, backend | | [ADR-08] Log queue depths at high watermarks. Feeds Status View. Alert if background queue grows unbounded. |
+| p3-t10 | cargo-nextest migration | dx | | Done | [ADR-13] Suite is large enough now. nextest run. Parallel test execution, better output, instant rerun of failed tests. |
+| p3-t11 | FTS5 perf benchmark | testing | | Done | [ADR-12] Seed DB with 10k / 100k blocks. Measure search latency. Verify segment count doesn't degrade after optimize. |
+| p3-t12 | Materializer queue depth monitoring | dx, backend | | Done | [ADR-08] Log queue depths at high watermarks. Feeds Status View. Alert if background queue grows unbounded. |
 
 ---
 

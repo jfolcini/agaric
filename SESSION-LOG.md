@@ -479,6 +479,22 @@
 - **Tests:** 531 Rust + 430 Vitest + 18 Playwright = 979 total
 - **Commit:** `c3f160b`
 
+### Phase 3 Wave 4 — Performance + Tooling
+
+#### [02:00] Orchestrator: cargo-nextest migration (p3-t10) [REVIEWED]
+- **Result:** Installed cargo-nextest 0.9.132. Created `src-tauri/.config/nextest.toml` (retries, slow-timeout profiles). Updated prek.toml hook and CI workflow.
+- 534 tests pass with nextest (parallel execution, ~3.3s)
+
+#### [02:00] Subagent: FTS5 perf benchmark (p3-t11) [REVIEWED]
+- **Result:** `src-tauri/benches/fts_bench.rs` — 4 benchmark groups (search, rebuild, update, optimize) parameterized at 1k/10k/100k corpus sizes. Varied content with ~10% search hit rate.
+
+#### [02:00] Subagent: Materializer queue monitoring (p3-t12) [REVIEWED]
+- **Result:** High-water marks (`fg_high_water`, `bg_high_water`) via `AtomicU64::fetch_max`. `check_queue_pressure()` logs warnings at 75% capacity. StatusInfo expanded. 4 new tests.
+- **Tests:** 534 Rust + 430 Vitest + 18 Playwright = 982 total
+- **Commit:** `19587d9`
+
+**Phase 3 complete.** All 12 tasks done.
+
 ---
 
 <!-- Template:
