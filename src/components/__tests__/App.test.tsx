@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import App from '../../App'
 import { useBootStore } from '../../stores/boot'
+import { useNavigationStore } from '../../stores/navigation'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -25,6 +26,13 @@ beforeEach(() => {
 
   // Reset the Zustand boot store between tests so each test starts fresh.
   useBootStore.setState({ state: 'booting', error: null })
+
+  // Reset the navigation store so each test starts at the default view.
+  useNavigationStore.setState({
+    currentView: 'journal',
+    pageStack: [],
+    selectedBlockId: null,
+  })
 
   // Default mock: all invoke calls return an empty page response.
   // This covers: boot store's list_blocks, JournalPage, PageBrowser, TagList, TrashView.
@@ -134,11 +142,18 @@ describe('App', () => {
 
   it('switches to Status view', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValue({
-      foreground_queue_depth: 0,
-      background_queue_depth: 0,
-      total_ops_dispatched: 0,
-      total_background_dispatched: 0,
+
+    // Use mockImplementation to return appropriate data based on command
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_status') {
+        return {
+          foreground_queue_depth: 0,
+          background_queue_depth: 0,
+          total_ops_dispatched: 0,
+          total_background_dispatched: 0,
+        }
+      }
+      return emptyPage
     })
 
     render(<App />)

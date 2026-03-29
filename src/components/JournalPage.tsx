@@ -7,7 +7,7 @@
  * block auto-deletes it.
  */
 
-import { ChevronLeft, ChevronRight, Plus, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ExternalLink, Plus, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -36,9 +36,14 @@ function formatDateDisplay(d: Date): string {
 interface JournalPageProps {
   /** Called when a block is clicked — navigates to block editor. */
   onBlockClick?: (blockId: string) => void
+  /** Called to navigate to a page for editing. */
+  onNavigateToPage?: (pageId: string, title?: string) => void
 }
 
-export function JournalPage({ onBlockClick: _onBlockClick }: JournalPageProps): React.ReactElement {
+export function JournalPage({
+  onBlockClick: _onBlockClick,
+  onNavigateToPage,
+}: JournalPageProps): React.ReactElement {
   const [date, setDate] = useState(() => new Date())
   const [dailyPageId, setDailyPageId] = useState<string | null>(null)
   const [blocks, setBlocks] = useState<BlockRow[]>([])
@@ -158,6 +163,16 @@ export function JournalPage({ onBlockClick: _onBlockClick }: JournalPageProps): 
           {!isToday && (
             <Button variant="ghost" size="sm" onClick={goToToday}>
               Today
+            </Button>
+          )}
+          {dailyPageId && onNavigateToPage && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Open in editor"
+              onClick={() => onNavigateToPage(dailyPageId, dateStr)}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>

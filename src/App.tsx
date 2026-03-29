@@ -8,11 +8,12 @@ import {
   Tag,
   Trash2,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback } from 'react'
 import { BootGate } from './components/BootGate'
 import { ConflictList } from './components/ConflictList'
 import { JournalPage } from './components/JournalPage'
 import { PageBrowser } from './components/PageBrowser'
+import { PageEditor } from './components/PageEditor'
 import { SearchPanel } from './components/SearchPanel'
 import { StatusPanel } from './components/StatusPanel'
 import { TagFilterPanel } from './components/TagFilterPanel'
@@ -34,10 +35,10 @@ import {
   SidebarTrigger,
   useSidebar,
 } from './components/ui/sidebar'
+import { useNavigationStore, type View } from './stores/navigation'
 
-type View = 'journal' | 'search' | 'pages' | 'tags' | 'trash' | 'status' | 'conflicts'
-
-const NAV_ITEMS: { id: View; icon: React.ElementType; label: string }[] = [
+/** Sidebar nav items — page-editor is not listed here (it's navigated to programmatically). */
+const NAV_ITEMS: { id: Exclude<View, 'page-editor'>; icon: React.ElementType; label: string }[] = [
   { id: 'journal', icon: Calendar, label: 'Journal' },
   { id: 'search', icon: Search, label: 'Search' },
   { id: 'pages', icon: FileText, label: 'Pages' },
@@ -61,8 +62,27 @@ function CollapseButton() {
   )
 }
 
+/** Resolve the header label from the current navigation state. */
+function useHeaderLabel(): string {
+  const { currentView, pageStack } = useNavigationStore()
+  if (currentView === 'page-editor' && pageStack.length > 0) {
+    return pageStack[pageStack.length - 1].title
+  }
+  return NAV_ITEMS.find((item) => item.id === currentView)?.label ?? ''
+}
+
 function App() {
-  const [view, setView] = useState<View>('journal')
+  const { currentView, pageStack, setView, navigateToPage, goBack } = useNavigationStore()
+  const headerLabel = useHeaderLabel()
+
+  const handlePageSelect = useCallback(
+    (pageId: string, title?: string) => {
+      navigateToPage(pageId, title ?? 'Untitled')
+    },
+    [navigateToPage],
+  )
+
+  const activePage = pageStack.length > 0 ? pageStack[pageStack.length - 1] : null
 
   return (
     <BootGate>
@@ -85,7 +105,7 @@ function App() {
                   {NAV_ITEMS.map((item) => (
                     <SidebarMenuItem key={item.id}>
                       <SidebarMenuButton
-                        isActive={view === item.id}
+                        isActive={currentView === item.id}
                         tooltip={item.label}
                         onClick={() => setView(item.id)}
                       >
@@ -106,22 +126,30 @@ function App() {
         <SidebarInset>
           <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
             <SidebarTrigger className="md:hidden" />
-            <span className="font-medium">{NAV_ITEMS.find((item) => item.id === view)?.label}</span>
+            <span className="font-medium">{headerLabel}</span>
           </header>
           <div className="flex-1 overflow-y-auto p-6">
-            {view === 'journal' && <JournalPage />}
-            {view === 'search' && <SearchPanel />}
-            {view === 'pages' && <PageBrowser onPageSelect={() => {}} />}
-            {view === 'tags' && (
+            {currentView === 'journal' && <JournalPage onNavigateToPage={handlePageSelect} />}
+            {currentView === 'search' && <SearchPanel />}
+            {currentView === 'pages' && <PageBrowser onPageSelect={handlePageSelect} />}
+            {currentView === 'tags' && (
               <div className="space-y-8">
                 <TagList />
                 <hr className="border-border" />
                 <TagFilterPanel />
               </div>
             )}
-            {view === 'trash' && <TrashView />}
-            {view === 'status' && <StatusPanel />}
-            {view === 'conflicts' && <ConflictList />}
+            {currentView === 'trash' && <TrashView />}
+            {currentView === 'status' && <StatusPanel />}
+            {currentView === 'conflicts' && <ConflictList />}
+            {currentView === 'page-editor' && activePage && (
+              <PageEditor
+                pageId={activePage.pageId}
+                title={activePage.title}
+                onBack={goBack}
+                onNavigateToPage={handlePageSelect}
+              />
+            )}
           </div>
         </SidebarInset>
       </SidebarProvider>

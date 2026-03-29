@@ -154,7 +154,7 @@ describe('PageBrowser', () => {
     const item = await screen.findByRole('button', { name: /Click me/i })
     await user.click(item)
 
-    expect(onPageSelect).toHaveBeenCalledWith('P1')
+    expect(onPageSelect).toHaveBeenCalledWith('P1', 'Click me')
   })
 
   it('has no a11y violations', async () => {

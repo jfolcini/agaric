@@ -14,7 +14,7 @@ import { createBlock, listBlocks } from '../lib/tauri'
 
 interface PageBrowserProps {
   /** Called when a page is selected. */
-  onPageSelect?: (pageId: string) => void
+  onPageSelect?: (pageId: string, title?: string) => void
 }
 
 export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElement {
@@ -91,7 +91,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
             key={page.id}
             type="button"
             className="page-browser-item flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50"
-            onClick={() => onPageSelect?.(page.id)}
+            onClick={() => onPageSelect?.(page.id, page.content ?? 'Untitled')}
           >
             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="page-browser-item-title truncate">{page.content ?? 'Untitled'}</span>
