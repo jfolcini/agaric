@@ -75,6 +75,8 @@ pub struct Cursor {
     pub deleted_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seq: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<f64>,
 }
 
 /// Pagination request from the client.
@@ -220,6 +222,7 @@ pub async fn list_children(
         position: Some(last.position.unwrap_or(NULL_POSITION_SENTINEL)),
         deleted_at: None,
         seq: None,
+        rank: None,
     })
 }
 
@@ -260,6 +263,7 @@ pub async fn list_by_type(
         position: None,
         deleted_at: None,
         seq: None,
+        rank: None,
     })
 }
 
@@ -305,6 +309,7 @@ pub async fn list_trash(
         position: None,
         deleted_at: last.deleted_at.clone(),
         seq: None,
+        rank: None,
     })
 }
 
@@ -346,6 +351,7 @@ pub async fn list_by_tag(
         position: None,
         deleted_at: None,
         seq: None,
+        rank: None,
     })
 }
 
@@ -389,6 +395,7 @@ pub async fn list_agenda(
         position: None,
         deleted_at: None,
         seq: None,
+        rank: None,
     })
 }
 
@@ -430,6 +437,7 @@ pub async fn list_backlinks(
         position: None,
         deleted_at: None,
         seq: None,
+        rank: None,
     })
 }
 
@@ -472,6 +480,7 @@ pub async fn list_block_history(
         position: None,
         deleted_at: None,
         seq: Some(last.seq),
+        rank: None,
     })
 }
 
@@ -510,6 +519,7 @@ pub async fn list_conflicts(
         position: None,
         deleted_at: None,
         seq: None,
+        rank: None,
     })
 }
 
@@ -611,6 +621,7 @@ mod tests {
             position: Some(3),
             deleted_at: None,
             seq: None,
+            rank: None,
         };
         let encoded = cursor.encode().unwrap();
         let decoded = Cursor::decode(&encoded).unwrap();
@@ -627,6 +638,7 @@ mod tests {
             position: None,
             deleted_at: Some("2025-01-15T12:00:00+00:00".into()),
             seq: None,
+            rank: None,
         };
         let encoded = cursor.encode().unwrap();
         let decoded = Cursor::decode(&encoded).unwrap();
@@ -640,6 +652,7 @@ mod tests {
             position: None,
             deleted_at: None,
             seq: Some(42),
+            rank: None,
         };
         let encoded = cursor.encode().unwrap();
         let decoded = Cursor::decode(&encoded).unwrap();
@@ -677,6 +690,7 @@ mod tests {
             position: Some(42),
             deleted_at: Some("2025-06-01T00:00:00+00:00".into()),
             seq: None,
+            rank: None,
         };
         let encoded = cursor.encode().unwrap();
         let decoded = Cursor::decode(&encoded).unwrap();

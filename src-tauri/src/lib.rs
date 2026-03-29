@@ -4,6 +4,7 @@ pub mod db;
 pub mod device;
 pub mod draft;
 pub mod error;
+pub mod fts;
 pub mod hash;
 pub mod materializer;
 pub mod op;
@@ -42,6 +43,7 @@ mod specta_tests {
             crate::commands::get_block_history,
             crate::commands::get_conflicts,
             crate::commands::get_status,
+            crate::commands::search_blocks,
         ])
     }
 
@@ -139,6 +141,7 @@ pub fn run() {
         commands::get_block_history,
         commands::get_conflicts,
         commands::get_status,
+        commands::search_blocks,
     ]);
 
     tauri::Builder::default()

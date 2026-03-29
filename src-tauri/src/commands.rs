@@ -16,6 +16,7 @@ use tauri::State;
 
 use crate::device::DeviceId;
 use crate::error::AppError;
+use crate::fts;
 use crate::materializer::{Materializer, StatusInfo};
 use crate::op::{
     AddTagPayload, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload,
@@ -711,6 +712,23 @@ pub fn get_status_inner(materializer: &Materializer) -> StatusInfo {
     materializer.status()
 }
 
+pub async fn search_blocks_inner(
+    pool: &SqlitePool,
+    query: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    if query.trim().is_empty() {
+        return Ok(PageResponse {
+            items: vec![],
+            next_cursor: None,
+            has_more: false,
+        });
+    }
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    fts::search_fts(pool, &query, &page).await
+}
+
 // ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
@@ -914,6 +932,18 @@ pub async fn get_conflicts(
 #[specta::specta]
 pub async fn get_status(materializer: State<'_, Materializer>) -> Result<StatusInfo, AppError> {
     Ok(get_status_inner(&materializer))
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn search_blocks(
+    pool: State<'_, SqlitePool>,
+    query: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    search_blocks_inner(&pool, query, cursor, limit).await
 }
 
 // ---------------------------------------------------------------------------
@@ -2453,5 +2483,62 @@ mod tests {
             .unwrap();
 
         insta::assert_yaml_snapshot!(resp);
+    }
+
+    // ======================================================================
+    // search_blocks_inner tests
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn search_blocks_inner_empty_query_returns_empty() {
+        let (pool, _dir) = test_pool().await;
+        let result = search_blocks_inner(&pool, "".into(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(result.items.len(), 0);
+        assert!(!result.has_more);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn search_blocks_inner_whitespace_query_returns_empty() {
+        let (pool, _dir) = test_pool().await;
+        let result = search_blocks_inner(&pool, "   ".into(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(result.items.len(), 0);
+        assert!(!result.has_more);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn search_blocks_inner_finds_indexed_block() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(
+            &pool,
+            "SRCH1",
+            "content",
+            "searchable content",
+            None,
+            Some(0),
+        )
+        .await;
+        crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+        let result = search_blocks_inner(&pool, "searchable".into(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].id, "SRCH1");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn search_blocks_inner_no_results_for_unindexed_term() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "SRCH2", "content", "apple banana", None, Some(0)).await;
+        crate::fts::rebuild_fts_index(&pool).await.unwrap();
+
+        let result = search_blocks_inner(&pool, "cherry".into(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(result.items.len(), 0);
     }
 }

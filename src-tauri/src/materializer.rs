@@ -61,6 +61,14 @@ pub enum MaterializeTask {
     RebuildAgendaCache,
     /// Background: reindex block_links for a specific block
     ReindexBlockLinks { block_id: String },
+    /// Background: update FTS index for a specific block
+    UpdateFtsBlock { block_id: String },
+    /// Background: remove a block from the FTS index
+    RemoveFtsBlock { block_id: String },
+    /// Background: full FTS index rebuild
+    RebuildFtsIndex,
+    /// Background: run FTS5 segment merge optimization
+    FtsOptimize,
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +103,7 @@ struct BlockIdHint {
 // ---------------------------------------------------------------------------
 
 /// Observable counters for materializer queue activity.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct QueueMetrics {
     /// Number of foreground tasks fully processed.
     pub fg_processed: AtomicU64,
@@ -103,6 +111,26 @@ pub struct QueueMetrics {
     pub bg_processed: AtomicU64,
     /// Number of background tasks dropped by dedup coalescing.
     pub bg_deduped: AtomicU64,
+    /// Number of FTS edits since last optimize.
+    pub fts_edits_since_optimize: AtomicU64,
+    /// Epoch milliseconds of the last FTS optimize.
+    pub fts_last_optimize_ms: AtomicU64,
+}
+
+impl Default for QueueMetrics {
+    fn default() -> Self {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        Self {
+            fg_processed: AtomicU64::new(0),
+            bg_processed: AtomicU64::new(0),
+            bg_deduped: AtomicU64::new(0),
+            fts_edits_since_optimize: AtomicU64::new(0),
+            fts_last_optimize_ms: AtomicU64::new(now_ms),
+        }
+    }
 }
 
 /// Serializable status snapshot of the materializer queues.
@@ -390,6 +418,7 @@ impl Materializer {
                 // Targeted deserialization — only extracts the field we need,
                 // cheaper than parsing the full payload into serde_json::Value.
                 let hint: BlockTypeHint = serde_json::from_str(&record.payload)?;
+                let hint2: BlockIdHint = serde_json::from_str(&record.payload)?;
                 match hint.block_type.as_str() {
                     "tag" => {
                         self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
@@ -399,11 +428,17 @@ impl Materializer {
                     }
                     _ => {}
                 }
+                // FTS: index the new block
+                if !hint2.block_id.is_empty() {
+                    self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
+                        block_id: hint2.block_id,
+                    })?;
+                }
             }
             "edit_block" => {
                 let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
                 self.try_enqueue_background(MaterializeTask::ReindexBlockLinks {
-                    block_id: hint.block_id,
+                    block_id: hint.block_id.clone(),
                 })?;
                 // Conservatively rebuild all content-dependent caches — we cannot
                 // determine block_type from the edit payload alone without a DB
@@ -411,11 +446,72 @@ impl Materializer {
                 self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+
+                // FTS: update the edited block
+                if !hint.block_id.is_empty() {
+                    self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
+                        block_id: hint.block_id,
+                    })?;
+                }
+
+                // FTS optimize scheduling
+                let edits = self
+                    .metrics
+                    .fts_edits_since_optimize
+                    .fetch_add(1, Ordering::Relaxed)
+                    + 1;
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                let last_ms = self.metrics.fts_last_optimize_ms.load(Ordering::Relaxed);
+                let elapsed_ms = now_ms.saturating_sub(last_ms);
+
+                if edits >= 500 || elapsed_ms >= 3_600_000 {
+                    self.try_enqueue_background(MaterializeTask::FtsOptimize)?;
+                    self.metrics
+                        .fts_edits_since_optimize
+                        .store(0, Ordering::Relaxed);
+                    self.metrics
+                        .fts_last_optimize_ms
+                        .store(now_ms, Ordering::Relaxed);
+                }
             }
-            "delete_block" | "restore_block" | "purge_block" => {
+            "delete_block" => {
+                let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
                 self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
                 self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                // FTS: remove the deleted block
+                if !hint.block_id.is_empty() {
+                    self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
+                        block_id: hint.block_id,
+                    })?;
+                }
+            }
+            "restore_block" => {
+                let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
+                self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                // FTS: re-index the restored block
+                if !hint.block_id.is_empty() {
+                    self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
+                        block_id: hint.block_id,
+                    })?;
+                }
+            }
+            "purge_block" => {
+                let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
+                self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
+                self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                // FTS: remove the purged block
+                if !hint.block_id.is_empty() {
+                    self.try_enqueue_background(MaterializeTask::RemoveFtsBlock {
+                        block_id: hint.block_id,
+                    })?;
+                }
             }
             "add_tag" | "remove_tag" => {
                 self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
@@ -448,20 +544,33 @@ impl Materializer {
 /// Coalesce duplicate tasks from a batch:
 ///
 /// - Parameterless cache-rebuild tasks (`RebuildTagsCache`, `RebuildPagesCache`,
-///   `RebuildAgendaCache`) are deduplicated by discriminant — only the first
-///   occurrence survives.
-/// - `ReindexBlockLinks` tasks are deduplicated by `block_id`.
+///   `RebuildAgendaCache`, `RebuildFtsIndex`, `FtsOptimize`) are deduplicated
+///   by discriminant — only the first occurrence survives.
+/// - `ReindexBlockLinks`, `UpdateFtsBlock`, and `RemoveFtsBlock` tasks are
+///   deduplicated by `block_id`.
 /// - `ApplyOp` tasks are always preserved (they should not appear on the bg
 ///   queue, but we never silently drop them).
 fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     let mut seen_discriminants: HashSet<mem::Discriminant<MaterializeTask>> = HashSet::new();
     let mut seen_block_ids: HashSet<String> = HashSet::new();
+    let mut seen_fts_update_ids: HashSet<String> = HashSet::new();
+    let mut seen_fts_remove_ids: HashSet<String> = HashSet::new();
     let mut result = Vec::with_capacity(tasks.len());
 
     for task in tasks {
         match &task {
             MaterializeTask::ReindexBlockLinks { block_id } => {
                 if seen_block_ids.insert(block_id.clone()) {
+                    result.push(task);
+                }
+            }
+            MaterializeTask::UpdateFtsBlock { block_id } => {
+                if seen_fts_update_ids.insert(block_id.clone()) {
+                    result.push(task);
+                }
+            }
+            MaterializeTask::RemoveFtsBlock { block_id } => {
+                if seen_fts_remove_ids.insert(block_id.clone()) {
                     result.push(task);
                 }
             }
@@ -516,6 +625,14 @@ async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
         MaterializeTask::ReindexBlockLinks { ref block_id } => {
             cache::reindex_block_links(pool, block_id).await
         }
+        MaterializeTask::UpdateFtsBlock { ref block_id } => {
+            crate::fts::update_fts_for_block(pool, block_id).await
+        }
+        MaterializeTask::RemoveFtsBlock { ref block_id } => {
+            crate::fts::remove_fts_for_block(pool, block_id).await
+        }
+        MaterializeTask::RebuildFtsIndex => crate::fts::rebuild_fts_index(pool).await,
+        MaterializeTask::FtsOptimize => crate::fts::fts_optimize(pool).await,
         MaterializeTask::ApplyOp(ref record) => {
             eprintln!(
                 "[materializer:bg] Unexpected ApplyOp in background queue: seq={}",
@@ -1361,5 +1478,98 @@ mod tests {
             1,
             "all-same block_id should coalesce to one task"
         );
+    }
+
+    #[test]
+    fn dedup_fts_update_blocks_coalesced_by_block_id() {
+        let tasks = vec![
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "blk-a".into(),
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "blk-b".into(),
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "blk-a".into(),
+            }, // dup
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "blk-c".into(),
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "blk-b".into(),
+            }, // dup
+        ];
+
+        let deduped = dedup_tasks(tasks);
+        assert_eq!(
+            deduped.len(),
+            3,
+            "should coalesce to 3 unique UpdateFtsBlock tasks"
+        );
+    }
+
+    #[test]
+    fn dedup_fts_remove_blocks_coalesced_by_block_id() {
+        let tasks = vec![
+            MaterializeTask::RemoveFtsBlock {
+                block_id: "blk-x".into(),
+            },
+            MaterializeTask::RemoveFtsBlock {
+                block_id: "blk-y".into(),
+            },
+            MaterializeTask::RemoveFtsBlock {
+                block_id: "blk-x".into(),
+            }, // dup
+        ];
+
+        let deduped = dedup_tasks(tasks);
+        assert_eq!(
+            deduped.len(),
+            2,
+            "should coalesce to 2 unique RemoveFtsBlock tasks"
+        );
+    }
+
+    #[test]
+    fn dedup_fts_update_and_remove_same_block_id_both_survive() {
+        // UpdateFtsBlock and RemoveFtsBlock for the same block_id are tracked
+        // independently — both should survive dedup.
+        let tasks = vec![
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "blk-z".into(),
+            },
+            MaterializeTask::RemoveFtsBlock {
+                block_id: "blk-z".into(),
+            },
+        ];
+
+        let deduped = dedup_tasks(tasks);
+        assert_eq!(
+            deduped.len(),
+            2,
+            "UpdateFtsBlock and RemoveFtsBlock for same block_id should both survive"
+        );
+    }
+
+    #[test]
+    fn dedup_fts_optimize_and_rebuild_coalesced_by_discriminant() {
+        let tasks = vec![
+            MaterializeTask::FtsOptimize,
+            MaterializeTask::RebuildFtsIndex,
+            MaterializeTask::FtsOptimize,     // dup
+            MaterializeTask::RebuildFtsIndex, // dup
+            MaterializeTask::RebuildTagsCache,
+            MaterializeTask::FtsOptimize, // dup
+        ];
+
+        let deduped = dedup_tasks(tasks);
+        assert_eq!(
+            deduped.len(),
+            3,
+            "should coalesce to FtsOptimize + RebuildFtsIndex + RebuildTagsCache"
+        );
+        assert!(matches!(deduped[0], MaterializeTask::FtsOptimize));
+        assert!(matches!(deduped[1], MaterializeTask::RebuildFtsIndex));
+        assert!(matches!(deduped[2], MaterializeTask::RebuildTagsCache));
     }
 }
