@@ -6,6 +6,33 @@ tagging inspired by org-mode and emergent structure. No cloud — local WiFi syn
 than Anytype, faster than Logseq. Everything is a block; pages are a block type; tags are a
 block type.
 
+## Status Summary
+
+| ADR | Title | Status | Notes |
+|-----|-------|--------|-------|
+| 01 | Shell & Frontend | **Partial** | P1-P3 done, P4 Waves 1-2 done. Export (P5) not started. |
+| 02 | State Management | **Partial** | Zustand boot/editor done. TanStack Query (P3+), XState (P4+) pending. |
+| 03 | UI Components | **Partial** | P1 done. Noto Sans bundling deferred to P5 (i18n). |
+| 04 | Database | **Complete** | sqlx + WAL + migrations. Single pool (ADR-04 read/write split deferred). |
+| 05 | Schema | **Complete** | 13 tables + FTS5 virtual table, 8 indexes. |
+| 06 | Data Model | **Partial** | P1 done. P4W1 conflict copies done. Export (P5) pending. |
+| 07 | Operation Log | **Partial** | Linear chain + DAG + snapshots/compaction done. Sync protocol pending. |
+| 08 | Materializer | **Complete** | Queues, caches, FTS tasks, tag queries, queue monitoring all done. |
+| 09 | Sync | **Planned** | Schema ready (peer_refs, DAG support). Implementation not started. |
+| 10 | CRDT / Conflict | **Partial** | merge.rs done (diffy, conflict copy, LWW). Sync-triggered merge pending. |
+| 11 | Rust Libraries | **Complete** | All libraries integrated (blake3, diffy, zstd, ciborium, etc.). |
+| 12 | Search | **Partial** | FTS5 done (P3). Tantivy/lindera for CJK deferred to P5. |
+| 13 | Dev Tooling | **Complete** | insta, Playwright E2E, cargo-nextest, FTS5 benchmarks all done. |
+| 14 | API | **N/A** | Dropped for v1. Deferred indefinitely. |
+| 15 | Encryption at Rest | **N/A** | Decision-only: filesystem-level (Android FBE, Linux LUKS). |
+| 16 | Build Order | **Partial** | Planning ADR. P1-P1.5 complete, P2-P5 in progress or planned. |
+| 17 | Graph View | **Planned** | Deferred to P5+. Schema supports it (block_links table). |
+| 18 | Tag Inheritance | **Closed** | Will not implement. Prefix-aware LIKE search covers the use case. |
+| 19 | CJK Support | **Partial** | FTS5 limitations documented. Tantivy + lindera planned for P5. |
+| 20 | Content Storage | **Partial** | Serializer + FTS strip + diffy done. Export (P5) pending. |
+
+**Legend:** P1=Phase 1, P2=Phase 2, etc. P4W1=Phase 4 Wave 1.
+
 ---
 
 ## ADR-01 — Shell & Frontend
