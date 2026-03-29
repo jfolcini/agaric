@@ -326,10 +326,10 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p4-t19 | zstd + ciborium snapshot encoding | backend | | [ADR-07, ADR-11] CBOR document: schema_version, snapshot_device_id, up_to_seqs frontier, all core table rows. No cache tables. |
-| p4-t20 | Snapshot write sequence (crash-safe) | backend | **YES** | [ADR-07] 1) INSERT status='pending'. 2) Compress+write data. 3) UPDATE status='complete'. Boot cleanup deletes pending rows. |
-| p4-t21 | Snapshot apply (RESET path) | backend | | [ADR-07] Wipe core tables. Decode CBOR. Insert rows. Replay tail ops. Trigger background cache rebuilds + FTS5 optimize. |
-| p4-t22 | 90-day op log compaction scheduler | backend | | [ADR-07] Background task. Runs when op_log rows older than 90 days exist. Produces log_snapshot. Purges old ops after snapshot status='complete'. |
+| p4-t19 | zstd + ciborium snapshot encoding | backend | | Done | [ADR-07, ADR-11] CBOR document: schema_version, snapshot_device_id, up_to_seqs frontier, all core table rows. No cache tables. |
+| p4-t20 | Snapshot write sequence (crash-safe) | backend | **YES** | Done | [ADR-07] 1) INSERT status='pending'. 2) Compress+write data. 3) UPDATE status='complete'. Boot cleanup deletes pending rows. |
+| p4-t21 | Snapshot apply (RESET path) | backend | | Done | [ADR-07] Wipe core tables. Decode CBOR. Insert rows. Replay tail ops. Trigger background cache rebuilds + FTS5 optimize. |
+| p4-t22 | 90-day op log compaction scheduler | backend | | Done | [ADR-07] Background task. Runs when op_log rows older than 90 days exist. Produces log_snapshot. Purges old ops after snapshot status='complete'. |
 
 ### Full Android
 

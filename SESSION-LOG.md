@@ -518,6 +518,18 @@
 - **Tests:** 584 Rust + 430 Vitest + 18 Playwright = 1032 total
 - **Commit:** `aba7ed3`
 
+### Phase 4 Wave 2 — Snapshot + Compaction
+
+#### [23:15] Subagent: snapshot.rs build (p4-t19/t20/t21/t22) [BUILT]
+- **Result:** `snapshot.rs` — zstd+ciborium encoding/decoding, crash-safe create_snapshot (pending→complete), apply_snapshot RESET path (wipe+insert in tx), compact_op_log 90-day retention, get_latest_snapshot. Added `zstd` 0.13 + `ciborium` 0.2 deps. `Snapshot(String)` error variant.
+- **Tests:** 13 new snapshot tests, 598 Rust passing
+
+#### [23:30] Subagent: snapshot.rs review [REVIEWED]
+- **Bug fixed:** `collect_frontier` crashed with `RowNotFound` on empty op_log — added early-return guard with clear error message.
+- **New tests:** 4 added (CBOR float round-trip, empty op_log, multi-device compaction, FK violation rejection).
+- **Tests:** 602 Rust + 430 Vitest + 18 Playwright = 1050 total
+- **Commit:** `656c8c5`
+
 ---
 
 <!-- Template:
