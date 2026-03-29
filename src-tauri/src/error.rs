@@ -43,6 +43,9 @@ pub enum AppError {
     #[error("Channel error: {0}")]
     Channel(String),
 
+    #[error("Snapshot error: {0}")]
+    Snapshot(String),
+
     #[error("Validation error: {0}")]
     Validation(String),
 }
@@ -65,6 +68,7 @@ impl Serialize for AppError {
             AppError::NotFound(_) => "not_found",
             AppError::InvalidOperation(_) => "invalid_operation",
             AppError::Channel(_) => "channel",
+            AppError::Snapshot(_) => "snapshot",
             AppError::Validation(_) => "validation",
         };
 
@@ -99,6 +103,7 @@ mod tests {
     const MSG_VALIDATION: &str = "title must not be empty";
     const MSG_CHANNEL: &str = "receiver dropped";
     const MSG_INVALID_OP: &str = "cannot edit deleted block";
+    const MSG_SNAPSHOT: &str = "CBOR encode failed";
 
     // --- Display output per variant ---
 
@@ -140,6 +145,12 @@ mod tests {
     fn display_channel_prefixes_message() {
         let err = AppError::Channel(MSG_CHANNEL.into());
         assert_eq!(err.to_string(), format!("Channel error: {MSG_CHANNEL}"));
+    }
+
+    #[test]
+    fn display_snapshot_prefixes_message() {
+        let err = AppError::Snapshot(MSG_SNAPSHOT.into());
+        assert_eq!(err.to_string(), format!("Snapshot error: {MSG_SNAPSHOT}"));
     }
 
     #[test]
@@ -185,6 +196,11 @@ mod tests {
                 AppError::Channel(MSG_CHANNEL.into()),
                 "channel",
                 format!("Channel error: {MSG_CHANNEL}"),
+            ),
+            (
+                AppError::Snapshot(MSG_SNAPSHOT.into()),
+                "snapshot",
+                format!("Snapshot error: {MSG_SNAPSHOT}"),
             ),
             (
                 AppError::Validation(MSG_VALIDATION.into()),

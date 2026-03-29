@@ -13,6 +13,7 @@ pub mod op;
 pub mod op_log;
 pub mod pagination;
 pub mod recovery;
+pub mod snapshot;
 pub mod soft_delete;
 pub mod tag_query;
 pub mod ulid;
