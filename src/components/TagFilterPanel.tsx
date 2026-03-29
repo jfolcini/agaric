@@ -216,6 +216,19 @@ export function TagFilterPanel(): React.ReactElement {
         </Button>
       </div>
 
+      {/* Filter feedback summary */}
+      {selectedTags.length === 0 && (
+        <p className="text-sm text-muted-foreground" data-testid="tag-filter-feedback">
+          Select tags above to filter blocks
+        </p>
+      )}
+      {selectedTags.length > 0 && !loading && results.length > 0 && (
+        <p className="text-sm text-muted-foreground" data-testid="tag-filter-feedback">
+          {results.length} {results.length === 1 ? 'block matches' : 'blocks match'}{' '}
+          {selectedTags.length} {selectedTags.length === 1 ? 'tag' : 'tags'} ({mode.toUpperCase()})
+        </p>
+      )}
+
       {/* Matching tags from prefix search */}
       {filteredMatching.length > 0 && (
         <div className="rounded-lg border bg-card p-3">

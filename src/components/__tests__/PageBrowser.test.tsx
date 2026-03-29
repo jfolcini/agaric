@@ -94,6 +94,16 @@ describe('PageBrowser', () => {
     expect(await screen.findByText(/No pages yet/)).toBeInTheDocument()
   })
 
+  it('shows skeleton loaders during initial load', () => {
+    // Mock that never resolves — keeps loading state
+    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+
+    const { container } = render(<PageBrowser />)
+
+    const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons.length).toBe(3)
+  })
+
   it('shows Untitled for pages with null content', async () => {
     const page = {
       items: [

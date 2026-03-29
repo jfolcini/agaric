@@ -11,6 +11,7 @@ import { ChevronLeft, ChevronRight, ExternalLink, Plus } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { createBlock, listBlocks } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { BlockTree } from './BlockTree'
@@ -152,7 +153,12 @@ export function JournalPage({
       </div>
 
       {/* Loading indicator while finding the daily page */}
-      {pageLoading && <div className="text-sm text-muted-foreground">Loading...</div>}
+      {pageLoading && (
+        <div className="space-y-1">
+          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-10 w-full rounded-lg" />
+        </div>
+      )}
 
       {/* Block tree — delegates all block rendering to BlockTree */}
       {!pageLoading && dailyPageId && <BlockTree parentId={dailyPageId} />}

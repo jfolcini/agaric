@@ -87,6 +87,16 @@ describe('TagList', () => {
     expect(await screen.findByText(/No tags yet/)).toBeInTheDocument()
   })
 
+  it('shows skeleton loaders during initial load', () => {
+    // Mock that never resolves — keeps loading state
+    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+
+    const { container } = render(<TagList />)
+
+    const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons.length).toBe(3)
+  })
+
   it('creates a tag via the form', async () => {
     const user = userEvent.setup()
     // Initial load — empty

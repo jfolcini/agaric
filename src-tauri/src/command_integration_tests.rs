@@ -372,7 +372,7 @@ async fn create_multiple_blocks_rapidly_all_get_unique_ids() {
             "content".into(),
             format!("block {i}"),
             None,
-            Some(i as i64),
+            Some((i + 1) as i64),
         )
         .await
         .unwrap();
@@ -1284,7 +1284,7 @@ async fn pagination_walk_all_pages_no_duplicates() {
             "content".into(),
             format!("block {i}"),
             None,
-            Some(i as i64),
+            Some((i + 1) as i64),
         )
         .await
         .unwrap();
@@ -1515,7 +1515,7 @@ async fn concurrent_creates_from_multiple_devices_no_conflicts() {
                 "content".into(),
                 format!("{dev}-block-{i}"),
                 None,
-                Some(i as i64),
+                Some((i + 1) as i64),
             )
             .await
             .unwrap();
@@ -1562,7 +1562,7 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
             "content".into(),
             format!("block {i}"),
             None,
-            Some(i as i64),
+            Some((i + 1) as i64),
         )
         .await
         .unwrap();
@@ -2306,5 +2306,316 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
     assert!(
         op_types.contains(&"remove_tag"),
         "op_log must contain remove_tag"
+    );
+}
+
+// ======================================================================
+// Fix #25: position validation — create_block & move_block
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_create_block_rejects_zero_position() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let result = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "test".into(),
+        None,
+        Some(0),
+    )
+    .await;
+
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "position=0 must return Validation error, got: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("position must be positive"),
+        "error message must mention positive position, got: {err}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_create_block_rejects_negative_position() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let result = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "test".into(),
+        None,
+        Some(-5),
+    )
+    .await;
+
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "negative position must return Validation error, got: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("position must be positive"),
+        "error message must mention positive position, got: {err}"
+    );
+    assert!(
+        err.to_string().contains("-5"),
+        "error message must include the bad value, got: {err}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_move_block_rejects_zero_position() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "test".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let result = move_block_inner(&pool, DEV, &mat, block.id, None, 0).await;
+
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "move with position=0 must return Validation error, got: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("position must be positive"),
+        "error message must mention positive position, got: {err}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_move_block_rejects_negative_position() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "test".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let result = move_block_inner(&pool, DEV, &mat, block.id, None, -3).await;
+
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "move with negative position must return Validation error, got: {err:?}"
+    );
+    assert!(
+        err.to_string().contains("position must be positive"),
+        "error message must mention positive position, got: {err}"
+    );
+    assert!(
+        err.to_string().contains("-3"),
+        "error message must include the bad value, got: {err}"
+    );
+}
+
+// ======================================================================
+// Fix #26: date format validation — list_blocks agenda_date
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_list_blocks_rejects_invalid_date() {
+    let (pool, _dir) = test_pool().await;
+
+    // Too short
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2025-1-1".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "short date must return Validation error, got: {result:?}"
+    );
+
+    // Non-digit characters
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("abcd-ef-gh".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "non-digit date must return Validation error, got: {result:?}"
+    );
+
+    // Invalid month
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2025-13-01".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "month=13 must return Validation error, got: {result:?}"
+    );
+
+    // Invalid day (00)
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2025-01-00".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "day=00 must return Validation error, got: {result:?}"
+    );
+
+    // Invalid day (32)
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2024-01-32".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "day=32 must return Validation error, got: {result:?}"
+    );
+
+    // Completely non-date string (exact 10 chars)
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("not-a-date".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "'not-a-date' must return Validation error, got: {result:?}"
+    );
+
+    // Wrong separator
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2025/01/15".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "slash-separated date must return Validation error, got: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_list_blocks_accepts_valid_date() {
+    let (pool, _dir) = test_pool().await;
+
+    // Valid dates should not return a Validation error — they may return
+    // an empty result set (no agenda entries) but no error.
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2025-06-15".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "valid date 2025-06-15 must be accepted, got: {result:?}"
+    );
+
+    // Boundary: Jan 1
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2025-01-01".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "valid date 2025-01-01 must be accepted, got: {result:?}"
+    );
+
+    // Boundary: Dec 31
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2025-12-31".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "valid date 2025-12-31 must be accepted, got: {result:?}"
     );
 }

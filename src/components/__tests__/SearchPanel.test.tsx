@@ -142,16 +142,17 @@ describe('SearchPanel', () => {
     })
   })
 
-  it('shows "Searching..." while loading', () => {
+  it('shows skeleton loaders while loading', () => {
     // Never resolve to keep loading state
     mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
 
-    render(<SearchPanel />)
+    const { container } = render(<SearchPanel />)
 
     const input = screen.getByPlaceholderText('Search blocks...')
     typeAndSubmit(input, 'slow')
 
-    expect(screen.getByText('Searching...')).toBeInTheDocument()
+    const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons.length).toBe(2)
   })
 
   it('paginates with "Load more"', async () => {

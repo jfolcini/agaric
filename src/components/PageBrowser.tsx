@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
 
@@ -105,7 +106,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       </div>
 
       {loading && pages.length === 0 && (
-        <div className="page-browser-loading text-sm text-muted-foreground">Loading pages...</div>
+        <div className="page-browser-loading space-y-1">
+          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-10 w-full rounded-lg" />
+        </div>
       )}
 
       {!loading && pages.length === 0 && (

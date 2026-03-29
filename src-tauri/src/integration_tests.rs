@@ -198,7 +198,14 @@ async fn hash_chain_links_each_op_to_its_predecessor() {
     let mat = Materializer::new(pool.clone());
 
     for i in 0..5 {
-        create_content(&pool, &mat, &format!("block {i}"), None, Some(i as i64)).await;
+        create_content(
+            &pool,
+            &mat,
+            &format!("block {i}"),
+            None,
+            Some((i + 1) as i64),
+        )
+        .await;
     }
 
     let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
@@ -250,9 +257,9 @@ async fn mixed_operations_produce_consistent_op_log_and_block_state() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let b0 = create_content(&pool, &mat, "content 0", None, Some(0)).await;
-    let b1 = create_content(&pool, &mat, "content 1", None, Some(1)).await;
-    let b2 = create_content(&pool, &mat, "content 2", None, Some(2)).await;
+    let b0 = create_content(&pool, &mat, "content 0", None, Some(1)).await;
+    let b1 = create_content(&pool, &mat, "content 1", None, Some(2)).await;
+    let b2 = create_content(&pool, &mat, "content 2", None, Some(3)).await;
 
     edit_block_inner(&pool, DEV, &mat, b0.id.clone(), "edited 0".into())
         .await
@@ -755,9 +762,15 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
     let mut ids = Vec::new();
     for i in 0..5 {
         ids.push(
-            create_content(&pool, &mat, &format!("block {i}"), None, Some(i as i64))
-                .await
-                .id,
+            create_content(
+                &pool,
+                &mat,
+                &format!("block {i}"),
+                None,
+                Some((i + 1) as i64),
+            )
+            .await
+            .id,
         );
     }
 
@@ -797,9 +810,15 @@ async fn cursor_pagination_walks_all_blocks_without_duplicates() {
     let mut created_ids = Vec::new();
     for i in 0..TOTAL {
         created_ids.push(
-            create_content(&pool, &mat, &format!("block {i}"), None, Some(i as i64))
-                .await
-                .id,
+            create_content(
+                &pool,
+                &mat,
+                &format!("block {i}"),
+                None,
+                Some((i + 1) as i64),
+            )
+            .await
+            .id,
         );
     }
 
@@ -836,7 +855,7 @@ async fn pagination_with_exact_page_boundary_terminates_correctly() {
 
     const PAGE_SIZE: i64 = 5;
     for i in 0..PAGE_SIZE {
-        create_content(&pool, &mat, &format!("block {i}"), None, Some(i)).await;
+        create_content(&pool, &mat, &format!("block {i}"), None, Some(i + 1)).await;
     }
 
     let page = list_blocks_inner(&pool, None, None, None, None, None, None, Some(PAGE_SIZE))
@@ -863,7 +882,14 @@ async fn list_by_type_filters_to_matching_block_type() {
 
     // 3 content, 2 page, 1 tag
     for i in 0..3 {
-        create_content(&pool, &mat, &format!("content {i}"), None, Some(i as i64)).await;
+        create_content(
+            &pool,
+            &mat,
+            &format!("content {i}"),
+            None,
+            Some((i + 1) as i64),
+        )
+        .await;
     }
     for i in 0..2 {
         create_block_inner(

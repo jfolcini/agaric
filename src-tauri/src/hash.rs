@@ -48,7 +48,8 @@ pub fn compute_op_hash(
     let mut seq_buf = [0u8; 20]; // i64 max decimal repr is 20 chars (incl. sign)
     let seq_len = {
         let mut cursor = std::io::Cursor::new(&mut seq_buf[..]);
-        std::io::Write::write_fmt(&mut cursor, format_args!("{seq}")).unwrap();
+        std::io::Write::write_fmt(&mut cursor, format_args!("{seq}"))
+            .expect("i64 decimal fits in 20-byte buffer");
         cursor.position() as usize
     };
 

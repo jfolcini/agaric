@@ -325,6 +325,72 @@ describe('TagFilterPanel', () => {
     expect(screen.queryByText('Results')).not.toBeInTheDocument()
   })
 
+  it('shows "Select tags above" feedback when no tags are selected', () => {
+    render(<TagFilterPanel />)
+    expect(screen.getByText('Select tags above to filter blocks')).toBeInTheDocument()
+  })
+
+  it('shows match summary feedback when tags are selected and results exist', async () => {
+    // list_tags_by_prefix response
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    const addBtn = screen.getByRole('button', { name: /Add/i })
+
+    // query_by_tags returns results
+    mockedInvoke.mockResolvedValue({
+      items: [
+        makeBlock({ id: 'B1', content: 'result one' }),
+        makeBlock({ id: 'B2', content: 'result two' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    await act(async () => {
+      fireEvent.click(addBtn)
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    // Should show feedback: "2 blocks match 1 tag (AND)"
+    expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
+      '2 blocks match 1 tag (AND)',
+    )
+  })
+
+  it('shows singular feedback when 1 result matches 1 tag', async () => {
+    // list_tags_by_prefix response
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    const addBtn = screen.getByRole('button', { name: /Add/i })
+
+    // query_by_tags returns exactly 1 result
+    mockedInvoke.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', content: 'only result' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    await act(async () => {
+      fireEvent.click(addBtn)
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    // Should show singular: "1 block matches 1 tag (AND)"
+    expect(screen.getByTestId('tag-filter-feedback')).toHaveTextContent(
+      '1 block matches 1 tag (AND)',
+    )
+  })
+
   it('does not crash on search error', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
 

@@ -33,6 +33,70 @@ use crate::ulid::BlockId;
 // Response types
 // ---------------------------------------------------------------------------
 
+/// Validate that a date string is in `YYYY-MM-DD` format with reasonable
+/// range checks on month (01–12) and day (01–31). This is a structural
+/// check — it does NOT reject dates like Feb 30; the DB/agenda query
+/// handles that gracefully. The goal is to catch obviously malformed input
+/// before it reaches the query layer.
+fn validate_date_format(date: &str) -> Result<(), AppError> {
+    if date.len() != 10 {
+        return Err(AppError::Validation(format!(
+            "date must be exactly 10 characters (YYYY-MM-DD), got {} characters: '{date}'",
+            date.len()
+        )));
+    }
+
+    let bytes = date.as_bytes();
+    // Check pattern: DDDD-DD-DD where D is ASCII digit
+    let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9];
+    for &i in &digit_positions {
+        if !bytes[i].is_ascii_digit() {
+            return Err(AppError::Validation(format!(
+                "date must match YYYY-MM-DD pattern, got '{date}'"
+            )));
+        }
+    }
+    if bytes[4] != b'-' || bytes[7] != b'-' {
+        return Err(AppError::Validation(format!(
+            "date must match YYYY-MM-DD pattern, got '{date}'"
+        )));
+    }
+
+    let parts: Vec<&str> = date.split('-').collect();
+    if parts.len() != 3 {
+        return Err(AppError::Validation(format!(
+            "date must have 3 parts separated by '-', got '{date}'"
+        )));
+    }
+
+    let year_len = parts[0].len();
+    let month_len = parts[1].len();
+    let day_len = parts[2].len();
+    if year_len != 4 || month_len != 2 || day_len != 2 {
+        return Err(AppError::Validation(format!(
+            "date must be YYYY-MM-DD (4-2-2 digits), got '{date}'"
+        )));
+    }
+
+    let month: u32 = parts[1].parse().unwrap_or(0);
+    let day: u32 = parts[2].parse().unwrap_or(0);
+
+    if !(1..=12).contains(&month) {
+        return Err(AppError::Validation(format!(
+            "month must be 01–12, got '{}'",
+            parts[1]
+        )));
+    }
+    if !(1..=31).contains(&day) {
+        return Err(AppError::Validation(format!(
+            "day must be 01–31, got '{}'",
+            parts[2]
+        )));
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct BlockResponse {
     pub id: String,
@@ -102,6 +166,15 @@ pub async fn create_block_inner(
         _ => {
             return Err(AppError::Validation(format!(
                 "unknown block_type '{block_type}': must be 'content', 'tag', or 'page'"
+            )));
+        }
+    }
+
+    // 1b. Validate position is positive (1-based) when provided
+    if let Some(pos) = position {
+        if pos <= 0 {
+            return Err(AppError::Validation(format!(
+                "position must be positive (1-based), got {pos}"
             )));
         }
     }
@@ -580,6 +653,13 @@ pub async fn move_block_inner(
         }
     }
 
+    // 1b. Validate position is positive (1-based)
+    if new_position <= 0 {
+        return Err(AppError::Validation(format!(
+            "position must be positive (1-based), got {new_position}"
+        )));
+    }
+
     // 2. Build OpPayload
     let payload = OpPayload::MoveBlock(MoveBlockPayload {
         block_id: block_id.clone(),
@@ -661,6 +741,7 @@ pub async fn list_blocks_inner(
     if show_deleted == Some(true) {
         pagination::list_trash(pool, &page).await
     } else if let Some(ref d) = agenda_date {
+        validate_date_format(d)?;
         pagination::list_agenda(pool, d, &page).await
     } else if let Some(ref t) = tag_id {
         pagination::list_by_tag(pool, t, &page).await

@@ -12,6 +12,7 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { getBlock, searchBlocks } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
@@ -139,7 +140,10 @@ export function SearchPanel(): React.ReactElement {
       )}
 
       {loading && !searched && (
-        <div className="search-loading text-sm text-muted-foreground">Searching...</div>
+        <div className="search-loading space-y-2">
+          <Skeleton className="h-12 w-full rounded-lg" />
+          <Skeleton className="h-12 w-full rounded-lg" />
+        </div>
       )}
 
       {searched && !loading && results.length === 0 && (

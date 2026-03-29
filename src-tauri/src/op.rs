@@ -320,6 +320,16 @@ impl OpPayload {
 /// Returns `Ok(())` if exactly one is `Some`, or an `AppError::Validation`
 /// describing the violation.
 pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error::AppError> {
+    // Reject NaN / Infinity — these are not valid domain values and would
+    // corrupt downstream consumers that expect finite numbers.
+    if let Some(num) = p.value_num {
+        if !num.is_finite() {
+            return Err(crate::error::AppError::Validation(format!(
+                "value_num must be finite, got {num}"
+            )));
+        }
+    }
+
     let count = [
         p.value_text.is_some(),
         p.value_num.is_some(),
@@ -1026,5 +1036,66 @@ mod tests {
                 "FromStr(as_str) mismatch for {variant:?}"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // 15. F24: validate_set_property rejects NaN / Infinity
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_set_property_nan() {
+        let p = SetPropertyPayload {
+            block_id: "B1".into(),
+            key: "k".into(),
+            value_text: None,
+            value_num: Some(f64::NAN),
+            value_date: None,
+            value_ref: None,
+        };
+        let err = validate_set_property(&p).unwrap_err();
+        assert!(
+            matches!(err, crate::error::AppError::Validation(_)),
+            "NaN value_num must return Validation error, got: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("finite"),
+            "error message must mention 'finite', got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_validate_set_property_infinity() {
+        let p = SetPropertyPayload {
+            block_id: "B1".into(),
+            key: "k".into(),
+            value_text: None,
+            value_num: Some(f64::INFINITY),
+            value_date: None,
+            value_ref: None,
+        };
+        let err = validate_set_property(&p).unwrap_err();
+        assert!(
+            matches!(err, crate::error::AppError::Validation(_)),
+            "Infinity value_num must return Validation error, got: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("finite"),
+            "error message must mention 'finite', got: {err}"
+        );
+
+        // Also test negative infinity
+        let p_neg = SetPropertyPayload {
+            block_id: "B1".into(),
+            key: "k".into(),
+            value_text: None,
+            value_num: Some(f64::NEG_INFINITY),
+            value_date: None,
+            value_ref: None,
+        };
+        let err_neg = validate_set_property(&p_neg).unwrap_err();
+        assert!(
+            matches!(err_neg, crate::error::AppError::Validation(_)),
+            "NEG_INFINITY value_num must return Validation error, got: {err_neg:?}"
+        );
     }
 }

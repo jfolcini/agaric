@@ -4,14 +4,16 @@ import {
   ChevronsLeft,
   FileText,
   GitMerge,
+  Keyboard,
   Search,
   Tag,
   Trash2,
 } from 'lucide-react'
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { BootGate } from './components/BootGate'
 import { ConflictList } from './components/ConflictList'
 import { JournalPage } from './components/JournalPage'
+import { KeyboardShortcuts } from './components/KeyboardShortcuts'
 import { PageBrowser } from './components/PageBrowser'
 import { PageEditor } from './components/PageEditor'
 import { SearchPanel } from './components/SearchPanel'
@@ -76,6 +78,7 @@ function useHeaderLabel(): string {
 function App() {
   const { currentView, pageStack, setView, navigateToPage, goBack } = useNavigationStore()
   const headerLabel = useHeaderLabel()
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   const handlePageSelect = useCallback(
     (pageId: string, title?: string) => {
@@ -119,6 +122,14 @@ function App() {
             </SidebarGroup>
           </SidebarContent>
           <SidebarFooter>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton tooltip="Shortcuts" onClick={() => setShortcutsOpen(true)}>
+                  <Keyboard />
+                  <span>Shortcuts</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
             <CollapseButton />
           </SidebarFooter>
           <SidebarRail />
@@ -155,6 +166,7 @@ function App() {
           </div>
         </SidebarInset>
       </SidebarProvider>
+      <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <Toaster position="bottom-right" richColors closeButton />
     </BootGate>
   )

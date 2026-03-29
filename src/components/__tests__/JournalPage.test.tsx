@@ -111,9 +111,10 @@ describe('JournalPage', () => {
     // Make the mock never resolve to keep loading state visible
     mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
 
-    render(<JournalPage />)
+    const { container } = render(<JournalPage />)
 
-    expect(screen.getByText('Loading...')).toBeInTheDocument()
+    const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons.length).toBe(2)
   })
 
   it('renders BlockTree with correct parentId when daily page exists', async () => {

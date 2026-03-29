@@ -569,6 +569,68 @@
 - **Tests:** 759 Rust (758 passed + 1 ignored specta) + 41 serializer integration + 430 Vitest = 1230 total
 - **Commit:** `e5d048c`
 
+## Session 3 — 2026-03-29
+
+### UX Improvements Wave
+
+#### [22:30] Branding + UI Infrastructure
+- Added Agaric branding (logo SVG, favicon, App.tsx header)
+- Created UX-TODOS.md with 13 UX issues
+- Added sonner toast + radix AlertDialog UI primitives
+- **Commits:** `63c5412`, `45423e2`
+
+#### [22:45] Subagent A: Tags & Pages UX [REVIEWED]
+- **Tasks:** UX #1 (tag delete confirmation), #2 (page delete confirmation), #7 (clickable tag names), #8 (toast errors), #10 (disabled state)
+- **Files:** TagList.tsx, PageBrowser.tsx + tests
+- **Tests:** +18 new tests (TagList: 18, PageBrowser: 14)
+- **Worktree:** `/tmp/wt-ux-tags/`
+
+#### [22:45] Subagent B: Editor & Block UX [REVIEWED]
+- **Tasks:** UX #3 (block delete button), #4 (empty block visibility), #5 (detail panel collapsed), #6 (header label), #12 (sidebar active state)
+- **Files:** PageEditor.tsx, SortableBlock.tsx, BlockTree.tsx, StaticBlock.tsx, EditableBlock.tsx, App.tsx, test-setup.ts + tests
+- **Tests:** +10 new tests
+- **Worktree:** `/tmp/wt-ux-editor/`
+
+#### [23:00] Review + Merge
+- Review subagent found & fixed: missing `aria-label` on trash buttons, updated test selectors to semantic `getByRole`
+- Wired up `onTagClick` in App.tsx (navigates to page-editor for tag)
+- Fixed Biome lint (non-null assertions → type casts)
+- **Tests:** 557 Vitest passing (+127 new), all prek hooks pass
+- **Commit:** `eba2d9d`
+
+## Session 5 — 2026-03-29
+
+### UX Improvements Wave 2 + REVIEW-LATER Fixes
+
+#### [22:26] Build: UX remaining items (#9 #11 #13) [BUILT]
+- **Tasks:** Keyboard shortcut help sheet, tag filter feedback text, skeleton loading states
+- **Files:** KeyboardShortcuts.tsx (new), App.tsx, TagFilterPanel.tsx, PageBrowser.tsx, TagList.tsx, JournalPage.tsx, SearchPanel.tsx + tests
+- **Result:** 571 Vitest tests passing
+
+#### [22:40] Review: UX items [REVIEWED]
+- Added `?` shortcut self-reference, singular tag feedback test
+- **Tests:** 571 Vitest passing
+
+#### [22:50] Visual Review
+- Screenshotted all 8 views via chrome-browser MCP (Journal, Shortcuts, Search, Pages, Tags, Trash, Status, Conflicts)
+- **Result:** No visual issues found
+
+#### [23:00] Build: REVIEW-LATER fixes #24 #25 #26 #47 [BUILT]
+- **#24:** NaN/Infinity validation in `validate_set_property()` (op.rs)
+- **#25:** Position validation in `create_block_inner()` + `move_block_inner()` (commands.rs)
+- **#26:** Date format validation `validate_date_format()` in `list_blocks_inner()` (commands.rs)
+- **#47:** `unwrap()` → `expect()` in `compute_op_hash()` (hash.rs)
+- Collateral: fixed 0-based → 1-based positions in integration tests
+- **Tests:** 809 Rust tests passing
+
+#### [23:15] Review: REVIEW-LATER fixes [REVIEWED]
+- All 4 fixes verified correct
+- Added 3 more tests: day=32 rejection, "not-a-date" rejection, negative move position
+- **Tests:** 811 Rust tests passing
+
+#### [23:30] Commit
+- Updated REVIEW-LATER.md: #24, #25, #26, #47 marked RESOLVED
+
 ---
 
 <!-- Template:

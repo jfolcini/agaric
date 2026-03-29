@@ -23,6 +23,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
 
@@ -111,7 +112,13 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         </Button>
       </form>
 
-      {loading && <div className="text-sm text-muted-foreground">Loading tags...</div>}
+      {loading && (
+        <div className="space-y-1">
+          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-10 w-full rounded-lg" />
+        </div>
+      )}
 
       {!loading && tags.length === 0 && (
         <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
