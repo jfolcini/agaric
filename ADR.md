@@ -9,7 +9,7 @@ block type.
 ---
 
 ## ADR-01 — Shell & Frontend
-**Status:** Phase 1.5 complete. Android spike complete (Phase 1.5). Phase 2 complete (DnD, backlinks, editor UI). Export (Phase 5) not started.
+**Status:** Phase 1.5 complete. Android spike complete (Phase 1.5). Phase 2 complete (DnD, backlinks, editor UI). Phase 3 complete (FTS5 search, tag queries, nextest). Phase 4 Waves 1-2 complete (DAG merge, snapshots/compaction). Export (Phase 5) not started.
 
 **Decision:** Tauri 2.0, React 18 + Vite, TipTap, Biome.
 
@@ -218,7 +218,7 @@ for reads (WAL allows concurrent readers).
 ---
 
 ## ADR-05 — Schema
-**Status: FULLY IMPLEMENTED.** All 13 tables, 7 indexes created in 0001_initial.sql.
+**Status: FULLY IMPLEMENTED.** All 13 tables, 7 indexes created in 0001_initial.sql. Phase 3 added FTS5 virtual table (0002_fts5.sql) + 1 index.
 
 **Central principle: everything is a block.** Tags, pages, and content are all rows in `blocks`,
 distinguished by `block_type`. No separate tags or pages tables.
@@ -364,7 +364,7 @@ CREATE INDEX idx_agenda_date        ON agenda_cache(date);
 ---
 
 ## ADR-06 — Data Model
-**Status:** Phase 1 complete. Conflict copies (Phase 4), export (Phase 5) not started.
+**Status:** Phase 1 complete. Phase 4 Wave 1 complete (conflict copies via merge.rs create_conflict_copy). Export (Phase 5) not started.
 
 **Integer position ordering:** `position` is a 1-based integer among siblings sharing the same
 `parent_id`. On insert between positions N and N+1, all siblings at position ≥ N+1 are
@@ -450,7 +450,7 @@ new `edit_block` on original, conflict copy → `delete_block`.
 ---
 
 ## ADR-07 — Operation Log
-**Status:** Phase 1 complete (linear chain). Phase 4 Wave 1 complete (DAG traversal, LCA, multi-parent merge ops). Snapshots, compaction, and sync protocol not started.
+**Status:** Phase 1 complete (linear chain). Phase 4 Wave 1 complete (DAG traversal, LCA, multi-parent merge ops). Phase 4 Wave 2 complete (snapshot encoding, crash-safe write, RESET apply, 90-day compaction). Sync protocol not started.
 
 **Core principle:** Op log is strictly append-only. `block_drafts` is the only mutable scratch
 space. Nothing else bypasses this invariant.
@@ -948,7 +948,7 @@ reference only.
 ---
 
 ## ADR-11 — Rust Libraries
-**Status:** Phase 1 complete. Phase 4: diffy added. zstd, ciborium not yet added.
+**Status:** Phase 1 complete. Phase 4: diffy, zstd, ciborium added.
 
 | Library | Phase | Purpose |
 |---------|-------|---------|

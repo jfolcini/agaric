@@ -105,6 +105,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
         ├── pagination.rs              # Cursor/keyset pagination (ADR critical)
         ├── recovery.rs                # Crash recovery at boot (ADR-07)
         ├── soft_delete.rs             # Cascade soft-delete, restore, purge (ADR-06)
+        ├── snapshot.rs                # Snapshot encoding, RESET apply, compaction (ADR-07)
         ├── tag_query.rs               # Boolean tag queries with FxHashSet (ADR-08)
         ├── ulid.rs                    # BlockId newtype (ULID, case-normalized)
         ├── integration_tests.rs       # Cross-module integration tests (test-only)
@@ -122,7 +123,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 | `db.rs` | SQLite pool with WAL + FK pragma + busy_timeout(5s) | `init_pool()` |
 | `device.rs` | Device UUID generation + file persistence | `DeviceId`, `get_or_create_device_id()` |
 | `draft.rs` | Block draft save/flush/delete (ADR-07) | `Draft`, `save_draft()`, `flush_draft()`, `delete_draft()`, `get_draft()`, `draft_count()`, `save_draft_if_changed()` |
-| `error.rs` | Error types for commands | `AppError` (Db, Io, Ulid, Serde, Blake3, Tauri, Validation, InvalidOperation, Channel, NotFound) |
+| `error.rs` | Error types for commands | `AppError` (Db, Io, Ulid, Serde, Blake3, Tauri, Validation, InvalidOperation, Channel, NotFound, Snapshot) |
 | `fts.rs` | FTS5 full-text search (ADR-12) | `strip_for_fts()`, `update_fts_for_block()`, `rebuild_fts_index()`, `fts_optimize()`, `search_fts()` |
 | `hash.rs` | blake3 hash for op log entries (ADR-07) | `compute_op_hash()`, `verify_op_hash()` |
 | `materializer.rs` | Foreground + background materializer queues, FTS tasks, high-water mark monitoring (ADR-08) | `Materializer`, `MaterializeTask`, `dispatch_op()`, `dispatch_background()`, `dedup_tasks()`, `QueueMetrics`, `shutdown()` |
@@ -131,6 +132,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 | `op_log.rs` | Op log writer — append local ops | `OpRecord` (FromRow), `append_local_op()`, `append_local_op_at()`, `append_local_op_in_tx()`, `get_op_by_seq()`, `get_latest_seq()`, `get_ops_since()` |
 | `pagination.rs` | Cursor/keyset pagination — all list queries | `Cursor`, `PageRequest`, `PageResponse`, `list_children()`, `list_by_type()`, `list_trash()`, `list_by_tag()`, `list_agenda()` |
 | `recovery.rs` | Crash recovery at boot (ADR-07) | `RecoveryReport` (duration_ms, draft_errors), `recover_at_boot()` |
+| `snapshot.rs` | Snapshot encoding, RESET apply, compaction (ADR-07) | `SnapshotData`, `encode_snapshot()`, `decode_snapshot()`, `create_snapshot()`, `apply_snapshot()`, `compact_op_log()`, `get_latest_snapshot()` |
 | `soft_delete.rs` | Cascade soft-delete, restore, purge (ADR-06) | `soft_delete_block()`, `cascade_soft_delete()` (returns count), `restore_block()`, `purge_block()` (batch O(k)), `is_deleted()`, `get_descendants()` |
 | `tag_query.rs` | Boolean tag queries (ADR-08) | `TagExpr`, `eval_tag_query()`, `list_tags_by_prefix()`, `escape_like()` |
 | `ulid.rs` | ID generation and validation | `BlockId`, `AttachmentId`, `SnapshotId` |
@@ -138,8 +140,8 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 
 ## Test Coverage
 
-- **584 Rust tests** + **430 Vitest frontend tests** + **18 Playwright E2E tests** = 1032 total
-- Phases 1–3 complete + Phase 4 Wave 1 (DAG + merge)
+- **602 Rust tests** + **430 Vitest frontend tests** + **18 Playwright E2E tests** = 1050 total
+- Phases 1–3 complete + Phase 4 Waves 1-2 (DAG + merge + snapshots/compaction)
 - Untestable Tauri bootstrap (lib.rs::run, main.rs::main, command wrappers) excluded via `#[cfg(not(tarpaulin_include))]`
 
 ## Test Tooling Guide
@@ -220,7 +222,7 @@ npm run test:coverage    # Vitest with v8 coverage
 npx playwright test     # Playwright E2E tests (18 tests)
 
 # Backend (source cargo env first: . "$HOME/.cargo/env")
-cd src-tauri && cargo nextest run  # Run Rust tests (584 tests)
+cd src-tauri && cargo nextest run  # Run Rust tests (602 tests)
 cd src-tauri && cargo fmt --check  # Rust formatting
 cd src-tauri && cargo clippy -- -D warnings  # Lint Rust
 
@@ -369,7 +371,7 @@ Measured timings (incremental, no code changes):
 | Command | Time | Notes |
 |---------|------|-------|
 | `cargo fmt --check` | 0.1s | No compilation |
-| `cargo nextest run` | 3.3s | 584 tests in parallel |
+| `cargo nextest run` | 3.3s | 602 tests in parallel |
 | `cargo clippy` | 2.0s | Separate analysis pass |
 | `biome check` | 0.2s | |
 | `tsc -b --noEmit` | 1.0s | |
