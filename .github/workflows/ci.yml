@@ -64,6 +64,12 @@ jobs:
       - name: Vitest
         run: npm test
 
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright E2E tests
+        run: npx playwright test
+
       - name: sqlx offline cache check
         working-directory: src-tauri
         run: cargo sqlx prepare --check

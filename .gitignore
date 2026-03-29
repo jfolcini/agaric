@@ -31,3 +31,8 @@ src-tauri/gen/
 src-tauri/dev.db
 src-tauri/dev.db-*
 coverage/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/

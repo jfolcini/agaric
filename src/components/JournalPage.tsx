@@ -184,6 +184,7 @@ export function JournalPage({ onBlockClick: _onBlockClick }: JournalPageProps): 
               <Button
                 variant="ghost"
                 size="icon-xs"
+                aria-label="Delete block"
                 className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
                 onClick={() => handleDeleteBlock(block.id)}
               >
