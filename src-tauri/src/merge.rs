@@ -215,13 +215,16 @@ pub async fn create_conflict_copy(
 /// Last-Writer-Wins resolution for concurrent property changes.
 ///
 /// Compares two `set_property` ops and returns the winning op's info.
-/// - Primary: later `created_at` timestamp wins (parsed as RFC 3339).
+/// - Primary: later `created_at` timestamp wins (lexicographic string comparison).
 /// - Tiebreaker 1: lexicographically larger `device_id` wins.
 /// - Tiebreaker 2: larger `seq` wins.
 ///
-/// Timestamps are parsed via `chrono::DateTime::parse_from_rfc3339` so that
-/// different UTC representations (`+00:00` vs `Z`) compare correctly.  Falls
-/// back to lexicographic string comparison only if parsing fails.   (F05)
+/// Timestamps are compared as strings via lexicographic ordering, which is
+/// correct for RFC 3339 timestamps **only when they share the same UTC
+/// suffix** (all `Z` or all `+00:00`).  The `now_rfc3339()` helper always
+/// emits `Z`, so production data is consistent.  If mixed-format timestamps
+/// are ever ingested from remote devices, this comparison may need to parse
+/// via `chrono::DateTime::parse_from_rfc3339` instead.            (F05)
 #[must_use = "conflict resolution result must be applied"]
 pub fn resolve_property_conflict(
     op_a: &OpRecord,

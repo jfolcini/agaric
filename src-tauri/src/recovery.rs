@@ -325,6 +325,22 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
+    // -- Test fixture constants --
+    //
+    // All timestamps use `Z` (not `+00:00`) to match `now_rfc3339()` output.
+    // Mixing suffixes would break the lexicographic `>=` comparison in
+    // `recover_single_draft`'s SQL query (see REVIEW-LATER #48).
+
+    /// Far-past timestamp: any op created by `append_local_op` (which calls
+    /// `now_rfc3339()`) will have `created_at >= FAR_PAST`, so the draft is
+    /// classified as "already flushed".
+    const FAR_PAST: &str = "2000-01-01T00:00:00Z";
+
+    /// Far-future timestamp: no op created by `append_local_op` will have
+    /// `created_at >= FAR_FUTURE`, so the draft is classified as "unflushed"
+    /// and gets recovered.
+    const FAR_FUTURE: &str = "2099-01-01T00:00:00Z";
+
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
         let db_path: PathBuf = dir.path().join("test.db");
@@ -483,7 +499,7 @@ mod tests {
         sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
             .bind(block_id)
             .bind("some content")
-            .bind("2000-01-01T00:00:00+00:00")
+            .bind(FAR_PAST)
             .execute(&pool)
             .await
             .unwrap();
@@ -598,7 +614,7 @@ mod tests {
         sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
             .bind(block_id)
             .bind("edited content")
-            .bind("2099-01-01T00:00:00+00:00")
+            .bind(FAR_FUTURE)
             .execute(&pool)
             .await
             .unwrap();
@@ -655,7 +671,7 @@ mod tests {
         sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
             .bind(block_id)
             .bind("v3 unflushed")
-            .bind("2099-01-01T00:00:00+00:00")
+            .bind(FAR_FUTURE)
             .execute(&pool)
             .await
             .unwrap();
@@ -735,7 +751,7 @@ mod tests {
         sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
             .bind("block-flushed")
             .bind("flushed content")
-            .bind("2000-01-01T00:00:00+00:00")
+            .bind(FAR_PAST)
             .execute(&pool)
             .await
             .unwrap();
@@ -827,7 +843,7 @@ mod tests {
             )
             .bind(&bid)
             .bind("x")
-            .bind("2000-01-01T00:00:00+00:00")
+            .bind(FAR_PAST)
             .execute(&pool)
             .await
             .unwrap();
@@ -963,7 +979,7 @@ mod tests {
         sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
             .bind(block_id)
             .bind("recovered content")
-            .bind("2099-01-01T00:00:00+00:00")
+            .bind(FAR_FUTURE)
             .execute(&pool)
             .await
             .unwrap();
@@ -997,7 +1013,7 @@ mod tests {
             )
             .bind(&bid)
             .bind(format!("new-{i}"))
-            .bind("2099-01-01T00:00:00+00:00")
+            .bind(FAR_FUTURE)
             .execute(&pool)
             .await
             .unwrap();
@@ -1032,7 +1048,7 @@ mod tests {
         sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
             .bind(block_id)
             .bind("stale draft")
-            .bind("2000-01-01T00:00:00+00:00")
+            .bind(FAR_PAST)
             .execute(&pool)
             .await
             .unwrap();
@@ -1067,7 +1083,7 @@ mod tests {
         let block_id = "block-soft-deleted";
 
         insert_test_block(&pool, block_id, "original").await;
-        sqlx::query("UPDATE blocks SET deleted_at = '2024-01-01T00:00:00+00:00' WHERE id = ?")
+        sqlx::query("UPDATE blocks SET deleted_at = '2024-01-01T00:00:00Z' WHERE id = ?")
             .bind(block_id)
             .execute(&pool)
             .await
@@ -1076,7 +1092,7 @@ mod tests {
         sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
             .bind(block_id)
             .bind("orphaned draft content")
-            .bind("2099-01-01T00:00:00+00:00")
+            .bind(FAR_FUTURE)
             .execute(&pool)
             .await
             .unwrap();
@@ -1110,7 +1126,7 @@ mod tests {
         sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
             .bind(block_id)
             .bind("orphaned draft")
-            .bind("2099-01-01T00:00:00+00:00")
+            .bind(FAR_FUTURE)
             .execute(&pool)
             .await
             .unwrap();
