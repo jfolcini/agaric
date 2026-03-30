@@ -7,9 +7,10 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { GripVertical, Trash2 } from 'lucide-react'
+import { CheckCircle2, ChevronRight, Circle, CircleDot, GripVertical, Trash2 } from 'lucide-react'
 import type React from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
+import { cn } from '../lib/utils'
 import { EditableBlock } from './EditableBlock'
 
 /** Pixels of left padding per depth level. */
@@ -28,6 +29,16 @@ interface SortableBlockProps {
   resolveTagName?: (id: string) => string
   resolveBlockStatus?: (id: string) => 'active' | 'deleted'
   resolveTagStatus?: (id: string) => 'active' | 'deleted'
+  /** Whether this block has children in the tree. */
+  hasChildren?: boolean
+  /** Whether this block is currently collapsed. */
+  isCollapsed?: boolean
+  /** Callback to toggle collapse state. */
+  onToggleCollapse?: (blockId: string) => void
+  /** Current task state: 'TODO', 'DOING', 'DONE', or null/undefined for no task. */
+  todoState?: string | null
+  /** Callback to cycle task state. */
+  onToggleTodo?: (blockId: string) => void
 }
 
 export function SortableBlock({
@@ -42,6 +53,11 @@ export function SortableBlock({
   resolveTagName,
   resolveBlockStatus,
   resolveTagStatus,
+  hasChildren = false,
+  isCollapsed = false,
+  onToggleCollapse,
+  todoState,
+  onToggleTodo,
 }: SortableBlockProps): React.ReactElement {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: blockId,
@@ -61,6 +77,35 @@ export function SortableBlock({
       data-block-id={blockId}
       className="sortable-block group flex items-start gap-1"
     >
+      {hasChildren ? (
+        <button
+          type="button"
+          className="collapse-toggle flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground"
+          onClick={() => onToggleCollapse?.(blockId)}
+          aria-label={isCollapsed ? 'Expand children' : 'Collapse children'}
+        >
+          <ChevronRight
+            size={14}
+            className={cn('transition-transform', !isCollapsed && 'rotate-90')}
+          />
+        </button>
+      ) : (
+        <span className="collapse-spacer flex-shrink-0 w-[15px]" />
+      )}
+      <button
+        type="button"
+        className="task-marker flex-shrink-0 p-0.5 transition-colors"
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggleTodo?.(blockId)
+        }}
+        aria-label={todoState ? `Task: ${todoState}. Click to cycle.` : 'Set as TODO'}
+      >
+        {todoState === 'TODO' && <Circle size={16} className="text-muted-foreground" />}
+        {todoState === 'DOING' && <CircleDot size={16} className="text-blue-500" />}
+        {todoState === 'DONE' && <CheckCircle2 size={16} className="text-green-600" />}
+        {!todoState && <span className="inline-block w-4 h-4" />}
+      </button>
       <button
         type="button"
         className="drag-handle flex-shrink-0 cursor-grab opacity-30 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-foreground"

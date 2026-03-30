@@ -37,8 +37,22 @@ import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
 import { useViewportObserver } from '../hooks/useViewportObserver'
-import { createBlock, getBlock, listBlocks, listTagsByPrefix } from '../lib/tauri'
-import { computePosition, getDragDescendants, getProjection } from '../lib/tree-utils'
+import type { PropertyRow } from '../lib/tauri'
+import {
+  createBlock,
+  deleteProperty,
+  getBlock,
+  getProperties,
+  listBlocks,
+  listTagsByPrefix,
+  setProperty,
+} from '../lib/tauri'
+import {
+  computePosition,
+  type FlatBlock,
+  getDragDescendants,
+  getProjection,
+} from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
 import { INDENT_WIDTH, SortableBlock } from './SortableBlock'
 
@@ -47,6 +61,9 @@ interface BlockInfo {
   title: string
   deleted: boolean
 }
+
+/** Task state cycle: none → TODO → DOING → DONE → none. */
+const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE']
 
 interface BlockTreeProps {
   /** Optional parent block ID — when set, loads children of this block. */
@@ -76,15 +93,68 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
   const [overId, setOverId] = useState<string | null>(null)
   const [offsetLeft, setOffsetLeft] = useState(0)
 
+  // ── Collapse state ─────────────────────────────────────────────────
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
+
+  // ── Block properties (task state) ─────────────────────────────────
+  const [blockProperties, setBlockProperties] = useState<Map<string, PropertyRow[]>>(new Map())
+
+  /** Get the current todo state for a block from the properties cache. */
+  const getTodoState = useCallback(
+    (blockId: string): string | null => {
+      const props = blockProperties.get(blockId)
+      const todoProp = props?.find((p) => p.key === 'todo')
+      return todoProp?.value_text ?? null
+    },
+    [blockProperties],
+  )
+
+  /** Set of block IDs that have children (next block in flat tree has greater depth). */
+  const hasChildrenSet = useMemo(() => {
+    const set = new Set<string>()
+    for (let i = 0; i < blocks.length - 1; i++) {
+      if (blocks[i + 1].depth > blocks[i].depth) {
+        set.add(blocks[i].id)
+      }
+    }
+    return set
+  }, [blocks])
+
+  /** Blocks visible after collapse filtering (before DnD filtering). */
+  const collapsedVisible = useMemo(() => {
+    if (collapsedIds.size === 0) return blocks
+    const result: FlatBlock[] = []
+    const skipUntilDepth: number[] = []
+
+    for (const block of blocks) {
+      while (
+        skipUntilDepth.length > 0 &&
+        block.depth <= skipUntilDepth[skipUntilDepth.length - 1]
+      ) {
+        skipUntilDepth.pop()
+      }
+
+      if (skipUntilDepth.length > 0) continue
+
+      result.push(block)
+
+      if (collapsedIds.has(block.id)) {
+        skipUntilDepth.push(block.depth)
+      }
+    }
+    return result
+  }, [blocks, collapsedIds])
+
   // Items visible during drag: exclude descendants of the active item
   const activeDescendants = useMemo(
-    () => (activeId ? getDragDescendants(blocks, activeId) : new Set<string>()),
-    [activeId, blocks],
+    () => (activeId ? getDragDescendants(collapsedVisible, activeId) : new Set<string>()),
+    [activeId, collapsedVisible],
   )
 
   const visibleItems = useMemo(
-    () => (activeId ? blocks.filter((b) => !activeDescendants.has(b.id)) : blocks),
-    [blocks, activeId, activeDescendants],
+    () =>
+      activeId ? collapsedVisible.filter((b) => !activeDescendants.has(b.id)) : collapsedVisible,
+    [collapsedVisible, activeId, activeDescendants],
   )
 
   // Projection of where the dragged item would land
@@ -187,6 +257,26 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     load(parentId)
   }, [load, parentId])
 
+  // ── Fetch properties for all blocks (batch) ────────────────────────
+  useEffect(() => {
+    if (blocks.length === 0) return
+    const fetchProps = async () => {
+      const propsMap = new Map<string, PropertyRow[]>()
+      await Promise.all(
+        blocks.map(async (b) => {
+          try {
+            const props = await getProperties(b.id)
+            if (props.length > 0) propsMap.set(b.id, props)
+          } catch {
+            /* ignore */
+          }
+        }),
+      )
+      setBlockProperties(propsMap)
+    }
+    fetchProps()
+  }, [blocks])
+
   // Keyboard callbacks
   const handleFlush = useCallback((): string | null => {
     if (!rovingEditor.activeBlockId) return null
@@ -201,6 +291,28 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     }
     return changed
   }, [rovingEditor, edit, splitBlock])
+
+  const toggleCollapse = useCallback(
+    (blockId: string) => {
+      // If collapsing and the focused block is a descendant, rescue focus
+      const wasCollapsed = collapsedIds.has(blockId)
+      if (!wasCollapsed && focusedBlockId) {
+        const descendants = getDragDescendants(blocks, blockId)
+        if (descendants.has(focusedBlockId)) {
+          handleFlush()
+          setFocused(null)
+        }
+      }
+
+      setCollapsedIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(blockId)) next.delete(blockId)
+        else next.add(blockId)
+        return next
+      })
+    },
+    [collapsedIds, blocks, focusedBlockId, handleFlush, setFocused],
+  )
 
   // ── Navigate to a block link target ────────────────────────────────
   const handleNavigate = useCallback(
@@ -229,41 +341,41 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
   handleNavigateRef.current = handleNavigate
 
   const handleFocusPrev = useCallback(() => {
-    const idx = blocks.findIndex((b) => b.id === focusedBlockId)
+    const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx > 0) {
-      const prevBlock = blocks[idx - 1]
+      const prevBlock = collapsedVisible[idx - 1]
       setFocused(prevBlock.id)
       rovingEditor.mount(prevBlock.id, prevBlock.content ?? '')
     }
-  }, [blocks, focusedBlockId, setFocused, rovingEditor])
+  }, [collapsedVisible, focusedBlockId, setFocused, rovingEditor])
 
   const handleFocusNext = useCallback(() => {
-    const idx = blocks.findIndex((b) => b.id === focusedBlockId)
-    if (idx >= 0 && idx < blocks.length - 1) {
-      const nextBlock = blocks[idx + 1]
+    const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
+    if (idx >= 0 && idx < collapsedVisible.length - 1) {
+      const nextBlock = collapsedVisible[idx + 1]
       setFocused(nextBlock.id)
       rovingEditor.mount(nextBlock.id, nextBlock.content ?? '')
     }
-  }, [blocks, focusedBlockId, setFocused, rovingEditor])
+  }, [collapsedVisible, focusedBlockId, setFocused, rovingEditor])
 
   const handleDeleteBlock = useCallback(() => {
     if (!focusedBlockId) return
-    const idx = blocks.findIndex((b) => b.id === focusedBlockId)
+    const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     rovingEditor.unmount()
     remove(focusedBlockId)
     // Focus previous block, or next, or nothing
     if (idx > 0) {
-      const prevBlock = blocks[idx - 1]
+      const prevBlock = collapsedVisible[idx - 1]
       setFocused(prevBlock.id)
       rovingEditor.mount(prevBlock.id, prevBlock.content ?? '')
-    } else if (blocks.length > 1) {
-      const nextBlock = blocks[1]
+    } else if (collapsedVisible.length > 1) {
+      const nextBlock = collapsedVisible[1]
       setFocused(nextBlock.id)
       rovingEditor.mount(nextBlock.id, nextBlock.content ?? '')
     } else {
       setFocused(null)
     }
-  }, [focusedBlockId, blocks, rovingEditor, remove, setFocused])
+  }, [focusedBlockId, collapsedVisible, rovingEditor, remove, setFocused])
 
   const handleIndent = useCallback(() => {
     if (!focusedBlockId) return
@@ -357,13 +469,13 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
   // ── Merge with previous block (p2-t11) ────────────────────────────
   const handleMergeWithPrev = useCallback(() => {
     if (!focusedBlockId) return
-    const idx = blocks.findIndex((b) => b.id === focusedBlockId)
+    const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx <= 0) return // First block — nothing to merge with
 
-    const prevBlock = blocks[idx - 1]
+    const prevBlock = collapsedVisible[idx - 1]
 
     // Get current block content from the editor
-    const currentContent = rovingEditor.unmount() ?? blocks[idx].content ?? ''
+    const currentContent = rovingEditor.unmount() ?? collapsedVisible[idx].content ?? ''
     const prevContent = prevBlock.content ?? ''
 
     // Merge: concatenate previous content + current content
@@ -388,7 +500,7 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
         rovingEditor.editor.commands.setTextSelection(pmPos)
       }
     }, 0)
-  }, [focusedBlockId, blocks, rovingEditor, edit, remove, setFocused])
+  }, [focusedBlockId, collapsedVisible, rovingEditor, edit, remove, setFocused])
 
   // ── Enter: save + create new block below + focus it ────────────────
   const handleEnterCreateBlock = useCallback(async () => {
@@ -412,6 +524,44 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     setFocused(null)
   }, [focusedBlockId, rovingEditor, setFocused])
 
+  // ── Task state cycling ─────────────────────────────────────────────
+  const handleToggleTodo = useCallback(
+    async (blockId: string) => {
+      const current = getTodoState(blockId)
+      const currentIdx = TASK_CYCLE.indexOf(current)
+      const nextIdx = (currentIdx + 1) % TASK_CYCLE.length
+      const nextState = TASK_CYCLE[nextIdx]
+
+      if (nextState === null) {
+        await deleteProperty(blockId, 'todo')
+      } else {
+        await setProperty({ blockId, key: 'todo', valueText: nextState })
+      }
+
+      // Update local cache
+      setBlockProperties((prev) => {
+        const next = new Map(prev)
+        if (nextState === null) {
+          const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'todo')
+          if (props.length === 0) next.delete(blockId)
+          else next.set(blockId, props)
+        } else {
+          const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'todo')
+          props.push({
+            key: 'todo',
+            value_text: nextState,
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+          })
+          next.set(blockId, props)
+        }
+        return next
+      })
+    },
+    [getTodoState],
+  )
+
   useBlockKeyboard(rovingEditor.editor, {
     onFocusPrev: handleFocusPrev,
     onFocusNext: handleFocusNext,
@@ -423,6 +573,34 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     onEnterCreateBlock: handleEnterCreateBlock,
     onEscapeCancel: handleEscapeCancel,
   })
+
+  // ── Keyboard shortcut for collapse toggle (Mod+.) ──────────────────
+  useEffect(() => {
+    const handleCollapseKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === '.') {
+        e.preventDefault()
+        if (focusedBlockId && hasChildrenSet.has(focusedBlockId)) {
+          toggleCollapse(focusedBlockId)
+        }
+      }
+    }
+    document.addEventListener('keydown', handleCollapseKey)
+    return () => document.removeEventListener('keydown', handleCollapseKey)
+  }, [focusedBlockId, hasChildrenSet, toggleCollapse])
+
+  // ── Keyboard shortcut for task cycling (Ctrl+Enter / Cmd+Enter) ────
+  useEffect(() => {
+    const handleTaskKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault()
+        if (focusedBlockId) {
+          handleToggleTodo(focusedBlockId)
+        }
+      }
+    }
+    document.addEventListener('keydown', handleTaskKey)
+    return () => document.removeEventListener('keydown', handleTaskKey)
+  }, [focusedBlockId, handleToggleTodo])
 
   // ── Active item for DragOverlay ────────────────────────────────────
   const activeBlock = activeId ? blocks.find((b) => b.id === activeId) : null
@@ -492,6 +670,11 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
                   resolveTagName={resolveTagName}
                   resolveBlockStatus={resolveBlockStatus}
                   resolveTagStatus={resolveTagStatus}
+                  hasChildren={hasChildrenSet.has(block.id)}
+                  isCollapsed={collapsedIds.has(block.id)}
+                  onToggleCollapse={toggleCollapse}
+                  todoState={getTodoState(block.id)}
+                  onToggleTodo={handleToggleTodo}
                 />
               </div>
             )

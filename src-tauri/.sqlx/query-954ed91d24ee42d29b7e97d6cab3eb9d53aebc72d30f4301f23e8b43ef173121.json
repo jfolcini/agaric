@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT key, value_text, value_num, value_date, value_ref FROM block_properties WHERE block_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "key",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "value_text",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "value_num",
+        "ordinal": 2,
+        "type_info": "Float"
+      },
+      {
+        "name": "value_date",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "value_ref",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "954ed91d24ee42d29b7e97d6cab3eb9d53aebc72d30f4301f23e8b43ef173121"
+}

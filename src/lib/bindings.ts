@@ -149,6 +149,30 @@ async listTagsForBlock(blockId: string) : Promise<Result<string[], { kind: strin
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async setProperty(blockId: string, key: string, valueText: string | null, valueNum: number | null, valueDate: string | null, valueRef: string | null) : Promise<Result<BlockResponse, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_property", { blockId, key, valueText, valueNum, valueDate, valueRef }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteProperty(blockId: string, key: string) : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_property", { blockId, key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProperties(blockId: string) : Promise<Result<PropertyRow[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_properties", { blockId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -179,6 +203,7 @@ export type MoveResponse = { block_id: string; new_parent_id: string | null; new
  * `total_count` is intentionally omitted — see module docs.
  */
 export type PageResponse<T> = { items: T[]; next_cursor: string | null; has_more: boolean }
+export type PropertyRow = { key: string; value_text: string | null; value_num: number | null; value_date: string | null; value_ref: string | null }
 export type PurgeResponse = { block_id: string; purged_count: number }
 export type RestoreResponse = { block_id: string; restored_count: number }
 /**

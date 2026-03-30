@@ -197,3 +197,44 @@ export async function listTagsByPrefix(params: { prefix: string }): Promise<TagC
 export async function listTagsForBlock(blockId: string): Promise<string[]> {
   return invoke('list_tags_for_block', { blockId })
 }
+
+// ---------------------------------------------------------------------------
+// Property commands
+// ---------------------------------------------------------------------------
+
+export interface PropertyRow {
+  key: string
+  value_text: string | null
+  value_num: number | null
+  value_date: string | null
+  value_ref: string | null
+}
+
+/** Set (upsert) a property on a block. Exactly one value field must be non-null. */
+export async function setProperty(params: {
+  blockId: string
+  key: string
+  valueText?: string | null
+  valueNum?: number | null
+  valueDate?: string | null
+  valueRef?: string | null
+}): Promise<void> {
+  await invoke('set_property', {
+    blockId: params.blockId,
+    key: params.key,
+    valueText: params.valueText ?? null,
+    valueNum: params.valueNum ?? null,
+    valueDate: params.valueDate ?? null,
+    valueRef: params.valueRef ?? null,
+  })
+}
+
+/** Delete a property from a block by key. */
+export async function deleteProperty(blockId: string, key: string): Promise<void> {
+  await invoke('delete_property', { blockId, key })
+}
+
+/** Get all properties for a block. */
+export async function getProperties(blockId: string): Promise<PropertyRow[]> {
+  return invoke('get_properties', { blockId })
+}

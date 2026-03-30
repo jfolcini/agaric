@@ -76,12 +76,12 @@ describe('App', () => {
   it('defaults to Journal view', async () => {
     render(<App />)
 
-    // JournalPage renders date navigation buttons
+    // JournalPage renders multi-day view with "Load older days" button
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Prev/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /load older days/i })).toBeInTheDocument()
     })
-    expect(screen.getByRole('button', { name: /Next/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /add block/i })).toBeInTheDocument()
+    // Multiple day sections each have their own "Add block" button
+    expect(screen.getAllByRole('button', { name: /add block/i }).length).toBeGreaterThanOrEqual(1)
   })
 
   it('switches to Pages view', async () => {
@@ -217,7 +217,7 @@ describe('App', () => {
 
     // Journal should render again
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /add block/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /load older days/i })).toBeInTheDocument()
     })
   })
 

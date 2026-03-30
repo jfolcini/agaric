@@ -16,6 +16,9 @@ function fakeId(): string {
 
 const blocks: Map<string, Record<string, unknown>> = new Map()
 
+// Property store: block_id → key → PropertyRow
+const properties: Map<string, Map<string, Record<string, unknown>>> = new Map()
+
 // ---------------------------------------------------------------------------
 // Seed data IDs — exported for tests and external reference
 // ---------------------------------------------------------------------------
@@ -63,6 +66,7 @@ function makeBlock(
 
 function seedBlocks(): void {
   blocks.clear()
+  properties.clear()
   counter = 0
 
   const today = todayDate()
@@ -333,6 +337,40 @@ export function setupMock(): void {
       case 'list_tags_for_block': {
         // In-memory mock doesn't track tag associations
         return []
+      }
+
+      case 'set_property': {
+        const a = args as Record<string, unknown>
+        const blockId = a.blockId as string
+        const key = a.key as string
+        if (!properties.has(blockId)) {
+          properties.set(blockId, new Map())
+        }
+        properties.get(blockId)!.set(key, {
+          key,
+          value_text: (a.valueText as string | null) ?? null,
+          value_num: (a.valueNum as number | null) ?? null,
+          value_date: (a.valueDate as string | null) ?? null,
+          value_ref: (a.valueRef as string | null) ?? null,
+        })
+        return null
+      }
+
+      case 'delete_property': {
+        const a = args as Record<string, unknown>
+        const blockId = a.blockId as string
+        const key = a.key as string
+        const blockProps = properties.get(blockId)
+        if (blockProps) blockProps.delete(key)
+        return null
+      }
+
+      case 'get_properties': {
+        const a = args as Record<string, unknown>
+        const blockId = a.blockId as string
+        const blockProps = properties.get(blockId)
+        if (!blockProps) return []
+        return [...blockProps.values()]
       }
 
       default:

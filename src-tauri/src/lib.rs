@@ -64,6 +64,9 @@ mod specta_tests {
             crate::commands::query_by_tags,
             crate::commands::list_tags_by_prefix,
             crate::commands::list_tags_for_block,
+            crate::commands::set_property,
+            crate::commands::delete_property,
+            crate::commands::get_properties,
         ])
     }
 
@@ -166,6 +169,9 @@ pub fn run() {
         commands::query_by_tags,
         commands::list_tags_by_prefix,
         commands::list_tags_for_block,
+        commands::set_property,
+        commands::delete_property,
+        commands::get_properties,
     ]);
 
     tauri::Builder::default()

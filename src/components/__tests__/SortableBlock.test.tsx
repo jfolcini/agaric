@@ -29,6 +29,38 @@ vi.mock('../EditableBlock', () => ({
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
+  CheckCircle2: (props: { size: number; className?: string }) => (
+    <svg
+      data-testid="check-circle-icon"
+      width={props.size}
+      height={props.size}
+      className={props.className}
+    />
+  ),
+  ChevronRight: (props: { size: number; className?: string }) => (
+    <svg
+      data-testid="chevron-right-icon"
+      width={props.size}
+      height={props.size}
+      className={props.className}
+    />
+  ),
+  Circle: (props: { size: number; className?: string }) => (
+    <svg
+      data-testid="circle-icon"
+      width={props.size}
+      height={props.size}
+      className={props.className}
+    />
+  ),
+  CircleDot: (props: { size: number; className?: string }) => (
+    <svg
+      data-testid="circle-dot-icon"
+      width={props.size}
+      height={props.size}
+      className={props.className}
+    />
+  ),
   GripVertical: (props: { size: number }) => (
     <svg data-testid="grip-vertical-icon" width={props.size} height={props.size} />
   ),
@@ -297,5 +329,371 @@ describe('SortableBlock', () => {
     )
 
     expect(screen.queryByRole('button', { name: /delete block/i })).not.toBeInTheDocument()
+  })
+})
+
+describe('SortableBlock collapse/expand chevron', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue({
+      attributes: {},
+      listeners: {},
+      setNodeRef: vi.fn(),
+      transform: null,
+      transition: undefined,
+      isDragging: false,
+    })
+  })
+
+  it('renders ChevronRight when hasChildren is true', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+      />,
+    )
+
+    expect(screen.getByTestId('chevron-right-icon')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /collapse children/i })).toBeInTheDocument()
+  })
+
+  it('does not render ChevronRight when hasChildren is false', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren={false}
+      />,
+    )
+
+    expect(screen.queryByTestId('chevron-right-icon')).not.toBeInTheDocument()
+  })
+
+  it('renders a spacer when hasChildren is false', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren={false}
+      />,
+    )
+
+    expect(container.querySelector('.collapse-spacer')).toBeInTheDocument()
+  })
+
+  it('does not render a spacer when hasChildren is true', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+      />,
+    )
+
+    expect(container.querySelector('.collapse-spacer')).not.toBeInTheDocument()
+  })
+
+  it('applies rotate-90 class when expanded (not collapsed)', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+        isCollapsed={false}
+      />,
+    )
+
+    const chevron = screen.getByTestId('chevron-right-icon')
+    expect(chevron.getAttribute('class')).toContain('rotate-90')
+  })
+
+  it('does not apply rotate-90 class when collapsed', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+        isCollapsed
+      />,
+    )
+
+    const chevron = screen.getByTestId('chevron-right-icon')
+    expect(chevron.getAttribute('class')).not.toContain('rotate-90')
+  })
+
+  it('shows "Collapse children" aria-label when expanded', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+        isCollapsed={false}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Collapse children' })).toBeInTheDocument()
+  })
+
+  it('shows "Expand children" aria-label when collapsed', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+        isCollapsed
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Expand children' })).toBeInTheDocument()
+  })
+
+  it('calls onToggleCollapse with blockId when chevron is clicked', async () => {
+    const user = userEvent.setup()
+    const onToggle = vi.fn()
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_42"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+        onToggleCollapse={onToggle}
+      />,
+    )
+
+    const collapseBtn = screen.getByRole('button', { name: /collapse children/i })
+    await user.click(collapseBtn)
+
+    expect(onToggle).toHaveBeenCalledOnce()
+    expect(onToggle).toHaveBeenCalledWith('BLOCK_42')
+  })
+})
+
+describe('SortableBlock task marker', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue({
+      attributes: {},
+      listeners: {},
+      setNodeRef: vi.fn(),
+      transform: null,
+      transition: undefined,
+      isDragging: false,
+    })
+  })
+
+  it('renders blank spacer when todoState is null (no task)', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState={null}
+      />,
+    )
+
+    const marker = container.querySelector('.task-marker')
+    expect(marker).toBeInTheDocument()
+    // No icons should be rendered
+    expect(screen.queryByTestId('circle-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('circle-dot-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('check-circle-icon')).not.toBeInTheDocument()
+  })
+
+  it('renders blank spacer when todoState is undefined', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const marker = container.querySelector('.task-marker')
+    expect(marker).toBeInTheDocument()
+    expect(screen.queryByTestId('circle-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('circle-dot-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('check-circle-icon')).not.toBeInTheDocument()
+  })
+
+  it('renders Circle icon for TODO state', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="TODO"
+      />,
+    )
+
+    expect(screen.getByTestId('circle-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('circle-dot-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('check-circle-icon')).not.toBeInTheDocument()
+  })
+
+  it('renders CircleDot icon for DOING state', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="DOING"
+      />,
+    )
+
+    expect(screen.getByTestId('circle-dot-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('circle-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('check-circle-icon')).not.toBeInTheDocument()
+  })
+
+  it('renders CheckCircle2 icon for DONE state', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="DONE"
+      />,
+    )
+
+    expect(screen.getByTestId('check-circle-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('circle-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('circle-dot-icon')).not.toBeInTheDocument()
+  })
+
+  it('has "Set as TODO" aria-label when no task state', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState={null}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Set as TODO' })).toBeInTheDocument()
+  })
+
+  it('has descriptive aria-label when task state is set', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="DOING"
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Task: DOING. Click to cycle.' })).toBeInTheDocument()
+  })
+
+  it('calls onToggleTodo with blockId when task marker is clicked', async () => {
+    const user = userEvent.setup()
+    const onToggleTodo = vi.fn()
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_42"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="TODO"
+        onToggleTodo={onToggleTodo}
+      />,
+    )
+
+    const marker = screen.getByRole('button', { name: /task: todo/i })
+    await user.click(marker)
+
+    expect(onToggleTodo).toHaveBeenCalledOnce()
+    expect(onToggleTodo).toHaveBeenCalledWith('BLOCK_42')
+  })
+
+  it('does not crash when onToggleTodo is not provided', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="TODO"
+      />,
+    )
+
+    const marker = screen.getByRole('button', { name: /task: todo/i })
+    // Should not throw
+    await user.click(marker)
+  })
+
+  it('applies text-muted-foreground class to TODO Circle icon', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="TODO"
+      />,
+    )
+
+    const icon = screen.getByTestId('circle-icon')
+    expect(icon.getAttribute('class')).toContain('text-muted-foreground')
+  })
+
+  it('applies text-blue-500 class to DOING CircleDot icon', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="DOING"
+      />,
+    )
+
+    const icon = screen.getByTestId('circle-dot-icon')
+    expect(icon.getAttribute('class')).toContain('text-blue-500')
+  })
+
+  it('applies text-green-600 class to DONE CheckCircle2 icon', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="DONE"
+      />,
+    )
+
+    const icon = screen.getByTestId('check-circle-icon')
+    expect(icon.getAttribute('class')).toContain('text-green-600')
   })
 })

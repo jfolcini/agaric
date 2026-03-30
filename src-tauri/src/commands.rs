@@ -21,8 +21,9 @@ use crate::fts;
 use crate::materializer::{Materializer, StatusInfo};
 use crate::now_rfc3339;
 use crate::op::{
-    AddTagPayload, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload,
-    OpPayload, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
+    validate_set_property, AddTagPayload, CreateBlockPayload, DeleteBlockPayload,
+    DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload, PurgeBlockPayload,
+    RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload,
 };
 use crate::op_log;
 use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
@@ -139,6 +140,15 @@ pub struct MoveResponse {
 pub struct TagResponse {
     pub block_id: String,
     pub tag_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, Type)]
+pub struct PropertyRow {
+    pub key: String,
+    pub value_text: Option<String>,
+    pub value_num: Option<f64>,
+    pub value_date: Option<String>,
+    pub value_ref: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1271,6 +1281,150 @@ pub async fn list_tags_for_block_inner(
     tag_query::list_tags_for_block(pool, &block_id).await
 }
 
+/// Set (upsert) a property on a block.
+///
+/// Validates the block exists and is not deleted, validates the property
+/// payload (exactly one non-null value field, valid key format), then
+/// appends a `SetProperty` op and materializes the change.
+#[allow(clippy::too_many_arguments)]
+pub async fn set_property_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    key: String,
+    value_text: Option<String>,
+    value_num: Option<f64>,
+    value_date: Option<String>,
+    value_ref: Option<String>,
+) -> Result<BlockResponse, AppError> {
+    // 1. Build and validate the payload before touching the DB
+    let prop_payload = SetPropertyPayload {
+        block_id: block_id.clone(),
+        key: key.clone(),
+        value_text: value_text.clone(),
+        value_num,
+        value_date: value_date.clone(),
+        value_ref: value_ref.clone(),
+    };
+    validate_set_property(&prop_payload)?;
+
+    // 2. Begin IMMEDIATE transaction for atomic validation + op_log + materialization
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // 3. Validate block exists and is not deleted (TOCTOU-safe inside tx)
+    let existing: Option<BlockRow> = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        block_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let existing = existing
+        .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
+
+    // 4. Append SetProperty op to the op_log
+    let payload = OpPayload::SetProperty(prop_payload);
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+
+    // 5. Materialize: upsert into block_properties
+    sqlx::query(
+        "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&block_id)
+    .bind(&key)
+    .bind(&value_text)
+    .bind(value_num)
+    .bind(&value_date)
+    .bind(&value_ref)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    // 6. Dispatch background cache tasks (fire-and-forget)
+    let _ = materializer.dispatch_background(&op_record);
+
+    // 7. Return the block
+    Ok(BlockResponse {
+        id: existing.id,
+        block_type: existing.block_type,
+        content: existing.content,
+        parent_id: existing.parent_id,
+        position: existing.position,
+        deleted_at: existing.deleted_at,
+    })
+}
+
+/// Delete a property from a block.
+///
+/// Appends a `DeleteProperty` op and removes the row from `block_properties`.
+pub async fn delete_property_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    key: String,
+) -> Result<(), AppError> {
+    // 1. Begin IMMEDIATE transaction
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // 2. Validate block exists and is not deleted (TOCTOU-safe)
+    let exists = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        block_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if exists.is_none() {
+        return Err(AppError::NotFound(format!(
+            "block '{block_id}' (not found or deleted)"
+        )));
+    }
+
+    // 3. Append DeleteProperty op
+    let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
+        block_id: block_id.clone(),
+        key: key.clone(),
+    });
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+
+    // 4. Materialize: delete from block_properties
+    sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+        .bind(&block_id)
+        .bind(&key)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    // 5. Dispatch background cache tasks (fire-and-forget)
+    let _ = materializer.dispatch_background(&op_record);
+
+    Ok(())
+}
+
+/// Get all properties for a block (read-only).
+pub async fn get_properties_inner(
+    pool: &SqlitePool,
+    block_id: String,
+) -> Result<Vec<PropertyRow>, AppError> {
+    let rows = sqlx::query_as!(
+        PropertyRow,
+        "SELECT key, value_text, value_num, value_date, value_ref \
+         FROM block_properties WHERE block_id = ?",
+        block_id
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
 // ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
@@ -1567,6 +1721,63 @@ pub async fn list_tags_for_block(
     block_id: String,
 ) -> Result<Vec<String>, AppError> {
     list_tags_for_block_inner(&pool, block_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub async fn set_property(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_id: String,
+    key: String,
+    value_text: Option<String>,
+    value_num: Option<f64>,
+    value_date: Option<String>,
+    value_ref: Option<String>,
+) -> Result<BlockResponse, AppError> {
+    set_property_inner(
+        &pool.0,
+        &device_id.0,
+        &materializer,
+        block_id,
+        key,
+        value_text,
+        value_num,
+        value_date,
+        value_ref,
+    )
+    .await
+    .map_err(sanitize_internal_error)
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_property(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_id: String,
+    key: String,
+) -> Result<(), AppError> {
+    delete_property_inner(&pool.0, &device_id.0, &materializer, block_id, key)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_properties(
+    pool: State<'_, ReadPool>,
+    block_id: String,
+) -> Result<Vec<PropertyRow>, AppError> {
+    get_properties_inner(&pool.0, block_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -4116,5 +4327,214 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.items.len(), 1);
+    }
+
+    // ======================================================================
+    // set_property / delete_property / get_properties
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_property_creates_property() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block to attach the property to
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "prop test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Set a text property
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "priority".into(),
+            Some("high".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Verify via get_properties
+        let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+        assert_eq!(props.len(), 1, "should have exactly one property");
+        assert_eq!(props[0].key, "priority");
+        assert_eq!(props[0].value_text, Some("high".into()));
+        assert!(props[0].value_num.is_none());
+        assert!(props[0].value_date.is_none());
+        assert!(props[0].value_ref.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_property_validates_key() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Empty key should fail validation
+        let result = set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "".into(),
+            Some("val".into()),
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "empty key should return Validation error, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_property_on_deleted_block_fails() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        delete_block_inner(&pool, DEV, &mat, block.id.clone())
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let result = set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "key".into(),
+            Some("val".into()),
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "setting property on deleted block should return NotFound, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn delete_property_removes_property() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Set a property
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "status".into(),
+            Some("active".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Delete the property
+        delete_property_inner(&pool, DEV, &mat, block.id.clone(), "status".into())
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Verify it's gone
+        let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+        assert!(
+            props.is_empty(),
+            "properties should be empty after delete, got: {props:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_properties_returns_empty_for_new_block() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "no props".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+        assert!(
+            props.is_empty(),
+            "new block should have no properties, got: {props:?}"
+        );
     }
 }

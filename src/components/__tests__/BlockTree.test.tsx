@@ -11,6 +11,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { PickerItem } from '../../editor/SuggestionList'
@@ -53,8 +54,40 @@ vi.mock('../../hooks/useViewportObserver', () => ({
 
 // Minimal mock for SortableBlock
 vi.mock('../SortableBlock', () => ({
-  SortableBlock: (props: { blockId: string }) => (
-    <div data-testid={`sortable-block-${props.blockId}`}>SortableBlock</div>
+  SortableBlock: (props: {
+    blockId: string
+    hasChildren?: boolean
+    isCollapsed?: boolean
+    onToggleCollapse?: (id: string) => void
+    todoState?: string | null
+    onToggleTodo?: (id: string) => void
+  }) => (
+    <div
+      data-testid={`sortable-block-${props.blockId}`}
+      data-has-children={props.hasChildren ?? false}
+      data-is-collapsed={props.isCollapsed ?? false}
+      data-todo-state={props.todoState ?? ''}
+    >
+      {props.hasChildren && props.onToggleCollapse && (
+        <button
+          data-testid={`toggle-${props.blockId}`}
+          onClick={() => props.onToggleCollapse?.(props.blockId)}
+          type="button"
+        >
+          Toggle
+        </button>
+      )}
+      {props.onToggleTodo && (
+        <button
+          data-testid={`todo-toggle-${props.blockId}`}
+          onClick={() => props.onToggleTodo?.(props.blockId)}
+          type="button"
+        >
+          Todo
+        </button>
+      )}
+      SortableBlock
+    </div>
   ),
   INDENT_WIDTH: 24,
 }))
@@ -643,5 +676,417 @@ describe('BlockTree rendering edge cases', () => {
 
     // Empty state should NOT be shown
     expect(document.querySelector('.block-tree-empty')).not.toBeInTheDocument()
+  })
+})
+
+// =========================================================================
+// Collapse / expand tests
+// =========================================================================
+
+const makeBlock = (
+  id: string,
+  parentId: string | null,
+  depth: number,
+  content = `Block ${id}`,
+) => ({
+  id,
+  block_type: 'content',
+  content,
+  parent_id: parentId,
+  position: 0,
+  deleted_at: null,
+  archived_at: null,
+  is_conflict: false,
+  depth,
+})
+
+describe('BlockTree collapse/expand', () => {
+  beforeEach(() => {
+    // Reset invoke so load() fails and doesn't overwrite store blocks
+    mockedInvoke.mockReset()
+  })
+
+  it('passes hasChildren=true for blocks with children', async () => {
+    const parentChild = [makeBlock('A', null, 0, 'Parent'), makeBlock('B', 'A', 1, 'Child')]
+
+    useBlockStore.setState({ blocks: parentChild, loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-has-children', 'true')
+    })
+    expect(screen.getByTestId('sortable-block-B')).toHaveAttribute('data-has-children', 'false')
+  })
+
+  it('passes hasChildren=false for leaf blocks', async () => {
+    const leaf = [makeBlock('LEAF', null, 0)]
+
+    useBlockStore.setState({ blocks: leaf, loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-LEAF')).toHaveAttribute(
+        'data-has-children',
+        'false',
+      )
+    })
+  })
+
+  it('hides children when parent is collapsed via toggle button', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Parent'), makeBlock('B', 'A', 1, 'Child')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    // Both visible initially
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-B')).toBeInTheDocument()
+    })
+
+    // Click toggle on parent
+    await user.click(screen.getByTestId('toggle-A'))
+
+    // Child should be hidden
+    expect(screen.queryByTestId('sortable-block-B')).not.toBeInTheDocument()
+    // Parent still visible and marked collapsed
+    expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+    expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-is-collapsed', 'true')
+  })
+
+  it('shows children again when parent is expanded', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Parent'), makeBlock('B', 'A', 1, 'Child')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-B')).toBeInTheDocument()
+    })
+
+    // Collapse
+    await user.click(screen.getByTestId('toggle-A'))
+    expect(screen.queryByTestId('sortable-block-B')).not.toBeInTheDocument()
+
+    // Expand
+    await user.click(screen.getByTestId('toggle-A'))
+    expect(screen.getByTestId('sortable-block-B')).toBeInTheDocument()
+    expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-is-collapsed', 'false')
+  })
+
+  it('hides all descendants when an ancestor is collapsed', async () => {
+    const user = userEvent.setup()
+    const tree = [
+      makeBlock('A', null, 0),
+      makeBlock('B', 'A', 1),
+      makeBlock('C', 'B', 2),
+      makeBlock('D', 'C', 3),
+    ]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-D')).toBeInTheDocument()
+    })
+
+    // Collapse root A — all descendants hidden
+    await user.click(screen.getByTestId('toggle-A'))
+
+    expect(screen.queryByTestId('sortable-block-B')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sortable-block-C')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sortable-block-D')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+  })
+
+  it('collapsing one sibling does not affect the other', async () => {
+    const user = userEvent.setup()
+    const tree = [
+      makeBlock('A', null, 0),
+      makeBlock('A1', 'A', 1),
+      makeBlock('B', null, 0),
+      makeBlock('B1', 'B', 1),
+    ]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A1')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-B1')).toBeInTheDocument()
+    })
+
+    // Collapse A only
+    await user.click(screen.getByTestId('toggle-A'))
+
+    expect(screen.queryByTestId('sortable-block-A1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sortable-block-B1')).toBeInTheDocument()
+  })
+
+  it('does not show toggle button for leaf blocks (no children)', async () => {
+    const tree = [makeBlock('LEAF', null, 0)]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-LEAF')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByTestId('toggle-LEAF')).not.toBeInTheDocument()
+  })
+})
+
+// =========================================================================
+// Task state cycling tests
+// =========================================================================
+
+describe('BlockTree task cycling', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('passes todoState to SortableBlock based on fetched properties', async () => {
+    const tree = [makeBlock('A', null, 0, 'Task block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    // Mock get_properties to return a TODO property for block A
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_properties' && args?.blockId === 'A') {
+        return [
+          { key: 'todo', value_text: 'TODO', value_num: null, value_date: null, value_ref: null },
+        ]
+      }
+      return []
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'TODO')
+    })
+  })
+
+  it('passes empty todoState when block has no todo property', async () => {
+    const tree = [makeBlock('A', null, 0, 'No task')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    // Mock get_properties to return empty array
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', '')
+    })
+  })
+
+  it('cycles from none to TODO when todo toggle is clicked', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    // Initially no properties
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('todo-toggle-A')).toBeInTheDocument()
+    })
+
+    // Now mock set_property for the cycling call
+    mockedInvoke.mockResolvedValue(null)
+
+    await user.click(screen.getByTestId('todo-toggle-A'))
+
+    // Should have called set_property with TODO
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'todo',
+        valueText: 'TODO',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+
+    // State should update to TODO
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'TODO')
+    })
+  })
+
+  it('cycles from TODO to DOING', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    // Block A starts with TODO property
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_properties' && args?.blockId === 'A') {
+        return [
+          { key: 'todo', value_text: 'TODO', value_num: null, value_date: null, value_ref: null },
+        ]
+      }
+      return []
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'TODO')
+    })
+
+    // Mock the set_property call
+    mockedInvoke.mockResolvedValue(null)
+
+    await user.click(screen.getByTestId('todo-toggle-A'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'todo',
+        valueText: 'DOING',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'DOING')
+    })
+  })
+
+  it('cycles from DONE to none (deletes property)', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    // Block A starts with DONE property
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_properties' && args?.blockId === 'A') {
+        return [
+          { key: 'todo', value_text: 'DONE', value_num: null, value_date: null, value_ref: null },
+        ]
+      }
+      return []
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'DONE')
+    })
+
+    // Mock the delete_property call
+    mockedInvoke.mockResolvedValue(null)
+
+    await user.click(screen.getByTestId('todo-toggle-A'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_property', {
+        blockId: 'A',
+        key: 'todo',
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', '')
+    })
+  })
+
+  it('renders todo toggle button for each block', async () => {
+    const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('todo-toggle-A')).toBeInTheDocument()
+      expect(screen.getByTestId('todo-toggle-B')).toBeInTheDocument()
+    })
+  })
+
+  it('Ctrl+Enter cycles task state on focused block', async () => {
+    const tree = [makeBlock('A', null, 0, 'Focused block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+    })
+
+    // Mock set_property for the Ctrl+Enter cycling call
+    mockedInvoke.mockResolvedValue(null)
+
+    // Fire Ctrl+Enter keydown
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      ctrlKey: true,
+      bubbles: true,
+    })
+    document.dispatchEvent(event)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'todo',
+        valueText: 'TODO',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('Ctrl+Enter does nothing when no block is focused', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+    })
+
+    // Fire Ctrl+Enter keydown
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      ctrlKey: true,
+      bubbles: true,
+    })
+    document.dispatchEvent(event)
+
+    // Should not call set_property or delete_property
+    await new Promise((r) => setTimeout(r, 50))
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_property', expect.anything())
   })
 })
