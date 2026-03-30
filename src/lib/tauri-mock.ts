@@ -190,12 +190,21 @@ export function setupMock(): void {
       case 'create_block': {
         const a = args as Record<string, unknown>
         const id = fakeId()
+        const parentId = (a.parentId as string) ?? null
+        // Compute position: if not provided, append after existing siblings
+        let position = a.position as number | undefined
+        if (position == null) {
+          const siblings = [...blocks.values()].filter(
+            (b) => b.parent_id === parentId && !b.deleted_at,
+          )
+          position = siblings.length
+        }
         const row = {
           id,
           block_type: a.blockType as string,
           content: (a.content as string) ?? null,
-          parent_id: (a.parentId as string) ?? null,
-          position: (a.position as number) ?? 0,
+          parent_id: parentId,
+          position,
           deleted_at: null,
           archived_at: null,
           is_conflict: false,

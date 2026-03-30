@@ -111,7 +111,11 @@ async fn create_tag_block_returns_correct_fields() {
 
     assert_eq!(resp.block_type, "tag", "block_type must be tag");
     assert_eq!(resp.content, Some("urgent".into()), "content must match");
-    assert!(resp.position.is_none(), "tags typically have no position");
+    assert_eq!(
+        resp.position,
+        Some(1),
+        "auto-assigned position for first block"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2617,5 +2621,75 @@ async fn test_list_blocks_accepts_valid_date() {
     assert!(
         result.is_ok(),
         "valid date 2025-12-31 must be accepted, got: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_with_none_position_appends_after_siblings() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Create a parent page
+    let parent = create_block_inner(&pool, DEV, &mat, "page".into(), "parent".into(), None, None)
+        .await
+        .unwrap();
+
+    settle().await;
+
+    // Create three children with position: None — each should auto-append
+    let child0 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "first".into(),
+        Some(parent.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    settle().await;
+
+    let child1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "second".into(),
+        Some(parent.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    settle().await;
+
+    let child2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "third".into(),
+        Some(parent.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        child0.position,
+        Some(1),
+        "first child with position: None should get position 1"
+    );
+    assert_eq!(
+        child1.position,
+        Some(2),
+        "second child with position: None should get position 2"
+    );
+    assert_eq!(
+        child2.position,
+        Some(3),
+        "third child with position: None should get position 3"
     );
 }

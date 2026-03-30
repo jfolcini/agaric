@@ -184,15 +184,6 @@ pub async fn create_block_inner(
     // 2. Generate new BlockId
     let block_id = BlockId::new();
 
-    // 3. Build OpPayload
-    let payload = OpPayload::CreateBlock(CreateBlockPayload {
-        block_id: block_id.as_str().to_owned(),
-        block_type: block_type.clone(),
-        parent_id: parent_id.clone(),
-        position,
-        content: content.clone(),
-    });
-
     // 4. Begin IMMEDIATE transaction for atomic op_log + blocks write.
     //    IMMEDIATE eagerly acquires the write lock, avoiding
     //    SQLITE_BUSY_SNAPSHOT when a background cache rebuild commits
@@ -213,6 +204,30 @@ pub async fn create_block_inner(
         }
     }
 
+    // Compute next position when none provided: append after last sibling
+    let effective_position = match position {
+        Some(p) => p,
+        None => {
+            let row: Option<(i64,)> = sqlx::query_as(
+                "SELECT COALESCE(MAX(position), 0) + 1 FROM blocks \
+                 WHERE parent_id IS ? AND deleted_at IS NULL",
+            )
+            .bind(&parent_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            row.map(|(p,)| p).unwrap_or(1)
+        }
+    };
+
+    // 3b. Build OpPayload with the resolved position
+    let payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: block_id.as_str().to_owned(),
+        block_type: block_type.clone(),
+        parent_id: parent_id.clone(),
+        position: Some(effective_position),
+        content: content.clone(),
+    });
+
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
@@ -225,7 +240,7 @@ pub async fn create_block_inner(
     .bind(&block_type)
     .bind(&content)
     .bind(&parent_id)
-    .bind(position)
+    .bind(effective_position)
     .execute(&mut *tx)
     .await?;
 
@@ -240,7 +255,7 @@ pub async fn create_block_inner(
         block_type,
         content: Some(content),
         parent_id,
-        position,
+        position: Some(effective_position),
         deleted_at: None,
     })
 }

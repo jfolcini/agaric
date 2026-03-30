@@ -311,7 +311,7 @@ describe('JournalPage', () => {
       })
     })
     expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-      blockType: 'text',
+      blockType: 'content',
       content: '',
       parentId: 'DP1',
       position: null,
@@ -365,7 +365,7 @@ describe('JournalPage', () => {
     // Should NOT have created a daily page — only the child block
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-        blockType: 'text',
+        blockType: 'content',
         content: '',
         parentId: 'DP1',
         position: null,

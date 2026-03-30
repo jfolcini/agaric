@@ -105,7 +105,7 @@ export function JournalPage({
 
     // Create an empty child block under the daily page
     await createBlock({
-      blockType: 'text',
+      blockType: 'content',
       content: '',
       parentId: pageId,
     })
