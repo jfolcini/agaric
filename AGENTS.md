@@ -100,6 +100,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 │   │   ├── tauri.ts                   # Type-safe Tauri invoke wrappers
 │   │   ├── tauri-mock.ts              # Browser IPC mock (auto-loaded outside Tauri)
 │   │   ├── bindings.ts                # Auto-generated specta bindings
+│   │   ├── format.ts                  # Shared formatTimestamp utility
 │   │   └── utils.ts                   # Shared helpers (cn, etc.)
 │   ├── __tests__/                     # Root-level tests
 │   │   ├── smoke.test.ts              # Vitest smoke test
@@ -113,6 +114,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
     ├── build.rs                       # Tauri build script
     ├── .env                           # DATABASE_URL for sqlx-cli
     ├── .config/nextest.toml           # nextest config
+    ├── .sqlx/                         # sqlx offline query cache (82 files, committed)
     ├── migrations/0001_initial.sql    # Full schema (13 tables, 7 indexes)
     ├── migrations/0002_fts5.sql       # FTS5 virtual table + triggers
     ├── capabilities/default.json      # Tauri 2 ACL permissions
@@ -190,7 +192,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 
 ## Test Coverage
 
-- **800 Rust tests** (759 lib + 41 serializer integration) + **430 Vitest frontend tests** + **18 Playwright E2E tests** = 1,248 total
+- **880 Rust tests** (839 lib + 41 serializer integration) + **651 Vitest frontend tests** + **18 Playwright E2E tests** = 1,549 total
 - Phases 1–3 complete + Phase 4 Waves 1-2 (DAG + merge + snapshots/compaction)
 - Untestable Tauri bootstrap (lib.rs::run, main.rs::main, command wrappers) excluded via `#[cfg(not(tarpaulin_include))]`
 
@@ -395,7 +397,7 @@ Config: `prek.toml`. Installed via `prek install`. Runs on every `git commit`. *
 3. **Cursor-based pagination on ALL list queries** — no offset pagination anywhere
 4. **Single TipTap instance** — roving editor, static divs for everything else
 5. **Biome from day one** — no ESLint, no Prettier
-6. **sqlx queries** — runtime `query_as()` in Phase 1; migrate to compile-time `query!` macros in Phase 2 (see REVIEW-LATER.md)
+6. **sqlx queries** — compile-time `query!` / `query_as!` / `query_scalar!` macros for all static SQL. `.sqlx/` offline cache committed. 11 runtime queries remain (PRAGMAs, FTS5, dynamic SQL). Run `cargo sqlx prepare` after changing any SQL query.
 7. **PRAGMA foreign_keys = ON** — enforced on every SQLite connection
 8. **ULID case normalization** — always uppercase Crockford base32 for blake3 determinism
 

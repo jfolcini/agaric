@@ -223,7 +223,7 @@ Android).
 ---
 
 ## ADR-04 — Database
-**Status: FULLY IMPLEMENTED.**
+**Status: FULLY IMPLEMENTED.** Compile-time query validation (`query!` / `query_as!` / `query_scalar!`) active across ~147 queries. `.sqlx/` offline cache committed. 11 runtime queries remain (PRAGMAs, FTS5, dynamic SQL).
 
 **Decision:** sqlx + sqlx migrate from Phase 1. WAL mode, single write connection, sqlx read
 pool for concurrent readers.
@@ -1010,7 +1010,7 @@ bundled.
 ---
 
 ## ADR-13 — Dev Tooling
-**Status:** Phase 1.5 complete (insta snapshots). Phase 2 complete (Playwright E2E). Phase 3 complete (cargo-nextest, FTS5 benchmarks).
+**Status:** Phase 1.5 complete (insta snapshots). Phase 2 complete (Playwright E2E). Phase 3 complete (cargo-nextest, FTS5 benchmarks). `.sqlx/` offline cache active (82 query files committed); `cargo sqlx prepare --check` ready for CI.
 
 | Tool | When | Notes |
 |------|------|-------|
