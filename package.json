@@ -31,6 +31,7 @@
     "@tiptap/extension-hard-break": "^3.21.0",
     "@tiptap/extension-history": "^3.21.0",
     "@tiptap/extension-italic": "^3.21.0",
+    "@tiptap/extension-link": "^3.21.0",
     "@tiptap/extension-paragraph": "^3.21.0",
     "@tiptap/extension-placeholder": "^3.21.0",
     "@tiptap/extension-text": "^3.21.0",

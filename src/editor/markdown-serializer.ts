@@ -2,7 +2,7 @@
  * Markdown serializer for the block-notes content format (ADR-20).
  *
  * Converts between ProseMirror JSON documents and a locked Markdown subset:
- *   marks:  **bold**  *italic*  `code`
+ *   marks:  **bold**  *italic*  `code`  [text](url)
  *   tokens: #[ULID]  [[ULID]]
  *
  * Zero external dependencies. O(n) in both directions.
@@ -48,6 +48,16 @@ function escapeText(s: string): string {
       i++ // skip second [
       continue
     }
+    // Single [ could start an external link — escape as \[
+    if (ch === '[') {
+      out += '\\['
+      continue
+    }
+    // ] could form ]( closing a link display text — escape as \]
+    if (ch === ']') {
+      out += '\\]'
+      continue
+    }
     out += ch
   }
   return out
@@ -81,8 +91,76 @@ function emitCloseAll(active: ReadonlySet<string>): string {
   return result
 }
 
+// -- Link mark helpers --------------------------------------------------------
+
+/** Extract link href from a text node's marks (null if no link mark). */
+function getLinkHref(node: InlineNode): string | null {
+  if (node.type !== 'text' || !node.marks) return null
+  for (const m of node.marks) {
+    if (m.type === 'link') return m.attrs.href
+  }
+  return null
+}
+
+/** Return a copy of an InlineNode with the link mark stripped. */
+function stripLinkMark(node: InlineNode): InlineNode {
+  if (node.type !== 'text' || !node.marks) return node
+  const marks = node.marks.filter((m) => m.type !== 'link')
+  if (marks.length === 0) {
+    return { type: 'text', text: node.text } as TextNode
+  }
+  return { ...node, marks } as TextNode
+}
+
+/** Group consecutive inline nodes by their link mark href. */
+interface NodeGroup {
+  href: string | null
+  nodes: InlineNode[]
+}
+
+function groupByLink(content: readonly InlineNode[]): NodeGroup[] {
+  const groups: NodeGroup[] = []
+  for (const node of content) {
+    const href = getLinkHref(node)
+    const last = groups.length > 0 ? groups[groups.length - 1] : null
+    if (last && last.href === href) {
+      last.nodes.push(node)
+    } else {
+      groups.push({ href, nodes: [node] })
+    }
+  }
+  return groups
+}
+
+/** Escape parentheses in URLs to prevent breaking `[text](url)` syntax.
+ * Balanced parens are handled by the parser's depth tracking. Only
+ * unbalanced `)` needs encoding.
+ */
+function escapeUrl(url: string): string {
+  let depth = 0
+  let result = ''
+  for (const ch of url) {
+    if (ch === '(') {
+      depth++
+      result += ch
+    } else if (ch === ')') {
+      if (depth > 0) {
+        depth--
+        result += ch
+      } else {
+        result += '%29'
+      }
+    } else {
+      result += ch
+    }
+  }
+  return result
+}
+
+// -- Serialize inline nodes (with mark coalescing) ----------------------------
+
 /**
- * Serialize a paragraph's inline content with mark coalescing.
+ * Serialize a list of inline nodes with mark coalescing.
  *
  * Instead of wrapping each TextNode independently (which creates ambiguous
  * delimiter sequences like `*a****b****c*`), this tracks which marks are
@@ -92,13 +170,11 @@ function emitCloseAll(active: ReadonlySet<string>): string {
  *   open italic → "a" → open bold → "b" → close bold → "c" → close italic
  *   = `*a**b**c*`
  */
-function serializeParagraph(node: ParagraphNode): string {
-  if (!node.content || node.content.length === 0) return ''
-
+function serializeInlineNodes(nodes: readonly InlineNode[]): string {
   let result = ''
   const activeMarks = new Set<string>()
 
-  for (const child of node.content) {
+  for (const child of nodes) {
     if (child.type === 'text') {
       const marks = child.marks ?? []
       const hasCode = marks.some((m) => m.type === 'code')
@@ -145,6 +221,31 @@ function serializeParagraph(node: ParagraphNode): string {
 
   // Close any remaining open marks
   result += emitCloseAll(activeMarks)
+
+  return result
+}
+
+/**
+ * Serialize a paragraph's inline content.
+ *
+ * Groups consecutive nodes by link mark, wrapping linked spans in [text](url).
+ */
+function serializeParagraph(node: ParagraphNode): string {
+  if (!node.content || node.content.length === 0) return ''
+
+  const groups = groupByLink(node.content)
+  let result = ''
+
+  for (const group of groups) {
+    if (group.href !== null) {
+      // Serialize inner content with link marks stripped, then wrap
+      const stripped = group.nodes.map(stripLinkMark)
+      const inner = serializeInlineNodes(stripped)
+      result += `[${inner}](${escapeUrl(group.href)})`
+    } else {
+      result += serializeInlineNodes(group.nodes)
+    }
+  }
 
   return result
 }
@@ -199,6 +300,119 @@ function tryConsumeToken(s: Scanner): TagRefNode | BlockLinkNode | null {
   }
   return null
 }
+
+// -- External link parsing ----------------------------------------------------
+
+/**
+ * Probe for a `[text](url)` external link starting at `s.pos`.
+ * Returns match details without modifying scanner state, or null on failure.
+ */
+interface LinkMatch {
+  displayText: string
+  url: string
+  endPos: number
+}
+
+function probeExternalLink(s: Scanner): LinkMatch | null {
+  if (peek(s) !== '[' || peek(s, 1) === '[') return null
+
+  const pos = s.pos + 1 // past [
+
+  // Find matching ] (tracking bracket depth)
+  let depth = 1
+  let textEnd = -1
+  for (let i = pos; i < s.src.length; i++) {
+    if (s.src[i] === '\\' && i + 1 < s.src.length) {
+      i++ // skip escaped char
+      continue
+    }
+    if (s.src[i] === '[') depth++
+    if (s.src[i] === ']') {
+      depth--
+      if (depth === 0) {
+        textEnd = i
+        break
+      }
+    }
+  }
+
+  if (textEnd === -1) return null
+
+  // Must have ( immediately after ]
+  if (textEnd + 1 >= s.src.length || s.src[textEnd + 1] !== '(') return null
+
+  // Find matching ) for URL (tracking paren depth)
+  const urlStart = textEnd + 2
+  let parenDepth = 1
+  let urlEnd = -1
+  for (let i = urlStart; i < s.src.length; i++) {
+    if (s.src[i] === '\\' && i + 1 < s.src.length) {
+      i++
+      continue
+    }
+    if (s.src[i] === '(') parenDepth++
+    if (s.src[i] === ')') {
+      parenDepth--
+      if (parenDepth === 0) {
+        urlEnd = i
+        break
+      }
+    }
+  }
+
+  if (urlEnd === -1) return null
+
+  return {
+    displayText: s.src.slice(pos, textEnd),
+    url: s.src.slice(urlStart, urlEnd),
+    endPos: urlEnd + 1,
+  }
+}
+
+/**
+ * Unescape a URL: decode %29 → ) for unbalanced parens that were escaped during serialization.
+ */
+function unescapeUrl(url: string): string {
+  return url.replace(/%29/g, ')')
+}
+
+/**
+ * Consume a matched external link and return InlineNode[] with link marks applied.
+ * Parses inner display text recursively for bold/italic/code/tokens.
+ */
+function consumeExternalLink(s: Scanner, match: LinkMatch, outerMarks: PMMark[]): InlineNode[] {
+  s.pos = match.endPos
+  const href = unescapeUrl(match.url)
+  const linkMark: PMMark = { type: 'link' as const, attrs: { href } }
+
+  if (match.displayText.length === 0) {
+    // Empty display text — use URL as text
+    const marks = [...outerMarks, linkMark]
+    return [{ type: 'text', text: href, marks }]
+  }
+
+  // Parse inner display text (handles bold/italic/code/tokens)
+  const innerDoc = parse(match.displayText)
+  const innerContent = innerDoc.content?.[0]?.content
+
+  if (!innerContent || innerContent.length === 0) {
+    const marks = [...outerMarks, linkMark]
+    return [{ type: 'text', text: match.displayText, marks }]
+  }
+
+  // Apply outer marks + link mark to all text nodes
+  return innerContent.map((node: InlineNode): InlineNode => {
+    if (node.type === 'text') {
+      const existing = (node.marks ?? []) as PMMark[]
+      const marks = [...outerMarks, ...existing, linkMark]
+      return { ...node, marks }
+    }
+    // tag_ref, block_link, hardBreak — can't apply marks to atom nodes
+    return node
+  })
+}
+
+// -- Main parser --------------------------------------------------------------
 
 function flushText(buf: string, marks: readonly PMMark[], nodes: InlineNode[]): string {
   if (buf.length > 0) {
@@ -264,7 +478,14 @@ export function parse(markdown: string): DocNode {
       // Escape sequences (only outside code spans)
       if (ch === '\\' && s.pos + 1 < s.src.length) {
         const next = peek(s, 1)
-        if (next === '*' || next === '`' || next === '\\' || next === '#' || next === '[') {
+        if (
+          next === '*' ||
+          next === '`' ||
+          next === '\\' ||
+          next === '#' ||
+          next === '[' ||
+          next === ']'
+        ) {
           buf += next
           s.pos += 2
           continue
@@ -277,6 +498,17 @@ export function parse(markdown: string): DocNode {
         buf = flushText(buf, currentMarks(), nodes)
         nodes.push(token)
         continue
+      }
+
+      // External link: [text](url) — single [ not followed by [
+      if (ch === '[' && peek(s, 1) !== '[') {
+        const linkMatch = probeExternalLink(s)
+        if (linkMatch) {
+          buf = flushText(buf, currentMarks(), nodes)
+          const linkNodes = consumeExternalLink(s, linkMatch, currentMarks())
+          nodes.push(...linkNodes)
+          continue
+        }
       }
 
       // Bold: **

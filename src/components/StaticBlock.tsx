@@ -59,9 +59,29 @@ function renderRichContent(
 
     for (const node of p.content as readonly InlineNode[]) {
       switch (node.type) {
-        case 'text':
-          elements.push(<span key={`t-${keyIdx++}`}>{node.text}</span>)
+        case 'text': {
+          const linkMark = node.marks?.find((m) => m.type === 'link')
+          if (linkMark && linkMark.type === 'link') {
+            elements.push(
+              // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard navigation handled via TipTap editor when block is focused
+              // biome-ignore lint/a11y/noStaticElementInteractions: inline link within a button — parent handles focus/keyboard
+              <span
+                key={`t-${keyIdx++}`}
+                className="external-link cursor-pointer"
+                data-href={linkMark.attrs.href}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  window.open(linkMark.attrs.href, '_blank', 'noopener,noreferrer')
+                }}
+              >
+                {node.text}
+              </span>,
+            )
+          } else {
+            elements.push(<span key={`t-${keyIdx++}`}>{node.text}</span>)
+          }
           break
+        }
 
         case 'tag_ref': {
           const tagId = node.attrs.id

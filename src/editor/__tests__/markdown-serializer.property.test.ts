@@ -22,7 +22,7 @@ const NUM_RUNS = 500
  * Characters that are meaningful to the serializer. We deliberately include
  * all delimiter characters so fast-check explores edge cases with them.
  */
-const INTERESTING_CHARS = 'abcXY 012*`#[\\]'
+const INTERESTING_CHARS = 'abcXY 012*`#[\\]()'
 
 /** A non-empty string from the interesting character alphabet. */
 const arbText: fc.Arbitrary<string> = fc
@@ -39,10 +39,17 @@ const arbUlid: fc.Arbitrary<string> = fc
 
 /** A valid mark combination (no duplicates). */
 const arbMarks: fc.Arbitrary<PMMark[]> = fc
-  .subarray([{ type: 'bold' } as PMMark, { type: 'italic' } as PMMark, { type: 'code' } as PMMark])
+  .subarray([
+    { type: 'bold' } as PMMark,
+    { type: 'italic' } as PMMark,
+    { type: 'code' } as PMMark,
+    { type: 'link', attrs: { href: 'https://example.com' } } as PMMark,
+  ])
   .filter((marks) => {
     // Code mark is exclusive — if present, drop bold/italic (serializer does this)
-    if (marks.some((m) => m.type === 'code')) return marks.length === 1
+    if (marks.some((m) => m.type === 'code')) {
+      return marks.filter((m) => m.type !== 'link').length === 1
+    }
     return true
   })
 
@@ -85,13 +92,30 @@ const arbDoc: fc.Arbitrary<DocNode> = fc
 const arbMarkdownString: fc.Arbitrary<string> = fc
   .array(
     fc.oneof(
-      fc.constantFrom('**', '*', '`', '\\*', '\\`', '\\\\', '\\#[', '\\[[', '#[', '[[', ']]', ']'),
+      fc.constantFrom(
+        '**',
+        '*',
+        '`',
+        '\\*',
+        '\\`',
+        '\\\\',
+        '\\#[',
+        '\\[[',
+        '\\[',
+        '\\]',
+        '#[',
+        '[[',
+        ']]',
+        ']',
+      ),
       fc
         .array(fc.constantFrom(...'abcXY 012'.split('')), { minLength: 1, maxLength: 6 })
         .map((chars) => chars.join('')),
       // Occasionally inject a valid ULID token
       arbUlid.map((id) => `#[${id}]`),
       arbUlid.map((id) => `[[${id}]]`),
+      // Occasionally inject a valid external link
+      fc.constantFrom('[link](https://example.com)', '[text](https://a.com)'),
     ),
     { minLength: 0, maxLength: 10 },
   )
@@ -122,8 +146,8 @@ function marksEqual(a: readonly PMMark[] | undefined, b: readonly PMMark[] | und
   const ma = a ?? []
   const mb = b ?? []
   if (ma.length !== mb.length) return false
-  const sortedA = [...ma].map((m) => m.type).sort()
-  const sortedB = [...mb].map((m) => m.type).sort()
+  const sortedA = [...ma].map((m) => JSON.stringify(m)).sort()
+  const sortedB = [...mb].map((m) => JSON.stringify(m)).sort()
   return sortedA.every((t, i) => t === sortedB[i])
 }
 
@@ -175,9 +199,12 @@ function hasStructuralAmbiguity(doc: DocNode): boolean {
       // Text with delimiter chars will be escaped; the parser produces a
       // different node structure (merged text) but same content.
       // Also: empty-ish text after escaping could produce different node counts.
-      if (/[*`\\]/.test(node.text)) return true
+      if (/[*`\\[\]()]/.test(node.text)) return true
       if (node.text.includes('#[')) return true
       if (node.text.includes('[[')) return true
+      // Link marks add structural complexity — serialization wraps in [text](url)
+      // which changes the node structure after round-trip
+      if (node.marks?.some((m) => m.type === 'link')) return true
     }
   }
   return false

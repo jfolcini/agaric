@@ -20,7 +20,12 @@ export interface CodeMark {
   readonly type: 'code'
 }
 
-export type PMMark = BoldMark | ItalicMark | CodeMark
+export interface LinkMark {
+  readonly type: 'link'
+  readonly attrs: { readonly href: string }
+}
+
+export type PMMark = BoldMark | ItalicMark | CodeMark | LinkMark
 
 // -- Node types ---------------------------------------------------------------
 

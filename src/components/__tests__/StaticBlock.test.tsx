@@ -293,4 +293,64 @@ describe('StaticBlock', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // -- External links ---------------------------------------------------------
+
+  it('renders external link as <span> with correct classes and data-href', () => {
+    const content = '[click here](https://example.com)'
+    const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+
+    const link = container.querySelector('span.external-link')
+    expect(link).not.toBeNull()
+    expect(link?.textContent).toBe('click here')
+    expect(link?.getAttribute('data-href')).toBe('https://example.com')
+    expect(link?.classList.contains('cursor-pointer')).toBe(true)
+  })
+
+  it('external link click does not trigger onFocus', async () => {
+    const onFocus = vi.fn()
+    const user = userEvent.setup()
+    const content = '[link](https://example.com)'
+
+    render(<StaticBlock blockId="B1" content={content} onFocus={onFocus} />)
+
+    const link = screen.getByText('link')
+    await user.click(link)
+    expect(onFocus).not.toHaveBeenCalled()
+  })
+
+  it('renders text mixed with external link and block_link', () => {
+    const content = `See [docs](https://docs.com) and [[${BLOCK_ID}]] here`
+    const { container } = render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={vi.fn()}
+        resolveBlockTitle={() => 'My Page'}
+      />,
+    )
+
+    const extLink = container.querySelector('span.external-link')
+    expect(extLink?.textContent).toBe('docs')
+    expect(extLink?.getAttribute('data-href')).toBe('https://docs.com')
+
+    expect(screen.getByText('My Page')).toBeInTheDocument()
+    const button = container.querySelector('.block-static')
+    expect(button?.textContent).toContain('See')
+    expect(button?.textContent).toContain('docs')
+    expect(button?.textContent).toContain('My Page')
+    expect(button?.textContent).toContain('here')
+  })
+
+  it('has no a11y violations with external link content', async () => {
+    const { container } = render(
+      <StaticBlock
+        blockId="B1"
+        content="Visit [example](https://example.com) for more"
+        onFocus={vi.fn()}
+      />,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
 })

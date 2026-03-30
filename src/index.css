@@ -163,3 +163,11 @@
 .tag-ref-chip {
   @apply inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-sm font-medium;
 }
+
+/* External URL links — both in TipTap editor (a.external-link) and StaticBlock */
+.external-link {
+  @apply text-primary underline decoration-primary/40 underline-offset-2 transition-colors;
+}
+.external-link:hover {
+  @apply decoration-primary/80;
+}

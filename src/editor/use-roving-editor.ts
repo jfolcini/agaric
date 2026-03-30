@@ -19,6 +19,7 @@ import { type Editor, useEditor } from '@tiptap/react'
 import { useCallback, useRef } from 'react'
 import { BlockLink } from './extensions/block-link'
 import { BlockLinkPicker } from './extensions/block-link-picker'
+import { ExternalLink } from './extensions/external-link'
 import { SlashCommand } from './extensions/slash-command'
 import { TagPicker } from './extensions/tag-picker'
 import { TagRef } from './extensions/tag-ref'
@@ -127,6 +128,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Code,
       HardBreak,
       History,
+      ExternalLink,
       Placeholder.configure({ placeholder }),
       TagRef.configure({
         resolveName: (id: string) => resolveTagNameRef.current(id),

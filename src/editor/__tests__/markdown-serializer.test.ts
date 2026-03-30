@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { parse, serialize } from '../markdown-serializer'
-import type { InlineNode, ParagraphNode } from '../types'
+import type { InlineNode, ParagraphNode, TextNode } from '../types'
 import {
   blockLink,
   bold,
@@ -13,6 +13,15 @@ import {
   tagRef,
   text,
 } from '../types'
+
+/** Create a text node with a link mark (and optional additional marks). */
+function linked(t: string, href: string, extraMarks?: TextNode['marks']): TextNode {
+  const marks: TextNode['marks'] = [
+    ...(extraMarks ?? []),
+    { type: 'link' as const, attrs: { href } },
+  ]
+  return { type: 'text', text: t, marks }
+}
 
 // -- serialize ----------------------------------------------------------------
 
@@ -183,8 +192,12 @@ describe('serialize', () => {
       expect(serialize(doc(paragraph(text('a # b'))))).toBe('a # b')
     })
 
-    it('lone [ without [[ is not escaped', () => {
-      expect(serialize(doc(paragraph(text('a [ b'))))).toBe('a [ b')
+    it('lone [ is escaped (could start external link)', () => {
+      expect(serialize(doc(paragraph(text('a [ b'))))).toBe('a \\[ b')
+    })
+
+    it('lone ] is escaped (could close link text)', () => {
+      expect(serialize(doc(paragraph(text('a ] b'))))).toBe('a \\] b')
     })
   })
 })
@@ -553,5 +566,291 @@ describe('mark coalescing: nested marks across adjacent text nodes', () => {
     const md = serialize(input)
     expect(md).toBe('**a***b*')
     expect(parse(md)).toEqual(input)
+  })
+})
+
+// -- external links -----------------------------------------------------------
+
+describe('external links', () => {
+  describe('serialize', () => {
+    it('simple link', () => {
+      expect(serialize(doc(paragraph(linked('click here', 'https://example.com'))))).toBe(
+        '[click here](https://example.com)',
+      )
+    })
+
+    it('link with surrounding text', () => {
+      expect(
+        serialize(
+          doc(
+            paragraph(text('see '), linked('this page', 'https://example.com'), text(' for more')),
+          ),
+        ),
+      ).toBe('see [this page](https://example.com) for more')
+    })
+
+    it('link at start of paragraph', () => {
+      expect(serialize(doc(paragraph(linked('start', 'https://a.com'), text(' rest'))))).toBe(
+        '[start](https://a.com) rest',
+      )
+    })
+
+    it('link at end of paragraph', () => {
+      expect(serialize(doc(paragraph(text('before '), linked('end', 'https://b.com'))))).toBe(
+        'before [end](https://b.com)',
+      )
+    })
+
+    it('bold text inside link', () => {
+      const node: TextNode = {
+        type: 'text',
+        text: 'bold link',
+        marks: [{ type: 'bold' }, { type: 'link', attrs: { href: 'https://x.com' } }],
+      }
+      expect(serialize(doc(paragraph(node)))).toBe('[**bold link**](https://x.com)')
+    })
+
+    it('italic text inside link', () => {
+      const node: TextNode = {
+        type: 'text',
+        text: 'italic link',
+        marks: [{ type: 'italic' }, { type: 'link', attrs: { href: 'https://x.com' } }],
+      }
+      expect(serialize(doc(paragraph(node)))).toBe('[*italic link*](https://x.com)')
+    })
+
+    it('code text inside link', () => {
+      const node: TextNode = {
+        type: 'text',
+        text: 'code',
+        marks: [{ type: 'code' }, { type: 'link', attrs: { href: 'https://x.com' } }],
+      }
+      expect(serialize(doc(paragraph(node)))).toBe('[`code`](https://x.com)')
+    })
+
+    it('multiple links in one paragraph', () => {
+      expect(
+        serialize(
+          doc(
+            paragraph(
+              linked('first', 'https://a.com'),
+              text(' and '),
+              linked('second', 'https://b.com'),
+            ),
+          ),
+        ),
+      ).toBe('[first](https://a.com) and [second](https://b.com)')
+    })
+
+    it('consecutive links (no separator)', () => {
+      expect(
+        serialize(doc(paragraph(linked('a', 'https://a.com'), linked('b', 'https://b.com')))),
+      ).toBe('[a](https://a.com)[b](https://b.com)')
+    })
+
+    it('link with balanced parentheses in URL (no escaping needed)', () => {
+      expect(
+        serialize(
+          doc(paragraph(linked('wiki', 'https://en.wikipedia.org/wiki/Link_(disambiguation)'))),
+        ),
+      ).toBe('[wiki](https://en.wikipedia.org/wiki/Link_(disambiguation))')
+    })
+
+    it('link with unbalanced ) in URL escapes it', () => {
+      expect(serialize(doc(paragraph(linked('broken', 'https://x.com/foo)bar'))))).toBe(
+        '[broken](https://x.com/foo%29bar)',
+      )
+    })
+
+    it('link adjacent to block_link token', () => {
+      expect(
+        serialize(
+          doc(
+            paragraph(
+              linked('ext', 'https://x.com'),
+              text(' '),
+              blockLink('01ARZ3NDEKTSV4RRFFQ69G5FAV'),
+            ),
+          ),
+        ),
+      ).toBe('[ext](https://x.com) [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]')
+    })
+
+    it('multi-node link (same href grouped)', () => {
+      const plain = linked('hello ', 'https://x.com')
+      const boldNode: TextNode = {
+        type: 'text',
+        text: 'world',
+        marks: [{ type: 'bold' }, { type: 'link', attrs: { href: 'https://x.com' } }],
+      }
+      expect(serialize(doc(paragraph(plain, boldNode)))).toBe('[hello **world**](https://x.com)')
+    })
+  })
+
+  describe('parse', () => {
+    it('simple link', () => {
+      expect(parse('[click here](https://example.com)')).toEqual(
+        doc(paragraph(linked('click here', 'https://example.com'))),
+      )
+    })
+
+    it('link with surrounding text', () => {
+      expect(parse('see [this page](https://example.com) for more')).toEqual(
+        doc(paragraph(text('see '), linked('this page', 'https://example.com'), text(' for more'))),
+      )
+    })
+
+    it('link at start of paragraph', () => {
+      expect(parse('[start](https://a.com) rest')).toEqual(
+        doc(paragraph(linked('start', 'https://a.com'), text(' rest'))),
+      )
+    })
+
+    it('link at end of paragraph', () => {
+      expect(parse('before [end](https://b.com)')).toEqual(
+        doc(paragraph(text('before '), linked('end', 'https://b.com'))),
+      )
+    })
+
+    it('bold text inside link', () => {
+      expect(parse('[**bold link**](https://x.com)')).toEqual(
+        doc(
+          paragraph({
+            type: 'text',
+            text: 'bold link',
+            marks: [{ type: 'bold' }, { type: 'link', attrs: { href: 'https://x.com' } }],
+          }),
+        ),
+      )
+    })
+
+    it('italic text inside link', () => {
+      expect(parse('[*italic link*](https://x.com)')).toEqual(
+        doc(
+          paragraph({
+            type: 'text',
+            text: 'italic link',
+            marks: [{ type: 'italic' }, { type: 'link', attrs: { href: 'https://x.com' } }],
+          }),
+        ),
+      )
+    })
+
+    it('code text inside link', () => {
+      expect(parse('[`code`](https://x.com)')).toEqual(
+        doc(
+          paragraph({
+            type: 'text',
+            text: 'code',
+            marks: [{ type: 'code' }, { type: 'link', attrs: { href: 'https://x.com' } }],
+          }),
+        ),
+      )
+    })
+
+    it('multiple links in one paragraph', () => {
+      expect(parse('[first](https://a.com) and [second](https://b.com)')).toEqual(
+        doc(
+          paragraph(
+            linked('first', 'https://a.com'),
+            text(' and '),
+            linked('second', 'https://b.com'),
+          ),
+        ),
+      )
+    })
+
+    it('consecutive links (no separator)', () => {
+      expect(parse('[a](https://a.com)[b](https://b.com)')).toEqual(
+        doc(paragraph(linked('a', 'https://a.com'), linked('b', 'https://b.com'))),
+      )
+    })
+
+    it('escaped [ is not a link start', () => {
+      expect(parse('a \\[not a link](url) b')).toEqual(
+        doc(paragraph(text('a [not a link](url) b'))),
+      )
+    })
+
+    it('incomplete link (no closing paren) falls back to text', () => {
+      expect(parse('[no close paren](https://x.com')).toEqual(
+        doc(paragraph(text('[no close paren](https://x.com'))),
+      )
+    })
+
+    it('[ without ]( is plain text', () => {
+      expect(parse('[just brackets]')).toEqual(doc(paragraph(text('[just brackets]'))))
+    })
+
+    it('[text] without (url) is plain text', () => {
+      expect(parse('[text] not a link')).toEqual(doc(paragraph(text('[text] not a link'))))
+    })
+
+    it('empty display text uses URL as text', () => {
+      expect(parse('[](https://x.com)')).toEqual(
+        doc(paragraph(linked('https://x.com', 'https://x.com'))),
+      )
+    })
+
+    it('link does not interfere with [[ block_link', () => {
+      expect(parse('[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]')).toEqual(
+        doc(paragraph(blockLink('01ARZ3NDEKTSV4RRFFQ69G5FAV'))),
+      )
+    })
+
+    it('link adjacent to block_link token', () => {
+      expect(parse('[ext](https://x.com) [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]')).toEqual(
+        doc(
+          paragraph(
+            linked('ext', 'https://x.com'),
+            text(' '),
+            blockLink('01ARZ3NDEKTSV4RRFFQ69G5FAV'),
+          ),
+        ),
+      )
+    })
+
+    it('link inside bold context', () => {
+      expect(parse('**[link](https://x.com)**')).toEqual(
+        doc(
+          paragraph({
+            type: 'text',
+            text: 'link',
+            marks: [{ type: 'bold' }, { type: 'link', attrs: { href: 'https://x.com' } }],
+          }),
+        ),
+      )
+    })
+
+    it('URL with parentheses (depth tracking)', () => {
+      expect(parse('[wiki](https://en.wikipedia.org/wiki/Link_(disambiguation))')).toEqual(
+        doc(paragraph(linked('wiki', 'https://en.wikipedia.org/wiki/Link_(disambiguation)'))),
+      )
+    })
+  })
+
+  describe('round-trip', () => {
+    const cases: [string, string][] = [
+      ['simple link', '[click here](https://example.com)'],
+      ['link with text', 'see [this page](https://a.com) for more'],
+      ['link at start', '[start](https://a.com) rest'],
+      ['link at end', 'before [end](https://b.com)'],
+      ['bold inside link', '[**bold**](https://x.com)'],
+      ['italic inside link', '[*italic*](https://x.com)'],
+      ['code inside link', '[`code`](https://x.com)'],
+      ['multiple links', '[a](https://a.com) and [b](https://b.com)'],
+      ['consecutive links', '[a](https://a.com)[b](https://b.com)'],
+      ['link with tokens', '[ext](https://x.com) [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]'],
+      ['link with balanced parens', '[wiki](https://en.wikipedia.org/wiki/Link_(disambiguation))'],
+      ['link with unbalanced paren', '[x](https://x.com/foo%29bar)'],
+      ['escaped bracket', 'a \\[ b'],
+      ['escaped close bracket', 'a \\] b'],
+    ]
+
+    for (const [name, input] of cases) {
+      it(name, () => {
+        expect(serialize(parse(input))).toBe(input)
+      })
+    }
   })
 })
