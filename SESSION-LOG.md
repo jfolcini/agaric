@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 11 — 2026-03-30 — Journal Tri-Mode, Slash Commands, Checkboxes, Fixes
+
+### Features built (3 parallel subagents)
+
+**Subagent A: Journal tri-mode + calendar**
+- Daily/Weekly/Monthly mode switcher tabs
+- Floating calendar picker (react-day-picker + Radix Popover)
+- Monthly: semantic table grid with content dot indicators
+- Weekly: Mon-Sun stacked BlockTrees
+- New components: popover.tsx, calendar.tsx
+- 25 JournalPage tests
+
+**Subagent B: Slash commands + undo/redo fix + linking fix**
+- `/` slash command TipTap extension (slash-command.ts)
+- /TODO, /DOING, /DONE set block property
+- /date creates/finds date page and inserts block link
+- Undo/redo fix: `state.reconfigure({ plugins })` preserves keymaps
+- Cross-page linking: BlockTree.handleNavigate detects foreign targets
+- PageEditor threads onNavigateToPage to BlockTree
+- 6 new tests
+
+**Subagent C: Checkboxes**
+- Interactive checkbox UI (empty square / blue indeterminate / green checkmark)
+- DONE blocks get line-through + opacity-50
+- `- [ ] ` → TODO and `- [x] ` → DONE markdown syntax (processed on blur)
+- 13 new tests
+
+**Result**: Commit `1acbf3e` — 17 files changed. 718 frontend + 885 Rust = 1,603 total tests.
+
+---
+
 ## Session 10 — 2026-03-30 — Journal Workflow Features
 
 ### Task: Implement journal workflow (excluding templates)

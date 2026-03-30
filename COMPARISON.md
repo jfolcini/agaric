@@ -51,7 +51,7 @@
 | Math/LaTeX | `$$E=mc^2$$` inline and block | Not implemented | **Gap** |
 | Tables | Markdown tables | Not implemented | **Gap** |
 | Blockquotes | `> quote` | Not implemented | **Gap** |
-| Slash commands `/` | 20+ commands (TODO, template, date, embed, etc.) | Not implemented | **Major gap** |
+| Slash commands `/` | 20+ commands (TODO, template, date, embed, etc.) | `/TODO`, `/DOING`, `/DONE`, `/date` — 4 commands via TipTap Suggestion extension | Partial — framework built, 4 commands. Extensible for more |
 | Autocomplete for `[[` | Search all pages | Yes -- `block-link-picker` extension, searches pages, "Create new" option | None |
 | Autocomplete for `#` | Search all tags | Yes -- `tag-picker` extension, searches tags | None |
 | Autocomplete for `((` | Search all blocks for reference | Not implemented -- no block reference system | **Gap** (requires block refs first) |
@@ -359,7 +359,7 @@ This is a deep feature set. Minimum viable:
 | 3 | **Block embeds** `{{embed ((id))}}` | Content reuse, editable in context | Need embed component + renderer |
 | 4 | **Collapse/expand** | Essential for large outlines | **Done** -- chevron toggle, Ctrl+., client-side state |
 | 5 | **Properties UI** | Backend supports it, users can't see/edit them | Frontend only |
-| 6 | **Slash commands** `/` | Discovery, task creation, template insertion | Frontend only |
+| 6 | **Slash commands** `/` | Discovery, task creation, template insertion | **Partial** -- framework + 4 commands (/TODO /DOING /DONE /date) |
 | 7 | **Inline queries** | Task dashboards, project overviews | Need query block renderer + backend support |
 
 ### Tier 2 -- Important (enables key workflows)
@@ -427,13 +427,13 @@ Not everything is a gap. Block Notes has architectural advantages:
 |---|:---:|:---:|---|
 | Block CRUD | 10 | 10 | Collapse/expand added |
 | Page management | 9 | 7 | Missing aliases, namespaces, page properties UI |
-| Editor formatting | 9 | 4 | Only bold/italic/code. No headings, tables, code blocks, highlight |
+| Editor formatting | 9 | 5 | Bold/italic/code + slash commands. No headings, tables, code blocks, highlight |
 | Linking system | 10 | 5 | Have page links + backlinks. Missing block refs, embeds, unlinked refs |
 | Properties | 8 | 7 | Backend + API complete. Task marker is first property UI. No general editor |
 | Tags | 8 | 7 | Good filtering. Tags not unified with pages (design choice) |
 | Query system | 9 | 2 | Only tag queries + FTS. No inline queries, no property/task queries |
-| Task management | 8 | 4 | TODO/DOING/DONE cycling works. No priority, scheduling, queries |
-| Daily journal | 8 | 7 | Multi-day scrolling, task markers, collapse. No templates |
+| Task management | 8 | 5 | TODO/DOING/DONE + checkboxes + /commands. No priority, scheduling, queries |
+| Daily journal | 8 | 8 | Tri-mode (daily/weekly/monthly), calendar picker, date linking. No templates |
 | Search | 8 | 7 | Good FTS5. Missing scope filters, unlinked references |
 | Templates | 7 | 0 | Not started |
 | Sync/storage | 5 | 8 | Our architecture is fundamentally better, but sync not exposed yet |
