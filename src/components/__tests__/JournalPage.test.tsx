@@ -300,7 +300,7 @@ describe('JournalPage', () => {
   // ── Monthly Mode ────────────────────────────────────────────────────
 
   describe('monthly mode', () => {
-    it('shows calendar grid when switched to monthly', async () => {
+    it('shows stacked day sections when switched to monthly', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce(emptyPage)
 
@@ -313,10 +313,10 @@ describe('JournalPage', () => {
       const monthTab = screen.getByRole('tab', { name: /monthly view/i })
       await user.click(monthTab)
 
-      // Should have a table with weekday headers
-      expect(screen.getByRole('table')).toBeInTheDocument()
-      expect(screen.getByRole('columnheader', { name: 'Mon' })).toBeInTheDocument()
-      expect(screen.getByRole('columnheader', { name: 'Sun' })).toBeInTheDocument()
+      // Should have multiple sections (one per day of the month)
+      const sections = screen.getAllByRole('region')
+      // Current month has at least 28 days
+      expect(sections.length).toBeGreaterThanOrEqual(28)
     })
 
     it('displays month/year in nav header', async () => {
@@ -336,7 +336,7 @@ describe('JournalPage', () => {
       expect(screen.getByTestId('date-display')).toHaveTextContent(expectedMonth)
     })
 
-    it('shows content dots for days with pages', async () => {
+    it('shows BlockTree for days with pages', async () => {
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
 
@@ -355,35 +355,10 @@ describe('JournalPage', () => {
       const monthTab = screen.getByRole('tab', { name: /monthly view/i })
       await user.click(monthTab)
 
-      // Find the content dot indicator
-      const dots = screen.getAllByTestId('content-dot')
-      expect(dots.length).toBeGreaterThanOrEqual(1)
-    })
-
-    it('clicking a day in monthly grid switches to daily view for that day', async () => {
-      const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
-
-      render(<JournalPage />)
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-      })
-
-      const monthTab = screen.getByRole('tab', { name: /monthly view/i })
-      await user.click(monthTab)
-
-      // Click on a day cell — find any cell button and click it
-      const cells = screen.getAllByRole('cell')
-      const firstButton = cells[0].querySelector('button')
-      expect(firstButton).toBeTruthy()
-      await user.click(firstButton!)
-
-      // Should switch to daily mode (1 section visible)
-      await waitFor(() => {
-        const dayTab = screen.getByRole('tab', { name: /daily view/i })
-        expect(dayTab).toHaveAttribute('aria-selected', 'true')
-      })
+      // Today's section should have a BlockTree (via the mock)
+      // Other days should show empty state
+      const addButtons = screen.getAllByRole('button', { name: /add block/i })
+      expect(addButtons.length).toBeGreaterThanOrEqual(1)
     })
   })
 

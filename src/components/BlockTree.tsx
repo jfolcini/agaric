@@ -251,10 +251,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   // ── Slash command definitions ──────────────────────────────────────
   const SLASH_COMMANDS: PickerItem[] = useMemo(
     () => [
-      { id: 'todo', label: 'TODO \u2014 Mark as to-do' },
-      { id: 'doing', label: 'DOING \u2014 Mark as in progress' },
-      { id: 'done', label: 'DONE \u2014 Mark as complete' },
-      { id: 'date', label: 'Date \u2014 Link to a date page' },
+      { id: 'todo', label: 'TODO — Mark as to-do' },
+      { id: 'doing', label: 'DOING — Mark as in progress' },
+      { id: 'done', label: 'DONE — Mark as complete' },
+      { id: 'date', label: 'DATE — Link to a date page' },
     ],
     [],
   )

@@ -6,7 +6,7 @@
  * - **Weekly**: Mon-Sun of one week, each day as a section with BlockTree.
  * - **Monthly**: Calendar grid showing content indicators; click to go to daily.
  *
- * A floating calendar date picker (react-day-picker inside Radix Popover)
+ * A floating calendar date picker (react-day-picker in a positioned dropdown)
  * lets the user jump to any date. Days with content are highlighted.
  */
 
@@ -18,7 +18,6 @@ import {
   endOfMonth,
   endOfWeek,
   format,
-  isSameMonth,
   startOfMonth,
   startOfWeek,
   subDays,
@@ -36,7 +35,6 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { createBlock, listBlocks } from '../lib/tauri'
@@ -100,15 +98,6 @@ function formatWeekRange(d: Date): string {
   const startStr = format(start, 'MMM d')
   const endStr = format(end, 'MMM d, yyyy')
   return `${startStr} - ${endStr}`
-}
-
-/** Get all calendar dates for a month grid (including padding from prev/next months). */
-function getMonthGridDays(d: Date): Date[] {
-  const monthStart = startOfMonth(d)
-  const monthEnd = endOfMonth(d)
-  const gridStart = startOfWeek(monthStart, WEEK_OPTIONS)
-  const gridEnd = endOfWeek(monthEnd, WEEK_OPTIONS)
-  return eachDayOfInterval({ start: gridStart, end: gridEnd })
 }
 
 // ── Component ─────────────────────────────────────────────────────────
@@ -339,72 +328,24 @@ export function JournalPage({
     )
   }
 
-  /** Render monthly view — calendar grid with content indicators. */
+  /** Render monthly view — stacked day sections for the whole month (like weekly but for a month). */
   function renderMonthly() {
-    const gridDays = getMonthGridDays(currentDate)
-    const weekDayHeaders = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    const monthStart = startOfMonth(currentDate)
+    const monthEnd = endOfMonth(currentDate)
+    const days = eachDayOfInterval({ start: monthStart, end: monthEnd })
+    const entries = days.map((d) => makeDayEntry(d))
 
     return (
-      <table
-        className="w-full border-collapse"
-        aria-label={`Calendar for ${format(currentDate, 'MMMM yyyy')}`}
-      >
-        <thead>
-          <tr>
-            {weekDayHeaders.map((day) => (
-              <th
-                key={day}
-                scope="col"
-                className="p-2 text-center text-xs font-medium text-muted-foreground"
-              >
-                {day}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {/* Render rows of 7 days */}
-          {Array.from({ length: Math.ceil(gridDays.length / 7) }, (_, rowIdx) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: calendar rows are stable by position
-            <tr key={rowIdx}>
-              {gridDays.slice(rowIdx * 7, rowIdx * 7 + 7).map((d) => {
-                const dateStr = formatDate(d)
-                const isCurrentMonth = isSameMonth(d, currentDate)
-                const isToday = dateStr === todayStr
-                const hasContent = datesWithPages.has(dateStr)
-
-                return (
-                  <td key={dateStr} className="p-0">
-                    <button
-                      type="button"
-                      aria-label={`${formatDateDisplay(d)}${hasContent ? ', has content' : ''}`}
-                      className={cn(
-                        'relative flex w-full flex-col items-center justify-center rounded-md p-2 text-sm transition-colors hover:bg-accent cursor-pointer',
-                        !isCurrentMonth && 'text-muted-foreground opacity-40',
-                        isToday && 'bg-accent font-bold',
-                        hasContent && isCurrentMonth && 'font-medium',
-                      )}
-                      onClick={() => navigateToDate(d, 'daily')}
-                    >
-                      <span>{d.getDate()}</span>
-                      {hasContent && (
-                        <span
-                          className={cn(
-                            'absolute bottom-1 h-1.5 w-1.5 rounded-full',
-                            isCurrentMonth ? 'bg-primary' : 'bg-muted-foreground',
-                          )}
-                          aria-hidden="true"
-                          data-testid="content-dot"
-                        />
-                      )}
-                    </button>
-                  </td>
-                )
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="space-y-4">
+        {entries.map((entry) => {
+          const isToday = entry.dateStr === todayStr
+          return (
+            <section key={entry.dateStr} aria-label={`Journal for ${entry.displayDate}`}>
+              {renderDaySection(entry, isToday ? 'h2' : 'h3')}
+            </section>
+          )
+        })}
+      </div>
     )
   }
 
@@ -465,46 +406,65 @@ export function JournalPage({
             Today
           </Button>
 
-          {/* Floating calendar picker */}
-          <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon-xs" aria-label="Open calendar picker">
-                <CalendarIcon className="h-4 w-4" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="end">
-              <Calendar
-                mode="single"
-                selected={currentDate}
-                onSelect={(day) => day && handleCalendarDayClick(day)}
-                defaultMonth={currentDate}
-                weekStartsOn={1}
-                showWeekNumber
-                showOutsideDays
-                onWeekNumberClick={handleCalendarWeekNumberClick}
-                modifiers={{
-                  hasContent: highlightedCalendarDays,
-                }}
-                modifiersClassNames={{
-                  hasContent: 'has-content-dot',
-                }}
-              />
-              <style>{`
-                .has-content-dot { position: relative; }
-                .has-content-dot::after {
-                  content: '';
-                  position: absolute;
-                  bottom: 2px;
-                  left: 50%;
-                  transform: translateX(-50%);
-                  width: 4px;
-                  height: 4px;
-                  border-radius: 50%;
-                  background: hsl(var(--primary));
-                }
-              `}</style>
-            </PopoverContent>
-          </Popover>
+          {/* Floating calendar picker — simple positioned dropdown */}
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Open calendar picker"
+              onClick={() => setCalendarOpen((o) => !o)}
+            >
+              <CalendarIcon className="h-4 w-4" />
+            </Button>
+            {calendarOpen && (
+              <>
+                {/* Backdrop to close on outside click */}
+                {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
+                <div className="fixed inset-0 z-40" onClick={() => setCalendarOpen(false)} />
+                <div className="absolute right-0 top-full z-50 mt-1 rounded-md border bg-popover p-2 shadow-md">
+                  <Calendar
+                    mode="single"
+                    selected={currentDate}
+                    onSelect={(day) => {
+                      if (day) {
+                        handleCalendarDayClick(day)
+                        setCalendarOpen(false)
+                      }
+                    }}
+                    defaultMonth={currentDate}
+                    weekStartsOn={1}
+                    showWeekNumber
+                    showOutsideDays
+                    onWeekNumberClick={(_wn: number, dates: Date[]) => {
+                      handleCalendarWeekNumberClick(_wn, dates)
+                      setCalendarOpen(false)
+                    }}
+                    modifiers={{
+                      hasContent: highlightedCalendarDays,
+                    }}
+                    modifiersClassNames={{
+                      hasContent: 'has-content-dot',
+                    }}
+                  />
+                  <style>{`
+                    .has-content-dot { position: relative; }
+                    .has-content-dot::after {
+                      content: '';
+                      position: absolute;
+                      bottom: 2px;
+                      left: 50%;
+                      transform: translateX(-50%);
+                      width: 4px;
+                      height: 4px;
+                      border-radius: 50%;
+                      background: hsl(var(--primary));
+                    }
+                  `}</style>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
