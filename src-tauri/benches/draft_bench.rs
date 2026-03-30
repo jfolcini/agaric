@@ -151,13 +151,16 @@ fn bench_flush_draft(c: &mut Criterion) {
 
     let content = "b".repeat(200);
 
+    // Measures save_draft + flush_draft together because criterion's async
+    // `iter_batched` setup closure runs inside the runtime, preventing
+    // `block_on` for per-iteration setup. Subtract the save_draft bench
+    // (benchmarked separately above) for an approximation of flush cost alone.
     c.bench_function("flush_draft", |b| {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             let block_id = block_id.clone();
             let content = content.clone();
             async move {
-                // Re-create the draft before each flush (flush deletes it)
                 save_draft(&pool, &block_id, &content).await.unwrap();
                 flush_draft(&pool, "dev-bench", &block_id, &content, None)
                     .await

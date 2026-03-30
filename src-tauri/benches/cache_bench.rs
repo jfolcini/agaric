@@ -125,7 +125,7 @@ fn bench_rebuild_tags_cache(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("rebuild_tags_cache");
 
-    for count in [10, 100, 1000] {
+    for count in [10, 100, 1000, 10_000] {
         let dir = TempDir::new().unwrap();
         let pool = make_pool(&rt, &dir);
         rt.block_on(seed_tags(&pool, count));
@@ -141,7 +141,7 @@ fn bench_rebuild_pages_cache(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("rebuild_pages_cache");
 
-    for count in [10, 100, 1000] {
+    for count in [10, 100, 1000, 10_000] {
         let dir = TempDir::new().unwrap();
         let pool = make_pool(&rt, &dir);
         rt.block_on(seed_pages(&pool, count));
@@ -157,7 +157,7 @@ fn bench_rebuild_agenda_cache(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("rebuild_agenda_cache");
 
-    for count in [10, 100, 1000] {
+    for count in [10, 100, 1000, 10_000] {
         let dir = TempDir::new().unwrap();
         let pool = make_pool(&rt, &dir);
         rt.block_on(seed_agenda(&pool, count));

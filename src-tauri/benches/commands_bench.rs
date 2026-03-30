@@ -3,7 +3,7 @@
 //!   2. `edit_block_inner`    — every keystroke save
 //!   3. `list_blocks_inner`   — every view render
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use block_notes_lib::commands::{
     batch_resolve_inner, create_block_inner, edit_block_inner, list_blocks_inner,
@@ -37,7 +37,7 @@ async fn seed_blocks(pool: &SqlitePool, materializer: &Materializer, n: usize) -
             "content".into(),
             format!("Seeded block number {i} with some placeholder content."),
             None,
-            Some(i as i64),
+            Some(i as i64 + 1),
         )
         .await
         .unwrap();
@@ -97,7 +97,7 @@ fn bench_create_block_with_parent(c: &mut Criterion) {
             "page".into(),
             "Parent page".into(),
             None,
-            Some(0),
+            Some(1),
         )
         .await
         .unwrap();
@@ -273,7 +273,7 @@ fn bench_list_blocks_empty(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             async move {
-                list_blocks_inner(&pool, None, None, None, None, None, Some(50))
+                list_blocks_inner(&pool, None, None, None, None, None, None, Some(50))
                     .await
                     .unwrap()
             }
@@ -293,7 +293,7 @@ fn bench_list_blocks_10_items(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             async move {
-                list_blocks_inner(&pool, None, None, None, None, None, Some(50))
+                list_blocks_inner(&pool, None, None, None, None, None, None, Some(50))
                     .await
                     .unwrap()
             }
@@ -315,7 +315,7 @@ fn bench_list_blocks_100_items(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             async move {
-                list_blocks_inner(&pool, None, None, None, None, None, Some(200))
+                list_blocks_inner(&pool, None, None, None, None, None, None, Some(200))
                     .await
                     .unwrap()
             }
@@ -338,12 +338,12 @@ fn bench_list_blocks_paginate_10_of_100(c: &mut Criterion) {
             let pool = pool.clone();
             async move {
                 // First page — fetch 10 of 100
-                let page1 = list_blocks_inner(&pool, None, None, None, None, None, Some(10))
+                let page1 = list_blocks_inner(&pool, None, None, None, None, None, None, Some(10))
                     .await
                     .unwrap();
                 // Second page using cursor from first page
                 if let Some(cursor) = page1.next_cursor {
-                    list_blocks_inner(&pool, None, None, None, None, Some(cursor), Some(10))
+                    list_blocks_inner(&pool, None, None, None, None, None, Some(cursor), Some(10))
                         .await
                         .unwrap();
                 }
@@ -382,9 +382,18 @@ fn bench_list_blocks_with_type_filter(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             async move {
-                list_blocks_inner(&pool, None, Some("page".into()), None, None, None, Some(50))
-                    .await
-                    .unwrap()
+                list_blocks_inner(
+                    &pool,
+                    None,
+                    Some("page".into()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(50),
+                )
+                .await
+                .unwrap()
             }
         })
     });
@@ -451,6 +460,121 @@ fn bench_batch_resolve_500(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// Scale benchmarks — measure hot-path ops at realistic DB sizes
+// ===========================================================================
+
+/// Benchmark create_block with 100 / 1K / 10K existing blocks in the DB.
+fn bench_create_block_at_scale(c: &mut Criterion) {
+    let mut group = c.benchmark_group("create_block_at_scale");
+
+    for db_size in [100, 1_000, 10_000] {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("create_s{db_size}")));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+        rt.block_on(seed_blocks(&pool, &materializer, db_size));
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{db_size}_blocks")),
+            &db_size,
+            |b, _| {
+                b.to_async(&rt).iter(|| {
+                    let pool = pool.clone();
+                    let materializer_ref = &materializer;
+                    async move {
+                        create_block_inner(
+                            &pool,
+                            "dev-bench",
+                            materializer_ref,
+                            "content".into(),
+                            "New block at scale".into(),
+                            None,
+                            None,
+                        )
+                        .await
+                        .unwrap()
+                    }
+                })
+            },
+        );
+
+        rt.block_on(async { materializer.shutdown() });
+    }
+    group.finish();
+}
+
+/// Benchmark edit_block with 100 / 1K / 10K ops already in the log.
+fn bench_edit_block_at_scale(c: &mut Criterion) {
+    let mut group = c.benchmark_group("edit_block_at_scale");
+
+    for db_size in [100, 1_000, 10_000] {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("edit_s{db_size}")));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+        let ids = rt.block_on(seed_blocks(&pool, &materializer, db_size));
+        let target_id = ids[0].clone();
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{db_size}_blocks")),
+            &db_size,
+            |b, _| {
+                b.to_async(&rt).iter(|| {
+                    let pool = pool.clone();
+                    let materializer_ref = &materializer;
+                    let target_id = target_id.clone();
+                    async move {
+                        edit_block_inner(
+                            &pool,
+                            "dev-bench",
+                            materializer_ref,
+                            target_id,
+                            "Edited content at scale".into(),
+                        )
+                        .await
+                        .unwrap()
+                    }
+                })
+            },
+        );
+
+        rt.block_on(async { materializer.shutdown() });
+    }
+    group.finish();
+}
+
+/// Benchmark list_blocks (first page of 50) with 100 / 1K / 10K total blocks.
+fn bench_list_blocks_at_scale(c: &mut Criterion) {
+    let mut group = c.benchmark_group("list_blocks_at_scale");
+
+    for db_size in [100, 1_000, 10_000] {
+        let rt = Runtime::new().unwrap();
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("list_s{db_size}")));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+        rt.block_on(seed_blocks(&pool, &materializer, db_size));
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{db_size}_blocks")),
+            &db_size,
+            |b, _| {
+                b.to_async(&rt).iter(|| {
+                    let pool = pool.clone();
+                    async move {
+                        list_blocks_inner(&pool, None, None, None, None, None, None, Some(50))
+                            .await
+                            .unwrap()
+                    }
+                })
+            },
+        );
+
+        rt.block_on(async { materializer.shutdown() });
+    }
+    group.finish();
+}
+
+// ===========================================================================
 // Harness
 // ===========================================================================
 
@@ -484,4 +608,17 @@ criterion_group!(
     bench_batch_resolve_500,
 );
 
-criterion_main!(create_benches, edit_benches, list_benches, resolve_benches);
+criterion_group!(
+    scale_benches,
+    bench_create_block_at_scale,
+    bench_edit_block_at_scale,
+    bench_list_blocks_at_scale,
+);
+
+criterion_main!(
+    create_benches,
+    edit_benches,
+    list_benches,
+    resolve_benches,
+    scale_benches,
+);

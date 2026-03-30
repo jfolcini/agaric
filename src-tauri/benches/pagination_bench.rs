@@ -96,7 +96,7 @@ fn bench_list_children(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("list_children");
 
-    for total in [10, 100, 1000] {
+    for total in [10, 100, 1000, 10_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(async {
             let pool = init_pool(&dir.path().join("bench.db")).await.unwrap();
@@ -133,7 +133,7 @@ fn bench_list_by_type(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("list_by_type");
 
-    for total in [10, 100, 1000] {
+    for total in [10, 100, 1000, 10_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(async {
             let pool = init_pool(&dir.path().join("bench.db")).await.unwrap();
@@ -166,7 +166,7 @@ fn bench_list_trash(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("list_trash");
 
-    for total in [10, 100, 1000] {
+    for total in [10, 100, 1000, 10_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(async {
             let pool = init_pool(&dir.path().join("bench.db")).await.unwrap();
@@ -199,7 +199,7 @@ fn bench_list_by_tag(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("list_by_tag");
 
-    for total in [10, 100, 1000] {
+    for total in [10, 100, 1000, 10_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(async {
             let pool = init_pool(&dir.path().join("bench.db")).await.unwrap();

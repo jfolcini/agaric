@@ -1,5 +1,7 @@
 //! Criterion benchmarks for `compute_op_hash` and `verify_op_hash`.
 
+use std::hint::black_box;
+
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use block_notes_lib::hash::{compute_op_hash, verify_op_hash};
@@ -11,13 +13,13 @@ use block_notes_lib::hash::{compute_op_hash, verify_op_hash};
 fn bench_hash_small_payload(c: &mut Criterion) {
     c.bench_function("hash_small_payload", |b| {
         b.iter(|| {
-            compute_op_hash(
+            black_box(compute_op_hash(
                 "device-123",
                 42,
                 Some(r#"[["dev-1",41]]"#),
                 "edit_block",
                 r#"{"block_id":"01HZ00000000000000000000AB","to_text":"hello"}"#,
-            )
+            ))
         })
     });
 }
@@ -25,20 +27,29 @@ fn bench_hash_small_payload(c: &mut Criterion) {
 fn bench_hash_large_payload(c: &mut Criterion) {
     let large = "x".repeat(100_000);
     c.bench_function("hash_large_payload_100k", |b| {
-        b.iter(|| compute_op_hash("dev-1", 1, None, "create_block", &large))
+        b.iter(|| black_box(compute_op_hash("dev-1", 1, None, "create_block", &large)))
     });
 }
 
 fn bench_verify_op_hash(c: &mut Criterion) {
     let hash = compute_op_hash("dev-1", 1, None, "create_block", r#"{"ok":true}"#);
     c.bench_function("verify_op_hash_match", |b| {
-        b.iter(|| verify_op_hash(&hash, "dev-1", 1, None, "create_block", r#"{"ok":true}"#))
+        b.iter(|| {
+            black_box(verify_op_hash(
+                &hash,
+                "dev-1",
+                1,
+                None,
+                "create_block",
+                r#"{"ok":true}"#,
+            ))
+        })
     });
 }
 
 fn bench_hash_no_parent_seqs(c: &mut Criterion) {
     c.bench_function("hash_no_parent_seqs", |b| {
-        b.iter(|| compute_op_hash("dev-1", 1, None, "create_block", "{}"))
+        b.iter(|| black_box(compute_op_hash("dev-1", 1, None, "create_block", "{}")))
     });
 }
 
