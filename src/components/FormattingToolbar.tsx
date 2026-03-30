@@ -30,13 +30,13 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
   })
 
   return (
-    <div className="formatting-toolbar flex items-center gap-0.5 rounded-md border bg-muted/50 p-0.5 mb-1">
+    <div className="formatting-toolbar flex items-center gap-1 rounded-md border bg-muted/50 p-0.5 mb-1">
       <Button
         variant="ghost"
         size="icon-xs"
         aria-label="Bold"
         aria-pressed={state.bold}
-        className={state.bold ? 'bg-accent' : ''}
+        className={state.bold ? 'bg-accent text-accent-foreground' : ''}
         onMouseDown={(e) => {
           e.preventDefault()
           editor.chain().focus().toggleBold().run()
@@ -49,7 +49,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
         size="icon-xs"
         aria-label="Italic"
         aria-pressed={state.italic}
-        className={state.italic ? 'bg-accent' : ''}
+        className={state.italic ? 'bg-accent text-accent-foreground' : ''}
         onMouseDown={(e) => {
           e.preventDefault()
           editor.chain().focus().toggleItalic().run()
@@ -62,7 +62,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
         size="icon-xs"
         aria-label="Code"
         aria-pressed={state.code}
-        className={state.code ? 'bg-accent' : ''}
+        className={state.code ? 'bg-accent text-accent-foreground' : ''}
         onMouseDown={(e) => {
           e.preventDefault()
           editor.chain().focus().toggleCode().run()

@@ -275,7 +275,7 @@ export type RestoreResponse = { block_id: string; restored_count: number }
  * Built from [`QueueMetrics`] (atomic counters) and channel capacity info.
  * Exposed by the `get_status` command.
  */
-export type StatusInfo = { foreground_queue_depth: number; background_queue_depth: number; total_ops_dispatched: number; total_background_dispatched: number; fg_high_water: number; bg_high_water: number }
+export type StatusInfo = { foreground_queue_depth: number; background_queue_depth: number; total_ops_dispatched: number; total_background_dispatched: number; fg_high_water: number; bg_high_water: number; fg_errors: number; bg_errors: number; fg_panics: number; bg_panics: number }
 /**
  * Row from `tags_cache`, used by `list_tags_by_prefix`.
  */

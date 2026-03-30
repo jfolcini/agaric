@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { BlockRow } from '../lib/tauri'
 import { addTag, createBlock, listBlocks, listTagsForBlock, removeTag } from '../lib/tauri'
+import { EmptyState } from './EmptyState'
 
 interface TagPanelProps {
   /** The block to manage tags for. */
@@ -41,7 +42,6 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
       .catch(() => {})
   }, [])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset state when focused block changes (blockId is a prop)
   useEffect(() => {
     setAppliedTagIds(new Set())
     setQuery('')
@@ -104,13 +104,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
   }, [newTagName, blockId])
 
   if (!blockId) {
-    return (
-      <div className="tag-panel rounded-lg border border-dashed p-8 text-center">
-        <div className="tag-panel-empty text-sm text-muted-foreground">
-          Select a block to manage tags
-        </div>
-      </div>
-    )
+    return <EmptyState message="Select a block to manage tags" />
   }
 
   const appliedTags = allTags.filter((t) => appliedTagIds.has(t.id))
@@ -120,6 +114,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
 
   return (
     <div className="tag-panel">
+      <p className="text-xs text-muted-foreground mb-1">Applied tags</p>
       <div className="tag-panel-applied flex flex-wrap gap-2">
         {appliedTags.map((tag) => (
           <Badge key={tag.id} variant="secondary" className="tag-chip gap-1">

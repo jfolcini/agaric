@@ -14,6 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { formatTimestamp } from '../lib/format'
 import type { HistoryEntry } from '../lib/tauri'
 import { editBlock, getBlockHistory } from '../lib/tauri'
+import { EmptyState } from './EmptyState'
 
 interface HistoryPanelProps {
   /** The block to show history for. */
@@ -89,13 +90,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   }
 
   if (!blockId) {
-    return (
-      <div className="history-panel rounded-lg border border-dashed p-6 text-center">
-        <div className="history-panel-empty text-sm text-muted-foreground">
-          Select a block to see history
-        </div>
-      </div>
-    )
+    return <EmptyState message="Select a block to see history" compact />
   }
 
   return (
@@ -108,10 +103,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
       )}
 
       {!loading && entries.length === 0 && (
-        <div className="history-panel-none rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          <Clock className="mx-auto mb-2 h-5 w-5" />
-          No history for this block
-        </div>
+        <EmptyState icon={Clock} message="No history for this block" />
       )}
 
       <div className="history-list space-y-2">

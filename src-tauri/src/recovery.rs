@@ -65,7 +65,7 @@ pub struct RecoveryReport {
 /// logic.
 #[cfg(not(tarpaulin_include))]
 fn log_draft_error(draft_errors: &mut Vec<String>, block_id: &str, e: &AppError, context: &str) {
-    eprintln!("[recovery] ERROR {context} draft for block {block_id}: {e}");
+    tracing::error!(block_id, context, error = %e, "draft recovery failed");
     if context == "deleting" {
         draft_errors.push(format!("{block_id} (delete): {e}"));
     } else {
@@ -152,13 +152,13 @@ pub async fn recover_at_boot(
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
-    eprintln!(
-        "[recovery] completed in {duration_ms}ms — \
-         snapshots_deleted={pending_snapshots_deleted}, \
-         drafts_recovered={}, already_flushed={drafts_already_flushed}, \
-         errors={}",
-        drafts_recovered.len(),
-        draft_errors.len(),
+    tracing::info!(
+        duration_ms,
+        pending_snapshots_deleted,
+        drafts_recovered = drafts_recovered.len(),
+        already_flushed = drafts_already_flushed,
+        errors = draft_errors.len(),
+        "recovery completed"
     );
 
     Ok(RecoveryReport {
@@ -203,10 +203,7 @@ async fn recover_single_draft(
     // Uses the pre-computed set from the batch query in recover_at_boot
     // instead of a per-draft SELECT COUNT(*) — avoids the N+1 problem.
     if !existing_block_ids.contains(&draft.block_id) {
-        eprintln!(
-            "[recovery] Skipping draft for missing/deleted block {}",
-            draft.block_id
-        );
+        tracing::info!(block_id = %draft.block_id, "skipping draft for missing/deleted block");
         return Ok(false);
     }
 
@@ -265,10 +262,7 @@ async fn recover_single_draft(
             .await?;
         tx.commit().await?;
 
-        eprintln!(
-            "[recovery] Recovered unflushed draft for block {}",
-            draft.block_id
-        );
+        tracing::info!(block_id = %draft.block_id, "recovered unflushed draft");
         Ok(true)
     } else {
         Ok(false)

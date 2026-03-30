@@ -54,6 +54,7 @@ import {
   getProjection,
 } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
+import { EmptyState } from './EmptyState'
 import { INDENT_WIDTH, SortableBlock } from './SortableBlock'
 import { Calendar } from './ui/calendar'
 
@@ -797,7 +798,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                   {/* Drop indicator: shows where the dragged block will land */}
                   {projected && overId === block.id && activeId !== block.id && (
                     <div
-                      className="drop-indicator h-0.5 bg-primary rounded-full"
+                      className="drop-indicator h-1 bg-primary rounded-full"
                       style={{ marginLeft: projected.depth * INDENT_WIDTH }}
                     />
                   )}
@@ -823,9 +824,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
               )
             })}
             {blocks.length === 0 && (
-              <div className="block-tree-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                <p>No blocks yet. Click + Add block below to start writing.</p>
-              </div>
+              <EmptyState message="No blocks yet. Click + Add block below to start writing." />
             )}
           </div>
         </SortableContext>

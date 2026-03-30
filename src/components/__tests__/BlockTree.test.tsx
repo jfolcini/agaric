@@ -548,8 +548,9 @@ describe('BlockTree picker wiring', () => {
       expect(useBlockStore.getState().loading).toBe(false)
     })
 
-    const emptyEl = document.querySelector('.block-tree-empty')
-    expect(emptyEl).toBeInTheDocument()
+    expect(
+      screen.getByText('No blocks yet. Click + Add block below to start writing.'),
+    ).toBeInTheDocument()
   })
 
   it('has no a11y violations in empty state', async () => {
@@ -647,8 +648,9 @@ describe('BlockTree rendering edge cases', () => {
     render(<BlockTree />)
 
     await waitFor(() => {
-      const emptyEl = document.querySelector('.block-tree-empty')
-      expect(emptyEl).toBeInTheDocument()
+      expect(
+        screen.getByText('No blocks yet. Click + Add block below to start writing.'),
+      ).toBeInTheDocument()
     })
 
     // No sortable blocks should be rendered

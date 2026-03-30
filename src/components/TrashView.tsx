@@ -11,9 +11,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTimestamp } from '../lib/format'
 import type { BlockRow } from '../lib/tauri'
 import { listBlocks, purgeBlock, restoreBlock } from '../lib/tauri'
+import { EmptyState } from './EmptyState'
 
 export function TrashView(): React.ReactElement {
   const [blocks, setBlocks] = useState<BlockRow[]>([])
@@ -77,10 +79,7 @@ export function TrashView(): React.ReactElement {
       )}
 
       {!loading && blocks.length === 0 && (
-        <div className="trash-view-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          <Trash2 className="mx-auto mb-2 h-5 w-5" />
-          Nothing in trash. Deleted items will appear here.
-        </div>
+        <EmptyState icon={Trash2} message="Nothing in trash. Deleted items will appear here." />
       )}
 
       <div className="trash-view-list space-y-2">
@@ -99,15 +98,24 @@ export function TrashView(): React.ReactElement {
               </span>
             </div>
             <div className="trash-item-actions flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="trash-restore-btn"
-                onClick={() => handleRestore(block)}
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                Restore
-              </Button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="trash-restore-btn"
+                      onClick={() => handleRestore(block)}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Restore
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Restore this block from trash</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
               {confirmPurgeId === block.id ? (
                 <div className="trash-purge-confirm flex items-center gap-2 rounded-md bg-destructive/10 px-3 py-1.5">
                   <AlertTriangle className="h-3.5 w-3.5 text-destructive shrink-0" />

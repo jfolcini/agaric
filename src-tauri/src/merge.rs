@@ -969,8 +969,7 @@ mod tests {
                 assert_eq!(record.device_id, DEV_A);
 
                 // Verify parent_seqs contains both heads
-                let parent_seqs: Vec<(String, i64)> =
-                    serde_json::from_str(record.parent_seqs.as_ref().unwrap()).unwrap();
+                let parent_seqs = record.parsed_parent_seqs().unwrap().unwrap();
                 assert_eq!(parent_seqs.len(), 2);
 
                 // Check merged content

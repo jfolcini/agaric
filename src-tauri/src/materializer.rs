@@ -124,6 +124,14 @@ pub struct QueueMetrics {
     pub fg_high_water: AtomicU64,
     /// High-water mark: max background queue depth ever observed.
     pub bg_high_water: AtomicU64,
+    /// Number of foreground tasks that returned an error.
+    pub fg_errors: AtomicU64,
+    /// Number of background tasks that returned an error.
+    pub bg_errors: AtomicU64,
+    /// Number of foreground tasks that panicked.
+    pub fg_panics: AtomicU64,
+    /// Number of background tasks that panicked.
+    pub bg_panics: AtomicU64,
 }
 
 impl Default for QueueMetrics {
@@ -140,6 +148,10 @@ impl Default for QueueMetrics {
             fts_last_optimize_ms: AtomicU64::new(now_ms),
             fg_high_water: AtomicU64::new(0),
             bg_high_water: AtomicU64::new(0),
+            fg_errors: AtomicU64::new(0),
+            bg_errors: AtomicU64::new(0),
+            fg_panics: AtomicU64::new(0),
+            bg_panics: AtomicU64::new(0),
         }
     }
 }
@@ -156,6 +168,10 @@ pub struct StatusInfo {
     pub total_background_dispatched: u64,
     pub fg_high_water: u64,
     pub bg_high_water: u64,
+    pub fg_errors: u64,
+    pub bg_errors: u64,
+    pub fg_panics: u64,
+    pub bg_panics: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -232,15 +248,15 @@ impl Materializer {
     #[cfg(not(tarpaulin_include))]
     fn log_consumer_result(
         label: &str,
-        result: Result<Result<(), crate::error::AppError>, tokio::task::JoinError>,
+        result: &Result<Result<(), crate::error::AppError>, tokio::task::JoinError>,
     ) {
         match result {
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
-                eprintln!("[materializer:{label}] Error processing task: {e}");
+                tracing::error!(label, error = %e, "error processing materializer task");
             }
             Err(e) => {
-                eprintln!("[materializer:{label}] Task panicked: {e}");
+                tracing::error!(label, error = %e, "materializer task panicked");
             }
         }
     }
@@ -269,7 +285,17 @@ impl Materializer {
                 tokio::task::spawn(async move { handle_foreground_task(&pool_clone, &task).await })
                     .await;
 
-            Self::log_consumer_result("fg", result);
+            Self::log_consumer_result("fg", &result);
+
+            match &result {
+                Ok(Err(_)) => {
+                    metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(_) => {
+                    metrics.fg_panics.fetch_add(1, Ordering::Relaxed);
+                }
+                _ => {}
+            }
 
             metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
 
@@ -279,7 +305,7 @@ impl Materializer {
                 break;
             }
         }
-        eprintln!("[materializer:fg] Queue closed");
+        tracing::info!("foreground queue closed");
     }
 
     /// Background consumer: batch-drains pending tasks, deduplicates, then
@@ -317,7 +343,17 @@ impl Materializer {
                     )
                     .await;
 
-                Self::log_consumer_result("bg", result);
+                Self::log_consumer_result("bg", &result);
+
+                match &result {
+                    Ok(Err(_)) => {
+                        metrics.bg_errors.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(_) => {
+                        metrics.bg_panics.fetch_add(1, Ordering::Relaxed);
+                    }
+                    _ => {}
+                }
 
                 metrics.bg_processed.fetch_add(1, Ordering::Relaxed);
             }
@@ -329,7 +365,7 @@ impl Materializer {
                 break;
             }
         }
-        eprintln!("[materializer:bg] Queue closed");
+        tracing::info!("background queue closed");
     }
 
     // -- sender access helpers ----------------------------------------------
@@ -428,15 +464,17 @@ impl Materializer {
 
         // 75% thresholds: 192 for fg (256 * 0.75), 768 for bg (1024 * 0.75)
         if fg_depth > FOREGROUND_CAPACITY * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR {
-            eprintln!(
-                "[materializer] WARNING: foreground queue pressure {fg_depth}/{FOREGROUND_CAPACITY} (>{pct}%)",
-                pct = 100 * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR
+            tracing::warn!(
+                depth = fg_depth,
+                capacity = FOREGROUND_CAPACITY,
+                "foreground queue pressure"
             );
         }
         if bg_depth > BACKGROUND_CAPACITY * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR {
-            eprintln!(
-                "[materializer] WARNING: background queue pressure {bg_depth}/{BACKGROUND_CAPACITY} (>{pct}%)",
-                pct = 100 * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR
+            tracing::warn!(
+                depth = bg_depth,
+                capacity = BACKGROUND_CAPACITY,
+                "background queue pressure"
             );
         }
     }
@@ -477,6 +515,10 @@ impl Materializer {
             total_background_dispatched: self.metrics.bg_processed.load(Ordering::Relaxed),
             fg_high_water: self.metrics.fg_high_water.load(Ordering::Relaxed),
             bg_high_water: self.metrics.bg_high_water.load(Ordering::Relaxed),
+            fg_errors: self.metrics.fg_errors.load(Ordering::Relaxed),
+            bg_errors: self.metrics.bg_errors.load(Ordering::Relaxed),
+            fg_panics: self.metrics.fg_panics.load(Ordering::Relaxed),
+            bg_panics: self.metrics.bg_panics.load(Ordering::Relaxed),
         }
     }
 
@@ -676,7 +718,7 @@ impl Materializer {
                 // No extra background tasks.
             }
             other => {
-                eprintln!("[materializer] Unknown op_type in dispatch_op: {other}");
+                tracing::warn!(op_type = other, "unknown op_type in dispatch_op");
             }
         }
 
@@ -747,18 +789,12 @@ async fn handle_foreground_task(
     match task {
         MaterializeTask::ApplyOp(record) => {
             // Stub: will implement actual op application in next batch
-            eprintln!(
-                "[materializer:fg] Processing op: {} seq={}",
-                record.op_type, record.seq
-            );
+            tracing::debug!(op_type = %record.op_type, seq = record.seq, "processing foreground op");
             Ok(())
         }
         _ => {
             // Foreground queue shouldn't receive non-ApplyOp tasks
-            eprintln!(
-                "[materializer:fg] Unexpected task in foreground queue: {:?}",
-                task
-            );
+            tracing::warn!(?task, "unexpected task in foreground queue");
             Ok(())
         }
     }
@@ -781,10 +817,7 @@ async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
         MaterializeTask::RebuildFtsIndex => crate::fts::rebuild_fts_index(pool).await,
         MaterializeTask::FtsOptimize => crate::fts::fts_optimize(pool).await,
         MaterializeTask::ApplyOp(ref record) => {
-            eprintln!(
-                "[materializer:bg] Unexpected ApplyOp in background queue: seq={}",
-                record.seq
-            );
+            tracing::warn!(seq = record.seq, "unexpected ApplyOp in background queue");
             Ok(())
         }
     }
@@ -1897,5 +1930,33 @@ mod tests {
         // The debug_assert fires in debug/test builds, preventing the
         // wasted no-op reindex.
         let _ = mat.dispatch_background(&record);
+    }
+
+    // ======================================================================
+    // Error/panic counter tests
+    // ======================================================================
+
+    #[tokio::test]
+    async fn error_counters_start_at_zero() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool);
+
+        let m = mat.metrics();
+        assert_eq!(m.fg_errors.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(m.bg_errors.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(m.fg_panics.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(m.bg_panics.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn status_info_includes_error_and_panic_counters() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool);
+
+        let status = mat.status();
+        assert_eq!(status.fg_errors, 0);
+        assert_eq!(status.bg_errors, 0);
+        assert_eq!(status.fg_panics, 0);
+        assert_eq!(status.bg_panics, 0);
     }
 }

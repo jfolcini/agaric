@@ -149,6 +149,13 @@ pub fn run() {
     use materializer::Materializer;
     use tauri::Manager;
     use tauri_specta::{collect_commands, Builder};
+    use tracing_subscriber::EnvFilter;
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::from_default_env().add_directive("blocknotes=info".parse().unwrap()),
+        )
+        .init();
 
     let builder = Builder::<tauri::Wry>::new().commands(collect_commands![
         commands::create_block,
@@ -196,9 +203,9 @@ pub fn run() {
                 &device_id,
             ))?;
             if !report.drafts_recovered.is_empty() {
-                eprintln!(
-                    "[boot] Recovered {} unflushed drafts",
-                    report.drafts_recovered.len()
+                tracing::info!(
+                    count = report.drafts_recovered.len(),
+                    "recovered unflushed drafts"
                 );
             }
 
@@ -216,7 +223,7 @@ pub fn run() {
         .invoke_handler(builder.invoke_handler())
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
-            eprintln!("Fatal: failed to run Tauri application: {e}");
+            tracing::error!(error = %e, "failed to run Tauri application");
             std::process::exit(1);
         });
 }

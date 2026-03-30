@@ -446,8 +446,7 @@ mod tests {
         assert_eq!(record.op_type, "edit_block");
 
         // parent_seqs should be sorted and contain both entries
-        let parent_seqs: Vec<(String, i64)> =
-            serde_json::from_str(record.parent_seqs.as_ref().unwrap()).unwrap();
+        let parent_seqs = record.parsed_parent_seqs().unwrap().unwrap();
         assert_eq!(parent_seqs.len(), 2);
         // Sorted lexicographically: device-A < device-B
         assert_eq!(parent_seqs[0], (DEV_A.to_owned(), 1));
@@ -466,8 +465,7 @@ mod tests {
             .await
             .unwrap();
 
-        let parent_seqs: Vec<(String, i64)> =
-            serde_json::from_str(record.parent_seqs.as_ref().unwrap()).unwrap();
+        let parent_seqs = record.parsed_parent_seqs().unwrap().unwrap();
         // Must be sorted: aaa < zzz
         assert_eq!(parent_seqs[0].0, "aaa-device");
         assert_eq!(parent_seqs[1].0, "zzz-device");

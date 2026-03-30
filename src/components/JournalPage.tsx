@@ -41,6 +41,7 @@ import { createBlock, listBlocks } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
 import { BlockTree } from './BlockTree'
+import { EmptyState } from './EmptyState'
 
 interface DayEntry {
   date: Date
@@ -243,19 +244,22 @@ export function JournalPage({
               Add block
             </button>
           ) : (
-            <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-              <CalendarIcon className="mx-auto mb-2 h-5 w-5" />
-              No blocks for {entry.displayDate}.
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mt-3 mx-auto flex items-center gap-1"
-                onClick={() => handleAddBlock(entry.dateStr)}
-              >
-                <Plus className="h-4 w-4" />
-                Add your first block
-              </Button>
-            </div>
+            <EmptyState
+              icon={CalendarIcon}
+              message={`No blocks for ${entry.displayDate}.`}
+              compact
+              action={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3 mx-auto flex items-center gap-1"
+                  onClick={() => handleAddBlock(entry.dateStr)}
+                >
+                  <Plus className="h-4 w-4" />
+                  Add your first block
+                </Button>
+              }
+            />
           ))}
 
         {/* "Add block" button — only shown when there IS content (otherwise the empty state has the CTA) */}
@@ -292,7 +296,7 @@ export function JournalPage({
           const isToday = entry.dateStr === todayStr
           return (
             <div key={entry.dateStr}>
-              {i > 0 && <div className="border-t border-border my-3" />}
+              {i > 0 && <div className="border-t border-border my-4" />}
               {renderDaySection(entry, isToday ? 'h2' : 'h3', { compact: true })}
             </div>
           )
@@ -314,7 +318,7 @@ export function JournalPage({
           const isToday = entry.dateStr === todayStr
           return (
             <div key={entry.dateStr}>
-              {i > 0 && <div className="border-t border-border my-3" />}
+              {i > 0 && <div className="border-t border-border my-4" />}
               {renderDaySection(entry, isToday ? 'h2' : 'h3', { compact: true })}
             </div>
           )

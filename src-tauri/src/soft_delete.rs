@@ -386,7 +386,7 @@ pub async fn purge_block(pool: &SqlitePool, block_id: &str) -> Result<u64, AppEr
         if let Err(e) = std::fs::remove_file(path) {
             // Log but don't fail — the DB rows are already gone.
             // NotFound is expected if the file was already cleaned up.
-            eprintln!("[purge] warning: failed to remove attachment file {path}: {e}");
+            tracing::warn!(path, error = %e, "failed to remove attachment file after purge");
         }
     }
 

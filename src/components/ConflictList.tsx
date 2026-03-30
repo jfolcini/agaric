@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { deleteBlock, editBlock, getConflicts } from '../lib/tauri'
+import { EmptyState } from './EmptyState'
 
 export function ConflictList(): React.ReactElement {
   const [blocks, setBlocks] = useState<BlockRow[]>([])
@@ -81,10 +82,10 @@ export function ConflictList(): React.ReactElement {
       )}
 
       {!loading && blocks.length === 0 && (
-        <div className="conflict-list-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          <GitMerge className="mx-auto mb-2 h-5 w-5" />
-          No conflicts. Conflicts appear when the same block is edited on multiple devices.
-        </div>
+        <EmptyState
+          icon={GitMerge}
+          message="No conflicts. Conflicts appear when the same block is edited on multiple devices."
+        />
       )}
 
       <div className="conflict-items space-y-2">

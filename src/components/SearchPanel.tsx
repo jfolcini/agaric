@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { getBlock, searchBlocks } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
+import { EmptyState } from './EmptyState'
 
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
@@ -155,10 +156,10 @@ export function SearchPanel(): React.ReactElement {
       )}
 
       {searched && !loading && results.length === 0 && (
-        <div className="search-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          <Search className="mx-auto mb-2 h-5 w-5 text-muted-foreground" />
-          No results found. Try different keywords or check your spelling.
-        </div>
+        <EmptyState
+          icon={Search}
+          message="No results found. Try different keywords or check your spelling."
+        />
       )}
 
       {results.length > 0 && (

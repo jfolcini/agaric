@@ -24,6 +24,21 @@ pub struct OpRecord {
     pub created_at: String,
 }
 
+impl OpRecord {
+    /// Parse `parent_seqs` JSON into typed tuples.
+    ///
+    /// Returns `None` for genesis ops (where `parent_seqs` is NULL).
+    ///
+    /// # Errors
+    /// Returns `serde_json::Error` if the JSON is malformed.
+    pub fn parsed_parent_seqs(&self) -> Result<Option<Vec<(String, i64)>>, serde_json::Error> {
+        match &self.parent_seqs {
+            None => Ok(None),
+            Some(json) => serde_json::from_str(json).map(Some),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Macro: reduce boilerplate in serialize_inner_payload
 // ---------------------------------------------------------------------------
@@ -431,8 +446,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(r2.seq, 2, "second op must have seq 2");
-        let parent_seqs: Vec<(String, i64)> =
-            serde_json::from_str(r2.parent_seqs.as_ref().unwrap()).unwrap();
+        let parent_seqs = r2.parsed_parent_seqs().unwrap().unwrap();
         assert_eq!(parent_seqs.len(), 1, "should reference exactly one parent");
         assert_eq!(parent_seqs[0].0, TEST_DEVICE, "parent device must match");
         assert_eq!(parent_seqs[0].1, 1, "parent seq must be 1");
@@ -500,8 +514,7 @@ mod tests {
                     "genesis op must have null parents"
                 );
             } else {
-                let parents: Vec<(String, i64)> =
-                    serde_json::from_str(rec.parent_seqs.as_ref().unwrap()).unwrap();
+                let parents = rec.parsed_parent_seqs().unwrap().unwrap();
                 assert_eq!(
                     parents,
                     vec![("seq-dev".to_string(), i - 1)],
@@ -987,5 +1000,60 @@ mod tests {
         insta::assert_yaml_snapshot!(ops, {
             "[].hash" => "[HASH]",
         });
+    }
+
+    // ── parsed_parent_seqs ────────────────────────────────────────────────
+
+    /// Helper: build a minimal OpRecord for unit tests (no DB needed).
+    fn make_test_op() -> OpRecord {
+        OpRecord {
+            device_id: TEST_DEVICE.into(),
+            seq: 1,
+            parent_seqs: None,
+            hash: "0".repeat(64),
+            op_type: "create_block".into(),
+            payload: "{}".into(),
+            created_at: FIXED_TS.into(),
+        }
+    }
+
+    #[test]
+    fn parsed_parent_seqs_none_for_genesis() {
+        let op = OpRecord {
+            parent_seqs: None,
+            ..make_test_op()
+        };
+        assert_eq!(op.parsed_parent_seqs().unwrap(), None);
+    }
+
+    #[test]
+    fn parsed_parent_seqs_parses_single_parent() {
+        let op = OpRecord {
+            parent_seqs: Some(r#"[["device1",1]]"#.to_string()),
+            ..make_test_op()
+        };
+        assert_eq!(
+            op.parsed_parent_seqs().unwrap(),
+            Some(vec![("device1".to_string(), 1)])
+        );
+    }
+
+    #[test]
+    fn parsed_parent_seqs_parses_multi_parent() {
+        let op = OpRecord {
+            parent_seqs: Some(r#"[["device1",3],["device2",5]]"#.to_string()),
+            ..make_test_op()
+        };
+        let parents = op.parsed_parent_seqs().unwrap().unwrap();
+        assert_eq!(parents.len(), 2);
+    }
+
+    #[test]
+    fn parsed_parent_seqs_error_on_malformed() {
+        let op = OpRecord {
+            parent_seqs: Some("not json".to_string()),
+            ..make_test_op()
+        };
+        assert!(op.parsed_parent_seqs().is_err());
     }
 }

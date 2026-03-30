@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { getBacklinks } from '../lib/tauri'
+import { EmptyState } from './EmptyState'
 
 interface BacklinksPanelProps {
   /** The block to show backlinks for. */
@@ -59,14 +60,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
   }, [nextCursor, loadBacklinks])
 
   if (!blockId) {
-    return (
-      <div className="backlinks-panel rounded-lg border border-dashed p-6 text-center">
-        <div className="backlinks-panel-empty text-sm text-muted-foreground">
-          <Link className="mx-auto mb-2 h-5 w-5 opacity-40" />
-          Select a block to see backlinks
-        </div>
-      </div>
-    )
+    return <EmptyState icon={Link} message="Select a block to see backlinks" compact />
   }
 
   return (
@@ -78,12 +72,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
         </div>
       )}
 
-      {!loading && blocks.length === 0 && (
-        <div className="backlinks-panel-none rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          <Link className="mx-auto mb-2 h-5 w-5" />
-          No backlinks found
-        </div>
-      )}
+      {!loading && blocks.length === 0 && <EmptyState icon={Link} message="No backlinks found" />}
 
       <div className="backlinks-list space-y-2">
         {blocks.map((block) => (

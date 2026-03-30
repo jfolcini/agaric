@@ -31,6 +31,8 @@ rustc-hash = "2.1.2"
 diffy = "0.4.2"
 zstd = "0.13"
 ciborium = "0.2"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }

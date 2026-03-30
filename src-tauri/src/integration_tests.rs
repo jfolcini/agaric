@@ -152,8 +152,7 @@ async fn create_edit_delete_restore_produces_sequential_ops_with_valid_hashes() 
         "genesis op has null parent_seqs"
     );
     for (idx, op) in ops.iter().enumerate().skip(1) {
-        let parents: Vec<(String, i64)> =
-            serde_json::from_str(op.parent_seqs.as_ref().unwrap()).unwrap();
+        let parents = op.parsed_parent_seqs().unwrap().unwrap();
         assert_eq!(
             parents,
             vec![(DEV.to_string(), idx as i64)],
@@ -222,8 +221,7 @@ async fn hash_chain_links_each_op_to_its_predecessor() {
                 "genesis op must have null parent_seqs"
             );
         } else {
-            let parents: Vec<(String, i64)> =
-                serde_json::from_str(op.parent_seqs.as_ref().unwrap()).unwrap();
+            let parents = op.parsed_parent_seqs().unwrap().unwrap();
             assert_eq!(
                 parents,
                 vec![(DEV.to_string(), seq - 1)],

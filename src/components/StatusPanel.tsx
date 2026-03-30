@@ -17,14 +17,16 @@ import { getStatus } from '../lib/tauri'
 export function StatusPanel(): React.ReactElement {
   const [status, setStatus] = useState<StatusInfo | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const loadStatus = useCallback(async () => {
     setLoading(true)
     try {
       const resp = await getStatus()
       setStatus(resp)
+      setError(null)
     } catch {
-      // Silently fail
+      setError('Failed to load status')
     }
     setLoading(false)
   }, [])
@@ -52,6 +54,10 @@ export function StatusPanel(): React.ReactElement {
               <Skeleton className="h-20 w-full rounded-lg" />
               <Skeleton className="h-20 w-full rounded-lg" />
             </div>
+          )}
+
+          {error && !status && (
+            <p className="status-panel-error text-sm text-destructive">{error}</p>
           )}
 
           {status && (

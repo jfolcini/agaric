@@ -1559,7 +1559,7 @@ pub async fn get_properties_inner(
 fn sanitize_internal_error(err: AppError) -> AppError {
     match &err {
         AppError::Database(_) | AppError::Migration(_) | AppError::Io(_) | AppError::Json(_) => {
-            eprintln!("[sanitize] internal error suppressed: {err}");
+            tracing::warn!(error = %err, "internal error suppressed during sanitization");
             AppError::InvalidOperation("an internal error occurred".into())
         }
         _ => err,
