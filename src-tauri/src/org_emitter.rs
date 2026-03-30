@@ -13,6 +13,9 @@ use crate::serializer::{
     InlineNode, OrgDoc, OrgMark, OrgParagraph, TextNode, ESCAPE_CHARS, REVERSE_ENTITIES,
 };
 
+/// Escape special Org-mode characters in plain text so they are not parsed as markup.
+///
+/// Handles `#[` → `\#[`, `[[` → `\[[`, and single-character escapes from [`ESCAPE_CHARS`].
 fn escape_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -40,6 +43,7 @@ fn escape_text(s: &str) -> String {
     out
 }
 
+/// Return the delimiter character for a given mark (e.g. `*` for bold).
 fn mark_delimiter(mark: &OrgMark) -> char {
     match mark {
         OrgMark::Bold => '*',
@@ -48,6 +52,9 @@ fn mark_delimiter(mark: &OrgMark) -> char {
     }
 }
 
+/// Emit a [`TextNode`] as Org-mode text, wrapping in mark delimiters and escaping content.
+///
+/// Code spans are emitted verbatim (no escape) wrapped in `~`. Other marks nest outward.
 fn emit_text_node(node: &TextNode) -> String {
     if node.marks.contains(&OrgMark::Code) {
         return format!("~{}~", node.text);
@@ -60,6 +67,7 @@ fn emit_text_node(node: &TextNode) -> String {
     result
 }
 
+/// Emit a single [`InlineNode`] as its Org-mode string representation.
 fn emit_inline_node(node: &InlineNode) -> String {
     match node {
         InlineNode::Text(t) => emit_text_node(t),
@@ -79,6 +87,7 @@ fn emit_inline_node(node: &InlineNode) -> String {
     }
 }
 
+/// Emit a paragraph by concatenating all its inline nodes.
 fn emit_paragraph(para: &OrgParagraph) -> String {
     para.content.iter().map(emit_inline_node).collect()
 }

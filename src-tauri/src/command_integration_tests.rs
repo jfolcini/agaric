@@ -63,6 +63,11 @@ async fn insert_block(
 }
 
 /// Allow materializer background tasks to settle before the next write.
+///
+/// 50ms is sufficient because the materializer background consumer polls
+/// every ~10ms with no I/O latency in tests (in-memory temp SQLite DB).
+/// This gives ~5 poll cycles for any queued cache-rebuild or reindex task
+/// to complete, preventing write-lock contention with the next operation.
 async fn settle() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 }

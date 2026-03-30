@@ -76,14 +76,29 @@ impl fmt::Display for OpType {
 }
 
 impl FromStr for OpType {
-    type Err = serde_json::Error;
+    type Err = String;
 
     /// Parses a snake_case string (e.g. `"create_block"`) into an [`OpType`].
     ///
-    /// Uses serde deserialization internally so the accepted strings are always
-    /// consistent with the `#[serde(rename_all = "snake_case")]` attribute.
+    /// Uses a manual match to avoid the overhead of serde_json deserialization
+    /// for this simple string-to-enum conversion. The match arms mirror
+    /// [`OpType::as_str`] to guarantee round-trip consistency.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        serde_json::from_value(serde_json::Value::String(s.to_owned()))
+        match s {
+            "create_block" => Ok(OpType::CreateBlock),
+            "edit_block" => Ok(OpType::EditBlock),
+            "delete_block" => Ok(OpType::DeleteBlock),
+            "restore_block" => Ok(OpType::RestoreBlock),
+            "purge_block" => Ok(OpType::PurgeBlock),
+            "move_block" => Ok(OpType::MoveBlock),
+            "add_tag" => Ok(OpType::AddTag),
+            "remove_tag" => Ok(OpType::RemoveTag),
+            "set_property" => Ok(OpType::SetProperty),
+            "delete_property" => Ok(OpType::DeleteProperty),
+            "add_attachment" => Ok(OpType::AddAttachment),
+            "delete_attachment" => Ok(OpType::DeleteAttachment),
+            other => Err(format!("unknown op type: {other}")),
+        }
     }
 }
 
@@ -91,6 +106,7 @@ impl FromStr for OpType {
 // Payload structs — one per OpType variant
 // ---------------------------------------------------------------------------
 
+/// Payload for the `create_block` op — creates a new block with the given type, content, and optional parent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateBlockPayload {
     pub block_id: String,
@@ -100,6 +116,7 @@ pub struct CreateBlockPayload {
     pub content: String,
 }
 
+/// Payload for the `edit_block` op — replaces a block's content with `to_text`, tracking the previous edit for conflict detection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditBlockPayload {
     pub block_id: String,
@@ -116,17 +133,20 @@ pub struct DeleteBlockPayload {
     pub block_id: String,
 }
 
+/// Payload for the `restore_block` op — un-deletes a block and its descendants using the `deleted_at` timestamp as a guard.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestoreBlockPayload {
     pub block_id: String,
     pub deleted_at_ref: String,
 }
 
+/// Payload for the `purge_block` op — physically deletes a soft-deleted block and all its descendants.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PurgeBlockPayload {
     pub block_id: String,
 }
 
+/// Payload for the `move_block` op — reparents a block under a new parent at the given position.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveBlockPayload {
     pub block_id: String,
@@ -134,18 +154,21 @@ pub struct MoveBlockPayload {
     pub new_position: i64,
 }
 
+/// Payload for the `add_tag` op — associates a tag block with a content/page block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddTagPayload {
     pub block_id: String,
     pub tag_id: String,
 }
 
+/// Payload for the `remove_tag` op — dissociates a tag block from a content/page block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoveTagPayload {
     pub block_id: String,
     pub tag_id: String,
 }
 
+/// Payload for the `set_property` op — upserts a typed key-value property on a block (exactly one value field must be set).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetPropertyPayload {
     pub block_id: String,
@@ -156,12 +179,14 @@ pub struct SetPropertyPayload {
     pub value_ref: Option<String>,
 }
 
+/// Payload for the `delete_property` op — removes a property by key from a block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeletePropertyPayload {
     pub block_id: String,
     pub key: String,
 }
 
+/// Payload for the `add_attachment` op — records a new file attachment linked to a block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddAttachmentPayload {
     pub attachment_id: String,
@@ -172,6 +197,7 @@ pub struct AddAttachmentPayload {
     pub fs_path: String,
 }
 
+/// Payload for the `delete_attachment` op — removes an attachment by its ID (block_id is not needed).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteAttachmentPayload {
     pub attachment_id: String,

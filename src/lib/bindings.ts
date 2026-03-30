@@ -6,6 +6,9 @@
 
 
 export const commands = {
+/**
+ * Tauri command: create a new block. Delegates to [`create_block_inner`].
+ */
 async createBlock(blockType: string, content: string, parentId: string | null, position: number | null) : Promise<Result<BlockResponse, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("create_block", { blockType, content, parentId, position }) };
@@ -14,6 +17,9 @@ async createBlock(blockType: string, content: string, parentId: string | null, p
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
+ */
 async editBlock(blockId: string, toText: string) : Promise<Result<BlockResponse, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("edit_block", { blockId, toText }) };
@@ -22,6 +28,9 @@ async editBlock(blockId: string, toText: string) : Promise<Result<BlockResponse,
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
+ */
 async deleteBlock(blockId: string) : Promise<Result<DeleteResponse, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_block", { blockId }) };
@@ -30,6 +39,9 @@ async deleteBlock(blockId: string) : Promise<Result<DeleteResponse, { kind: stri
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`].
+ */
 async restoreBlock(blockId: string, deletedAtRef: string) : Promise<Result<RestoreResponse, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("restore_block", { blockId, deletedAtRef }) };
@@ -38,6 +50,9 @@ async restoreBlock(blockId: string, deletedAtRef: string) : Promise<Result<Resto
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`].
+ */
 async purgeBlock(blockId: string) : Promise<Result<PurgeResponse, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("purge_block", { blockId }) };
@@ -46,6 +61,9 @@ async purgeBlock(blockId: string) : Promise<Result<PurgeResponse, { kind: string
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: move a block to a new parent at a given position. Delegates to [`move_block_inner`].
+ */
 async moveBlock(blockId: string, newParentId: string | null, newPosition: number) : Promise<Result<MoveResponse, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("move_block", { blockId, newParentId, newPosition }) };
@@ -54,6 +72,9 @@ async moveBlock(blockId: string, newParentId: string | null, newPosition: number
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
+ */
 async listBlocks(parentId: string | null, blockType: string | null, tagId: string | null, showDeleted: boolean | null, agendaDate: string | null, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agendaDate, cursor, limit }) };
@@ -62,6 +83,9 @@ async listBlocks(parentId: string | null, blockType: string | null, tagId: strin
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: fetch a single block by ID. Delegates to [`get_block_inner`].
+ */
 async getBlock(blockId: string) : Promise<Result<BlockRow, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_block", { blockId }) };
@@ -70,6 +94,9 @@ async getBlock(blockId: string) : Promise<Result<BlockRow, { kind: string; messa
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: add a tag to a block. Delegates to [`add_tag_inner`].
+ */
 async addTag(blockId: string, tagId: string) : Promise<Result<TagResponse, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("add_tag", { blockId, tagId }) };
@@ -78,6 +105,9 @@ async addTag(blockId: string, tagId: string) : Promise<Result<TagResponse, { kin
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: remove a tag from a block. Delegates to [`remove_tag_inner`].
+ */
 async removeTag(blockId: string, tagId: string) : Promise<Result<TagResponse, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("remove_tag", { blockId, tagId }) };
@@ -86,6 +116,9 @@ async removeTag(blockId: string, tagId: string) : Promise<Result<TagResponse, { 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`].
+ */
 async getBacklinks(blockId: string, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_backlinks", { blockId, cursor, limit }) };
@@ -94,6 +127,9 @@ async getBacklinks(blockId: string, cursor: string | null, limit: number | null)
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`].
+ */
 async getBlockHistory(blockId: string, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<HistoryEntry>, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_block_history", { blockId, cursor, limit }) };
@@ -102,6 +138,9 @@ async getBlockHistory(blockId: string, cursor: string | null, limit: number | nu
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: list conflict-copy blocks. Delegates to [`get_conflicts_inner`].
+ */
 async getConflicts(cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_conflicts", { cursor, limit }) };
@@ -110,6 +149,9 @@ async getConflicts(cursor: string | null, limit: number | null) : Promise<Result
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: get materializer queue status. Delegates to [`get_status_inner`].
+ */
 async getStatus() : Promise<Result<StatusInfo, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_status") };
@@ -118,6 +160,9 @@ async getStatus() : Promise<Result<StatusInfo, { kind: string; message: string }
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
+ */
 async searchBlocks(query: string, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("search_blocks", { query, cursor, limit }) };
@@ -126,6 +171,9 @@ async searchBlocks(query: string, cursor: string | null, limit: number | null) :
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`].
+ */
 async queryByTags(tagIds: string[], prefixes: string[], mode: string, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("query_by_tags", { tagIds, prefixes, mode, cursor, limit }) };
@@ -134,6 +182,9 @@ async queryByTags(tagIds: string[], prefixes: string[], mode: string, cursor: st
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
+ */
 async listTagsByPrefix(prefix: string) : Promise<Result<TagCacheRow[], { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_tags_by_prefix", { prefix }) };
@@ -142,6 +193,9 @@ async listTagsByPrefix(prefix: string) : Promise<Result<TagCacheRow[], { kind: s
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`].
+ */
 async listTagsForBlock(blockId: string) : Promise<Result<string[], { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_tags_for_block", { blockId }) };
@@ -150,6 +204,9 @@ async listTagsForBlock(blockId: string) : Promise<Result<string[], { kind: strin
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: set (upsert) a property on a block. Delegates to [`set_property_inner`].
+ */
 async setProperty(blockId: string, key: string, valueText: string | null, valueNum: number | null, valueDate: string | null, valueRef: string | null) : Promise<Result<BlockResponse, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_property", { blockId, key, valueText, valueNum, valueDate, valueRef }) };
@@ -158,6 +215,9 @@ async setProperty(blockId: string, key: string, valueText: string | null, valueN
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: delete a property from a block. Delegates to [`delete_property_inner`].
+ */
 async deleteProperty(blockId: string, key: string) : Promise<Result<null, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_property", { blockId, key }) };
@@ -166,6 +226,9 @@ async deleteProperty(blockId: string, key: string) : Promise<Result<null, { kind
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Tauri command: get all properties for a block. Delegates to [`get_properties_inner`].
+ */
 async getProperties(blockId: string) : Promise<Result<PropertyRow[], { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_properties", { blockId }) };

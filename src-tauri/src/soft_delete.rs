@@ -1376,4 +1376,165 @@ mod tests {
             "nonexistent block should have no descendants"
         );
     }
+
+    // ======================================================================
+    // restore_block: mismatched deleted_at timestamp
+    // ======================================================================
+
+    /// Restoring a block with a `deleted_at_ref` that does NOT match the
+    /// block's actual `deleted_at` timestamp must restore zero rows.  This
+    /// ensures that only blocks sharing the exact cascade timestamp are
+    /// restored — independently deleted descendants are preserved.
+    #[tokio::test]
+    async fn restore_block_with_wrong_deleted_at_ref() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
+        insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
+
+        // Cascade-delete parent + child with a shared timestamp.
+        let (real_ts, count) = cascade_soft_delete(&pool, PARENT).await.unwrap();
+        assert_eq!(count, 2, "precondition: both blocks deleted");
+
+        // Try to restore with a WRONG timestamp.
+        let wrong_ts = "1999-01-01T00:00:00+00:00";
+        assert_ne!(real_ts, wrong_ts, "precondition: timestamps differ");
+
+        let restored = restore_block(&pool, PARENT, wrong_ts).await.unwrap();
+        assert_eq!(
+            restored, 0,
+            "mismatched deleted_at_ref must restore zero rows"
+        );
+
+        // Both blocks should still be deleted with the original timestamp.
+        assert_eq!(
+            get_deleted_at(&pool, PARENT).await,
+            Some(real_ts.clone()),
+            "parent must remain deleted"
+        );
+        assert_eq!(
+            get_deleted_at(&pool, CHILD).await,
+            Some(real_ts),
+            "child must remain deleted"
+        );
+    }
+
+    // ======================================================================
+    // cascade_soft_delete: double-delete idempotency
+    // ======================================================================
+
+    /// Calling `cascade_soft_delete` twice on the same block must not error.
+    /// The second call should be a no-op (zero rows affected) because the
+    /// block and all its descendants are already deleted and the CTE skips
+    /// rows where `deleted_at IS NOT NULL`.
+    #[tokio::test]
+    async fn double_cascade_soft_delete_is_idempotent() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, PARENT, "page", "parent", None, Some(1)).await;
+        insert_block(&pool, CHILD, "content", "child", Some(PARENT), Some(1)).await;
+        insert_block(
+            &pool,
+            GRANDCHILD,
+            "content",
+            "grandchild",
+            Some(CHILD),
+            Some(1),
+        )
+        .await;
+
+        // First cascade: deletes all 3
+        let (ts1, count1) = cascade_soft_delete(&pool, PARENT).await.unwrap();
+        assert_eq!(
+            count1, 3,
+            "first cascade must delete parent + child + grandchild"
+        );
+
+        // Second cascade: must succeed with 0 rows affected
+        let (_ts2, count2) = cascade_soft_delete(&pool, PARENT).await.unwrap();
+        assert_eq!(
+            count2, 0,
+            "second cascade must be a no-op (0 rows affected)"
+        );
+
+        // Original timestamps must be preserved (not overwritten)
+        assert_eq!(
+            get_deleted_at(&pool, PARENT).await,
+            Some(ts1.clone()),
+            "parent's deleted_at must retain original timestamp"
+        );
+        assert_eq!(
+            get_deleted_at(&pool, CHILD).await,
+            Some(ts1.clone()),
+            "child's deleted_at must retain original timestamp"
+        );
+        assert_eq!(
+            get_deleted_at(&pool, GRANDCHILD).await,
+            Some(ts1),
+            "grandchild's deleted_at must retain original timestamp"
+        );
+    }
+
+    // ======================================================================
+    // concurrent deletes stress test (#38)
+    // ======================================================================
+
+    /// Spawn 5 concurrent `cascade_soft_delete` calls on different children
+    /// of the same parent.  All must complete without panic or deadlock.
+    /// SQLite's busy_timeout(5000) + IMMEDIATE transactions ensure
+    /// serialisation under contention; the test verifies correctness.
+    #[tokio::test]
+    async fn concurrent_deletes_dont_panic() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create a parent with 5 children
+        insert_block(&pool, "CPAR01", "page", "concurrent parent", None, Some(1)).await;
+        for i in 1..=5_i64 {
+            let id = format!("CCHD{i:02}");
+            insert_block(
+                &pool,
+                &id,
+                "content",
+                &format!("child {i}"),
+                Some("CPAR01"),
+                Some(i),
+            )
+            .await;
+        }
+
+        // Spawn 5 concurrent cascade_soft_delete calls, each targeting a
+        // different child. The parent is not deleted, only the children.
+        let mut handles = Vec::new();
+        for i in 1..=5_i64 {
+            let pool = pool.clone();
+            handles.push(tokio::spawn(async move {
+                let id = format!("CCHD{i:02}");
+                cascade_soft_delete(&pool, &id).await
+            }));
+        }
+
+        // All must complete without panic
+        for handle in handles {
+            let result = handle.await.expect("task must not panic");
+            let (_ts, count) = result.expect("cascade_soft_delete must not error");
+            // Each child is a leaf, so count is 1
+            assert_eq!(count, 1, "each child deletion must affect exactly 1 row");
+        }
+
+        // Verify all children are deleted
+        for i in 1..=5_i64 {
+            let id = format!("CCHD{i:02}");
+            assert!(
+                get_deleted_at(&pool, &id).await.is_some(),
+                "child {id} must be deleted"
+            );
+        }
+
+        // Parent must still be alive
+        assert_eq!(
+            get_deleted_at(&pool, "CPAR01").await,
+            None,
+            "parent must not be affected by child deletions"
+        );
+    }
 }

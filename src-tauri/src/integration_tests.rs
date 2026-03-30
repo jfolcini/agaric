@@ -1044,7 +1044,9 @@ async fn materializer_processes_background_tasks_after_page_create() {
     .await
     .unwrap();
 
-    // Wait for the background consumer to fully process the task
+    // Allow 200ms for the background consumer to fully process the cache-rebuild
+    // task (RebuildPagesCache). 200ms provides margin because the consumer's poll
+    // interval is ~10ms, but the SQLite write + cache rebuild adds I/O latency.
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let bg = mat.metrics().bg_processed.load(Ordering::Relaxed);
@@ -1063,7 +1065,9 @@ async fn materializer_processes_background_tasks_after_edit() {
 
     let block = create_content(&pool, &mat, "original", None, Some(1)).await;
 
-    // Wait for any create-related background tasks to process
+    // Allow 100ms for create-related background tasks to settle. The consumer
+    // polls every ~10ms; 100ms gives ~10 poll cycles which is sufficient for
+    // the create_block cache tasks (tags/pages/links) to complete.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     let bg_before = mat.metrics().bg_processed.load(Ordering::Relaxed);
 
@@ -1071,7 +1075,10 @@ async fn materializer_processes_background_tasks_after_edit() {
         .await
         .unwrap();
 
-    // Wait for the background consumer to fully process the edit tasks
+    // Allow 200ms for the background consumer to fully process the edit tasks
+    // (ReindexBlockLinks + potential RebuildPagesCache). 200ms provides margin
+    // because the consumer processes tasks sequentially with ~10ms poll interval,
+    // and each cache write involves an SQLite transaction.
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let bg_after = mat.metrics().bg_processed.load(Ordering::Relaxed);

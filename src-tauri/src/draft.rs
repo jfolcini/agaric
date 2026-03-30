@@ -629,4 +629,160 @@ mod tests {
             .unwrap();
         assert_eq!(ops.len(), 2, "both ops must be persisted");
     }
+
+    // ── flush_draft partial-failure edge case ───────────────────────────
+
+    /// Verify that flush_draft's atomic transaction prevents partial state:
+    /// if we create a draft and flush it, but then a *second* flush (on a
+    /// different block) encounters no draft to delete, the op is still
+    /// committed and the draft count remains zero — i.e. flush handles the
+    /// "delete-nothing" path gracefully because `DELETE WHERE` with zero
+    /// matches is not an error.
+    #[tokio::test]
+    async fn flush_draft_when_delete_draft_fails_after_op_commit() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create and flush a draft for BLOCK_A — normal path.
+        save_draft(&pool, BLOCK_A, "content A").await.unwrap();
+        let r1 = flush_draft(&pool, DEVICE, BLOCK_A, "content A", None)
+            .await
+            .unwrap();
+        assert_eq!(r1.op_type, "edit_block");
+        assert_eq!(
+            draft_count(&pool).await.unwrap(),
+            0,
+            "draft must be gone after flush"
+        );
+
+        // Now flush BLOCK_B which has NO draft row. The delete_draft_in_tx
+        // inside flush_draft will DELETE 0 rows — this must succeed, not error.
+        let r2 = flush_draft(&pool, DEVICE, BLOCK_B, "content B", None)
+            .await
+            .unwrap();
+        assert_eq!(r2.op_type, "edit_block", "op should still be committed");
+        assert_eq!(
+            draft_count(&pool).await.unwrap(),
+            0,
+            "no orphan drafts after flush with missing draft row"
+        );
+
+        // Verify both ops exist in the log
+        let ops = crate::op_log::get_ops_since(&pool, DEVICE, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            ops.len(),
+            2,
+            "both flush ops must be committed regardless of draft existence"
+        );
+    }
+
+    // ── block_id with LIKE wildcard characters ──────────────────────────
+
+    /// Block IDs containing SQL LIKE metacharacters (`%`, `_`) must be
+    /// stored and retrieved correctly.  The draft layer uses parameterised
+    /// queries so these characters should not be interpreted as wildcards.
+    #[tokio::test]
+    async fn block_id_with_like_wildcards() {
+        let (pool, _dir) = test_pool().await;
+
+        let ids_with_wildcards = [
+            "01HZ0000000000000000BLK%01",
+            "01HZ0000000000000000BLK_02",
+            "01HZ000000000000000BLK%_03",
+        ];
+
+        for &bid in &ids_with_wildcards {
+            save_draft(&pool, bid, &format!("content for {bid}"))
+                .await
+                .unwrap();
+        }
+
+        // Each draft must be independently retrievable by exact ID
+        for &bid in &ids_with_wildcards {
+            let d = get_draft(&pool, bid)
+                .await
+                .unwrap()
+                .unwrap_or_else(|| panic!("draft for {bid} should exist"));
+            assert_eq!(d.block_id, bid, "block_id must match exactly");
+            assert_eq!(
+                d.content,
+                format!("content for {bid}"),
+                "content must match for {bid}"
+            );
+        }
+
+        assert_eq!(
+            draft_count(&pool).await.unwrap(),
+            3,
+            "all 3 drafts with LIKE-wildcard IDs must be stored"
+        );
+
+        // Delete with LIKE-wildcard ID
+        delete_draft(&pool, ids_with_wildcards[0]).await.unwrap();
+        assert!(
+            get_draft(&pool, ids_with_wildcards[0])
+                .await
+                .unwrap()
+                .is_none(),
+            "draft with % in ID must be deletable"
+        );
+        assert_eq!(
+            draft_count(&pool).await.unwrap(),
+            2,
+            "only the targeted draft must be deleted"
+        );
+    }
+
+    // ── content containing JSON-like strings ────────────────────────────
+
+    /// Draft content that looks like JSON (`{"key": "val"}`) must not
+    /// break payload parsing or database round-trips.  Drafts store plain
+    /// text in the `content` column — no JSON interpretation should occur.
+    #[tokio::test]
+    async fn content_containing_json_like_strings() {
+        let (pool, _dir) = test_pool().await;
+
+        let json_like_contents = [
+            r#"{"key": "val"}"#,
+            r#"[1, 2, {"nested": true}]"#,
+            r#"{"block_id": "fake", "op_type": "edit_block"}"#,
+            r#"content with "quotes" and {braces}"#,
+            r#"null"#,
+        ];
+
+        for (i, content) in json_like_contents.iter().enumerate() {
+            let bid = format!("01HZ000000000000000000JSON{i:02}");
+            save_draft(&pool, &bid, content).await.unwrap();
+
+            let d = get_draft(&pool, &bid)
+                .await
+                .unwrap()
+                .expect("draft should exist");
+            assert_eq!(
+                &d.content, content,
+                "JSON-like content must round-trip exactly: {content}"
+            );
+        }
+
+        // Flush one of the JSON-like content drafts and verify the op payload
+        let record = flush_draft(
+            &pool,
+            DEVICE,
+            "01HZ000000000000000000JSON00",
+            r#"{"key": "val"}"#,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(record.op_type, "edit_block");
+        // Verify the payload is valid JSON containing the to_text field
+        let payload: serde_json::Value = serde_json::from_str(&record.payload).unwrap();
+        assert_eq!(
+            payload["to_text"].as_str().unwrap(),
+            r#"{"key": "val"}"#,
+            "JSON-like content must be properly escaped in the op payload"
+        );
+    }
 }

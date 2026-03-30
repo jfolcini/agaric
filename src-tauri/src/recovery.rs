@@ -27,6 +27,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use std::time::Instant;
 
 use crate::draft::{delete_draft, get_all_drafts};
@@ -109,11 +110,28 @@ pub async fn recover_at_boot(
     let mut drafts_already_flushed: u64 = 0;
     let mut draft_errors: Vec<String> = Vec::new();
 
-    // TODO(Phase 2): batch-process drafts — collect all block_ids, issue a
-    // single IN-clause query, then iterate the result map.  For Phase 1 with
-    // small datasets the per-draft loop is fine.
+    // Batch-check which draft block_ids still exist (not soft-deleted) in the
+    // blocks table. This replaces per-draft SELECT COUNT(*) queries (N+1)
+    // with a single IN-clause query.
+    //
+    // NOTE: sqlx compile-time macros (query!, query_scalar!) don't support
+    // dynamic IN clauses, so we use runtime sqlx::query() here. This is
+    // acceptable — the query is straightforward and only runs once at boot.
+    let existing_block_ids: HashSet<String> = if drafts.is_empty() {
+        HashSet::new()
+    } else {
+        let placeholders = vec!["?"; drafts.len()].join(",");
+        let sql =
+            format!("SELECT id FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL");
+        let mut q = sqlx::query_scalar::<_, String>(&sql);
+        for draft in &drafts {
+            q = q.bind(&draft.block_id);
+        }
+        q.fetch_all(pool).await?.into_iter().collect()
+    };
+
     for draft in &drafts {
-        match recover_single_draft(pool, device_id, draft).await {
+        match recover_single_draft(pool, device_id, draft, &existing_block_ids).await {
             Ok(true) => {
                 drafts_recovered.push(draft.block_id.clone());
             }
@@ -175,18 +193,16 @@ async fn recover_single_draft(
     pool: &SqlitePool,
     device_id: &str,
     draft: &crate::draft::Draft,
+    existing_block_ids: &HashSet<String>,
 ) -> Result<bool, AppError> {
     // F07: If the block has been soft-deleted or doesn't exist in the blocks
     // table, the draft is irrelevant. Just report it as "already flushed" so
     // it gets cleaned up (the caller deletes all draft rows regardless of
     // outcome).
-    let block_exists: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM blocks WHERE id = ? AND deleted_at IS NULL",
-        draft.block_id
-    )
-    .fetch_one(pool)
-    .await?;
-    if block_exists == 0 {
+    //
+    // Uses the pre-computed set from the batch query in recover_at_boot
+    // instead of a per-draft SELECT COUNT(*) — avoids the N+1 problem.
+    if !existing_block_ids.contains(&draft.block_id) {
         eprintln!(
             "[recovery] Skipping draft for missing/deleted block {}",
             draft.block_id

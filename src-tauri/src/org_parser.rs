@@ -39,27 +39,34 @@ static FOOTNOTE_RE: LazyLock<Regex> =
 // Scanner
 // ---------------------------------------------------------------------------
 
+/// Byte-offset scanner over a source string for single-pass inline parsing.
 struct Scanner<'a> {
     src: &'a str,
     pos: usize,
 }
 
 impl<'a> Scanner<'a> {
+    /// Create a new scanner starting at position 0.
     fn new(src: &'a str) -> Self {
         Self { src, pos: 0 }
     }
+    /// Return the next character without advancing, or `None` at end-of-input.
     fn peek(&self) -> Option<char> {
         self.src[self.pos..].chars().next()
     }
+    /// Return the character `offset` positions ahead of current, or `None`.
     fn peek_at(&self, offset: usize) -> Option<char> {
         self.src[self.pos..].chars().nth(offset)
     }
+    /// Return the number of bytes remaining in the source.
     fn remaining(&self) -> usize {
         self.src.len() - self.pos
     }
+    /// Advance the scanner by `n` bytes, clamping at end-of-input.
     fn advance(&mut self, n: usize) {
         self.pos = (self.pos + n).min(self.src.len());
     }
+    /// Return the remaining unscanned slice.
     fn rest(&self) -> &'a str {
         &self.src[self.pos..]
     }
@@ -69,6 +76,7 @@ impl<'a> Scanner<'a> {
 // Token consumers
 // ---------------------------------------------------------------------------
 
+/// Try to consume a tag reference token `#[ULID]` (29 bytes: `#[` + 26-char ULID + `]`).
 fn try_consume_tag_ref(s: &mut Scanner) -> Option<InlineNode> {
     if s.remaining() < 29 {
         return None;
@@ -89,6 +97,7 @@ fn try_consume_tag_ref(s: &mut Scanner) -> Option<InlineNode> {
     }
 }
 
+/// Try to consume a block link token `[[ULID]]` (30 bytes: `[[` + 26-char ULID + `]]`).
 fn try_consume_block_link(s: &mut Scanner) -> Option<InlineNode> {
     if s.remaining() < 30 {
         return None;
@@ -113,6 +122,7 @@ fn try_consume_block_link(s: &mut Scanner) -> Option<InlineNode> {
     }
 }
 
+/// Try to consume an Org entity `\name` (e.g. `\alpha`), looking up the name in [`ENTITIES`].
 fn try_consume_entity(s: &mut Scanner) -> Option<InlineNode> {
     if s.peek() != Some('\\') {
         return None;
@@ -137,6 +147,7 @@ fn try_consume_entity(s: &mut Scanner) -> Option<InlineNode> {
     }
 }
 
+/// Try to consume an active Org timestamp `<YYYY-MM-DD Day>` or `<YYYY-MM-DD Day HH:MM>`.
 fn try_consume_active_timestamp(s: &mut Scanner) -> Option<InlineNode> {
     if s.peek() != Some('<') {
         return None;
@@ -155,6 +166,9 @@ fn try_consume_active_timestamp(s: &mut Scanner) -> Option<InlineNode> {
     }))
 }
 
+/// Try to consume an inactive Org timestamp `[YYYY-MM-DD Day]` or `[YYYY-MM-DD Day HH:MM]`.
+///
+/// Returns `None` if the `[` is followed by another `[` (block link), avoiding ambiguity.
 fn try_consume_inactive_timestamp(s: &mut Scanner) -> Option<InlineNode> {
     if s.peek() != Some('[') {
         return None;
@@ -176,6 +190,7 @@ fn try_consume_inactive_timestamp(s: &mut Scanner) -> Option<InlineNode> {
     }))
 }
 
+/// Try to consume an Org footnote reference `[fn:label]`.
 fn try_consume_footnote(s: &mut Scanner) -> Option<InlineNode> {
     if s.peek() != Some('[') {
         return None;
@@ -196,6 +211,7 @@ fn try_consume_footnote(s: &mut Scanner) -> Option<InlineNode> {
 // Mark handling
 // ---------------------------------------------------------------------------
 
+/// Return the delimiter character for a given mark (e.g. `*` for bold).
 fn mark_delimiter(mark: OrgMark) -> char {
     match mark {
         OrgMark::Bold => '*',
@@ -204,6 +220,7 @@ fn mark_delimiter(mark: OrgMark) -> char {
     }
 }
 
+/// Map a character to its corresponding [`OrgMark`], or `None` if it is not a mark delimiter.
 fn char_to_mark(ch: char) -> Option<OrgMark> {
     match ch {
         '*' => Some(OrgMark::Bold),
@@ -217,6 +234,11 @@ fn char_to_mark(ch: char) -> Option<OrgMark> {
 // Line parser
 // ---------------------------------------------------------------------------
 
+/// Parse a single line of Org-mode text into a sequence of inline nodes.
+///
+/// Handles mark toggles (bold/italic/code), escape sequences, entities,
+/// tag references, block links, timestamps, and footnotes. Unclosed marks
+/// are reverted to plain text at end-of-line.
 fn parse_line(line: &str) -> Vec<InlineNode> {
     let mut s = Scanner::new(line);
     let mut nodes: Vec<InlineNode> = Vec::new();
@@ -373,6 +395,7 @@ fn parse_line(line: &str) -> Vec<InlineNode> {
     nodes
 }
 
+/// Flush the accumulated text buffer into a [`InlineNode::Text`] node with current marks.
 fn flush_text(buf: &mut String, marks: &[OrgMark], nodes: &mut Vec<InlineNode>) {
     if !buf.is_empty() {
         nodes.push(InlineNode::Text(TextNode {
@@ -382,6 +405,7 @@ fn flush_text(buf: &mut String, marks: &[OrgMark], nodes: &mut Vec<InlineNode>) 
     }
 }
 
+/// Convert an inline node back to plain text (for unclosed-mark revert).
 fn node_to_plain_text(node: &InlineNode) -> String {
     match node {
         InlineNode::Text(t) => t.text.clone(),

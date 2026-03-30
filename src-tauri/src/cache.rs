@@ -1364,4 +1364,61 @@ mod tests {
             "conflict block must be excluded from agenda (tag source)"
         );
     }
+
+    // ====================================================================
+    // reindex_block_links — dangling target and NULL-content edge cases
+    // ====================================================================
+
+    /// A block whose content references a `[[ULID]]` that does NOT exist in
+    /// the blocks table must not crash `reindex_block_links`. The INSERT uses
+    /// `WHERE EXISTS` to skip dangling references.
+    #[tokio::test]
+    async fn reindex_block_links_with_dangling_target_ulid() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert a source block whose content links to a ULID that has no
+        // corresponding row in the blocks table.
+        let nonexistent_ulid = "01HZ00000000000000NONEXIST";
+        insert_block(
+            &pool,
+            "01HZ0000000000000000000SRC",
+            "content",
+            &format!("see [[{nonexistent_ulid}]] for details"),
+        )
+        .await;
+
+        // Must not panic or return an error
+        reindex_block_links(&pool, "01HZ0000000000000000000SRC")
+            .await
+            .unwrap();
+
+        // No link row should be created because the target doesn't exist
+        let count = count_rows(&pool, "block_links").await;
+        assert_eq!(
+            count, 0,
+            "dangling [[ULID]] must not produce a block_links row (FK guard)"
+        );
+    }
+
+    /// A block with NULL content must not crash `reindex_block_links`.
+    /// The function should treat NULL content as empty (no links to extract).
+    #[tokio::test]
+    async fn reindex_block_links_on_null_content_block() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert a block with NULL content
+        insert_block_null_content(&pool, "01HZ0000000000000NULLCONT", "content");
+
+        // Must not panic or return an error
+        reindex_block_links(&pool, "01HZ0000000000000NULLCONT")
+            .await
+            .unwrap();
+
+        // No links should be created
+        let count = count_rows(&pool, "block_links").await;
+        assert_eq!(
+            count, 0,
+            "NULL-content block must produce zero block_links rows"
+        );
+    }
 }

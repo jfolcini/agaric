@@ -2236,4 +2236,97 @@ mod tests {
         );
         assert_eq!(resp.items[0].id, "BLOCK001");
     }
+
+    // ====================================================================
+    // Cursor stability after deletes (#37)
+    // ====================================================================
+
+    /// Cursor-based keyset pagination must remain stable when rows are
+    /// soft-deleted between page fetches.
+    ///
+    /// Scenario:
+    /// 1. Create 10 children (C01–C10) under a parent.
+    /// 2. Fetch the first page (limit=5), obtaining a cursor after C05.
+    /// 3. Soft-delete C03 (before the cursor).
+    /// 4. Fetch page 2 using the cursor — must return C06–C10 without
+    ///    duplicates or gaps, even though C03 is now gone.
+    ///
+    /// This works because keyset pagination uses `(position, id) > cursor`
+    /// rather than offset-based `SKIP N`, so deleted rows before the cursor
+    /// do not shift subsequent page boundaries.
+    #[tokio::test]
+    async fn cursor_stability_after_delete() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create parent + 10 children
+        insert_block(&pool, "CSPAR001", "page", "parent", None, Some(0)).await;
+        for i in 1..=10_i64 {
+            let id = format!("CS_C{i:03}");
+            insert_block(
+                &pool,
+                &id,
+                "content",
+                &format!("child {i}"),
+                Some("CSPAR001"),
+                Some(i),
+            )
+            .await;
+        }
+
+        // Page 1: fetch first 5 children (limit=5)
+        let p1 = PageRequest::new(None, Some(5)).unwrap();
+        let r1 = list_children(&pool, Some("CSPAR001"), &p1).await.unwrap();
+
+        assert_eq!(r1.items.len(), 5, "page 1 must return 5 items");
+        assert!(r1.has_more, "page 1 must have more items");
+        assert_eq!(r1.items[0].id, "CS_C001");
+        assert_eq!(r1.items[4].id, "CS_C005");
+
+        // Soft-delete C03 (a block BEFORE the cursor position).
+        // This was already returned in page 1, so it shouldn't affect page 2.
+        soft_delete_block(&pool, "CS_C003", FIXED_DELETED_AT).await;
+
+        // Page 2: continue from cursor — must see C06..C10 (keyset skips
+        // past C05 regardless of deleted rows before it).
+        let p2 = PageRequest::new(r1.next_cursor, Some(5)).unwrap();
+        let r2 = list_children(&pool, Some("CSPAR001"), &p2).await.unwrap();
+
+        assert_eq!(r2.items.len(), 5, "page 2 must return 5 items (C06–C10)");
+        assert!(!r2.has_more, "page 2 is the last page");
+        assert_eq!(r2.items[0].id, "CS_C006", "page 2 must start at C06");
+        assert_eq!(r2.items[4].id, "CS_C010", "page 2 must end at C10");
+
+        // C03 must NOT appear in page 2 (it's soft-deleted and was before
+        // the cursor anyway). Page 1 already returned it before deletion.
+        let page2_ids: Vec<&str> = r2.items.iter().map(|b| b.id.as_str()).collect();
+        assert!(
+            !page2_ids.contains(&"CS_C003"),
+            "soft-deleted C03 must not appear in page 2"
+        );
+
+        // Verify no duplicates between page 1 and page 2
+        let mut all_ids: Vec<String> = r1.items.iter().map(|b| b.id.clone()).collect();
+        all_ids.extend(r2.items.iter().map(|b| b.id.clone()));
+        let unique_count = {
+            let mut set = std::collections::HashSet::new();
+            all_ids.iter().filter(|id| set.insert(id.clone())).count()
+        };
+        assert_eq!(unique_count, all_ids.len(), "no duplicate IDs across pages");
+
+        // Verify a fresh full walk (no cursor) skips the deleted C03
+        let fresh_page = PageRequest::new(None, Some(20)).unwrap();
+        let fresh = list_children(&pool, Some("CSPAR001"), &fresh_page)
+            .await
+            .unwrap();
+        assert_eq!(
+            fresh.items.len(),
+            9,
+            "full walk after delete must return 9 items (C01–C10 minus C03)"
+        );
+        let fresh_ids: Vec<&str> = fresh.items.iter().map(|b| b.id.as_str()).collect();
+        assert!(
+            !fresh_ids.contains(&"CS_C003"),
+            "deleted C03 must be excluded from fresh walk"
+        );
+    }
 }

@@ -157,6 +157,15 @@ pub struct PropertyRow {
 
 /// Create a new block.
 ///
+/// Validates block type and optional parent, generates a ULID, appends a
+/// `CreateBlock` op, inserts the row into `blocks`, and dispatches
+/// background cache tasks.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — unknown `block_type` or non-positive `position`
+/// - [`AppError::NotFound`] — `parent_id` does not refer to a live block
+///
 /// # Rate limiting (F07)
 ///
 /// No server-side rate limiting is implemented. This is acceptable for a
@@ -271,6 +280,15 @@ pub async fn create_block_inner(
     })
 }
 
+/// Edit a block's content.
+///
+/// Validates the block exists and is not deleted, looks up the previous edit
+/// reference for conflict detection, appends an `EditBlock` op, updates the
+/// `blocks` table, and dispatches background cache tasks.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — block does not exist or is soft-deleted
 pub async fn edit_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -334,8 +352,10 @@ pub async fn edit_block_inner(
 
     tx.commit().await?;
 
-    // 5. Dispatch background cache tasks (fire-and-forget)
-    let _ = materializer.dispatch_background(&op_record);
+    // 5. Dispatch background cache tasks (fire-and-forget).
+    // Use dispatch_edit_background with the block_type hint so only
+    // relevant caches are rebuilt (e.g. content blocks skip tags/pages).
+    let _ = materializer.dispatch_edit_background(&op_record, &block_type);
 
     // 6. Return response
     Ok(BlockResponse {
@@ -348,6 +368,16 @@ pub async fn edit_block_inner(
     })
 }
 
+/// Soft-delete a block and all its descendants (ADR-06 cascade).
+///
+/// Validates the block exists and is not already deleted, appends a
+/// `DeleteBlock` op, sets `deleted_at` on the block and all descendants
+/// via recursive CTE, and dispatches background cache tasks.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — block does not exist
+/// - [`AppError::InvalidOperation`] — block is already soft-deleted
 pub async fn delete_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -409,6 +439,17 @@ pub async fn delete_block_inner(
     })
 }
 
+/// Restore a soft-deleted block and its descendants.
+///
+/// Validates the block exists and is deleted with the expected `deleted_at`
+/// timestamp (optimistic concurrency guard), appends a `RestoreBlock` op,
+/// clears `deleted_at` on matching descendants, and dispatches background
+/// cache tasks.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — block does not exist
+/// - [`AppError::InvalidOperation`] — block is not deleted, or `deleted_at` timestamp mismatch
 pub async fn restore_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -483,6 +524,17 @@ pub async fn restore_block_inner(
     })
 }
 
+/// Permanently purge a soft-deleted block and all its descendants.
+///
+/// Validates the block exists and is already soft-deleted, appends a
+/// `PurgeBlock` op, then physically deletes the block, its descendants,
+/// and all related rows (tags, properties, links, caches, FTS, drafts,
+/// attachments) in a single deferred-FK transaction.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — block does not exist
+/// - [`AppError::InvalidOperation`] — block is not soft-deleted
 pub async fn purge_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -658,6 +710,17 @@ pub async fn purge_block_inner(
     })
 }
 
+/// Move a block to a new parent at a specific position.
+///
+/// Validates the block and optional new parent exist, detects cycles via
+/// ancestor-walking CTE, appends a `MoveBlock` op, updates `parent_id` and
+/// `position` in the `blocks` table, and dispatches background cache tasks.
+///
+/// # Errors
+///
+/// - [`AppError::InvalidOperation`] — block cannot be its own parent
+/// - [`AppError::Validation`] — non-positive position, or cycle detected
+/// - [`AppError::NotFound`] — block or new parent does not exist or is deleted
 pub async fn move_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -791,6 +854,12 @@ pub async fn move_block_inner(
 ///    `position > before_pos` up by 1, then `new_position = before_pos + 1`.
 /// 5. When `after_id` is `None`: place at position 1, shifting existing
 ///    siblings up if necessary.
+///
+/// # Errors
+///
+/// - [`AppError::InvalidOperation`] — block cannot be its own parent
+/// - [`AppError::Validation`] — `after_id` equals `block_id`
+/// - [`AppError::NotFound`] — block, parent, or `after_id` sibling not found
 pub async fn reorder_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -966,6 +1035,16 @@ pub async fn reorder_block_inner(
     })
 }
 
+/// List blocks with pagination, applying at most one exclusive filter.
+///
+/// Dispatches to the appropriate pagination query based on which filter
+/// parameter is set: `show_deleted` (trash), `agenda_date`, `tag_id`,
+/// `block_type`, or `parent_id` (children, the default). Page size is
+/// clamped to `[1, 100]`.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — multiple conflicting filters, or invalid date format
 #[allow(clippy::too_many_arguments)]
 pub async fn list_blocks_inner(
     pool: &SqlitePool,
@@ -1016,6 +1095,11 @@ pub async fn list_blocks_inner(
     }
 }
 
+/// Fetch a single block by ID (including soft-deleted blocks).
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — no block with the given ID exists
 pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
@@ -1028,6 +1112,17 @@ pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<Bloc
     row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}'")))
 }
 
+/// Add a tag to a block.
+///
+/// Validates both the block and the tag block exist and are not deleted,
+/// checks that `tag_id` refers to a block with `block_type = 'tag'`, ensures
+/// the association does not already exist, appends an `AddTag` op, inserts
+/// into `block_tags`, and dispatches background cache tasks.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — block or tag block does not exist or is deleted
+/// - [`AppError::InvalidOperation`] — `tag_id` is not a tag block, or tag already applied
 pub async fn add_tag_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1114,6 +1209,15 @@ pub async fn add_tag_inner(
     Ok(TagResponse { block_id, tag_id })
 }
 
+/// Remove a tag from a block.
+///
+/// Validates the block exists and is not deleted, checks the tag association
+/// exists, appends a `RemoveTag` op, deletes from `block_tags`, and dispatches
+/// background cache tasks.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — block does not exist, is deleted, or tag association missing
 pub async fn remove_tag_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1178,6 +1282,7 @@ pub async fn remove_tag_inner(
     Ok(TagResponse { block_id, tag_id })
 }
 
+/// List blocks that link to the given block (backlinks), with cursor pagination.
 pub async fn get_backlinks_inner(
     pool: &SqlitePool,
     block_id: String,
@@ -1188,6 +1293,7 @@ pub async fn get_backlinks_inner(
     pagination::list_backlinks(pool, &block_id, &page).await
 }
 
+/// List op-log history entries for a specific block, with cursor pagination.
 pub async fn get_block_history_inner(
     pool: &SqlitePool,
     block_id: String,
@@ -1198,6 +1304,7 @@ pub async fn get_block_history_inner(
     pagination::list_block_history(pool, &block_id, &page).await
 }
 
+/// List conflict-copy blocks (blocks with `is_conflict = true`), with cursor pagination.
 pub async fn get_conflicts_inner(
     pool: &SqlitePool,
     cursor: Option<String>,
@@ -1207,10 +1314,15 @@ pub async fn get_conflicts_inner(
     pagination::list_conflicts(pool, &page).await
 }
 
+/// Return current materializer queue metrics and system status.
 pub fn get_status_inner(materializer: &Materializer) -> StatusInfo {
     materializer.status()
 }
 
+/// Full-text search across block content using FTS5.
+///
+/// Returns an empty page if the query is blank. Otherwise delegates to
+/// [`fts::search_fts`] with cursor pagination.
 pub async fn search_blocks_inner(
     pool: &SqlitePool,
     query: String,
@@ -1232,6 +1344,7 @@ pub async fn search_blocks_inner(
 ///
 /// Builds a `TagExpr` from the provided tag_ids, prefixes, and mode.
 /// `mode` is `"and"` for intersection, anything else defaults to `"or"` (union).
+/// Returns an empty page when no tag IDs or prefixes are supplied.
 pub async fn query_by_tags_inner(
     pool: &SqlitePool,
     tag_ids: Vec<String>,
@@ -1286,6 +1399,11 @@ pub async fn list_tags_for_block_inner(
 /// Validates the block exists and is not deleted, validates the property
 /// payload (exactly one non-null value field, valid key format), then
 /// appends a `SetProperty` op and materializes the change.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — invalid key format, non-finite number, or not exactly one value field set
+/// - [`AppError::NotFound`] — block does not exist or is soft-deleted
 #[allow(clippy::too_many_arguments)]
 pub async fn set_property_inner(
     pool: &SqlitePool,
@@ -1362,6 +1480,10 @@ pub async fn set_property_inner(
 /// Delete a property from a block.
 ///
 /// Appends a `DeleteProperty` op and removes the row from `block_properties`.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — block does not exist or is soft-deleted
 pub async fn delete_property_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1444,6 +1566,7 @@ fn sanitize_internal_error(err: AppError) -> AppError {
     }
 }
 
+/// Tauri command: create a new block. Delegates to [`create_block_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1469,6 +1592,7 @@ pub async fn create_block(
     .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1484,6 +1608,7 @@ pub async fn edit_block(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1498,6 +1623,7 @@ pub async fn delete_block(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1519,6 +1645,7 @@ pub async fn restore_block(
     .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1533,6 +1660,7 @@ pub async fn purge_block(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: move a block to a new parent at a given position. Delegates to [`move_block_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1556,6 +1684,7 @@ pub async fn move_block(
     .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1584,6 +1713,7 @@ pub async fn list_blocks(
     .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: fetch a single block by ID. Delegates to [`get_block_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1593,6 +1723,7 @@ pub async fn get_block(pool: State<'_, ReadPool>, block_id: String) -> Result<Bl
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: add a tag to a block. Delegates to [`add_tag_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1608,6 +1739,7 @@ pub async fn add_tag(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: remove a tag from a block. Delegates to [`remove_tag_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1623,6 +1755,7 @@ pub async fn remove_tag(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1637,6 +1770,7 @@ pub async fn get_backlinks(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1651,6 +1785,7 @@ pub async fn get_block_history(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: list conflict-copy blocks. Delegates to [`get_conflicts_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1664,6 +1799,7 @@ pub async fn get_conflicts(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: get materializer queue status. Delegates to [`get_status_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1671,6 +1807,7 @@ pub async fn get_status(materializer: State<'_, Materializer>) -> Result<StatusI
     Ok(get_status_inner(&materializer))
 }
 
+/// Tauri command: full-text search across blocks. Delegates to [`search_blocks_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1685,6 +1822,7 @@ pub async fn search_blocks(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1701,6 +1839,7 @@ pub async fn query_by_tags(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1713,6 +1852,7 @@ pub async fn list_tags_by_prefix(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1725,6 +1865,7 @@ pub async fn list_tags_for_block(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: set (upsert) a property on a block. Delegates to [`set_property_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1755,6 +1896,7 @@ pub async fn set_property(
     .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: delete a property from a block. Delegates to [`delete_property_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1770,6 +1912,7 @@ pub async fn delete_property(
         .map_err(sanitize_internal_error)
 }
 
+/// Tauri command: get all properties for a block. Delegates to [`get_properties_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1983,14 +2126,18 @@ mod tests {
         .await
         .unwrap();
 
-        // Allow bg cache tasks to settle before delete
+        // Allow 50ms for the materializer background consumer to process queued
+        // cache-rebuild tasks from create_block. The consumer polls every ~10ms;
+        // 50ms gives ~5 poll cycles which is sufficient with no real I/O in tests.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         delete_block_inner(&pool, DEV, &mat, parent.id.clone())
             .await
             .unwrap();
 
-        // Allow bg cache tasks from delete to settle
+        // Allow 50ms for the materializer background consumer to process cache
+        // tasks triggered by delete_block (tags/pages/agenda rebuild). Same
+        // rationale as above: ~5 poll cycles at ~10ms interval.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let result = create_block_inner(
@@ -2284,6 +2431,106 @@ mod tests {
             Some(unicode.into()),
             "unicode content should survive edit round-trip"
         );
+    }
+
+    // ── edit_block edge cases ───────────────────────────────────────────
+
+    /// Editing a block to an empty string must succeed — empty content is
+    /// valid (e.g. a cleared paragraph before the user types new text).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn edit_block_with_empty_to_text() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let created = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "non-empty".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "".into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            edited.content,
+            Some("".into()),
+            "editing to empty string must succeed and store empty content"
+        );
+
+        // Verify in DB
+        let row = sqlx::query!("SELECT content FROM blocks WHERE id = ?", created.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            row.content,
+            Some("".into()),
+            "empty string must be persisted in DB"
+        );
+    }
+
+    /// Editing a block with the exact same content it already has must still
+    /// succeed (the command layer does not short-circuit on identical content).
+    /// An op_log entry IS written because the command doesn't diff content —
+    /// that's a valid design choice for idempotent replay.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn edit_block_with_identical_content_is_noop() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let created = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "same text".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        // Count ops before the "no-change" edit
+        let ops_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        // Edit with identical content
+        let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "same text".into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            edited.content,
+            Some("same text".into()),
+            "content must be returned unchanged"
+        );
+
+        // The command layer does not diff — an op IS still written
+        let ops_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            ops_after,
+            ops_before + 1,
+            "an edit_block op is written even for identical content"
+        );
+
+        // Verify DB content is unchanged
+        let row = sqlx::query!("SELECT content FROM blocks WHERE id = ?", created.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row.content, Some("same text".into()));
     }
 
     // ======================================================================
@@ -3828,7 +4075,9 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        // Allow consumer tasks to start before checking status
+        // Allow 10ms for consumer tokio tasks to be spawned and start their event
+        // loops. This is minimal — just enough for the runtime to schedule the
+        // spawned tasks before we query their status metrics.
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
         let status = get_status_inner(&mat);
@@ -3848,7 +4097,8 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        // Allow consumer tasks to start
+        // Allow 10ms for consumer tokio tasks to be spawned and start their event
+        // loops before taking a snapshot of the status fields.
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
         let status = get_status_inner(&mat);
@@ -4351,6 +4601,8 @@ mod tests {
         .await
         .unwrap();
 
+        // Allow 50ms for materializer bg tasks from create_block to settle.
+        // Prevents write-lock contention with the next set_property operation.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Set a text property
@@ -4368,6 +4620,8 @@ mod tests {
         .await
         .unwrap();
 
+        // Allow 50ms for materializer bg tasks from set_property to settle
+        // before reading properties. Ensures cache writes are complete.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Verify via get_properties
@@ -4397,6 +4651,8 @@ mod tests {
         .await
         .unwrap();
 
+        // Allow 50ms for materializer bg tasks from create_block to settle.
+        // Prevents write-lock contention with the next set_property call.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Empty key should fail validation
@@ -4436,12 +4692,16 @@ mod tests {
         .await
         .unwrap();
 
+        // Allow 50ms for materializer bg tasks from create_block to settle
+        // before issuing delete_block (avoids write-lock contention).
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         delete_block_inner(&pool, DEV, &mat, block.id.clone())
             .await
             .unwrap();
 
+        // Allow 50ms for materializer bg tasks from delete_block to settle
+        // before attempting set_property (which should fail).
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let result = set_property_inner(
@@ -4480,6 +4740,7 @@ mod tests {
         .await
         .unwrap();
 
+        // Allow 50ms for materializer bg tasks from create_block to settle.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Set a property
@@ -4497,6 +4758,8 @@ mod tests {
         .await
         .unwrap();
 
+        // Allow 50ms for materializer bg tasks from set_property to settle
+        // before delete_property (avoids write-lock contention).
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Delete the property
@@ -4504,6 +4767,8 @@ mod tests {
             .await
             .unwrap();
 
+        // Allow 50ms for materializer bg tasks from delete_property to settle
+        // before reading properties (ensures cache writes are complete).
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Verify it's gone

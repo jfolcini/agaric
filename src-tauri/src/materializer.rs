@@ -487,7 +487,24 @@ impl Materializer {
     /// foreground `ApplyOp` task and only triggering stale-while-revalidate
     /// cache rebuilds / reindexing.
     pub fn dispatch_background(&self, record: &OpRecord) -> Result<(), AppError> {
-        self.enqueue_background_tasks(record)
+        self.enqueue_background_tasks(record, None)
+    }
+
+    /// Like [`dispatch_background`], but with a `block_type` hint for
+    /// `edit_block` ops so that only relevant caches are rebuilt:
+    ///
+    /// - `"content"` blocks: only `ReindexBlockLinks` (content may have `[[ULID]]` links)
+    /// - `"page"` blocks: `RebuildPagesCache` + `ReindexBlockLinks`
+    /// - `"tag"` blocks: `RebuildTagsCache` + `ReindexBlockLinks`
+    ///
+    /// Callers that already know the block_type (e.g. `edit_block_inner`)
+    /// should prefer this method to avoid unnecessary cache rebuilds.
+    pub fn dispatch_edit_background(
+        &self,
+        record: &OpRecord,
+        block_type: &str,
+    ) -> Result<(), AppError> {
+        self.enqueue_background_tasks(record, Some(block_type))
     }
 
     /// Main entry point after an op is appended to the log.
@@ -504,12 +521,20 @@ impl Materializer {
         self.enqueue_foreground(MaterializeTask::ApplyOp(record.clone()))
             .await?;
 
-        self.enqueue_background_tasks(record)
+        self.enqueue_background_tasks(record, None)
     }
 
     /// Shared background-task routing logic used by both `dispatch_op` and
     /// `dispatch_background`.
-    fn enqueue_background_tasks(&self, record: &OpRecord) -> Result<(), AppError> {
+    ///
+    /// `block_type_hint` is used by `edit_block` to skip irrelevant cache
+    /// rebuilds when the caller already knows the block type. When `None`,
+    /// the conservative path rebuilds all content-dependent caches.
+    fn enqueue_background_tasks(
+        &self,
+        record: &OpRecord,
+        block_type_hint: Option<&str>,
+    ) -> Result<(), AppError> {
         // Background tasks are best-effort — use try_enqueue_background to
         // avoid blocking on a full queue.
         match record.op_type.as_str() {
@@ -545,12 +570,29 @@ impl Materializer {
                         block_id: hint.block_id.clone(),
                     })?;
                 }
-                // Conservatively rebuild all content-dependent caches — we cannot
-                // determine block_type from the edit payload alone without a DB
-                // lookup, so a tag rename or date change must still invalidate.
-                self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
-                self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+
+                // Selectively rebuild caches based on block_type when the
+                // caller provides a hint (e.g. edit_block_inner already
+                // queried the block row). Without the hint, conservatively
+                // rebuild all content-dependent caches since the edit
+                // payload alone doesn't carry block_type.
+                match block_type_hint {
+                    Some("tag") => {
+                        self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
+                    }
+                    Some("page") => {
+                        self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
+                    }
+                    Some("content") => {
+                        // Content blocks only need link reindexing (done above).
+                    }
+                    _ => {
+                        // No hint or unknown block_type — conservative path.
+                        self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
+                        self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
+                        self.try_enqueue_background(MaterializeTask::RebuildAgendaCache)?;
+                    }
+                }
 
                 // FTS: update the edited block
                 if !hint.block_id.is_empty() {
@@ -868,7 +910,8 @@ mod tests {
             mat.dispatch_op(&record).await.is_ok(),
             "dispatch_op for create_block(page) should succeed"
         );
-        // Allow bg consumer to process
+        // Allow 50ms for the materializer background consumer to process the queued task.
+        // This is sufficient because the consumer polls every ~10ms with no I/O latency in tests.
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
@@ -893,6 +936,8 @@ mod tests {
             mat.dispatch_op(&record).await.is_ok(),
             "dispatch_op for create_block(tag) should succeed"
         );
+        // Allow 50ms for the background consumer to drain the queued RebuildTagsCache task.
+        // The consumer polls every ~10ms; 50ms gives ~5 poll cycles which is sufficient.
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
@@ -1284,7 +1329,9 @@ mod tests {
         let mat = Materializer::new(pool);
 
         mat.shutdown();
-        // Give consumer tasks time to notice the flag and exit.
+        // Allow 100ms for consumer tasks to notice the shutdown flag and exit.
+        // Consumer loops check the flag on each poll (~10ms interval); 100ms
+        // gives ~10 iterations which is ample time to observe the flag and break.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let result = mat.try_enqueue_background(MaterializeTask::RebuildTagsCache);
@@ -1308,10 +1355,14 @@ mod tests {
             .enqueue_background(MaterializeTask::RebuildTagsCache)
             .await
             .is_ok());
+        // Allow 50ms for the background consumer to process the enqueued task.
+        // The consumer polls every ~10ms; 50ms gives ~5 cycles to drain the queue.
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         mat.shutdown();
-        // Give consumer tasks time to notice the flag and exit.
+        // Allow 100ms for consumer tasks to notice the shutdown flag and exit.
+        // Consumer loops check the flag on each poll (~10ms interval); 100ms
+        // gives ~10 iterations which is ample time to observe the flag and break.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // After consumers exit the receiver is dropped, so send returns Err.
@@ -1343,6 +1394,10 @@ mod tests {
         // Shutdown must succeed even though queues are full — the senders
         // are dropped, closing the channel and unblocking recv().
         mat.shutdown();
+        // Allow 150ms for consumer tasks to notice the shutdown flag and fully exit,
+        // even though the queues are full. The consumer may be blocked on recv() with
+        // a full queue; shutdown drops the senders which unblocks recv(). 150ms gives
+        // ample time for the unblock + loop exit + task completion cycle.
         tokio::time::sleep(Duration::from_millis(150)).await;
 
         // Verify the materializer is fully shut down.
@@ -1380,7 +1435,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Allow bg consumer time to process
+        // Allow 200ms for the background consumer to process 3 distinct cache-rebuild
+        // tasks. Each task involves an SQLite transaction; 200ms provides margin for
+        // sequential processing (~10ms poll + ~20ms per cache rebuild × 3 tasks).
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         let m = mat.metrics();
@@ -1412,7 +1469,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Allow fg consumer time to process
+        // Allow 100ms for the foreground consumer to process the ApplyOp task.
+        // The foreground consumer processes tasks synchronously; 100ms provides
+        // margin for the single op application + any SQLite write latency.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let m = mat.metrics();
@@ -1442,6 +1501,9 @@ mod tests {
             .await
             .unwrap();
 
+        // Allow 200ms for the background consumer to process all 4 enqueued tasks.
+        // Each task involves an SQLite transaction; 200ms provides margin for
+        // sequential processing at ~10ms poll interval + ~20ms per task.
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Queue should still be functional — consumer loop survived.
@@ -1779,7 +1841,9 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        // Allow consumer tasks to start
+        // Allow 10ms for consumer tokio tasks to be spawned and start their event loops.
+        // This is minimal — just enough for the runtime to schedule the spawned tasks
+        // before we query their status. No I/O or processing is expected yet.
         tokio::time::sleep(Duration::from_millis(10)).await;
 
         let status = mat.status();
