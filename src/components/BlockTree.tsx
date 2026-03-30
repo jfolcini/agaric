@@ -102,7 +102,6 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     remove,
     edit,
     splitBlock,
-    createBelow,
     indent,
     dedent,
     reorder,
@@ -649,21 +648,12 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     }, 0)
   }, [focusedBlockId, collapsedVisible, rovingEditor, edit, remove, setFocused])
 
-  // ── Enter: save + create new block below + focus it ────────────────
-  const handleEnterCreateBlock = useCallback(async () => {
+  // ── Enter: save content + close editor ───────────────────────────────
+  const handleEnterSave = useCallback(() => {
     if (!focusedBlockId) return
-    // Flush current editor content and unfocus before creating new block
-    // to prevent the blur handler from firing and causing double operations
-    const blockId = focusedBlockId
     handleFlush()
-    setFocused(null) // explicitly clear focus before async createBelow
-    // Create an empty block below and focus it
-    const newId = await createBelow(blockId)
-    if (newId) {
-      setFocused(newId)
-      rovingEditor.mount(newId, '')
-    }
-  }, [focusedBlockId, handleFlush, createBelow, setFocused, rovingEditor])
+    setFocused(null)
+  }, [focusedBlockId, handleFlush, setFocused])
 
   // ── Escape: discard changes, unfocus ───────────────────────────────
   const handleEscapeCancel = useCallback(() => {
@@ -719,7 +709,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     onDedent: handleDedent,
     onFlush: handleFlush,
     onMergeWithPrev: handleMergeWithPrev,
-    onEnterCreateBlock: handleEnterCreateBlock,
+    onEnterSave: handleEnterSave,
     onEscapeCancel: handleEscapeCancel,
   })
 

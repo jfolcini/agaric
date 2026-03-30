@@ -24,8 +24,8 @@ export interface BlockKeyboardCallbacks {
   onFlush: () => string | null
   /** Merge current block with previous (Backspace at start of non-empty block). */
   onMergeWithPrev: () => void
-  /** Enter pressed — save current block + create new block below + focus it. */
-  onEnterCreateBlock: () => void
+  /** Flush current content and close the editor. Called on Enter. */
+  onEnterSave: () => void
   /** Escape pressed — cancel editing, discard changes, unfocus. */
   onEscapeCancel: () => void
 }
@@ -69,11 +69,11 @@ export function handleBlockKeyDown(
     return
   }
 
-  // Enter (without Shift): save current block + create new block below.
+  // Enter (without Shift): save current block content + close editor.
   // Shift+Enter falls through to TipTap's HardBreak (line within same block).
   if (key === 'Enter' && !shiftKey) {
     event.preventDefault()
-    callbacks.onEnterCreateBlock()
+    callbacks.onEnterSave()
     return
   }
 
@@ -124,7 +124,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     onDedent,
     onFlush,
     onMergeWithPrev,
-    onEnterCreateBlock,
+    onEnterSave,
     onEscapeCancel,
   } = callbacks
 
@@ -139,7 +139,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onDedent,
         onFlush,
         onMergeWithPrev,
-        onEnterCreateBlock,
+        onEnterSave,
         onEscapeCancel,
       })
     },
@@ -152,7 +152,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       onDedent,
       onFlush,
       onMergeWithPrev,
-      onEnterCreateBlock,
+      onEnterSave,
       onEscapeCancel,
     ],
   )

@@ -42,7 +42,7 @@ function makeCallbacks(): BlockKeyboardCallbacks & { _calls: Record<string, numb
       return null
     },
     onMergeWithPrev: track('onMergeWithPrev'),
-    onEnterCreateBlock: track('onEnterCreateBlock'),
+    onEnterSave: track('onEnterSave'),
     onEscapeCancel: track('onEscapeCancel'),
     _calls,
   }
@@ -246,7 +246,7 @@ describe('handleBlockKeyDown', () => {
   })
 
   describe('Enter / Shift+Enter', () => {
-    it('Enter calls onEnterCreateBlock', () => {
+    it('Enter calls onEnterSave', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('Enter')
@@ -254,7 +254,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
-      expect(cbs._calls.onEnterCreateBlock).toBe(1)
+      expect(cbs._calls.onEnterSave).toBe(1)
     })
 
     it('Shift+Enter does nothing (TipTap default handles line break)', () => {
@@ -265,7 +265,7 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls.onEnterCreateBlock).toBeUndefined()
+      expect(cbs._calls.onEnterSave).toBeUndefined()
     })
   })
 

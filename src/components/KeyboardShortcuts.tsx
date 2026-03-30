@@ -27,7 +27,7 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: { keys: string; descriptio
     {
       category: 'Editing',
       shortcuts: [
-        { keys: 'Enter', description: 'Create new block below' },
+        { keys: 'Enter', description: 'Save block and close editor' },
         { keys: 'Backspace on empty block', description: 'Delete block' },
         { keys: 'Backspace at start of block', description: 'Merge with previous' },
         { keys: 'Tab', description: 'Indent block' },

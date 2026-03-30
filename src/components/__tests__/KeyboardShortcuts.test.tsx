@@ -40,7 +40,7 @@ describe('KeyboardShortcuts', () => {
     // Verify all shortcuts are present
     expect(screen.getByText('Move to previous block')).toBeInTheDocument()
     expect(screen.getByText('Move to next block')).toBeInTheDocument()
-    expect(screen.getByText('Create new block below')).toBeInTheDocument()
+    expect(screen.getByText('Save block and close editor')).toBeInTheDocument()
     expect(screen.getByText('Delete block')).toBeInTheDocument()
     expect(screen.getByText('Merge with previous')).toBeInTheDocument()
     expect(screen.getByText('Indent block')).toBeInTheDocument()

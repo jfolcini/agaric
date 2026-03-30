@@ -1,5 +1,7 @@
 # Developer Documentation — Block Notes App
 
+Local-first block-based note-taking app (Logseq/Obsidian-like). React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log with CQRS materializer for offline-first sync.
+
 > **No changes to this file (AGENTS.md) without explicit user approval. Ever.**
 
 ## Build Commands
