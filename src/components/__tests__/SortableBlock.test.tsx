@@ -484,7 +484,7 @@ describe('SortableBlock task marker', () => {
     })
   })
 
-  it('renders blank spacer when todoState is null (no task)', () => {
+  it('renders ghost checkbox when todoState is null (no task)', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -497,11 +497,11 @@ describe('SortableBlock task marker', () => {
 
     const marker = container.querySelector('.task-marker')
     expect(marker).toBeInTheDocument()
-    // No checkbox elements should be rendered
-    expect(container.querySelector('.task-checkbox')).not.toBeInTheDocument()
+    // Ghost checkbox visible on hover
+    expect(container.querySelector('.task-checkbox-empty')).toBeInTheDocument()
   })
 
-  it('renders blank spacer when todoState is undefined', () => {
+  it('renders ghost checkbox when todoState is undefined', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -513,7 +513,7 @@ describe('SortableBlock task marker', () => {
 
     const marker = container.querySelector('.task-marker')
     expect(marker).toBeInTheDocument()
-    expect(container.querySelector('.task-checkbox')).not.toBeInTheDocument()
+    expect(container.querySelector('.task-checkbox-empty')).toBeInTheDocument()
   })
 
   it('renders unchecked checkbox for TODO state', () => {
