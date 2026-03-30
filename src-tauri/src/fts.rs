@@ -1728,4 +1728,62 @@ mod tests {
         assert_eq!(all_ids.len(), 3, "all 3 blocks should be returned");
         assert_eq!(unique.len(), 3, "no duplicates across pages");
     }
+
+    // ======================================================================
+    // FTS5 parse error mapping (defense-in-depth)
+    // ======================================================================
+
+    /// Directly execute an invalid FTS5 MATCH query to verify SQLite returns
+    /// a parse-error-like error. This validates the error indicators that the
+    /// `search_fts` `.map_err` closure checks for (lines 443-445).
+    #[tokio::test]
+    async fn fts5_invalid_match_syntax_returns_error() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, BLOCK_A, "content", "test content", None, Some(1)).await;
+        rebuild_fts_index(&pool).await.unwrap();
+
+        let result = sqlx::query("SELECT * FROM fts_blocks WHERE fts_blocks MATCH 'AND OR'")
+            .fetch_all(&pool)
+            .await;
+
+        assert!(
+            result.is_err(),
+            "invalid FTS5 syntax should produce an error"
+        );
+        let err_msg = result.err().unwrap().to_string();
+        assert!(
+            err_msg.contains("fts5") || err_msg.contains("parse") || err_msg.contains("syntax"),
+            "FTS5 error should mention parse/syntax issue, got: {err_msg}"
+        );
+    }
+
+    /// Verify that `search_fts` with dangerous inputs does NOT return
+    /// a parse error — the sanitizer protects against FTS5 operator injection.
+    #[tokio::test]
+    async fn search_fts_sanitizer_protects_against_fts5_operators() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, BLOCK_A, "content", "hello world", None, Some(1)).await;
+        rebuild_fts_index(&pool).await.unwrap();
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+
+        for dangerous_query in &[
+            "AND OR NOT",
+            "col: value",
+            "\"unclosed quote",
+            "* prefix",
+            "(grouping)",
+            "NEAR(a b)",
+        ] {
+            let result = search_fts(&pool, dangerous_query, &page).await;
+            assert!(
+                result.is_ok(),
+                "sanitizer should protect query '{}' from parse error, got: {:?}",
+                dangerous_query,
+                result.err()
+            );
+        }
+    }
 }

@@ -1035,4 +1035,89 @@ mod tests {
         assert!(result.contains("BLK_1"));
         assert!(!result.contains("BLK_2"));
     }
+
+    // ======================================================================
+    // resolve_expr: direct TagExpr variant coverage
+    // ======================================================================
+
+    #[tokio::test]
+    async fn resolve_expr_tag_single_match() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG_SINGLE", "tag", "solo").await;
+        insert_block(&pool, "BLK_SOLO", "content", "only one").await;
+        insert_tag_assoc(&pool, "BLK_SOLO", "TAG_SINGLE").await;
+
+        let result = resolve_expr(&pool, &TagExpr::Tag("TAG_SINGLE".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            result.len(),
+            1,
+            "Tag variant should match exactly one block"
+        );
+        assert!(
+            result.contains("BLK_SOLO"),
+            "result should contain the tagged block"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_expr_prefix_direct() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG_PD1", "tag", "proj/alpha").await;
+        insert_tag_cache(&pool, "TAG_PD1", "proj/alpha", 1).await;
+
+        insert_block(&pool, "BLK_PD1", "content", "alpha work").await;
+        insert_tag_assoc(&pool, "BLK_PD1", "TAG_PD1").await;
+
+        let result = resolve_expr(&pool, &TagExpr::Prefix("proj/".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            result.len(),
+            1,
+            "Prefix variant should match exactly one block"
+        );
+        assert!(
+            result.contains("BLK_PD1"),
+            "result should contain the prefix-matched block"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_expr_and_empty_direct() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = resolve_expr(&pool, &TagExpr::And(vec![])).await.unwrap();
+        assert!(result.is_empty(), "empty And must return empty set");
+    }
+
+    #[tokio::test]
+    async fn resolve_expr_not_direct() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG_ND", "tag", "exclude-me").await;
+        insert_block(&pool, "BLK_ND1", "content", "tagged").await;
+        insert_block(&pool, "BLK_ND2", "content", "untagged").await;
+
+        insert_tag_assoc(&pool, "BLK_ND1", "TAG_ND").await;
+
+        let expr = TagExpr::Not(Box::new(TagExpr::Tag("TAG_ND".into())));
+        let result = resolve_expr(&pool, &expr).await.unwrap();
+
+        assert!(
+            !result.contains("BLK_ND1"),
+            "tagged block should be excluded"
+        );
+        assert!(
+            result.contains("BLK_ND2"),
+            "untagged block should be included"
+        );
+        assert!(
+            result.contains("TAG_ND"),
+            "tag block itself should be in complement"
+        );
+    }
 }

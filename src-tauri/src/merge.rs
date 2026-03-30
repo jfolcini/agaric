@@ -1698,4 +1698,127 @@ mod tests {
         // device-B > device-A lexicographically
         assert_eq!(result_ab.winner_device, DEV_B);
     }
+
+    // =====================================================================
+    // 9. find_lca: unexpected op_type in edit chain (→ extract_prev_edit)
+    // =====================================================================
+
+    /// Walking the edit chain in `find_lca` calls `extract_prev_edit`, which
+    /// returns `AppError::InvalidOperation` if the op is neither edit_block
+    /// nor create_block. This exercises that defensive check.
+    #[tokio::test]
+    async fn find_lca_unexpected_op_type_in_chain_returns_error() {
+        let (pool, _dir) = test_pool().await;
+
+        // seq 1: create_block
+        append_local_op_at(&pool, DEV_A, make_create("B1", "hello"), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        // seq 2: insert a raw "add_tag" op with a prev_edit-like payload.
+        // When find_lca walks chain A from this op, extract_prev_edit will
+        // fail because "add_tag" is not edit_block or create_block.
+        let add_tag_payload = r#"{"block_id":"B1","tag_id":"T1"}"#;
+        let record = make_remote_record(DEV_A, 2, None, "add_tag", add_tag_payload);
+        // Insert directly via raw SQL since insert_remote_op expects a
+        // device_id != DEV_A for "remote" but we need it on DEV_A's chain
+        sqlx::query!(
+            "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            record.device_id,
+            record.seq,
+            record.parent_seqs,
+            record.hash,
+            record.op_type,
+            record.payload,
+            record.created_at,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // find_lca starts from (DEV_A, 2) and calls extract_prev_edit on
+        // the "add_tag" op — should return InvalidOperation error
+        let result = dag::find_lca(&pool, &(DEV_A.into(), 2), &(DEV_A.into(), 1)).await;
+
+        assert!(
+            result.is_err(),
+            "find_lca should error on unexpected op_type in chain, got: {result:?}"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("expected edit_block or create_block"),
+            "error should mention expected op types, got: {err}"
+        );
+    }
+
+    // =====================================================================
+    // 10. merge_text: fallback walk with no LCA (direct create → create)
+    // =====================================================================
+
+    /// When two devices independently create the same block_id (disjoint
+    /// edit chains with no overlap), find_lca returns None and merge_text
+    /// walks back to the create_block root for the ancestor text.
+    /// This exercises the fallback path at lines 95-129 in merge.rs.
+    #[tokio::test]
+    async fn merge_text_no_lca_walks_to_create_root() {
+        let (pool, _dir) = test_pool().await;
+
+        // Device A: create_block B1 with "base text\n"
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_create("B1", "base text\n"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device A: edit B1 → "base text\nfrom A\n"
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "base text\nfrom A\n", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B: independently create the same block_id B1 with "base text\n"
+        // This creates a disjoint chain with no overlap to A's chain.
+        let b_create_payload = r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"base text\n"}"#;
+        let b_create = make_remote_record(DEV_B, 1, None, "create_block", b_create_payload);
+        crate::dag::insert_remote_op(&pool, &b_create)
+            .await
+            .unwrap();
+
+        // Device B: edit B1 → "base text\nfrom B\n"
+        let b_edit_payload =
+            r#"{"block_id":"B1","to_text":"base text\nfrom B\n","prev_edit":["device-B",1]}"#;
+        let b_edit = make_remote_record(DEV_B, 2, None, "edit_block", b_edit_payload);
+        crate::dag::insert_remote_op(&pool, &b_edit).await.unwrap();
+
+        // merge_text: chains A (1→2) and B (1→2) have no overlap in (device_id, seq)
+        // find_lca will return None, triggering the fallback walk.
+        let result = merge_text(&pool, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 2))
+            .await
+            .unwrap();
+
+        // The ancestor is found by walking A's chain to create_block → "base text\n"
+        match result {
+            MergeResult::Clean(merged) => {
+                assert!(
+                    merged.contains("from A") && merged.contains("from B"),
+                    "clean merge should combine both additions: {merged}"
+                );
+            }
+            MergeResult::Conflict { ancestor, .. } => {
+                assert_eq!(
+                    ancestor, "base text\n",
+                    "ancestor must come from create_block found by fallback walk"
+                );
+            }
+        }
+    }
 }

@@ -1040,4 +1040,79 @@ mod tests {
             "expected NotFound error, got: {msg}"
         );
     }
+
+    // =====================================================================
+    // extract_prev_edit: unexpected op_type
+    // =====================================================================
+
+    /// `extract_prev_edit` returns `AppError::InvalidOperation` when the
+    /// `OpRecord` has an op_type other than "edit_block" or "create_block".
+    #[test]
+    fn extract_prev_edit_unexpected_op_type_returns_error() {
+        let payload = r#"{"block_id":"B1","tag_id":"T1"}"#;
+        let hash = compute_op_hash("dev-test", 1, None, "delete_block", payload);
+        let record = OpRecord {
+            device_id: "dev-test".to_owned(),
+            seq: 1,
+            parent_seqs: None,
+            hash,
+            op_type: "delete_block".to_owned(),
+            payload: payload.to_owned(),
+            created_at: FIXED_TS.to_owned(),
+        };
+
+        let result = extract_prev_edit(&record);
+        assert!(
+            result.is_err(),
+            "extract_prev_edit should error on delete_block op_type"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("expected edit_block or create_block"),
+            "error should mention expected types, got: {err}"
+        );
+    }
+
+    /// `extract_prev_edit` returns `Ok(None)` for `create_block` ops.
+    #[test]
+    fn extract_prev_edit_create_block_returns_none() {
+        let payload = r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"hello"}"#;
+        let hash = compute_op_hash("dev-test", 1, None, "create_block", payload);
+        let record = OpRecord {
+            device_id: "dev-test".to_owned(),
+            seq: 1,
+            parent_seqs: None,
+            hash,
+            op_type: "create_block".to_owned(),
+            payload: payload.to_owned(),
+            created_at: FIXED_TS.to_owned(),
+        };
+
+        let result = extract_prev_edit(&record).unwrap();
+        assert!(result.is_none(), "create_block should have no prev_edit");
+    }
+
+    /// `extract_prev_edit` returns the `prev_edit` pointer for `edit_block` ops.
+    #[test]
+    fn extract_prev_edit_edit_block_returns_prev_edit() {
+        let payload = r#"{"block_id":"B1","to_text":"updated","prev_edit":["device-A",1]}"#;
+        let hash = compute_op_hash("dev-test", 2, None, "edit_block", payload);
+        let record = OpRecord {
+            device_id: "dev-test".to_owned(),
+            seq: 2,
+            parent_seqs: None,
+            hash,
+            op_type: "edit_block".to_owned(),
+            payload: payload.to_owned(),
+            created_at: FIXED_TS.to_owned(),
+        };
+
+        let result = extract_prev_edit(&record).unwrap();
+        assert_eq!(
+            result,
+            Some(("device-A".to_owned(), 1)),
+            "edit_block should return its prev_edit"
+        );
+    }
 }

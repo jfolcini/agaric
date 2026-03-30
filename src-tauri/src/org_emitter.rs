@@ -285,4 +285,44 @@ mod tests {
     fn unicode_to_entity_unknown() {
         assert_eq!(unicode_to_entity("x"), None);
     }
+
+    // --- Italic mark delimiter (line 51) ---
+    #[test]
+    fn emit_text_node_italic() {
+        let node = TextNode {
+            text: "hi".into(),
+            marks: vec![OrgMark::Italic],
+        };
+        assert_eq!(emit_text_node(&node), "/hi/");
+    }
+
+    // --- Timestamp with time (line 81) ---
+    #[test]
+    fn emit_ts_with_time() {
+        assert_eq!(
+            emit(&doc(vec![vec![InlineNode::Timestamp(OrgTimestamp {
+                active: true,
+                date: "2024-01-15".into(),
+                time: Some("10:30".into()),
+            })]])),
+            "<2024-01-15 Mon 10:30>"
+        );
+    }
+    #[test]
+    fn emit_inactive_ts_with_time() {
+        assert_eq!(
+            emit(&doc(vec![vec![InlineNode::Timestamp(OrgTimestamp {
+                active: false,
+                date: "2025-01-15".into(),
+                time: Some("14:00".into()),
+            })]])),
+            "[2025-01-15 Wed 14:00]"
+        );
+    }
+
+    // --- HardBreak (line 86) ---
+    #[test]
+    fn emit_hard_break() {
+        assert_eq!(emit_inline_node(&InlineNode::HardBreak), "\n");
+    }
 }

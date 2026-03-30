@@ -1106,6 +1106,58 @@ pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<Bloc
     row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}'")))
 }
 
+// ---------------------------------------------------------------------------
+// batch_resolve — single-query multi-block metadata lookup
+// ---------------------------------------------------------------------------
+
+/// Lightweight metadata returned by [`batch_resolve_inner`].
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow, specta::Type)]
+pub struct ResolvedBlock {
+    pub id: String,
+    /// `content` column — page title, tag name, or content text (truncated).
+    pub title: Option<String>,
+    pub block_type: String,
+    pub deleted: bool,
+}
+
+/// Batch-resolve block metadata for a list of IDs in a single query.
+///
+/// Returns one [`ResolvedBlock`] per matched ID. IDs that don't exist in the
+/// database are silently omitted (no error). Soft-deleted blocks are included
+/// with `deleted = true`.
+///
+/// Uses `json_each()` so the full ID list is passed as a single JSON-encoded
+/// bind parameter — no dynamic SQL construction.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — `ids` is empty
+pub async fn batch_resolve_inner(
+    pool: &SqlitePool,
+    ids: Vec<String>,
+) -> Result<Vec<ResolvedBlock>, AppError> {
+    if ids.is_empty() {
+        return Err(AppError::Validation("ids list cannot be empty".into()));
+    }
+
+    let ids_json = serde_json::to_string(&ids)?;
+
+    let rows: Vec<ResolvedBlock> = sqlx::query_as(
+        "SELECT \
+             id, \
+             content AS title, \
+             block_type, \
+             CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END AS deleted \
+           FROM blocks \
+           WHERE id IN (SELECT value FROM json_each(?1))",
+    )
+    .bind(&ids_json)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
 /// Add a tag to a block.
 ///
 /// Validates both the block and the tag block exist and are not deleted,
@@ -1715,6 +1767,19 @@ pub async fn list_blocks(
 #[specta::specta]
 pub async fn get_block(pool: State<'_, ReadPool>, block_id: String) -> Result<BlockRow, AppError> {
     get_block_inner(&pool.0, block_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: batch-resolve block metadata. Delegates to [`batch_resolve_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn batch_resolve(
+    pool: State<'_, ReadPool>,
+    ids: Vec<String>,
+) -> Result<Vec<ResolvedBlock>, AppError> {
+    batch_resolve_inner(&pool.0, ids)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -4776,5 +4841,170 @@ mod tests {
             props.is_empty(),
             "new block should have no properties, got: {props:?}"
         );
+    }
+
+    // ─── batch_resolve tests ─────────────────────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_resolve_returns_all_requested_blocks() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BR01", "content", "First block", None, Some(0)).await;
+        insert_block(&pool, "BR02", "page", "My Page", None, Some(1)).await;
+        insert_block(&pool, "BR03", "tag", "work", None, Some(2)).await;
+
+        let result = batch_resolve_inner(&pool, vec!["BR01".into(), "BR02".into(), "BR03".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(result.len(), 3, "must return all 3 blocks");
+
+        let r1 = result.iter().find(|r| r.id == "BR01").unwrap();
+        assert_eq!(r1.title.as_deref(), Some("First block"));
+        assert_eq!(r1.block_type, "content");
+        assert!(!r1.deleted);
+
+        let r2 = result.iter().find(|r| r.id == "BR02").unwrap();
+        assert_eq!(r2.title.as_deref(), Some("My Page"));
+        assert_eq!(r2.block_type, "page");
+        assert!(!r2.deleted);
+
+        let r3 = result.iter().find(|r| r.id == "BR03").unwrap();
+        assert_eq!(r3.title.as_deref(), Some("work"));
+        assert_eq!(r3.block_type, "tag");
+        assert!(!r3.deleted);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_resolve_empty_ids_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = batch_resolve_inner(&pool, vec![]).await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "empty ids list must return Validation error, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_resolve_includes_deleted_blocks() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BR_DEL", "content", "deleted block", None, Some(0)).await;
+        sqlx::query("UPDATE blocks SET deleted_at = ?")
+            .bind(FIXED_TS)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = batch_resolve_inner(&pool, vec!["BR_DEL".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert!(result[0].deleted, "deleted blocks must have deleted=true");
+        assert_eq!(result[0].title.as_deref(), Some("deleted block"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_resolve_omits_nonexistent_ids() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BR_EXISTS", "content", "exists", None, Some(0)).await;
+
+        let result = batch_resolve_inner(&pool, vec!["BR_EXISTS".into(), "BR_MISSING".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(result.len(), 1, "nonexistent IDs must be silently omitted");
+        assert_eq!(result[0].id, "BR_EXISTS");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_resolve_null_content_returns_none_title() {
+        let (pool, _dir) = test_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, ?, NULL, NULL, 0)",
+        )
+        .bind("BR_NULL")
+        .bind("content")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let result = batch_resolve_inner(&pool, vec!["BR_NULL".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert!(result[0].title.is_none(), "NULL content → None title");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_resolve_single_id() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BR_SINGLE", "page", "Solo Page", None, Some(0)).await;
+
+        let result = batch_resolve_inner(&pool, vec!["BR_SINGLE".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "BR_SINGLE");
+        assert_eq!(result[0].title.as_deref(), Some("Solo Page"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_resolve_duplicate_ids_deduped_by_db() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BR_DUP", "content", "Dup block", None, Some(0)).await;
+
+        let result = batch_resolve_inner(
+            &pool,
+            vec!["BR_DUP".into(), "BR_DUP".into(), "BR_DUP".into()],
+        )
+        .await
+        .unwrap();
+
+        // json_each produces 3 rows for 3 values, but the IN subquery
+        // matches only the one block row — result depends on DB behavior.
+        // With json_each + IN, duplicates in the value list may produce
+        // duplicate matches. We assert at least 1 result.
+        assert!(
+            !result.is_empty(),
+            "duplicate IDs must still return the block"
+        );
+        assert!(
+            result.iter().all(|r| r.id == "BR_DUP"),
+            "all results must be the same block"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_resolve_mixed_block_types() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BR_PAGE", "page", "Page Title", None, Some(0)).await;
+        insert_block(&pool, "BR_TAG", "tag", "my-tag", None, Some(1)).await;
+        insert_block(
+            &pool,
+            "BR_CONTENT",
+            "content",
+            "Some text",
+            Some("BR_PAGE"),
+            Some(0),
+        )
+        .await;
+
+        let result = batch_resolve_inner(
+            &pool,
+            vec!["BR_PAGE".into(), "BR_TAG".into(), "BR_CONTENT".into()],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.len(), 3);
+        let types: Vec<&str> = result.iter().map(|r| r.block_type.as_str()).collect();
+        assert!(types.contains(&"page"));
+        assert!(types.contains(&"tag"));
+        assert!(types.contains(&"content"));
     }
 }

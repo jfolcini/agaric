@@ -342,6 +342,24 @@ mod tests {
         assert_eq!(c.max_input_size, orig.max_input_size);
     }
 
+    // F02 -- reconfigure emit_entities_as_names (line 149)
+    #[test]
+    fn reconfigure_emit_entities() {
+        let mut c = OrgSerializerConfig {
+            max_input_size: 42,
+            emit_entities_as_names: false,
+        };
+        c.reconfigure(OrgSerializerConfigUpdate {
+            max_input_size: None,
+            emit_entities_as_names: Some(true),
+        });
+        assert_eq!(c.max_input_size, 42, "max_input_size must stay unchanged");
+        assert!(
+            c.emit_entities_as_names,
+            "emit_entities_as_names must be updated to true"
+        );
+    }
+
     // F07 -- Size guard
     #[test]
     fn parse_checked_ok() {

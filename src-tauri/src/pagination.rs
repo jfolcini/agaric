@@ -2329,4 +2329,76 @@ mod tests {
             "deleted C03 must be excluded from fresh walk"
         );
     }
+
+    // ======================================================================
+    // list_children: next_cursor with exactly limit+1 items (line 174)
+    // ======================================================================
+
+    /// When exactly `limit + 1` items exist, has_more is true and next_cursor
+    /// is set. This exercises the `build_page_response` cursor construction
+    /// path (line 165-167) and the next_cursor field assignment (line 173).
+    #[tokio::test]
+    async fn list_children_exactly_limit_plus_one_returns_next_cursor() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "LP_PAR", "page", "parent", None, Some(1)).await;
+
+        // Insert exactly 3 children (limit will be 2 → 3 = limit + 1)
+        for i in 1..=3_i64 {
+            let id = format!("LP_C{i:03}");
+            insert_block(
+                &pool,
+                &id,
+                "content",
+                &format!("child {i}"),
+                Some("LP_PAR"),
+                Some(i),
+            )
+            .await;
+        }
+
+        let page = PageRequest::new(None, Some(2)).unwrap();
+        let resp = list_children(&pool, Some("LP_PAR"), &page).await.unwrap();
+
+        assert_eq!(resp.items.len(), 2, "should return exactly limit items");
+        assert!(resp.has_more, "has_more must be true with limit+1 items");
+        assert!(
+            resp.next_cursor.is_some(),
+            "next_cursor must be set when has_more is true"
+        );
+    }
+
+    /// When exactly `limit` items exist (no extra), has_more is false and
+    /// next_cursor is None. This is the boundary condition for the cursor
+    /// path — the extra-row check finds no overflow.
+    #[tokio::test]
+    async fn list_children_exactly_limit_items_returns_no_next_cursor() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "LE_PAR", "page", "parent", None, Some(1)).await;
+
+        // Insert exactly 2 children (limit = 2 → fetch 3, get 2 → no overflow)
+        for i in 1..=2_i64 {
+            let id = format!("LE_C{i:03}");
+            insert_block(
+                &pool,
+                &id,
+                "content",
+                &format!("child {i}"),
+                Some("LE_PAR"),
+                Some(i),
+            )
+            .await;
+        }
+
+        let page = PageRequest::new(None, Some(2)).unwrap();
+        let resp = list_children(&pool, Some("LE_PAR"), &page).await.unwrap();
+
+        assert_eq!(resp.items.len(), 2, "should return all 2 items");
+        assert!(!resp.has_more, "has_more must be false when no overflow");
+        assert!(
+            resp.next_cursor.is_none(),
+            "next_cursor must be None when has_more is false"
+        );
+    }
 }

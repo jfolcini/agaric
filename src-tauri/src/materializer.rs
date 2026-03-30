@@ -2086,10 +2086,26 @@ mod tests {
         let mat = Materializer::new(pool);
 
         let m = mat.metrics();
-        assert_eq!(m.fg_errors.load(AtomicOrdering::Relaxed), 0);
-        assert_eq!(m.bg_errors.load(AtomicOrdering::Relaxed), 0);
-        assert_eq!(m.fg_panics.load(AtomicOrdering::Relaxed), 0);
-        assert_eq!(m.bg_panics.load(AtomicOrdering::Relaxed), 0);
+        assert_eq!(
+            m.fg_errors.load(AtomicOrdering::Relaxed),
+            0,
+            "fg_errors should start at 0"
+        );
+        assert_eq!(
+            m.bg_errors.load(AtomicOrdering::Relaxed),
+            0,
+            "bg_errors should start at 0"
+        );
+        assert_eq!(
+            m.fg_panics.load(AtomicOrdering::Relaxed),
+            0,
+            "fg_panics should start at 0"
+        );
+        assert_eq!(
+            m.bg_panics.load(AtomicOrdering::Relaxed),
+            0,
+            "bg_panics should start at 0"
+        );
     }
 
     #[tokio::test]
@@ -2098,9 +2114,21 @@ mod tests {
         let mat = Materializer::new(pool);
 
         let status = mat.status();
-        assert_eq!(status.fg_errors, 0);
-        assert_eq!(status.bg_errors, 0);
-        assert_eq!(status.fg_panics, 0);
-        assert_eq!(status.bg_panics, 0);
+        assert_eq!(
+            status.fg_errors, 0,
+            "fg_errors in StatusInfo should be 0 on fresh materializer"
+        );
+        assert_eq!(
+            status.bg_errors, 0,
+            "bg_errors in StatusInfo should be 0 on fresh materializer"
+        );
+        assert_eq!(
+            status.fg_panics, 0,
+            "fg_panics in StatusInfo should be 0 on fresh materializer"
+        );
+        assert_eq!(
+            status.bg_panics, 0,
+            "bg_panics in StatusInfo should be 0 on fresh materializer"
+        );
     }
 }

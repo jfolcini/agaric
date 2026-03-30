@@ -1743,4 +1743,115 @@ mod tests {
             assert_eq!(a.deleted_at, b.deleted_at);
         }
     }
+
+    // =======================================================================
+    // 26. create_snapshot_captures_all_related_tables (lines 155,167,181,192)
+    // =======================================================================
+
+    #[tokio::test]
+    async fn create_snapshot_captures_all_related_tables() {
+        let (pool, _dir) = test_pool().await;
+        let device_id = "dev-1";
+
+        // 1. Insert blocks (including a tag block for FK on block_tags)
+        insert_block(&pool, "blk-1", "main content").await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, is_conflict) \
+             VALUES ('blk-2', 'content', 'linked target', 2, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, is_conflict) \
+             VALUES ('tag-1', 'tag', 'urgent', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 2. Insert block_tags
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES ('blk-1', 'tag-1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // 3. Insert block_properties
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             VALUES ('blk-1', 'status', 'active')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 4. Insert block_links
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES ('blk-1', 'blk-2')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // 5. Insert attachments
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES ('att-1', 'blk-1', 'image/png', 'photo.png', 1024, 'attachments/photo.png', '2025-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 6. Insert an op so the frontier query succeeds
+        insert_op_at(&pool, device_id, "blk-1", "2025-01-01T00:00:00Z").await;
+
+        // 7. Create snapshot and decode
+        let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
+        let row = sqlx::query!("SELECT data FROM log_snapshots WHERE id = ?", snapshot_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let decoded = decode_snapshot(&row.data).unwrap();
+
+        // 8. Verify all related tables are populated
+        assert_eq!(
+            decoded.tables.blocks.len(),
+            3,
+            "should capture all 3 blocks"
+        );
+
+        assert_eq!(
+            decoded.tables.block_tags.len(),
+            1,
+            "should capture block_tags"
+        );
+        assert_eq!(decoded.tables.block_tags[0].block_id, "blk-1");
+        assert_eq!(decoded.tables.block_tags[0].tag_id, "tag-1");
+
+        assert_eq!(
+            decoded.tables.block_properties.len(),
+            1,
+            "should capture block_properties"
+        );
+        assert_eq!(decoded.tables.block_properties[0].block_id, "blk-1");
+        assert_eq!(decoded.tables.block_properties[0].key, "status");
+        assert_eq!(
+            decoded.tables.block_properties[0].value_text.as_deref(),
+            Some("active")
+        );
+
+        assert_eq!(
+            decoded.tables.block_links.len(),
+            1,
+            "should capture block_links"
+        );
+        assert_eq!(decoded.tables.block_links[0].source_id, "blk-1");
+        assert_eq!(decoded.tables.block_links[0].target_id, "blk-2");
+
+        assert_eq!(
+            decoded.tables.attachments.len(),
+            1,
+            "should capture attachments"
+        );
+        assert_eq!(decoded.tables.attachments[0].filename, "photo.png");
+        assert_eq!(decoded.tables.attachments[0].block_id, "blk-1");
+    }
 }

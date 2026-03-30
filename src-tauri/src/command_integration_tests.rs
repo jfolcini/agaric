@@ -2705,3 +2705,260 @@ async fn create_block_with_none_position_appends_after_siblings() {
         "third child with position: None should get position 3"
     );
 }
+
+// ======================================================================
+// list_tags_for_block — happy paths & lifecycle
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_tags_for_block_returns_both_tags_then_one_after_removal() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Create block and two tags
+    insert_block(&pool, "LTFB_BLK", "content", "my block", None, Some(1)).await;
+    insert_block(&pool, "LTFB_TAG1", "tag", "urgent", None, None).await;
+    insert_block(&pool, "LTFB_TAG2", "tag", "personal", None, None).await;
+
+    // Add both tags
+    add_tag_inner(&pool, DEV, &mat, "LTFB_BLK".into(), "LTFB_TAG1".into())
+        .await
+        .unwrap();
+    add_tag_inner(&pool, DEV, &mat, "LTFB_BLK".into(), "LTFB_TAG2".into())
+        .await
+        .unwrap();
+
+    // Verify both tags returned
+    let tags = list_tags_for_block_inner(&pool, "LTFB_BLK".into())
+        .await
+        .unwrap();
+    assert_eq!(tags.len(), 2, "block must have 2 tags after adding both");
+    assert!(
+        tags.contains(&"LTFB_TAG1".to_string()),
+        "tag list must contain LTFB_TAG1"
+    );
+    assert!(
+        tags.contains(&"LTFB_TAG2".to_string()),
+        "tag list must contain LTFB_TAG2"
+    );
+
+    // Remove one tag
+    remove_tag_inner(&pool, DEV, &mat, "LTFB_BLK".into(), "LTFB_TAG1".into())
+        .await
+        .unwrap();
+
+    // Verify only one tag remains
+    let tags_after = list_tags_for_block_inner(&pool, "LTFB_BLK".into())
+        .await
+        .unwrap();
+    assert_eq!(tags_after.len(), 1, "block must have 1 tag after removal");
+    assert_eq!(
+        tags_after[0], "LTFB_TAG2",
+        "remaining tag must be LTFB_TAG2"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_tags_for_block_no_tags_returns_empty() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "LTFB_EMPTY", "content", "no tags", None, Some(1)).await;
+
+    let tags = list_tags_for_block_inner(&pool, "LTFB_EMPTY".into())
+        .await
+        .unwrap();
+    assert!(tags.is_empty(), "block with no tags must return empty vec");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_tags_for_nonexistent_block_returns_empty() {
+    let (pool, _dir) = test_pool().await;
+
+    let tags = list_tags_for_block_inner(&pool, "GHOST_LTFB_999".into())
+        .await
+        .unwrap();
+    assert!(
+        tags.is_empty(),
+        "nonexistent block must return empty vec (no error)"
+    );
+}
+
+// ======================================================================
+// delete_property on deleted block — error path
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_on_deleted_block_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Create block, set a property, then delete the block
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "doomed".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "status".into(),
+        Some("active".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    delete_block_inner(&pool, DEV, &mat, block.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Attempt to delete property on the now-deleted block
+    let result = delete_property_inner(&pool, DEV, &mat, block.id.clone(), "status".into()).await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "delete_property on deleted block must return AppError::NotFound"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_on_nonexistent_block_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let result = delete_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        "GHOST_PROP_BLK_999".into(),
+        "whatever".into(),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "delete_property on nonexistent block must return AppError::NotFound"
+    );
+}
+
+// ======================================================================
+// Date validation edge cases — comprehensive format checks
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn date_validation_invalid_month_13_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2025-13-01".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "month=13 must return Validation error, got: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn date_validation_short_format_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2025-01".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "short date '2025-01' must return Validation error, got: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn date_validation_two_digit_year_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("25-1-1".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "'25-1-1' must return Validation error, got: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn date_validation_day_32_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("2025-01-32".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "day=32 must return Validation error, got: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn date_validation_non_date_string_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        Some("not-a-date".into()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "'not-a-date' must return Validation error, got: {result:?}"
+    );
+}

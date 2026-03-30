@@ -571,4 +571,238 @@ mod tests {
             vec![marked("*x*", vec![OrgMark::Code])]
         );
     }
+
+    // --- Tag ref early returns (lines 82, 87, 96) ---
+    #[test]
+    fn tag_ref_too_short() {
+        let mut s = Scanner::new("#[AB]");
+        assert!(
+            try_consume_tag_ref(&mut s).is_none(),
+            "input shorter than 29 bytes must not match as tag ref"
+        );
+        assert_eq!(s.pos, 0, "scanner must not advance on failed tag ref");
+    }
+    #[test]
+    fn tag_ref_wrong_prefix() {
+        // 29 bytes, passes length guard; second char is 'A' not '['
+        let mut s = Scanner::new("#A01ARZ3NDEKTSV4RRFFQ69G5FAV]");
+        assert!(
+            try_consume_tag_ref(&mut s).is_none(),
+            "tag ref with wrong prefix char should be rejected"
+        );
+    }
+    #[test]
+    fn tag_ref_invalid_ulid() {
+        // Correct #[ ] framing but lowercase content fails ULID regex
+        let mut s = Scanner::new("#[abcdefghijklmnopqrstuvwxyz]");
+        assert!(
+            try_consume_tag_ref(&mut s).is_none(),
+            "tag ref with non-uppercase ULID content must be rejected"
+        );
+    }
+
+    // --- Block link early returns (lines 108, 121) ---
+    #[test]
+    fn block_link_too_short() {
+        let mut s = Scanner::new("[[AB]]");
+        assert!(
+            try_consume_block_link(&mut s).is_none(),
+            "input shorter than 30 bytes must not match as block link"
+        );
+    }
+    #[test]
+    fn block_link_wrong_prefix() {
+        // 30+ bytes, starts with '[' but second char is not '['
+        let mut s = Scanner::new("[x01ARZ3NDEKTSV4RRFFQ69G5FAV]]");
+        assert!(
+            try_consume_block_link(&mut s).is_none(),
+            "block link with wrong second bracket must be rejected"
+        );
+    }
+    #[test]
+    fn block_link_invalid_ulid() {
+        // Correct [[ ]] framing but lowercase content fails ULID regex
+        let mut s = Scanner::new("[[abcdefghijklmnopqrstuvwxyz]]");
+        assert!(
+            try_consume_block_link(&mut s).is_none(),
+            "block link with non-uppercase ULID content must be rejected"
+        );
+    }
+
+    // --- Entity early returns (lines 128, 146) ---
+    #[test]
+    fn entity_no_backslash() {
+        let mut s = Scanner::new("alpha");
+        assert!(
+            try_consume_entity(&mut s).is_none(),
+            "entity without leading backslash must not match"
+        );
+    }
+    #[test]
+    fn entity_unknown_name() {
+        let mut s = Scanner::new("\\foobar");
+        assert!(
+            try_consume_entity(&mut s).is_none(),
+            "unknown entity name must not match"
+        );
+    }
+
+    // --- Active timestamp early return (line 153) ---
+    #[test]
+    fn active_ts_no_angle() {
+        let mut s = Scanner::new("not a timestamp");
+        assert!(
+            try_consume_active_timestamp(&mut s).is_none(),
+            "active timestamp without '<' must not match"
+        );
+    }
+
+    // --- Inactive timestamps (lines 174, 177, 183-189, 309-310) ---
+    #[test]
+    fn inactive_ts_no_bracket() {
+        let mut s = Scanner::new("not a timestamp");
+        assert!(
+            try_consume_inactive_timestamp(&mut s).is_none(),
+            "inactive timestamp without '[' must not match"
+        );
+    }
+    #[test]
+    fn inactive_ts_rejects_double_bracket() {
+        let mut s = Scanner::new("[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]");
+        assert!(
+            try_consume_inactive_timestamp(&mut s).is_none(),
+            "double bracket must be rejected to avoid block link ambiguity"
+        );
+    }
+    #[test]
+    fn inactive_ts_date_only() {
+        let nodes = parse_line("[2025-01-15 Wed]");
+        assert_eq!(
+            nodes,
+            vec![InlineNode::Timestamp(OrgTimestamp {
+                active: false,
+                date: "2025-01-15".into(),
+                time: None,
+            })]
+        );
+    }
+    #[test]
+    fn inactive_ts_with_time() {
+        let nodes = parse_line("[2025-01-15 Wed 10:30]");
+        assert_eq!(
+            nodes,
+            vec![InlineNode::Timestamp(OrgTimestamp {
+                active: false,
+                date: "2025-01-15".into(),
+                time: Some("10:30".into()),
+            })]
+        );
+    }
+    #[test]
+    fn inactive_ts_invalid() {
+        let nodes = parse_line("[invalid]");
+        assert_eq!(nodes, vec![text("[invalid]")]);
+    }
+
+    // --- Footnote early return (line 196) ---
+    #[test]
+    fn footnote_no_bracket() {
+        let mut s = Scanner::new("not a footnote");
+        assert!(
+            try_consume_footnote(&mut s).is_none(),
+            "footnote without '[' must not match"
+        );
+    }
+
+    // --- Mark delimiters: italic and code (lines 218-219) ---
+    #[test]
+    fn parse_line_italic() {
+        assert_eq!(
+            parse_line("/italic/"),
+            vec![marked("italic", vec![OrgMark::Italic])]
+        );
+    }
+    #[test]
+    fn parse_line_code() {
+        assert_eq!(
+            parse_line("~code~"),
+            vec![marked("code", vec![OrgMark::Code])]
+        );
+    }
+    #[test]
+    fn parse_unclosed_italic() {
+        // Exercises mark_delimiter(Italic) in the unclosed-mark revert path
+        assert_eq!(parse_line("/x"), vec![text("/x")]);
+    }
+
+    // --- Text node merging (lines 385-386) ---
+    #[test]
+    fn text_merge_after_unclosed() {
+        // "a *b" → plain "a " flushed, then unclosed bold reverts "*b",
+        // trailing text merges with the preceding plain-text node.
+        let nodes = parse_line("a *b");
+        assert_eq!(nodes, vec![text("a *b")]);
+    }
+
+    // --- node_to_plain_text (lines 409-423) ---
+    #[test]
+    fn plain_text_of_tag_ref() {
+        let n = InlineNode::TagRef {
+            id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+        };
+        assert_eq!(node_to_plain_text(&n), "#[01ARZ3NDEKTSV4RRFFQ69G5FAV]");
+    }
+    #[test]
+    fn plain_text_of_block_link() {
+        let n = InlineNode::BlockLink {
+            id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+        };
+        assert_eq!(node_to_plain_text(&n), "[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]");
+    }
+    #[test]
+    fn plain_text_of_entity() {
+        let n = InlineNode::Entity {
+            name: "alpha".into(),
+            unicode: "\u{03B1}".into(),
+        };
+        assert_eq!(node_to_plain_text(&n), "\\alpha");
+    }
+    #[test]
+    fn plain_text_of_active_ts() {
+        let n = InlineNode::Timestamp(OrgTimestamp {
+            active: true,
+            date: "2024-01-15".into(),
+            time: None,
+        });
+        assert_eq!(node_to_plain_text(&n), "<2024-01-15>");
+    }
+    #[test]
+    fn plain_text_of_inactive_ts_no_time() {
+        let n = InlineNode::Timestamp(OrgTimestamp {
+            active: false,
+            date: "2024-01-15".into(),
+            time: None,
+        });
+        assert_eq!(node_to_plain_text(&n), "[2024-01-15]");
+    }
+    #[test]
+    fn plain_text_of_inactive_ts_with_time() {
+        let n = InlineNode::Timestamp(OrgTimestamp {
+            active: false,
+            date: "2024-01-15".into(),
+            time: Some("10:30".into()),
+        });
+        assert_eq!(node_to_plain_text(&n), "[2024-01-15 10:30]");
+    }
+    #[test]
+    fn plain_text_of_footnote() {
+        let n = InlineNode::FootnoteRef {
+            label: "abc".into(),
+        };
+        assert_eq!(node_to_plain_text(&n), "[fn:abc]");
+    }
+    #[test]
+    fn plain_text_of_hard_break() {
+        assert_eq!(node_to_plain_text(&InlineNode::HardBreak), "\n");
+    }
 }
