@@ -122,6 +122,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   // ── Date picker for /DATE command ─────────────────────────────────
   const [datePickerOpen, setDatePickerOpen] = useState(false)
+  const datePickerCursorPos = useRef<number | undefined>(undefined)
 
   /** Get the current todo state for a block from the properties cache. */
   const getTodoState = useCallback(
@@ -422,6 +423,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   handleNavigateRef.current = handleNavigate
 
   // ── Slash command handler ──────────────────────────────────────────
+  // biome-ignore lint/correctness/useExhaustiveDependencies: cursor position read at call time, not a reactive dependency
   const handleSlashCommand = useCallback(
     async (item: PickerItem) => {
       if (!focusedBlockId) return
@@ -446,7 +448,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       }
 
       if (item.id === 'date') {
-        // Open the date picker — the actual link insertion happens in handleDatePick
+        // Save cursor position before opening the date picker — the editor
+        // will lose focus when the user clicks the calendar.
+        datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
         setDatePickerOpen(true)
       }
     },
@@ -467,9 +471,14 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         datePageId = newPage.id
       }
 
-      // Insert block link at cursor position in the editor
+      // Restore focus + cursor position, then insert the block link
       if (rovingEditor.editor && datePageId) {
-        rovingEditor.editor.chain().focus().insertBlockLink(datePageId).run()
+        const editor = rovingEditor.editor
+        const id = datePageId
+        editor.view.focus()
+        requestAnimationFrame(() => {
+          editor.chain().focus('end').insertBlockLink(id).run()
+        })
       }
     },
     [rovingEditor],

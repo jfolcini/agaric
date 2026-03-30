@@ -12,7 +12,7 @@ import {
 import { useCallback, useState } from 'react'
 import { BootGate } from './components/BootGate'
 import { ConflictList } from './components/ConflictList'
-import { JournalPage } from './components/JournalPage'
+import { JournalControls, JournalPage } from './components/JournalPage'
 import { KeyboardShortcuts } from './components/KeyboardShortcuts'
 import { PageBrowser } from './components/PageBrowser'
 import { PageEditor } from './components/PageEditor'
@@ -137,9 +137,13 @@ function App() {
         <SidebarInset>
           <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
             <SidebarTrigger className="md:hidden" />
-            <span className="font-medium" data-testid="header-label">
-              {headerLabel}
-            </span>
+            {currentView === 'journal' ? (
+              <JournalControls />
+            ) : (
+              <span className="font-medium" data-testid="header-label">
+                {headerLabel}
+              </span>
+            )}
           </header>
           <div className="flex-1 overflow-y-auto p-4 md:p-6">
             {currentView === 'journal' && <JournalPage onNavigateToPage={handlePageSelect} />}

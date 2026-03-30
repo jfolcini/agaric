@@ -32,7 +32,8 @@ vi.mock('../BlockTree', () => ({
 }))
 
 import { useBlockStore } from '../../stores/blocks'
-import { JournalPage } from '../JournalPage'
+import { useJournalStore } from '../../stores/journal'
+import { JournalControls, JournalPage } from '../JournalPage'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -73,16 +74,31 @@ beforeEach(() => {
     focusedBlockId: null,
     loading: false,
   })
+  // Reset journal store to defaults
+  useJournalStore.setState({
+    mode: 'daily',
+    currentDate: new Date(),
+  })
 })
+
+/** Render JournalPage with JournalControls (controls live in App header in production). */
+function renderJournal(props?: { onNavigateToPage?: (pageId: string, title?: string) => void }) {
+  return render(
+    <>
+      <JournalControls />
+      <JournalPage onNavigateToPage={props?.onNavigateToPage} />
+    </>,
+  )
+}
 
 describe('JournalPage', () => {
   // ── Daily Mode (default) ────────────────────────────────────────────
 
   describe('daily mode', () => {
     it('defaults to daily mode showing one day section (today)', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -97,9 +113,9 @@ describe('JournalPage', () => {
     })
 
     it('renders today with h2 header in daily mode', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -110,9 +126,9 @@ describe('JournalPage', () => {
     })
 
     it('shows empty state with "No blocks" when no page exists for the day', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -126,13 +142,13 @@ describe('JournalPage', () => {
     it('renders BlockTree when a page exists for the current day', async () => {
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValueOnce({
+      mockedInvoke.mockResolvedValue({
         items: [makeDailyPage('DP-TODAY', todayStr)],
         next_cursor: null,
         has_more: false,
       })
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         const trees = screen.getAllByTestId('block-tree')
@@ -145,9 +161,9 @@ describe('JournalPage', () => {
 
     it('prev button navigates to previous day', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -164,9 +180,9 @@ describe('JournalPage', () => {
 
     it('next button navigates to next day', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -183,9 +199,9 @@ describe('JournalPage', () => {
 
     it('today button returns to current day', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -211,9 +227,9 @@ describe('JournalPage', () => {
   describe('weekly mode', () => {
     it('shows 7 day sections (Mon-Sun) when switched to weekly', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -228,9 +244,9 @@ describe('JournalPage', () => {
 
     it('week starts on Monday and ends on Sunday', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -252,9 +268,9 @@ describe('JournalPage', () => {
 
     it('displays week range in nav header', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -274,13 +290,13 @@ describe('JournalPage', () => {
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValueOnce({
+      mockedInvoke.mockResolvedValue({
         items: [makeDailyPage('DP-TODAY', todayStr)],
         next_cursor: null,
         has_more: false,
       })
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -302,9 +318,9 @@ describe('JournalPage', () => {
   describe('monthly mode', () => {
     it('shows stacked day sections when switched to monthly', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -321,9 +337,9 @@ describe('JournalPage', () => {
 
     it('displays month/year in nav header', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -340,13 +356,13 @@ describe('JournalPage', () => {
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValueOnce({
+      mockedInvoke.mockResolvedValue({
         items: [makeDailyPage('DP-TODAY', todayStr)],
         next_cursor: null,
         has_more: false,
       })
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -366,9 +382,9 @@ describe('JournalPage', () => {
 
   describe('mode switcher', () => {
     it('renders Day/Week/Month tabs', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -380,9 +396,9 @@ describe('JournalPage', () => {
     })
 
     it('Day tab is selected by default', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -396,9 +412,9 @@ describe('JournalPage', () => {
 
     it('switching modes updates aria-selected on tabs', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -422,9 +438,9 @@ describe('JournalPage', () => {
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
 
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -490,13 +506,13 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
       const dailyPage = makeDailyPage('DP1', todayStr)
 
-      mockedInvoke.mockResolvedValueOnce({
+      mockedInvoke.mockResolvedValue({
         items: [dailyPage],
         next_cursor: null,
         has_more: false,
       })
 
-      render(<JournalPage />)
+      renderJournal()
 
       await waitFor(() => {
         expect(screen.getAllByTestId('block-tree')).toHaveLength(1)
@@ -546,13 +562,13 @@ describe('JournalPage', () => {
       const dailyPage = makeDailyPage('DP1', todayStr)
       const onNavigateToPage = vi.fn()
 
-      mockedInvoke.mockResolvedValueOnce({
+      mockedInvoke.mockResolvedValue({
         items: [dailyPage],
         next_cursor: null,
         has_more: false,
       })
 
-      render(<JournalPage onNavigateToPage={onNavigateToPage} />)
+      renderJournal({ onNavigateToPage })
 
       await waitFor(() => {
         expect(screen.getAllByTestId('block-tree')).toHaveLength(1)
@@ -570,9 +586,9 @@ describe('JournalPage', () => {
     })
 
     it('does not show "Open in editor" button for days without pages', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      mockedInvoke.mockResolvedValue(emptyPage)
 
-      render(<JournalPage onNavigateToPage={vi.fn()} />)
+      renderJournal({ onNavigateToPage: vi.fn() })
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -587,7 +603,7 @@ describe('JournalPage', () => {
   it('shows loading state while fetching pages', () => {
     mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
 
-    const { container } = render(<JournalPage />)
+    const { container } = renderJournal()
 
     expect(screen.getByTestId('loading-skeleton')).toBeInTheDocument()
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
@@ -597,9 +613,9 @@ describe('JournalPage', () => {
   // ── a11y ────────────────────────────────────────────────────────────
 
   it('has no a11y violations (daily mode, empty state)', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    mockedInvoke.mockResolvedValue(emptyPage)
 
-    const { container } = render(<JournalPage />)
+    const { container } = renderJournal()
 
     await waitFor(async () => {
       expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -612,13 +628,13 @@ describe('JournalPage', () => {
     const todayStr = formatDate(new Date())
     const dailyPage = makeDailyPage('DP1', todayStr)
 
-    mockedInvoke.mockResolvedValueOnce({
+    mockedInvoke.mockResolvedValue({
       items: [dailyPage],
       next_cursor: null,
       has_more: false,
     })
 
-    const { container } = render(<JournalPage onNavigateToPage={() => {}} />)
+    const { container } = renderJournal({ onNavigateToPage: () => {} })
 
     await waitFor(async () => {
       expect(screen.getAllByTestId('block-tree')).toHaveLength(1)

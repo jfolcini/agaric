@@ -39,11 +39,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { createBlock, listBlocks } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
+import { useJournalStore } from '../stores/journal'
 import { BlockTree } from './BlockTree'
-
-// ── Types ─────────────────────────────────────────────────────────────
-
-type JournalMode = 'daily' | 'weekly' | 'monthly'
 
 interface DayEntry {
   date: Date
@@ -106,11 +103,9 @@ export function JournalPage({
   onBlockClick: _onBlockClick,
   onNavigateToPage,
 }: JournalPageProps): React.ReactElement {
-  const [mode, setMode] = useState<JournalMode>('daily')
-  const [currentDate, setCurrentDate] = useState(new Date())
+  const { mode, currentDate } = useJournalStore()
   const [pageMap, setPageMap] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(false)
-  const [calendarOpen, setCalendarOpen] = useState(false)
   // Track per-day pageIds that were created by handleAddBlock so we can
   // immediately show BlockTree without waiting for a full refetch.
   const [createdPages, setCreatedPages] = useState<Map<string, string>>(new Map())
@@ -139,14 +134,6 @@ export function JournalPage({
   useEffect(() => {
     fetchPages()
   }, [])
-
-  /** Set of date strings that have pages — for calendar highlighting. */
-  const datesWithPages = useMemo(() => {
-    const set = new Set<string>()
-    for (const k of pageMap.keys()) set.add(k)
-    for (const k of createdPages.keys()) set.add(k)
-    return set
-  }, [pageMap, createdPages])
 
   /** Build a DayEntry from a Date. */
   const makeDayEntry = useCallback(
@@ -182,65 +169,9 @@ export function JournalPage({
     await load(pageId)
   }
 
-  // ── Navigation handlers ─────────────────────────────────────────────
-
-  function goToday() {
-    setCurrentDate(new Date())
-  }
-
-  function goPrev() {
-    setCurrentDate((d) => {
-      if (mode === 'daily') return subDays(d, 1)
-      if (mode === 'weekly') return subWeeks(d, 1)
-      return subMonths(d, 1)
-    })
-  }
-
-  function goNext() {
-    setCurrentDate((d) => {
-      if (mode === 'daily') return addDays(d, 1)
-      if (mode === 'weekly') return addWeeks(d, 1)
-      return addMonths(d, 1)
-    })
-  }
-
-  /** Navigate to a specific date, optionally switching mode. */
-  function navigateToDate(date: Date, newMode?: JournalMode) {
-    setCurrentDate(date)
-    if (newMode) setMode(newMode)
-    setCalendarOpen(false)
-  }
-
-  // ── Calendar picker event handlers ──────────────────────────────────
-
-  function handleCalendarDayClick(day: Date) {
-    navigateToDate(day, 'daily')
-  }
-
-  function handleCalendarWeekNumberClick(_weekNumber: number, dates: Date[]) {
-    if (dates.length > 0) {
-      navigateToDate(dates[0], 'weekly')
-    }
-  }
-
-  // ── Date display for each mode ──────────────────────────────────────
-
-  function getDateDisplay(): string {
-    if (mode === 'daily') return formatDateDisplay(currentDate)
-    if (mode === 'weekly') return formatWeekRange(currentDate)
-    return format(currentDate, 'MMMM yyyy')
-  }
-
-  function getNavLabel(): { prev: string; next: string } {
-    if (mode === 'daily') return { prev: 'Previous day', next: 'Next day' }
-    if (mode === 'weekly') return { prev: 'Previous week', next: 'Next week' }
-    return { prev: 'Previous month', next: 'Next month' }
-  }
-
   // ── Render helpers ──────────────────────────────────────────────────
 
   const todayStr = formatDate(new Date())
-  const navLabels = getNavLabel()
 
   /** Render a single day section with BlockTree. */
   function renderDaySection(entry: DayEntry, headingLevel: 'h2' | 'h3' = 'h3') {
@@ -351,123 +282,10 @@ export function JournalPage({
 
   // ── Highlighted days for the floating calendar picker ────────────────
 
-  const highlightedCalendarDays = useMemo(() => {
-    const days: Date[] = []
-    for (const dateStr of datesWithPages) {
-      const parts = dateStr.split('-')
-      if (parts.length === 3) {
-        days.push(new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])))
-      }
-    }
-    return days
-  }, [datesWithPages])
-
   // ── Main render ─────────────────────────────────────────────────────
 
   return (
     <div className="space-y-4">
-      {/* Header: Mode buttons + navigation */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {/* Mode switcher */}
-        <div className="flex items-center gap-1" role="tablist" aria-label="Journal view mode">
-          {(['daily', 'weekly', 'monthly'] as const).map((m) => (
-            <Button
-              key={m}
-              variant={mode === m ? 'secondary' : 'ghost'}
-              size="xs"
-              role="tab"
-              aria-selected={mode === m}
-              aria-label={`${m.charAt(0).toUpperCase() + m.slice(1)} view`}
-              onClick={() => setMode(m)}
-            >
-              {m === 'daily' ? 'Day' : m === 'weekly' ? 'Week' : 'Month'}
-            </Button>
-          ))}
-        </div>
-
-        {/* Date navigation */}
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon-xs" aria-label={navLabels.prev} onClick={goPrev}>
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-
-          <span
-            className="min-w-[160px] text-center text-sm font-medium"
-            data-testid="date-display"
-          >
-            {getDateDisplay()}
-          </span>
-
-          <Button variant="ghost" size="icon-xs" aria-label={navLabels.next} onClick={goNext}>
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-
-          <Button variant="outline" size="xs" onClick={goToday} aria-label="Go to today">
-            Today
-          </Button>
-
-          {/* Floating calendar picker — simple positioned dropdown */}
-          <div className="relative">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Open calendar picker"
-              onClick={() => setCalendarOpen((o) => !o)}
-            >
-              <CalendarIcon className="h-4 w-4" />
-            </Button>
-            {calendarOpen && (
-              <>
-                {/* Backdrop to close on outside click */}
-                {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
-                {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
-                <div className="fixed inset-0 z-40" onClick={() => setCalendarOpen(false)} />
-                <div className="absolute right-0 top-full z-50 mt-1 rounded-md border bg-popover p-2 shadow-md">
-                  <Calendar
-                    mode="single"
-                    selected={currentDate}
-                    onSelect={(day) => {
-                      if (day) {
-                        handleCalendarDayClick(day)
-                        setCalendarOpen(false)
-                      }
-                    }}
-                    defaultMonth={currentDate}
-                    weekStartsOn={1}
-                    showWeekNumber
-                    showOutsideDays
-                    onWeekNumberClick={(_wn: number, dates: Date[]) => {
-                      handleCalendarWeekNumberClick(_wn, dates)
-                      setCalendarOpen(false)
-                    }}
-                    modifiers={{
-                      hasContent: highlightedCalendarDays,
-                    }}
-                    modifiersClassNames={{
-                      hasContent: 'has-content-dot',
-                    }}
-                  />
-                  <style>{`
-                    .has-content-dot { position: relative; }
-                    .has-content-dot::after {
-                      content: '';
-                      position: absolute;
-                      bottom: 2px;
-                      left: 50%;
-                      transform: translateX(-50%);
-                      width: 4px;
-                      height: 4px;
-                      border-radius: 50%;
-                      background: hsl(var(--primary));
-                    }
-                  `}</style>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-
       {/* Loading indicator on initial fetch */}
       {loading && (
         <div className="space-y-1" data-testid="loading-skeleton">
@@ -481,6 +299,162 @@ export function JournalPage({
       {!loading && mode === 'daily' && renderDaily()}
       {!loading && mode === 'weekly' && renderWeekly()}
       {!loading && mode === 'monthly' && renderMonthly()}
+    </div>
+  )
+}
+
+// ── Journal Controls (rendered in App header bar) ─────────────────────
+
+/** Journal mode/date controls — rendered in the App header for space efficiency. */
+export function JournalControls(): React.ReactElement {
+  const { mode, currentDate, setMode, setCurrentDate, navigateToDate } = useJournalStore()
+  const [calendarOpen, setCalendarOpen] = useState(false)
+  const [pageMap, setPageMap] = useState<Set<string>>(new Set())
+
+  // Fetch page map for calendar highlighting
+  useEffect(() => {
+    listBlocks({ blockType: 'page', limit: 500 })
+      .then((resp) => {
+        const dates = new Set<string>()
+        for (const b of resp.items) {
+          if (b.content && /^\d{4}-\d{2}-\d{2}$/.test(b.content)) dates.add(b.content)
+        }
+        setPageMap(dates)
+      })
+      .catch(() => {})
+  }, [])
+
+  const highlightedDays = useMemo(() => {
+    const days: Date[] = []
+    for (const dateStr of pageMap) {
+      const parts = dateStr.split('-')
+      if (parts.length === 3) {
+        days.push(new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])))
+      }
+    }
+    return days
+  }, [pageMap])
+
+  function goPrev() {
+    if (mode === 'daily') setCurrentDate(subDays(currentDate, 1))
+    else if (mode === 'weekly') setCurrentDate(subWeeks(currentDate, 1))
+    else setCurrentDate(subMonths(currentDate, 1))
+  }
+
+  function goNext() {
+    if (mode === 'daily') setCurrentDate(addDays(currentDate, 1))
+    else if (mode === 'weekly') setCurrentDate(addWeeks(currentDate, 1))
+    else setCurrentDate(addMonths(currentDate, 1))
+  }
+
+  function getDateDisplay(): string {
+    if (mode === 'daily') return formatDateDisplay(currentDate)
+    if (mode === 'weekly') return formatWeekRange(currentDate)
+    return format(currentDate, 'MMMM yyyy')
+  }
+
+  const navLabels = {
+    prev:
+      mode === 'daily' ? 'Previous day' : mode === 'weekly' ? 'Previous week' : 'Previous month',
+    next: mode === 'daily' ? 'Next day' : mode === 'weekly' ? 'Next week' : 'Next month',
+  }
+
+  return (
+    <div className="flex flex-1 items-center gap-2">
+      {/* Mode switcher */}
+      <div className="flex items-center gap-0.5" role="tablist" aria-label="Journal view mode">
+        {(['daily', 'weekly', 'monthly'] as const).map((m) => (
+          <Button
+            key={m}
+            variant={mode === m ? 'secondary' : 'ghost'}
+            size="xs"
+            role="tab"
+            aria-selected={mode === m}
+            aria-label={`${m.charAt(0).toUpperCase() + m.slice(1)} view`}
+            onClick={() => setMode(m)}
+          >
+            {m === 'daily' ? 'Day' : m === 'weekly' ? 'Week' : 'Month'}
+          </Button>
+        ))}
+      </div>
+
+      <div className="flex-1" />
+
+      {/* Date navigation */}
+      <div className="flex items-center gap-1">
+        <Button variant="ghost" size="icon-xs" aria-label={navLabels.prev} onClick={goPrev}>
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <span className="min-w-[140px] text-center text-sm font-medium" data-testid="date-display">
+          {getDateDisplay()}
+        </span>
+        <Button variant="ghost" size="icon-xs" aria-label={navLabels.next} onClick={goNext}>
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={() => setCurrentDate(new Date())}
+          aria-label="Go to today"
+        >
+          Today
+        </Button>
+        <div className="relative">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Open calendar picker"
+            onClick={() => setCalendarOpen((o) => !o)}
+          >
+            <CalendarIcon className="h-4 w-4" />
+          </Button>
+          {calendarOpen && (
+            <>
+              {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
+              {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
+              <div className="fixed inset-0 z-40" onClick={() => setCalendarOpen(false)} />
+              <div className="absolute right-0 top-full z-50 mt-1 rounded-md border bg-popover p-2 shadow-md">
+                <Calendar
+                  mode="single"
+                  selected={currentDate}
+                  onSelect={(day) => {
+                    if (day) {
+                      navigateToDate(day, 'daily')
+                      setCalendarOpen(false)
+                    }
+                  }}
+                  defaultMonth={currentDate}
+                  weekStartsOn={1}
+                  showWeekNumber
+                  showOutsideDays
+                  onWeekNumberClick={(_wn: number, dates: Date[]) => {
+                    if (dates.length > 0) {
+                      navigateToDate(dates[0], 'weekly')
+                      setCalendarOpen(false)
+                    }
+                  }}
+                  modifiers={{ hasContent: highlightedDays }}
+                  modifiersClassNames={{ hasContent: 'has-content-dot' }}
+                />
+                <style>{`
+                  .has-content-dot { position: relative; }
+                  .has-content-dot::after {
+                    content: '';
+                    position: absolute;
+                    bottom: 2px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    width: 4px;
+                    height: 4px;
+                    border-radius: 50%;
+                    background: hsl(var(--primary));
+                  }
+                `}</style>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
