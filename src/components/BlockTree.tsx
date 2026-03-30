@@ -64,6 +64,7 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     remove,
     edit,
     splitBlock,
+    createBelow,
     indent,
     dedent,
     reorder,
@@ -389,6 +390,28 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     }, 0)
   }, [focusedBlockId, blocks, rovingEditor, edit, remove, setFocused])
 
+  // ── Enter: save + create new block below + focus it ────────────────
+  const handleEnterCreateBlock = useCallback(async () => {
+    if (!focusedBlockId) return
+    // Flush current editor content
+    const blockId = focusedBlockId
+    handleFlush()
+    // Create an empty block below and focus it
+    const newId = await createBelow(blockId)
+    if (newId) {
+      setFocused(newId)
+      rovingEditor.mount(newId, '')
+    }
+  }, [focusedBlockId, handleFlush, createBelow, setFocused, rovingEditor])
+
+  // ── Escape: discard changes, unfocus ───────────────────────────────
+  const handleEscapeCancel = useCallback(() => {
+    if (!focusedBlockId) return
+    // Unmount but discard the result — don't save changes
+    rovingEditor.unmount()
+    setFocused(null)
+  }, [focusedBlockId, rovingEditor, setFocused])
+
   useBlockKeyboard(rovingEditor.editor, {
     onFocusPrev: handleFocusPrev,
     onFocusNext: handleFocusNext,
@@ -397,6 +420,8 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     onDedent: handleDedent,
     onFlush: handleFlush,
     onMergeWithPrev: handleMergeWithPrev,
+    onEnterCreateBlock: handleEnterCreateBlock,
+    onEscapeCancel: handleEscapeCancel,
   })
 
   // ── Active item for DragOverlay ────────────────────────────────────

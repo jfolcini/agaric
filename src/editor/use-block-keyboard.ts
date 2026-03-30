@@ -24,6 +24,10 @@ export interface BlockKeyboardCallbacks {
   onFlush: () => string | null
   /** Merge current block with previous (Backspace at start of non-empty block). */
   onMergeWithPrev: () => void
+  /** Enter pressed — save current block + create new block below + focus it. */
+  onEnterCreateBlock: () => void
+  /** Escape pressed — cancel editing, discard changes, unfocus. */
+  onEscapeCancel: () => void
 }
 
 /** Minimal editor shape needed by the key handler (for testability). */
@@ -65,6 +69,21 @@ export function handleBlockKeyDown(
     return
   }
 
+  // Enter (without Shift): save current block + create new block below.
+  // Shift+Enter falls through to TipTap's HardBreak (line within same block).
+  if (key === 'Enter' && !shiftKey) {
+    event.preventDefault()
+    callbacks.onEnterCreateBlock()
+    return
+  }
+
+  // Escape: cancel editing, discard changes, unfocus.
+  if (key === 'Escape') {
+    event.preventDefault()
+    callbacks.onEscapeCancel()
+    return
+  }
+
   // ArrowUp / ArrowLeft at position 0 → previous block
   if ((key === 'ArrowUp' || key === 'ArrowLeft') && atStart) {
     event.preventDefault()
@@ -97,8 +116,17 @@ export function handleBlockKeyDown(
 }
 
 export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboardCallbacks): void {
-  const { onFocusPrev, onFocusNext, onDeleteBlock, onIndent, onDedent, onFlush, onMergeWithPrev } =
-    callbacks
+  const {
+    onFocusPrev,
+    onFocusNext,
+    onDeleteBlock,
+    onIndent,
+    onDedent,
+    onFlush,
+    onMergeWithPrev,
+    onEnterCreateBlock,
+    onEscapeCancel,
+  } = callbacks
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -111,9 +139,22 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onDedent,
         onFlush,
         onMergeWithPrev,
+        onEnterCreateBlock,
+        onEscapeCancel,
       })
     },
-    [editor, onFocusPrev, onFocusNext, onDeleteBlock, onIndent, onDedent, onFlush, onMergeWithPrev],
+    [
+      editor,
+      onFocusPrev,
+      onFocusNext,
+      onDeleteBlock,
+      onIndent,
+      onDedent,
+      onFlush,
+      onMergeWithPrev,
+      onEnterCreateBlock,
+      onEscapeCancel,
+    ],
   )
 
   useEffect(() => {

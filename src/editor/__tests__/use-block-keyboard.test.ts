@@ -42,6 +42,8 @@ function makeCallbacks(): BlockKeyboardCallbacks & { _calls: Record<string, numb
       return null
     },
     onMergeWithPrev: track('onMergeWithPrev'),
+    onEnterCreateBlock: track('onEnterCreateBlock'),
+    onEscapeCancel: track('onEscapeCancel'),
     _calls,
   }
 }
@@ -243,32 +245,48 @@ describe('handleBlockKeyDown', () => {
     })
   })
 
-  describe('unhandled keys', () => {
-    it('Enter does nothing (TipTap default handles paragraph creation)', () => {
+  describe('Enter / Shift+Enter', () => {
+    it('Enter calls onEnterCreateBlock', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('Enter')
 
       handleBlockKeyDown(event, editor, cbs)
 
-      expect(event.preventDefault).not.toHaveBeenCalled()
-      expect(cbs._calls.onFlush).toBeUndefined()
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onEnterCreateBlock).toBe(1)
     })
 
-    it('regular character key does nothing', () => {
+    it('Shift+Enter does nothing (TipTap default handles line break)', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
-      const event = makeEvent('a')
+      const event = makeEvent('Enter', { shiftKey: true })
 
       handleBlockKeyDown(event, editor, cbs)
 
       expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls.onEnterCreateBlock).toBeUndefined()
     })
+  })
 
-    it('Escape does nothing', () => {
+  describe('Escape', () => {
+    it('Escape calls onEscapeCancel', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
       const event = makeEvent('Escape')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onEscapeCancel).toBe(1)
+    })
+  })
+
+  describe('unhandled keys', () => {
+    it('regular character key does nothing', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('a')
 
       handleBlockKeyDown(event, editor, cbs)
 
