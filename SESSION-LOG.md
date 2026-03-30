@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 8 — 2026-03-30 — UX Component Visual Polish
+
+### Task: Comprehensive visual review + fix all 19 components
+
+**Approach**: 4 parallel review subagents → consolidated review → 4 parallel build subagents → 4 review subagents → commit.
+
+**Review phase** (4 parallel subagents):
+- Group A: Editor Core (BlockTree, EditableBlock, StaticBlock, SortableBlock, FormattingToolbar, PageEditor)
+- Group B: Navigation & Pages (App, BootGate, JournalPage, PageBrowser, BacklinksPanel)
+- Group C: Search & Tags (SearchPanel, TagList, TagPanel, TagFilterPanel)
+- Group D: System Views (StatusPanel, HistoryPanel, ConflictList, TrashView, KeyboardShortcuts)
+- Findings consolidated into `UX-COMPONENT-REVIEW.md` (58 issues: 4 critical, 18 major, 28 minor, 8 nits)
+- Visual spot checks via chrome-browser MCP confirmed all findings
+
+**Build phase** (4 parallel subagents):
+- Build A: 7 source + 2 test files (chip CSS, focus ring, hover states, drag handle, spacing, toolbar, title hint)
+- Build B: 5 source + 1 test file (tags separator, boot states, empty states, skeleton loading, badge variants)
+- Build C: 4 source + 1 test file (Badge component, empty states, spacing, section headers, skeleton loading)
+- Build D: 5 source + 3 test files (destructive buttons, confirmation layout, badge/truncation, metric cards, kbd styling)
+- Note: Builds B/D reverted A/C changes via git stash; A/C re-applied successfully
+
+**Review phase** (4 parallel subagents):
+- Review A: LGTM
+- Review B: LGTM
+- Review C: LGTM
+- Review D: Found/fixed missing `min-w-0` on truncation parents in TrashView + ConflictList
+
+**Result**: Commit `eff5293` — 28 files changed (19 source + 1 CSS + 8 tests), 651/651 tests pass.
+
+---
+
 ## Session 1 — 2026-03-28
 
 ### Phase 1 — Foundation (Waves 1-2)
