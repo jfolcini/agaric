@@ -7,13 +7,14 @@
 
 import { Link } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
-import { getBacklinks } from '../lib/tauri'
+import { getBacklinks, getBlock } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
+import { renderRichContent } from './StaticBlock'
 
 interface BacklinksPanelProps {
   /** The block to show backlinks for. */
@@ -25,6 +26,8 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
   const [loading, setLoading] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
+  const [resolveVersion, setResolveVersion] = useState(0)
+  const resolveCache = useRef<Map<string, { title: string; deleted: boolean }>>(new Map())
 
   const loadBacklinks = useCallback(
     async (cursor?: string) => {
@@ -52,8 +55,83 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
     setBlocks([])
     setNextCursor(null)
     setHasMore(false)
+    resolveCache.current.clear()
     loadBacklinks()
   }, [blockId, loadBacklinks])
+
+  // Resolve [[ULID]] and #[ULID] tokens found in backlink content
+  useEffect(() => {
+    if (blocks.length === 0) return
+
+    const ULID_RE = /\[\[([0-9A-Z]{26})\]\]/g
+    const TAG_RE = /#\[([0-9A-Z]{26})\]/g
+    const idsToResolve = new Set<string>()
+
+    for (const block of blocks) {
+      if (!block.content) continue
+      for (const m of block.content.matchAll(ULID_RE)) idsToResolve.add(m[1])
+      for (const m of block.content.matchAll(TAG_RE)) idsToResolve.add(m[1])
+    }
+
+    // Remove already-cached IDs
+    for (const id of idsToResolve) {
+      if (resolveCache.current.has(id)) idsToResolve.delete(id)
+    }
+
+    if (idsToResolve.size === 0) {
+      setResolveVersion((v) => v + 1)
+      return
+    }
+
+    let cancelled = false
+
+    Promise.all(
+      [...idsToResolve].map(async (id) => {
+        try {
+          const b = await getBlock(id)
+          resolveCache.current.set(id, {
+            title:
+              b.content?.slice(0, 60) ||
+              (b.block_type === 'tag' ? `#${id.slice(0, 8)}...` : `[[${id.slice(0, 8)}...]]`),
+            deleted: b.deleted_at !== null,
+          })
+        } catch {
+          // Block not found — mark as deleted
+          resolveCache.current.set(id, { title: `[[${id.slice(0, 8)}...]]`, deleted: true })
+        }
+      }),
+    ).then(() => {
+      if (!cancelled) setResolveVersion((v) => v + 1)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [blocks])
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
+  const resolveBlockTitle = useCallback(
+    (id: string): string => {
+      return resolveCache.current.get(id)?.title ?? `[[${id.slice(0, 8)}...]]`
+    },
+    [resolveVersion],
+  )
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
+  const resolveBlockStatus = useCallback(
+    (id: string): 'active' | 'deleted' => {
+      return resolveCache.current.get(id)?.deleted ? 'deleted' : 'active'
+    },
+    [resolveVersion],
+  )
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
+  const resolveTagName = useCallback(
+    (id: string): string => {
+      return resolveCache.current.get(id)?.title ?? `#${id.slice(0, 8)}...`
+    },
+    [resolveVersion],
+  )
 
   const loadMore = useCallback(() => {
     if (nextCursor) loadBacklinks(nextCursor)
@@ -84,7 +162,13 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
               {block.block_type}
             </Badge>
             <span className="backlink-item-text text-sm flex-1 truncate">
-              {block.content ?? '(empty)'}
+              {block.content
+                ? renderRichContent(block.content, {
+                    resolveBlockTitle,
+                    resolveTagName,
+                    resolveBlockStatus,
+                  })
+                : '(empty)'}
             </span>
             <span className="backlink-item-id text-xs text-muted-foreground font-mono">
               {block.id.slice(0, 8)}...

@@ -98,7 +98,7 @@ function seedBlocks(): void {
     makeBlock(
       SEED_IDS.BLOCK_GS_2,
       'content',
-      'Use the sidebar to navigate between pages, tags, and search.',
+      `Use the sidebar to navigate between pages, tags, and search. See [[${SEED_IDS.PAGE_QUICK_NOTES}]] for tips.`,
       SEED_IDS.PAGE_GETTING_STARTED,
       1,
     ),
@@ -118,7 +118,7 @@ function seedBlocks(): void {
     makeBlock(
       SEED_IDS.BLOCK_GS_4,
       'content',
-      'Try tagging blocks with #work or #personal to organize your notes.',
+      `Try tagging blocks with #[${SEED_IDS.TAG_WORK}] or #[${SEED_IDS.TAG_PERSONAL}] to organize your notes.`,
       SEED_IDS.PAGE_GETTING_STARTED,
       3,
     ),
@@ -128,7 +128,7 @@ function seedBlocks(): void {
     makeBlock(
       SEED_IDS.BLOCK_GS_5,
       'content',
-      'Use the search panel to find anything across all your pages.',
+      '**Use the search panel** to find anything across all your pages.',
       SEED_IDS.PAGE_GETTING_STARTED,
       4,
     ),
@@ -276,7 +276,19 @@ export function setupMock(): void {
       }
 
       case 'get_backlinks': {
-        return { items: [], next_cursor: null, has_more: false }
+        const a = args as Record<string, unknown>
+        const targetId = a.blockId as string
+        // Scan all blocks for [[targetId]] tokens to find backlinks
+        const LINK_RE = /\[\[([^\]]+)\]\]/g
+        const backlinkItems = [...blocks.values()].filter((b) => {
+          if (b.deleted_at) return false
+          const content = (b.content as string) ?? ''
+          for (const m of content.matchAll(LINK_RE)) {
+            if (m[1] === targetId) return true
+          }
+          return false
+        })
+        return { items: backlinkItems, next_cursor: null, has_more: false }
       }
 
       case 'get_block_history': {

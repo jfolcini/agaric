@@ -32,7 +32,7 @@ export interface StaticBlockProps {
  * Render markdown content as rich React nodes for the static view.
  * Inline tokens (block_link, tag_ref) become styled/clickable spans.
  */
-function renderRichContent(
+export function renderRichContent(
   markdown: string,
   options: {
     onNavigate?: (id: string) => void
@@ -61,12 +61,16 @@ function renderRichContent(
       switch (node.type) {
         case 'text': {
           const linkMark = node.marks?.find((m) => m.type === 'link')
-          if (linkMark && linkMark.type === 'link') {
-            elements.push(
+          const hasBold = node.marks?.some((m) => m.type === 'bold') ?? false
+          const hasItalic = node.marks?.some((m) => m.type === 'italic') ?? false
+          const hasCode = node.marks?.some((m) => m.type === 'code') ?? false
+
+          // Build the text content, wrapping with mark elements
+          let content: React.ReactNode =
+            linkMark && linkMark.type === 'link' ? (
               // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard navigation handled via TipTap editor when block is focused
               // biome-ignore lint/a11y/noStaticElementInteractions: inline link within a button — parent handles focus/keyboard
               <span
-                key={`t-${keyIdx++}`}
                 className="external-link cursor-pointer"
                 data-href={linkMark.attrs.href}
                 onClick={(e) => {
@@ -75,11 +79,17 @@ function renderRichContent(
                 }}
               >
                 {node.text}
-              </span>,
+              </span>
+            ) : (
+              node.text
             )
-          } else {
-            elements.push(<span key={`t-${keyIdx++}`}>{node.text}</span>)
-          }
+
+          // Apply marks from innermost to outermost
+          if (hasCode) content = <code>{content}</code>
+          if (hasItalic) content = <em>{content}</em>
+          if (hasBold) content = <strong>{content}</strong>
+
+          elements.push(<span key={`t-${keyIdx++}`}>{content}</span>)
           break
         }
 

@@ -194,4 +194,193 @@ describe('BacklinksPanel', () => {
       expect(screen.getByText('No backlinks found')).toBeInTheDocument()
     })
   })
+
+  // -- Rich content rendering (Bug 5 fix) ------------------------------------
+
+  describe('rich content rendering', () => {
+    const PAGE_ULID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+    const TAG_ULID = '01BRZ3NDEKTSV4RRFFQ69G5FAV'
+
+    it('renders [[ULID]] as a block-link chip with resolved title', async () => {
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+        if (cmd === 'get_backlinks') {
+          return {
+            items: [makeBlock('BL00000000000000000000001', `See [[${PAGE_ULID}]] for details`)],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_block') {
+          if ((args as { blockId: string })?.blockId === PAGE_ULID) {
+            return makeBlock(PAGE_ULID, 'My Resolved Page', 'page')
+          }
+        }
+        return emptyPage
+      })
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      await waitFor(() => {
+        const chip = container.querySelector('.block-link-chip')
+        expect(chip).toBeInTheDocument()
+        expect(chip).toHaveTextContent('My Resolved Page')
+      })
+
+      // Surrounding text should also be rendered
+      expect(screen.getByText(/See/)).toBeInTheDocument()
+      expect(screen.getByText(/for details/)).toBeInTheDocument()
+    })
+
+    it('renders **bold** content with <strong> element', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_backlinks') {
+          return {
+            items: [makeBlock('BL00000000000000000000002', '**bold text** here')],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return emptyPage
+      })
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      await waitFor(() => {
+        const strong = container.querySelector('strong')
+        expect(strong).toBeInTheDocument()
+        expect(strong).toHaveTextContent('bold text')
+      })
+    })
+
+    it('renders #[ULID] as a tag-ref chip with resolved name', async () => {
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+        if (cmd === 'get_backlinks') {
+          return {
+            items: [makeBlock('BL00000000000000000000003', `Tagged #[${TAG_ULID}] here`)],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_block') {
+          if ((args as { blockId: string })?.blockId === TAG_ULID) {
+            return makeBlock(TAG_ULID, 'Important', 'tag')
+          }
+        }
+        return emptyPage
+      })
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      await waitFor(() => {
+        const chip = container.querySelector('.tag-ref-chip')
+        expect(chip).toBeInTheDocument()
+        expect(chip).toHaveTextContent('Important')
+      })
+    })
+
+    it('calls get_block for ULIDs found in backlink content', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_backlinks') {
+          return {
+            items: [makeBlock('BL00000000000000000000004', `Link to [[${PAGE_ULID}]]`)],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_block') {
+          return makeBlock(PAGE_ULID, 'Resolved Title', 'page')
+        }
+        return emptyPage
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('get_block', { blockId: PAGE_ULID })
+      })
+    })
+
+    it('shows truncated ULID fallback when getBlock fails', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_backlinks') {
+          return {
+            items: [makeBlock('BL00000000000000000000005', `Broken [[${PAGE_ULID}]]`)],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_block') {
+          throw new Error('not found')
+        }
+        return emptyPage
+      })
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      await waitFor(() => {
+        const chip = container.querySelector('.block-link-chip')
+        expect(chip).toBeInTheDocument()
+        // Fallback: [[first8chars...]]
+        expect(chip).toHaveTextContent(`[[${PAGE_ULID.slice(0, 8)}...]]`)
+      })
+    })
+
+    it('renders "(empty)" for blocks with null content', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_backlinks') {
+          return {
+            items: [
+              {
+                id: 'BLEMPTY0000000000000000001',
+                block_type: 'content',
+                content: null,
+                parent_id: null,
+                position: null,
+                deleted_at: null,
+                archived_at: null,
+                is_conflict: false,
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return emptyPage
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      expect(await screen.findByText('(empty)')).toBeInTheDocument()
+    })
+
+    it('has no a11y violations with rich content', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_backlinks') {
+          return {
+            items: [
+              makeBlock('BL00000000000000000000006', `See **bold** and [[${PAGE_ULID}]] link`),
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_block') {
+          return makeBlock(PAGE_ULID, 'Accessible Page', 'page')
+        }
+        return emptyPage
+      })
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      // Wait for rich content to render (chip appears after resolution)
+      await waitFor(() => {
+        expect(container.querySelector('.block-link-chip')).toBeInTheDocument()
+      })
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
 })

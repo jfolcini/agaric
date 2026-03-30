@@ -190,33 +190,51 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   // ── Resolve cache ──────────────────────────────────────────────────
   // Simple in-memory cache of block/tag info for resolve callbacks.
-  // Populated by handleNavigate and async lookups; avoids repeated IPC
-  // calls during render.
+  // Populated by the preload effect below + handleNavigate.
   const blockInfoCache = useRef<Map<string, BlockInfo>>(new Map())
+  const pagesListRef = useRef<Array<{ id: string; title: string }>>([])
+  // Bumped after preload to trigger re-render with resolved titles.
+  const [resolveVersion, setResolveVersion] = useState(0)
 
-  const resolveBlockTitle = useCallback((id: string): string => {
-    const cached = blockInfoCache.current.get(id)
-    if (cached) return cached.title
-    return `[[${id.slice(0, 8)}...]]`
-  }, [])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
+  const resolveBlockTitle = useCallback(
+    (id: string): string => {
+      const cached = blockInfoCache.current.get(id)
+      if (cached) return cached.title
+      return `[[${id.slice(0, 8)}...]]`
+    },
+    [resolveVersion],
+  )
 
-  const resolveBlockStatus = useCallback((id: string): 'active' | 'deleted' => {
-    const cached = blockInfoCache.current.get(id)
-    if (cached) return cached.deleted ? 'deleted' : 'active'
-    return 'active'
-  }, [])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
+  const resolveBlockStatus = useCallback(
+    (id: string): 'active' | 'deleted' => {
+      const cached = blockInfoCache.current.get(id)
+      if (cached) return cached.deleted ? 'deleted' : 'active'
+      return 'active'
+    },
+    [resolveVersion],
+  )
 
-  const resolveTagName = useCallback((id: string): string => {
-    const cached = blockInfoCache.current.get(id)
-    if (cached) return cached.title
-    return `#${id.slice(0, 8)}...`
-  }, [])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
+  const resolveTagName = useCallback(
+    (id: string): string => {
+      const cached = blockInfoCache.current.get(id)
+      if (cached) return cached.title
+      return `#${id.slice(0, 8)}...`
+    },
+    [resolveVersion],
+  )
 
-  const resolveTagStatus = useCallback((id: string): 'active' | 'deleted' => {
-    const cached = blockInfoCache.current.get(id)
-    if (cached) return cached.deleted ? 'deleted' : 'active'
-    return 'active'
-  }, [])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
+  const resolveTagStatus = useCallback(
+    (id: string): 'active' | 'deleted' => {
+      const cached = blockInfoCache.current.get(id)
+      if (cached) return cached.deleted ? 'deleted' : 'active'
+      return 'active'
+    },
+    [resolveVersion],
+  )
 
   // ── Picker callbacks ────────────────────────────────────────────────
   const searchTags = useCallback(async (query: string): Promise<PickerItem[]> => {
@@ -228,17 +246,24 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   }, [])
 
   const searchPages = useCallback(async (query: string): Promise<PickerItem[]> => {
-    const resp = await listBlocks({ blockType: 'page', limit: 20 })
     const q = query.toLowerCase()
-    const matches: PickerItem[] = resp.items
-      .filter((p) => (p.content ?? '').toLowerCase().includes(q))
-      .map((p) => ({
-        id: p.id,
-        label: p.content ?? 'Untitled',
-      }))
+
+    // Use the preloaded pages list for instant, complete results.
+    // Falls back to API call if cache hasn't loaded yet.
+    let source = pagesListRef.current
+    if (source.length === 0) {
+      const resp = await listBlocks({ blockType: 'page', limit: 500 })
+      source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
+    }
+
+    const matches: PickerItem[] = source
+      .filter((p) => p.title.toLowerCase().includes(q))
+      .slice(0, 20)
+      .map((p) => ({ id: p.id, label: p.title }))
+
     // Append a "Create new" option when the query doesn't exactly match an existing page
     if (q.trim().length > 0) {
-      const exactMatch = resp.items.some((p) => (p.content ?? '').toLowerCase() === q)
+      const exactMatch = source.some((p) => p.title.toLowerCase() === q)
       if (!exactMatch) {
         matches.push({ id: '__create__', label: query.trim(), isCreate: true })
       }
@@ -250,6 +275,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     const block = await createBlock({ blockType: 'page', content: label })
     // Populate resolve cache so the link chip shows the title immediately
     blockInfoCache.current.set(block.id, { title: label, deleted: false })
+    pagesListRef.current = [...pagesListRef.current, { id: block.id, title: label }]
     return block.id
   }, [])
 
@@ -303,6 +329,73 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   useEffect(() => {
     load(parentId)
   }, [load, parentId])
+
+  // Preload all pages + tags into the resolve cache so link chips show
+  // resolved titles on first render instead of truncated ULIDs.
+  // MUST be declared after the load effect so it fires second on mount.
+  useEffect(() => {
+    let cancelled = false
+    async function preload() {
+      try {
+        // Fetch all pages
+        const pagesResp = await listBlocks({ blockType: 'page', limit: 1000 })
+        const pagesList: Array<{ id: string; title: string }> = []
+        for (const p of pagesResp.items) {
+          const title = p.content ?? 'Untitled'
+          blockInfoCache.current.set(p.id, {
+            title,
+            deleted: p.deleted_at !== null,
+          })
+          pagesList.push({ id: p.id, title })
+        }
+        pagesListRef.current = pagesList
+
+        // Fetch all tags
+        const tags = await listTagsByPrefix({ prefix: '' })
+        for (const t of tags) {
+          blockInfoCache.current.set(t.tag_id, {
+            title: t.name,
+            deleted: false,
+          })
+        }
+
+        // Scan loaded blocks for [[ULID]] tokens not yet cached
+        const ULID_LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
+        const uncached = new Set<string>()
+        for (const b of blocks) {
+          if (!b.content) continue
+          for (const m of b.content.matchAll(ULID_LINK_RE)) {
+            if (!blockInfoCache.current.has(m[1])) uncached.add(m[1])
+          }
+        }
+
+        // Batch-fetch any uncached block references
+        if (uncached.size > 0) {
+          await Promise.all(
+            [...uncached].map(async (id) => {
+              try {
+                const blk = await getBlock(id)
+                blockInfoCache.current.set(id, {
+                  title: blk.content?.slice(0, 60) || `[[${id.slice(0, 8)}...]]`,
+                  deleted: blk.deleted_at !== null,
+                })
+              } catch {
+                blockInfoCache.current.set(id, { title: `[[${id.slice(0, 8)}...]]`, deleted: true })
+              }
+            }),
+          )
+        }
+
+        if (!cancelled) setResolveVersion((v) => v + 1)
+      } catch {
+        // Preload failed — resolve callbacks will use fallbacks
+      }
+    }
+    preload()
+    return () => {
+      cancelled = true
+    }
+  }, [blocks])
 
   // ── Fetch properties for all blocks (batch) ────────────────────────
   useEffect(() => {
@@ -402,9 +495,15 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           return
         }
 
-        // If target's parent differs from our tree's parent, navigate to the page
+        // If target's parent differs from our tree's parent, navigate to the parent page
         if (targetBlock.parent_id && targetBlock.parent_id !== rootParentId) {
-          onNavigateToPage?.(targetBlock.parent_id, targetBlock.content ?? 'Untitled')
+          // Fetch the parent to get the actual page title (not the target block's content)
+          try {
+            const parentBlock = await getBlock(targetBlock.parent_id)
+            onNavigateToPage?.(targetBlock.parent_id, parentBlock.content ?? 'Untitled')
+          } catch {
+            onNavigateToPage?.(targetBlock.parent_id, 'Untitled')
+          }
           return
         }
 

@@ -353,4 +353,65 @@ describe('StaticBlock', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // -- Bold / italic / code marks ---------------------------------------------
+
+  it('renders bold text with <strong> element', () => {
+    const content = '**bold text**'
+    const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+    const strong = container.querySelector('strong')
+    expect(strong).toBeInTheDocument()
+    expect(strong?.textContent).toBe('bold text')
+  })
+
+  it('renders italic text with <em> element', () => {
+    const content = '*italic text*'
+    const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+    const em = container.querySelector('em')
+    expect(em).toBeInTheDocument()
+    expect(em?.textContent).toBe('italic text')
+  })
+
+  it('renders code text with <code> element', () => {
+    const content = '`code text`'
+    const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+    const code = container.querySelector('code')
+    expect(code).toBeInTheDocument()
+    expect(code?.textContent).toBe('code text')
+  })
+
+  it('renders bold italic text with nested <strong> and <em>', () => {
+    const content = '***bold italic***'
+    const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+    const strong = container.querySelector('strong')
+    expect(strong).toBeInTheDocument()
+    const em = strong?.querySelector('em')
+    expect(em).toBeInTheDocument()
+    expect(em?.textContent).toBe('bold italic')
+  })
+
+  it('renders bold external link with <strong> wrapping the link span', () => {
+    const content = '**[click](https://example.com)**'
+    const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+    const strong = container.querySelector('strong')
+    expect(strong).toBeInTheDocument()
+    const link = strong?.querySelector('.external-link')
+    expect(link).toBeInTheDocument()
+    expect(link?.textContent).toBe('click')
+  })
+
+  it('renders bold text adjacent to block_link chip', () => {
+    const ULID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+    const content = `**important** see [[${ULID}]]`
+    const { container } = render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={vi.fn()}
+        resolveBlockTitle={() => 'My Page'}
+      />,
+    )
+    expect(container.querySelector('strong')?.textContent).toBe('important')
+    expect(screen.getByText('My Page')).toBeInTheDocument()
+  })
 })

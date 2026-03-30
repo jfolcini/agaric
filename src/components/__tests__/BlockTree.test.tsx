@@ -202,7 +202,7 @@ describe('BlockTree picker wiring', () => {
     expect(results).toEqual([])
   })
 
-  it('searchPages calls list_blocks with blockType=page and limit=20', async () => {
+  it('searchPages calls list_blocks with blockType=page and filters results', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
     render(<BlockTree />)
@@ -258,7 +258,7 @@ describe('BlockTree picker wiring', () => {
       showDeleted: null,
       agendaDate: null,
       cursor: null,
-      limit: 20,
+      limit: 500,
     })
     expect(results).toEqual([
       { id: 'P1', label: 'Meeting Notes' },
@@ -571,6 +571,9 @@ describe('BlockTree picker wiring', () => {
 
 describe('BlockTree rendering edge cases', () => {
   it('renders deeply nested blocks (3+ levels)', async () => {
+    // Default fallback for preload + load effects
+    mockedInvoke.mockResolvedValue(emptyPage)
+
     const deepBlocks = [
       {
         id: 'ROOT',
@@ -658,6 +661,9 @@ describe('BlockTree rendering edge cases', () => {
   })
 
   it('renders single root block with no children', async () => {
+    // Default fallback for preload + load effects
+    mockedInvoke.mockResolvedValue(emptyPage)
+
     const singleBlock = [
       {
         id: 'ONLY',
