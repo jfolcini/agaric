@@ -1,5 +1,35 @@
 # Session Log
 
+## Session 9 — 2026-03-30 — sqlx Migration + UX Polish Remaining Items
+
+### Task 1: Migrate ~147 sqlx runtime queries to compile-time macros (REVIEW-LATER #1)
+
+**Approach**: Audit all `query_as()` calls → test migration pattern → 4 parallel build subagents → verify + commit.
+
+**Audit**: 147 `query_as()` calls across 12 files. 98.6% migratable (11 must remain runtime: 8 PRAGMA, 1 FTS5, 1 dynamic IN, 1 test helper).
+
+**Build** (4 parallel subagents):
+- A: snapshot.rs (37) + recovery.rs (18) = 55 calls
+- B: commands.rs = 35 calls
+- C: soft_delete.rs (44) + cache.rs (21) + db.rs (13) = 78 calls
+- D: fts (7) + tag_query (5) + merge (3) + dag (1) + integration tests (17) = 33 calls
+
+**Infrastructure**: Generated `.sqlx/` offline cache (82 query files). Updated `prek.toml` to exclude `.sqlx/` from biome/check-json hooks.
+
+**Result**: Commit `1824e0a` — 95 files changed (12 Rust + 82 .sqlx/ cache + 1 prek.toml). 880/880 Rust tests pass.
+
+### Task 2: UX polish items #62-#67
+
+**Build** (2 parallel subagents):
+- A: #62 skeleton loading (3 components) + #63 formatTimestamp utility + #64 debounce indicator
+- B: #65 AND/OR tooltip + #66 inline CTAs + #67 shortcuts grouping
+
+**Result**: Commit `af32df7` — 11 files changed (1 new utility + 10 components/tests). 651/651 frontend tests pass.
+
+**Remaining**: #68 (shared EmptyState component) and #69 (minor polish collection) — both low-priority refactoring, not visual bugs.
+
+---
+
 ## Session 8 — 2026-03-30 — UX Component Visual Polish
 
 ### Task: Comprehensive visual review + fix all 19 components
