@@ -19,6 +19,7 @@ import { type Editor, useEditor } from '@tiptap/react'
 import { useCallback, useRef } from 'react'
 import { BlockLink } from './extensions/block-link'
 import { BlockLinkPicker } from './extensions/block-link-picker'
+import { SlashCommand } from './extensions/slash-command'
 import { TagPicker } from './extensions/tag-picker'
 import { TagRef } from './extensions/tag-ref'
 import { parse, serialize } from './markdown-serializer'
@@ -40,6 +41,10 @@ export interface RovingEditorOptions {
   onCreatePage?: (label: string) => Promise<string>
   /** Called when user clicks a [[block link]] chip to navigate. */
   onNavigate?: (id: string) => void
+  /** Return slash commands matching query (for / picker). */
+  searchSlashCommands?: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  /** Execute a selected slash command. */
+  onSlashCommand?: (item: PickerItem) => void
   /** Check whether a linked block is active or deleted (broken link). */
   resolveBlockStatus?: (id: string) => 'active' | 'deleted'
   /** Check whether a referenced tag is active or deleted. */
@@ -85,6 +90,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     searchPages = () => [],
     onCreatePage,
     onNavigate,
+    searchSlashCommands = () => [],
+    onSlashCommand,
     resolveBlockStatus,
     resolveTagStatus,
   } = options
@@ -107,6 +114,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   resolveTagStatusRef.current = resolveTagStatus
   const onCreatePageRef = useRef(onCreatePage)
   onCreatePageRef.current = onCreatePage
+  const onSlashCommandRef = useRef(onSlashCommand)
+  onSlashCommandRef.current = onSlashCommand
 
   const editor = useEditor({
     extensions: [
@@ -137,6 +146,10 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
           return fn(label)
         },
       }),
+      SlashCommand.configure({
+        items: searchSlashCommands,
+        onCommand: (item: PickerItem) => onSlashCommandRef.current?.(item),
+      }),
     ],
     editable: true,
     content: { type: 'doc', content: [{ type: 'paragraph' }] },
@@ -152,9 +165,10 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       replaceDocSilently(editor, doc as unknown as Record<string, unknown>)
       // ADR-01: "Cleared on blur/flush. Ctrl+Z does not cross the flush boundary."
       // Reset undo history so previous block's edits don't leak into this one.
-      // We do this by replacing the editor state with a fresh history plugin state.
+      // Pass { plugins } explicitly to preserve all plugin configurations
+      // (including History keymaps) while resetting their internal state.
       const { state } = editor
-      const newState = state.reconfigure({})
+      const newState = state.reconfigure({ plugins: state.plugins })
       editor.view.updateState(newState)
       editor.commands.focus()
     },

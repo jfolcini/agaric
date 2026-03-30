@@ -29,9 +29,9 @@ vi.mock('../EditableBlock', () => ({
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
-  CheckCircle2: (props: { size: number; className?: string }) => (
+  Check: (props: { size: number; className?: string }) => (
     <svg
-      data-testid="check-circle-icon"
+      data-testid="check-icon"
       width={props.size}
       height={props.size}
       className={props.className}
@@ -40,22 +40,6 @@ vi.mock('lucide-react', () => ({
   ChevronRight: (props: { size: number; className?: string }) => (
     <svg
       data-testid="chevron-right-icon"
-      width={props.size}
-      height={props.size}
-      className={props.className}
-    />
-  ),
-  Circle: (props: { size: number; className?: string }) => (
-    <svg
-      data-testid="circle-icon"
-      width={props.size}
-      height={props.size}
-      className={props.className}
-    />
-  ),
-  CircleDot: (props: { size: number; className?: string }) => (
-    <svg
-      data-testid="circle-dot-icon"
       width={props.size}
       height={props.size}
       className={props.className}
@@ -513,10 +497,8 @@ describe('SortableBlock task marker', () => {
 
     const marker = container.querySelector('.task-marker')
     expect(marker).toBeInTheDocument()
-    // No icons should be rendered
-    expect(screen.queryByTestId('circle-icon')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('circle-dot-icon')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('check-circle-icon')).not.toBeInTheDocument()
+    // No checkbox elements should be rendered
+    expect(container.querySelector('.task-checkbox')).not.toBeInTheDocument()
   })
 
   it('renders blank spacer when todoState is undefined', () => {
@@ -531,13 +513,11 @@ describe('SortableBlock task marker', () => {
 
     const marker = container.querySelector('.task-marker')
     expect(marker).toBeInTheDocument()
-    expect(screen.queryByTestId('circle-icon')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('circle-dot-icon')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('check-circle-icon')).not.toBeInTheDocument()
+    expect(container.querySelector('.task-checkbox')).not.toBeInTheDocument()
   })
 
-  it('renders Circle icon for TODO state', () => {
-    render(
+  it('renders unchecked checkbox for TODO state', () => {
+    const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
@@ -547,13 +527,14 @@ describe('SortableBlock task marker', () => {
       />,
     )
 
-    expect(screen.getByTestId('circle-icon')).toBeInTheDocument()
-    expect(screen.queryByTestId('circle-dot-icon')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('check-circle-icon')).not.toBeInTheDocument()
+    const todoCheckbox = container.querySelector('.task-checkbox-todo')
+    expect(todoCheckbox).toBeInTheDocument()
+    expect(container.querySelector('.task-checkbox-doing')).not.toBeInTheDocument()
+    expect(container.querySelector('.task-checkbox-done')).not.toBeInTheDocument()
   })
 
-  it('renders CircleDot icon for DOING state', () => {
-    render(
+  it('renders indeterminate checkbox for DOING state', () => {
+    const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
@@ -563,13 +544,14 @@ describe('SortableBlock task marker', () => {
       />,
     )
 
-    expect(screen.getByTestId('circle-dot-icon')).toBeInTheDocument()
-    expect(screen.queryByTestId('circle-icon')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('check-circle-icon')).not.toBeInTheDocument()
+    const doingCheckbox = container.querySelector('.task-checkbox-doing')
+    expect(doingCheckbox).toBeInTheDocument()
+    expect(container.querySelector('.task-checkbox-todo')).not.toBeInTheDocument()
+    expect(container.querySelector('.task-checkbox-done')).not.toBeInTheDocument()
   })
 
-  it('renders CheckCircle2 icon for DONE state', () => {
-    render(
+  it('renders checked checkbox with Check icon for DONE state', () => {
+    const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
@@ -579,9 +561,11 @@ describe('SortableBlock task marker', () => {
       />,
     )
 
-    expect(screen.getByTestId('check-circle-icon')).toBeInTheDocument()
-    expect(screen.queryByTestId('circle-icon')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('circle-dot-icon')).not.toBeInTheDocument()
+    const doneCheckbox = container.querySelector('.task-checkbox-done')
+    expect(doneCheckbox).toBeInTheDocument()
+    expect(screen.getByTestId('check-icon')).toBeInTheDocument()
+    expect(container.querySelector('.task-checkbox-todo')).not.toBeInTheDocument()
+    expect(container.querySelector('.task-checkbox-doing')).not.toBeInTheDocument()
   })
 
   it('has "Set as TODO" aria-label when no task state', () => {
@@ -652,8 +636,8 @@ describe('SortableBlock task marker', () => {
     await user.click(marker)
   })
 
-  it('applies text-muted-foreground class to TODO Circle icon', () => {
-    render(
+  it('applies border-muted-foreground class to TODO checkbox', () => {
+    const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
@@ -663,12 +647,12 @@ describe('SortableBlock task marker', () => {
       />,
     )
 
-    const icon = screen.getByTestId('circle-icon')
-    expect(icon.getAttribute('class')).toContain('text-muted-foreground')
+    const checkbox = container.querySelector('.task-checkbox-todo')
+    expect(checkbox?.getAttribute('class')).toContain('border-muted-foreground')
   })
 
-  it('applies text-blue-500 class to DOING CircleDot icon', () => {
-    render(
+  it('applies border-blue-500 class to DOING checkbox', () => {
+    const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
@@ -678,12 +662,12 @@ describe('SortableBlock task marker', () => {
       />,
     )
 
-    const icon = screen.getByTestId('circle-dot-icon')
-    expect(icon.getAttribute('class')).toContain('text-blue-500')
+    const checkbox = container.querySelector('.task-checkbox-doing')
+    expect(checkbox?.getAttribute('class')).toContain('border-blue-500')
   })
 
-  it('applies text-green-600 class to DONE CheckCircle2 icon', () => {
-    render(
+  it('applies border-green-600 and bg-green-600 class to DONE checkbox', () => {
+    const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
@@ -693,7 +677,39 @@ describe('SortableBlock task marker', () => {
       />,
     )
 
-    const icon = screen.getByTestId('check-circle-icon')
-    expect(icon.getAttribute('class')).toContain('text-green-600')
+    const checkbox = container.querySelector('.task-checkbox-done')
+    expect(checkbox?.getAttribute('class')).toContain('border-green-600')
+    expect(checkbox?.getAttribute('class')).toContain('bg-green-600')
+  })
+
+  it('applies line-through and opacity-50 to content when DONE', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="DONE"
+      />,
+    )
+
+    // The content wrapper div should have line-through and opacity-50
+    const contentWrapper = container.querySelector('.line-through')
+    expect(contentWrapper).toBeInTheDocument()
+    expect(contentWrapper?.getAttribute('class')).toContain('opacity-50')
+  })
+
+  it('does not apply line-through when todoState is not DONE', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="TODO"
+      />,
+    )
+
+    expect(container.querySelector('.line-through')).not.toBeInTheDocument()
   })
 })

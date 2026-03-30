@@ -29,7 +29,7 @@ export function PageEditor({
   pageId,
   title,
   onBack,
-  onNavigateToPage: _onNavigateToPage,
+  onNavigateToPage,
 }: PageEditorProps): React.ReactElement {
   const [editableTitle, setEditableTitle] = useState(title)
   const titleRef = useRef<HTMLDivElement>(null)
@@ -125,7 +125,7 @@ export function PageEditor({
       </div>
 
       {/* Block tree — loads children of pageId */}
-      <BlockTree parentId={pageId} />
+      <BlockTree parentId={pageId} onNavigateToPage={onNavigateToPage} />
 
       {/* Detail panel — tab bar shown when a block has been focused, content shown when tab selected */}
       {effectiveBlockId != null && (

@@ -21,16 +21,24 @@ import { useBlockStore } from '../../stores/blocks'
 let capturedSearchTags: ((query: string) => PickerItem[] | Promise<PickerItem[]>) | undefined
 let capturedSearchPages: ((query: string) => PickerItem[] | Promise<PickerItem[]>) | undefined
 let capturedOnCreatePage: ((label: string) => Promise<string>) | undefined
+let capturedSearchSlashCommands:
+  | ((query: string) => PickerItem[] | Promise<PickerItem[]>)
+  | undefined
+let capturedOnSlashCommand: ((item: PickerItem) => void) | undefined
 
 vi.mock('../../editor/use-roving-editor', () => ({
   useRovingEditor: (opts: {
     searchTags?: (query: string) => PickerItem[] | Promise<PickerItem[]>
     searchPages?: (query: string) => PickerItem[] | Promise<PickerItem[]>
     onCreatePage?: (label: string) => Promise<string>
+    searchSlashCommands?: (query: string) => PickerItem[] | Promise<PickerItem[]>
+    onSlashCommand?: (item: PickerItem) => void
   }) => {
     capturedSearchTags = opts.searchTags
     capturedSearchPages = opts.searchPages
     capturedOnCreatePage = opts.onCreatePage
+    capturedSearchSlashCommands = opts.searchSlashCommands
+    capturedOnSlashCommand = opts.onSlashCommand
     return {
       editor: null,
       mount: vi.fn(),
@@ -109,7 +117,7 @@ vi.mock('@dnd-kit/sortable', () => ({
   verticalListSortingStrategy: vi.fn(),
 }))
 
-import { BlockTree } from '../BlockTree'
+import { BlockTree, processCheckboxSyntax } from '../BlockTree'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -120,6 +128,8 @@ beforeEach(() => {
   capturedSearchTags = undefined
   capturedSearchPages = undefined
   capturedOnCreatePage = undefined
+  capturedSearchSlashCommands = undefined
+  capturedOnSlashCommand = undefined
   useBlockStore.setState({
     blocks: [],
     focusedBlockId: null,
@@ -1088,5 +1098,172 @@ describe('BlockTree task cycling', () => {
     await new Promise((r) => setTimeout(r, 50))
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_property', expect.anything())
+  })
+})
+
+// =========================================================================
+// Checkbox markdown syntax processing tests
+// =========================================================================
+
+describe('processCheckboxSyntax', () => {
+  it('detects "- [ ] " prefix and returns TODO state', () => {
+    const result = processCheckboxSyntax('- [ ] Buy groceries')
+    expect(result).toEqual({ cleanContent: 'Buy groceries', todoState: 'TODO' })
+  })
+
+  it('detects "- [x] " prefix (lowercase) and returns DONE state', () => {
+    const result = processCheckboxSyntax('- [x] Completed task')
+    expect(result).toEqual({ cleanContent: 'Completed task', todoState: 'DONE' })
+  })
+
+  it('detects "- [X] " prefix (uppercase) and returns DONE state', () => {
+    const result = processCheckboxSyntax('- [X] Completed task')
+    expect(result).toEqual({ cleanContent: 'Completed task', todoState: 'DONE' })
+  })
+
+  it('returns null todoState for content without checkbox syntax', () => {
+    const result = processCheckboxSyntax('Just normal text')
+    expect(result).toEqual({ cleanContent: 'Just normal text', todoState: null })
+  })
+
+  it('returns null todoState for empty content', () => {
+    const result = processCheckboxSyntax('')
+    expect(result).toEqual({ cleanContent: '', todoState: null })
+  })
+
+  it('does not match "- [ ]" without trailing space', () => {
+    const result = processCheckboxSyntax('- [ ]no space')
+    expect(result).toEqual({ cleanContent: '- [ ]no space', todoState: null })
+  })
+
+  it('does not match "- [x]" without trailing space', () => {
+    const result = processCheckboxSyntax('- [x]no space')
+    expect(result).toEqual({ cleanContent: '- [x]no space', todoState: null })
+  })
+
+  it('does not match checkbox syntax in the middle of content', () => {
+    const result = processCheckboxSyntax('Some text - [ ] not at start')
+    expect(result).toEqual({ cleanContent: 'Some text - [ ] not at start', todoState: null })
+  })
+
+  it('handles "- [ ] " with empty content after prefix', () => {
+    const result = processCheckboxSyntax('- [ ] ')
+    expect(result).toEqual({ cleanContent: '', todoState: 'TODO' })
+  })
+
+  it('handles "- [x] " with empty content after prefix', () => {
+    const result = processCheckboxSyntax('- [x] ')
+    expect(result).toEqual({ cleanContent: '', todoState: 'DONE' })
+  })
+
+  it('preserves content after the 6-character prefix exactly', () => {
+    const result = processCheckboxSyntax('- [ ] - [ ] nested checkbox look')
+    expect(result).toEqual({ cleanContent: '- [ ] nested checkbox look', todoState: 'TODO' })
+  })
+})
+
+// =========================================================================
+// Slash command tests
+// =========================================================================
+
+describe('BlockTree slash command wiring', () => {
+  it('passes searchSlashCommands to useRovingEditor', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+    expect(typeof capturedSearchSlashCommands).toBe('function')
+  })
+
+  it('passes onSlashCommand to useRovingEditor', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+    expect(typeof capturedOnSlashCommand).toBe('function')
+  })
+
+  it('searchSlashCommands returns all commands for empty query', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('')
+
+    expect(results).toHaveLength(4)
+    expect(results?.map((r) => r.id)).toEqual(['todo', 'doing', 'done', 'date'])
+  })
+
+  it('searchSlashCommands filters commands by query', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('to-do')
+
+    expect(results).toHaveLength(1)
+    expect(results?.[0].id).toBe('todo')
+  })
+
+  it('searchSlashCommands returns empty array when nothing matches', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('zzz_nonexistent')
+
+    expect(results).toEqual([])
+  })
+
+  it('searchSlashCommands is case-insensitive', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('DONE')
+
+    expect(results).toHaveLength(1)
+    expect(results?.[0].id).toBe('done')
+  })
+})
+
+// =========================================================================
+// Cross-page navigation tests
+// =========================================================================
+
+describe('BlockTree cross-page navigation', () => {
+  it('accepts onNavigateToPage prop without error', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+    const onNav = vi.fn()
+
+    render(<BlockTree onNavigateToPage={onNav} />)
+
+    await waitFor(() => {
+      expect(capturedSearchTags).toBeDefined()
+    })
+    // No crash — prop is accepted
+    expect(onNav).not.toHaveBeenCalled()
   })
 })

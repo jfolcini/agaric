@@ -76,11 +76,10 @@ describe('App', () => {
   it('defaults to Journal view', async () => {
     render(<App />)
 
-    // JournalPage renders multi-day view with "Load older days" button
+    // JournalPage renders tri-mode view with Day/Week/Month tabs and Add block
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /load older days/i })).toBeInTheDocument()
+      expect(screen.getByRole('tab', { name: /daily view/i })).toBeInTheDocument()
     })
-    // Multiple day sections each have their own "Add block" button
     expect(screen.getAllByRole('button', { name: /add block/i }).length).toBeGreaterThanOrEqual(1)
   })
 
@@ -215,9 +214,9 @@ describe('App', () => {
     // Go back to Journal
     await user.click(sidebar.getByText('Journal'))
 
-    // Journal should render again
+    // Journal should render again with tri-mode tabs
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /load older days/i })).toBeInTheDocument()
+      expect(screen.getByRole('tab', { name: /daily view/i })).toBeInTheDocument()
     })
   })
 

@@ -70,6 +70,17 @@ language = "system"
 pass_filenames = false
 files = "(^package\\.json$|^package-lock\\.json$)"
 
+# JS: depcheck (unused dependency detection — like cargo-machete for JS)
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "depcheck"
+name = "depcheck"
+entry = "npx depcheck --ignores='tailwindcss,@vitest/coverage-v8,better-npm-audit,depcheck,license-checker'"
+language = "system"
+pass_filenames = false
+files = "(^package\\.json$|^package-lock\\.json$)"
+
 # Rust: cargo fmt
 [[repos]]
 repo = "local"

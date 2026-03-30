@@ -65,12 +65,32 @@ interface BlockInfo {
 /** Task state cycle: none → TODO → DOING → DONE → none. */
 const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE']
 
+/**
+ * Detect markdown checkbox syntax at the start of content.
+ * `- [ ] ` → TODO, `- [x] ` / `- [X] ` → DONE.
+ * Returns the cleaned content and the detected todo state, or null if no match.
+ */
+export function processCheckboxSyntax(content: string): {
+  cleanContent: string
+  todoState: string | null
+} {
+  if (content.startsWith('- [ ] ')) {
+    return { cleanContent: content.slice(6), todoState: 'TODO' }
+  }
+  if (content.startsWith('- [x] ') || content.startsWith('- [X] ')) {
+    return { cleanContent: content.slice(6), todoState: 'DONE' }
+  }
+  return { cleanContent: content, todoState: null }
+}
+
 interface BlockTreeProps {
   /** Optional parent block ID — when set, loads children of this block. */
   parentId?: string
+  /** Navigate to a page in the page editor (cross-page navigation). */
+  onNavigateToPage?: (pageId: string, title: string) => void
 }
 
-export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement {
+export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): React.ReactElement {
   const {
     blocks,
     rootParentId,
@@ -228,10 +248,30 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     return block.id
   }, [])
 
+  // ── Slash command definitions ──────────────────────────────────────
+  const SLASH_COMMANDS: PickerItem[] = useMemo(
+    () => [
+      { id: 'todo', label: 'TODO \u2014 Mark as to-do' },
+      { id: 'doing', label: 'DOING \u2014 Mark as in progress' },
+      { id: 'done', label: 'DONE \u2014 Mark as complete' },
+      { id: 'date', label: 'Date \u2014 Link to a date page' },
+    ],
+    [],
+  )
+
+  const searchSlashCommands = useCallback(
+    async (query: string): Promise<PickerItem[]> => {
+      const q = query.toLowerCase()
+      return SLASH_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
+    },
+    [SLASH_COMMANDS],
+  )
+
   // ── Roving editor ──────────────────────────────────────────────────
-  // handleNavigate is defined below but referenced via ref to avoid
-  // circular dependency with rovingEditor.
+  // handleNavigate and handleSlashCommand are defined below but referenced
+  // via ref to avoid circular dependency with rovingEditor.
   const handleNavigateRef = useRef<(id: string) => void>(() => {})
+  const handleSlashCommandRef = useRef<(item: PickerItem) => void>(() => {})
 
   const rovingEditor = useRovingEditor({
     resolveBlockTitle,
@@ -242,6 +282,8 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     searchTags,
     searchPages,
     onCreatePage,
+    searchSlashCommands,
+    onSlashCommand: (item: PickerItem) => handleSlashCommandRef.current(item),
   })
 
   const viewport = useViewportObserver()
@@ -286,7 +328,29 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
       if (changed.includes('\n')) {
         splitBlock(blockId, changed)
       } else {
-        edit(blockId, changed)
+        // Check for checkbox markdown syntax before saving
+        const { cleanContent, todoState } = processCheckboxSyntax(changed)
+        if (todoState) {
+          // Set the todo property and save cleaned content
+          setProperty({ blockId, key: 'todo', valueText: todoState })
+          edit(blockId, cleanContent)
+          // Update local properties cache
+          setBlockProperties((prev) => {
+            const next = new Map(prev)
+            const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'todo')
+            props.push({
+              key: 'todo',
+              value_text: todoState,
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+            })
+            next.set(blockId, props)
+            return next
+          })
+        } else {
+          edit(blockId, changed)
+        }
       }
     }
     return changed
@@ -326,7 +390,20 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
           title: targetBlock.content?.slice(0, 60) || `[[${targetId.slice(0, 8)}...]]`,
           deleted: targetBlock.deleted_at !== null,
         })
-        // Load the parent's children so the target block is in the list
+
+        // If target is a page, navigate to it in the page editor
+        if (targetBlock.block_type === 'page') {
+          onNavigateToPage?.(targetId, targetBlock.content ?? 'Untitled')
+          return
+        }
+
+        // If target's parent differs from our tree's parent, navigate to the page
+        if (targetBlock.parent_id && targetBlock.parent_id !== rootParentId) {
+          onNavigateToPage?.(targetBlock.parent_id, targetBlock.content ?? 'Untitled')
+          return
+        }
+
+        // Same tree — navigate locally
         await load(targetBlock.parent_id ?? undefined)
         setFocused(targetId)
         rovingEditor.mount(targetId, targetBlock.content ?? '')
@@ -334,11 +411,60 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
         // Block not found (deleted/purged) — no-op, don't crash
       }
     },
-    [handleFlush, load, setFocused, rovingEditor],
+    [handleFlush, load, setFocused, rovingEditor, rootParentId, onNavigateToPage],
   )
 
   // Keep the ref in sync with the latest handleNavigate
   handleNavigateRef.current = handleNavigate
+
+  // ── Slash command handler ──────────────────────────────────────────
+  const handleSlashCommand = useCallback(
+    async (item: PickerItem) => {
+      if (!focusedBlockId) return
+
+      if (item.id === 'todo' || item.id === 'doing' || item.id === 'done') {
+        const state = item.id.toUpperCase()
+        await setProperty({ blockId: focusedBlockId, key: 'todo', valueText: state })
+        // Update local properties cache
+        setBlockProperties((prev) => {
+          const next = new Map(prev)
+          const props = (next.get(focusedBlockId) ?? []).filter((p) => p.key !== 'todo')
+          props.push({
+            key: 'todo',
+            value_text: state,
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+          })
+          next.set(focusedBlockId, props)
+          return next
+        })
+      }
+
+      if (item.id === 'date') {
+        // Insert today's date as a block link
+        const today = new Date()
+        const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+        // Find or create the date page
+        const resp = await listBlocks({ blockType: 'page', limit: 500 })
+        let datePageId = resp.items.find((b) => b.content === dateStr)?.id
+        if (!datePageId) {
+          const newPage = await createBlock({ blockType: 'page', content: dateStr })
+          datePageId = newPage.id
+        }
+
+        // Insert block link at cursor
+        if (rovingEditor.editor && datePageId) {
+          rovingEditor.editor.chain().focus().insertBlockLink(datePageId).run()
+        }
+      }
+    },
+    [focusedBlockId, rovingEditor],
+  )
+
+  // Keep the slash command ref in sync
+  handleSlashCommandRef.current = handleSlashCommand
 
   const handleFocusPrev = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)

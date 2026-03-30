@@ -7,7 +7,7 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { CheckCircle2, ChevronRight, Circle, CircleDot, GripVertical, Trash2 } from 'lucide-react'
+import { Check, ChevronRight, GripVertical, Trash2 } from 'lucide-react'
 import type React from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { cn } from '../lib/utils'
@@ -101,10 +101,19 @@ export function SortableBlock({
         }}
         aria-label={todoState ? `Task: ${todoState}. Click to cycle.` : 'Set as TODO'}
       >
-        {todoState === 'TODO' && <Circle size={16} className="text-muted-foreground" />}
-        {todoState === 'DOING' && <CircleDot size={16} className="text-blue-500" />}
-        {todoState === 'DONE' && <CheckCircle2 size={16} className="text-green-600" />}
-        {!todoState && <span className="inline-block w-4 h-4" />}
+        {todoState === 'DONE' ? (
+          <div className="task-checkbox task-checkbox-done h-4 w-4 rounded border-2 border-green-600 bg-green-600 flex items-center justify-center">
+            <Check size={12} className="text-white" />
+          </div>
+        ) : todoState === 'DOING' ? (
+          <div className="task-checkbox task-checkbox-doing h-4 w-4 rounded border-2 border-blue-500 bg-blue-500/20 flex items-center justify-center">
+            <div className="h-1.5 w-1.5 rounded-sm bg-blue-500" />
+          </div>
+        ) : todoState === 'TODO' ? (
+          <div className="task-checkbox task-checkbox-todo h-4 w-4 rounded border-2 border-muted-foreground" />
+        ) : (
+          <div className="h-4 w-4" />
+        )}
       </button>
       <button
         type="button"
@@ -125,7 +134,7 @@ export function SortableBlock({
           <Trash2 size={16} />
         </button>
       )}
-      <div className="flex-1 min-w-0">
+      <div className={cn('flex-1 min-w-0', todoState === 'DONE' && 'line-through opacity-50')}>
         <EditableBlock
           blockId={blockId}
           content={content}

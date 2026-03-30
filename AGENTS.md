@@ -24,6 +24,7 @@
 | cargo-nextest | 0.9.132 | ~/.cargo/bin/cargo-nextest |
 | better-npm-audit | 3.11.0 | node_modules/.bin/better-npm-audit |
 | license-checker | 25.0.1 | node_modules/.bin/license-checker |
+| depcheck | (latest) | node_modules/.bin/depcheck |
 
 ### Tauri 2.0 System Dependencies (confirmed installed)
 
@@ -384,6 +385,7 @@ Config: `prek.toml`. Installed via `prek install`. Runs on every `git commit`. *
 | cargo-test | Rust tests (nextest) | .rs |
 | npm-audit | JS security advisories (better-npm-audit) | package.json/lock only |
 | license-checker | JS license compliance (allowlist) | package.json/lock only |
+| depcheck | JS unused dependency detection | package.json/lock only |
 | cargo-deny | Security advisories, licenses | Cargo.toml/lock only |
 | cargo-machete | Unused dependency detection | Cargo.toml/lock only |
 
