@@ -46,6 +46,48 @@ async fn seed_blocks(pool: &SqlitePool, materializer: &Materializer, n: usize) -
     ids
 }
 
+/// Bulk-seed `n` blocks directly via SQL in a single transaction.
+///
+/// Much faster than [`seed_blocks`] (which goes through the full command
+/// pipeline) — suitable for 10K+ DB sizes where seeding cost dominates.
+/// Populates both `blocks` and `op_log` tables for realistic DB state.
+async fn seed_blocks_bulk(pool: &SqlitePool, n: usize) -> Vec<String> {
+    let mut ids = Vec::with_capacity(n);
+    let mut tx = pool.begin().await.unwrap();
+    for i in 0..n {
+        let id = format!("SEED{i:020}");
+        let content = format!("Seeded block {i} with some placeholder content.");
+        let ts = format!("2025-01-15T12:00:{:06}+00:00", i);
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) \
+             VALUES (?, 'content', ?, ?)",
+        )
+        .bind(&id)
+        .bind(&content)
+        .bind(i as i64 + 1)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+             VALUES ('dev-bench', ?, 'fakehash', 'create_block', ?, ?)",
+        )
+        .bind(i as i64 + 1)
+        .bind(format!(
+            r#"{{"block_id":"{id}","block_type":"content","content":"{content}"}}"#,
+        ))
+        .bind(&ts)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+
+        ids.push(id);
+    }
+    tx.commit().await.unwrap();
+    ids
+}
+
 // ===========================================================================
 // create_block benchmarks
 // ===========================================================================
@@ -463,16 +505,16 @@ fn bench_batch_resolve_500(c: &mut Criterion) {
 // Scale benchmarks — measure hot-path ops at realistic DB sizes
 // ===========================================================================
 
-/// Benchmark create_block with 100 / 1K / 10K existing blocks in the DB.
+/// Benchmark create_block with 100 / 1K / 10K / 100K existing blocks in the DB.
 fn bench_create_block_at_scale(c: &mut Criterion) {
     let mut group = c.benchmark_group("create_block_at_scale");
 
-    for db_size in [100, 1_000, 10_000] {
+    for db_size in [100, 1_000, 10_000, 100_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("create_s{db_size}")));
         let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
-        rt.block_on(seed_blocks(&pool, &materializer, db_size));
+        rt.block_on(seed_blocks_bulk(&pool, db_size));
 
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("{db_size}_blocks")),
@@ -503,16 +545,16 @@ fn bench_create_block_at_scale(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark edit_block with 100 / 1K / 10K ops already in the log.
+/// Benchmark edit_block with 100 / 1K / 10K / 100K ops already in the log.
 fn bench_edit_block_at_scale(c: &mut Criterion) {
     let mut group = c.benchmark_group("edit_block_at_scale");
 
-    for db_size in [100, 1_000, 10_000] {
+    for db_size in [100, 1_000, 10_000, 100_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("edit_s{db_size}")));
         let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
-        let ids = rt.block_on(seed_blocks(&pool, &materializer, db_size));
+        let ids = rt.block_on(seed_blocks_bulk(&pool, db_size));
         let target_id = ids[0].clone();
 
         group.bench_with_input(
@@ -543,16 +585,15 @@ fn bench_edit_block_at_scale(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark list_blocks (first page of 50) with 100 / 1K / 10K total blocks.
+/// Benchmark list_blocks (first page of 50) with 100 / 1K / 10K / 100K total blocks.
 fn bench_list_blocks_at_scale(c: &mut Criterion) {
     let mut group = c.benchmark_group("list_blocks_at_scale");
 
-    for db_size in [100, 1_000, 10_000] {
+    for db_size in [100, 1_000, 10_000, 100_000] {
         let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("list_s{db_size}")));
-        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
-        rt.block_on(seed_blocks(&pool, &materializer, db_size));
+        rt.block_on(seed_blocks_bulk(&pool, db_size));
 
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("{db_size}_blocks")),
@@ -568,8 +609,6 @@ fn bench_list_blocks_at_scale(c: &mut Criterion) {
                 })
             },
         );
-
-        rt.block_on(async { materializer.shutdown() });
     }
     group.finish();
 }

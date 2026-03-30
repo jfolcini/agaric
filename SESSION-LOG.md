@@ -779,6 +779,29 @@
 
 ---
 
+## Session 12 — 2026-03-30 — Benchmark Fixes & Scale Benchmarks
+
+### Benchmark compilation fixes + deprecation cleanup
+
+- **commands_bench.rs:** Added `BenchmarkId` import, fixed all `list_blocks_inner` calls for 8-arg signature (new `agenda_date` param added in Session 10), fixed 0-based position to 1-based in `seed_blocks` and `bench_create_block_with_parent`
+- **hash_bench.rs:** Replaced deprecated `criterion::black_box` with `std::hint::black_box` (5 call sites)
+- **draft_bench.rs:** Fixed `flush_draft` nested-runtime panic — `iter_batched` setup closure called `rt.block_on()` inside criterion's async runtime. Replaced with combined save+flush measurement (save_draft benchmarked separately for subtraction)
+
+### Scale benchmarks added
+
+- **commands_bench.rs:** 3 new benchmark groups (`create_block_at_scale`, `edit_block_at_scale`, `list_blocks_at_scale`) — each parameterized at 100/1K/10K existing DB blocks
+- **cache_bench.rs:** Extended tags/pages/agenda rebuild from [10, 100, 1000] to include 10,000
+- **pagination_bench.rs:** Extended all pagination groups from [10, 100, 1000] to include 10,000
+
+### Verification
+
+All 8 bench binaries compile and run cleanly:
+- hash_bench, draft_bench, commands_bench, cache_bench, pagination_bench, soft_delete_bench, op_log_bench, fts_bench
+
+**Commit:** `048178e`
+
+---
+
 <!-- Template:
 #### [HH:MM] Subagent: <title> [BUILT|REVIEWED]
 - **Tasks:** <task IDs>

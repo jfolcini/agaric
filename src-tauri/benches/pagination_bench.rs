@@ -5,13 +5,14 @@ use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers — transaction-wrapped for fast bulk inserts
 // ---------------------------------------------------------------------------
 
 /// Seed a parent block and `n` children with sequential positions.
 async fn seed_children(pool: &sqlx::SqlitePool, n: usize) {
+    let mut tx = pool.begin().await.unwrap();
     sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('PARENT', 'page', 'p')")
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .unwrap();
 
@@ -24,50 +25,63 @@ async fn seed_children(pool: &sqlx::SqlitePool, n: usize) {
         .bind(&id)
         .bind(&format!("c{i}"))
         .bind(i as i64 + 1)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .unwrap();
     }
+    tx.commit().await.unwrap();
 }
 
 /// Seed `n` blocks of a given type.
 async fn seed_typed_blocks(pool: &sqlx::SqlitePool, block_type: &str, n: usize) {
+    let mut tx = pool.begin().await.unwrap();
     for i in 0..n {
         let id = format!("BLK{i:020}");
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)")
             .bind(&id)
             .bind(block_type)
             .bind(&format!("content {i}"))
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .unwrap();
     }
+    tx.commit().await.unwrap();
 }
 
 /// Seed `n` soft-deleted blocks with distinct timestamps.
 async fn seed_trash(pool: &sqlx::SqlitePool, n: usize) {
+    let mut tx = pool.begin().await.unwrap();
     for i in 0..n {
         let id = format!("TRASH{i:020}");
-        let ts = format!("2025-01-15T12:{:02}:{:02}+00:00", i / 60, i % 60);
+        let ts = format!(
+            "2025-01-{:02}T{:02}:{:02}:{:02}+00:00",
+            i / 86400 + 1,
+            (i / 3600) % 24,
+            (i / 60) % 60,
+            i % 60
+        );
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, deleted_at) VALUES (?, 'content', ?, ?)",
         )
         .bind(&id)
         .bind(&format!("trash {i}"))
         .bind(&ts)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .unwrap();
     }
+    tx.commit().await.unwrap();
 }
 
 /// Seed `n` blocks and tag them all with a single tag.
 async fn seed_tagged_blocks(pool: &sqlx::SqlitePool, n: usize) {
+    let mut tx = pool.begin().await.unwrap();
+
     // Create the tag
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content) VALUES ('TAG01', 'tag', 'bench-tag')",
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .unwrap();
 
@@ -76,16 +90,17 @@ async fn seed_tagged_blocks(pool: &sqlx::SqlitePool, n: usize) {
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', ?)")
             .bind(&id)
             .bind(&format!("tagged {i}"))
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .unwrap();
 
         sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, 'TAG01')")
             .bind(&id)
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .unwrap();
     }
+    tx.commit().await.unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +111,7 @@ fn bench_list_children(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("list_children");
 
-    for total in [10, 100, 1000, 10_000] {
+    for total in [10, 100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(async {
             let pool = init_pool(&dir.path().join("bench.db")).await.unwrap();
@@ -133,7 +148,7 @@ fn bench_list_by_type(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("list_by_type");
 
-    for total in [10, 100, 1000, 10_000] {
+    for total in [10, 100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(async {
             let pool = init_pool(&dir.path().join("bench.db")).await.unwrap();
@@ -166,7 +181,7 @@ fn bench_list_trash(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("list_trash");
 
-    for total in [10, 100, 1000, 10_000] {
+    for total in [10, 100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(async {
             let pool = init_pool(&dir.path().join("bench.db")).await.unwrap();
@@ -199,7 +214,7 @@ fn bench_list_by_tag(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("list_by_tag");
 
-    for total in [10, 100, 1000, 10_000] {
+    for total in [10, 100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(async {
             let pool = init_pool(&dir.path().join("bench.db")).await.unwrap();

@@ -9,53 +9,59 @@ use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
 // ---------------------------------------------------------------------------
-// Seed helpers
+// Seed helpers — transaction-wrapped for fast bulk inserts
 // ---------------------------------------------------------------------------
 
 /// Insert `count` tag blocks, each used by one content block.
 async fn seed_tags(pool: &SqlitePool, count: usize) {
+    let mut tx = pool.begin().await.unwrap();
     for i in 0..count {
         let tag_id = format!("TAG{i:020}");
         let blk_id = format!("BLK{i:020}");
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'tag', ?)")
             .bind(&tag_id)
             .bind(&format!("tag-{i}"))
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .unwrap();
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', ?)")
             .bind(&blk_id)
             .bind(&format!("note {i}"))
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .unwrap();
         sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
             .bind(&blk_id)
             .bind(&tag_id)
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .unwrap();
     }
+    tx.commit().await.unwrap();
 }
 
 /// Insert `count` page blocks.
 async fn seed_pages(pool: &SqlitePool, count: usize) {
+    let mut tx = pool.begin().await.unwrap();
     for i in 0..count {
         let id = format!("PG{i:021}");
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', ?)")
             .bind(&id)
             .bind(&format!("Page Title {i}"))
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .unwrap();
     }
+    tx.commit().await.unwrap();
 }
 
 /// Insert `count` content blocks, each with a date property and a date tag.
 async fn seed_agenda(pool: &SqlitePool, count: usize) {
+    let mut tx = pool.begin().await.unwrap();
+
     // One shared date tag
     sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('ADTAG0000000000000000000', 'tag', 'date/2025-07-01')")
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .unwrap();
 
@@ -65,7 +71,7 @@ async fn seed_agenda(pool: &SqlitePool, count: usize) {
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', ?)")
             .bind(&id)
             .bind(&format!("agenda item {i}"))
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .unwrap();
         sqlx::query(
@@ -73,7 +79,7 @@ async fn seed_agenda(pool: &SqlitePool, count: usize) {
         )
         .bind(&id)
         .bind(&date)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .unwrap();
         // Tag every 5th block with the shared date tag
@@ -82,11 +88,12 @@ async fn seed_agenda(pool: &SqlitePool, count: usize) {
                 "INSERT INTO block_tags (block_id, tag_id) VALUES (?, 'ADTAG0000000000000000000')",
             )
             .bind(&id)
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .unwrap();
         }
     }
+    tx.commit().await.unwrap();
 }
 
 /// Insert a source block referencing `link_count` target blocks via [[ULID]].
@@ -125,7 +132,7 @@ fn bench_rebuild_tags_cache(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("rebuild_tags_cache");
 
-    for count in [10, 100, 1000, 10_000] {
+    for count in [10, 100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = make_pool(&rt, &dir);
         rt.block_on(seed_tags(&pool, count));
@@ -141,7 +148,7 @@ fn bench_rebuild_pages_cache(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("rebuild_pages_cache");
 
-    for count in [10, 100, 1000, 10_000] {
+    for count in [10, 100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = make_pool(&rt, &dir);
         rt.block_on(seed_pages(&pool, count));
@@ -157,7 +164,7 @@ fn bench_rebuild_agenda_cache(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("rebuild_agenda_cache");
 
-    for count in [10, 100, 1000, 10_000] {
+    for count in [10, 100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = make_pool(&rt, &dir);
         rt.block_on(seed_agenda(&pool, count));
