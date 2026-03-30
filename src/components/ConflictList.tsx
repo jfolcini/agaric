@@ -11,6 +11,7 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { deleteBlock, editBlock, getConflicts } from '../lib/tauri'
 
@@ -73,8 +74,9 @@ export function ConflictList(): React.ReactElement {
   return (
     <div className="conflict-list space-y-4">
       {loading && blocks.length === 0 && (
-        <div className="conflict-list-loading text-sm text-muted-foreground">
-          Loading conflicts...
+        <div className="conflict-list-loading space-y-2">
+          <Skeleton className="h-14 w-full rounded-lg" />
+          <Skeleton className="h-14 w-full rounded-lg" />
         </div>
       )}
 

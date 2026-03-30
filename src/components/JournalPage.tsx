@@ -168,7 +168,16 @@ export function JournalPage({
       {!pageLoading && !dailyPageId && (
         <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           <Calendar className="mx-auto mb-2 h-5 w-5" />
-          No blocks for {dateStr}. Use + Add block below to start writing.
+          No blocks for {dateStr}.
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-3 mx-auto flex items-center gap-1"
+            onClick={handleAddBlock}
+          >
+            <Plus className="h-4 w-4" />
+            Add your first block
+          </Button>
         </div>
       )}
 

@@ -10,6 +10,8 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { formatTimestamp } from '../lib/format'
 import type { BlockRow } from '../lib/tauri'
 import { listBlocks, purgeBlock, restoreBlock } from '../lib/tauri'
 
@@ -68,7 +70,10 @@ export function TrashView(): React.ReactElement {
   return (
     <div className="trash-view space-y-4">
       {loading && blocks.length === 0 && (
-        <div className="trash-view-loading text-sm text-muted-foreground">Loading trash...</div>
+        <div className="trash-view-loading space-y-2">
+          <Skeleton className="h-14 w-full rounded-lg" />
+          <Skeleton className="h-14 w-full rounded-lg" />
+        </div>
       )}
 
       {!loading && blocks.length === 0 && (
@@ -90,7 +95,7 @@ export function TrashView(): React.ReactElement {
               </Badge>
               <span className="trash-item-text text-sm truncate">{block.content ?? '(empty)'}</span>
               <span className="trash-item-date text-xs text-muted-foreground">
-                Deleted: {block.deleted_at ? new Date(block.deleted_at).toLocaleDateString() : ''}
+                Deleted: {block.deleted_at ? formatTimestamp(block.deleted_at, 'relative') : ''}
               </span>
             </div>
             <div className="trash-item-actions flex items-center gap-2">

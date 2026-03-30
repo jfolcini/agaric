@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { BlockRow } from '../lib/tauri'
 import { getBlock, listTagsByPrefix, queryByTags } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
@@ -212,22 +213,40 @@ export function TagFilterPanel(): React.ReactElement {
       {/* AND/OR mode toggle */}
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground">Mode:</span>
-        <Button
-          variant={mode === 'and' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setMode('and')}
-          aria-pressed={mode === 'and'}
-        >
-          AND
-        </Button>
-        <Button
-          variant={mode === 'or' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setMode('or')}
-          aria-pressed={mode === 'or'}
-        >
-          OR
-        </Button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={mode === 'and' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setMode('and')}
+                aria-pressed={mode === 'and'}
+              >
+                AND
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Show blocks with ALL selected tags</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={mode === 'or' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setMode('or')}
+                aria-pressed={mode === 'or'}
+              >
+                OR
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Show blocks with ANY selected tag</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
 
       {/* Filter feedback summary */}

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { formatTimestamp } from '../lib/format'
 import type { HistoryEntry } from '../lib/tauri'
 import { editBlock, getBlockHistory } from '../lib/tauri'
 
@@ -128,7 +129,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                     {entry.op_type}
                   </Badge>
                   <span className="history-item-time text-xs text-muted-foreground">
-                    {new Date(entry.created_at).toLocaleString()}
+                    {formatTimestamp(entry.created_at)}
                   </span>
                 </div>
                 {preview && (

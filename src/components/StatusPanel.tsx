@@ -10,6 +10,7 @@ import { Activity } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { StatusInfo } from '../lib/tauri'
 import { getStatus } from '../lib/tauri'
 
@@ -45,8 +46,11 @@ export function StatusPanel(): React.ReactElement {
         </CardHeader>
         <CardContent>
           {loading && !status && (
-            <div className="status-panel-loading flex items-center justify-center py-8 text-sm text-muted-foreground">
-              Loading status...
+            <div className="status-panel-loading grid grid-cols-2 gap-4">
+              <Skeleton className="h-20 w-full rounded-lg" />
+              <Skeleton className="h-20 w-full rounded-lg" />
+              <Skeleton className="h-20 w-full rounded-lg" />
+              <Skeleton className="h-20 w-full rounded-lg" />
             </div>
           )}
 

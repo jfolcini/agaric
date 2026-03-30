@@ -6,8 +6,7 @@
  */
 
 import { Keyboard } from 'lucide-react'
-import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import {
   Sheet,
   SheetContent,
@@ -16,17 +15,40 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 
-const SHORTCUTS: { keys: string; description: string }[] = [
-  { keys: 'Arrow Up / Left at start', description: 'Move to previous block' },
-  { keys: 'Arrow Down / Right at end', description: 'Move to next block' },
-  { keys: 'Backspace on empty block', description: 'Delete block' },
-  { keys: 'Backspace at start of block', description: 'Merge with previous' },
-  { keys: 'Tab', description: 'Indent block' },
-  { keys: 'Shift + Tab', description: 'Dedent block' },
-  { keys: '# in editor', description: 'Tag picker' },
-  { keys: '[[ in editor', description: 'Block link picker' },
-  { keys: '?', description: 'Show keyboard shortcuts' },
-]
+const SHORTCUT_GROUPS: { category: string; shortcuts: { keys: string; description: string }[] }[] =
+  [
+    {
+      category: 'Navigation',
+      shortcuts: [
+        { keys: 'Arrow Up / Left at start', description: 'Move to previous block' },
+        { keys: 'Arrow Down / Right at end', description: 'Move to next block' },
+      ],
+    },
+    {
+      category: 'Editing',
+      shortcuts: [
+        { keys: 'Enter', description: 'Create new block below' },
+        { keys: 'Backspace on empty block', description: 'Delete block' },
+        { keys: 'Backspace at start of block', description: 'Merge with previous' },
+        { keys: 'Tab', description: 'Indent block' },
+        { keys: 'Shift + Tab', description: 'Dedent block' },
+      ],
+    },
+    {
+      category: 'Pickers',
+      shortcuts: [
+        { keys: '# in editor', description: 'Tag picker' },
+        { keys: '[[ in editor', description: 'Block link picker' },
+      ],
+    },
+    {
+      category: 'UI',
+      shortcuts: [
+        { keys: '?', description: 'Show keyboard shortcuts' },
+        { keys: 'Escape', description: 'Close dialog / cancel editing' },
+      ],
+    },
+  ]
 
 interface KeyboardShortcutsProps {
   /** Controlled open state — used by the sidebar button. */
@@ -98,15 +120,27 @@ export function KeyboardShortcuts({
               </tr>
             </thead>
             <tbody>
-              {SHORTCUTS.map((shortcut) => (
-                <tr key={shortcut.keys} className="border-b last:border-0">
-                  <td className="py-3 pr-4">
-                    <kbd className="rounded border border-border bg-muted px-2 py-1 font-mono text-xs font-semibold shadow-sm">
-                      {shortcut.keys}
-                    </kbd>
-                  </td>
-                  <td className="py-3 text-muted-foreground">{shortcut.description}</td>
-                </tr>
+              {SHORTCUT_GROUPS.map((group) => (
+                <React.Fragment key={group.category}>
+                  <tr>
+                    <td
+                      colSpan={2}
+                      className="pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                    >
+                      {group.category}
+                    </td>
+                  </tr>
+                  {group.shortcuts.map((shortcut) => (
+                    <tr key={shortcut.keys} className="border-b last:border-0">
+                      <td className="py-3 pr-4">
+                        <kbd className="rounded border border-border bg-muted px-2 py-1 font-mono text-xs font-semibold shadow-sm">
+                          {shortcut.keys}
+                        </kbd>
+                      </td>
+                      <td className="py-3 text-muted-foreground">{shortcut.description}</td>
+                    </tr>
+                  ))}
+                </React.Fragment>
               ))}
             </tbody>
           </table>

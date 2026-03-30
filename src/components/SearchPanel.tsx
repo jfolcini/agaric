@@ -8,7 +8,7 @@
  *  - CJK limitation notice (p3-t6)
  */
 
-import { Search } from 'lucide-react'
+import { Loader2, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
@@ -33,6 +33,7 @@ export function SearchPanel(): React.ReactElement {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [searched, setSearched] = useState(false)
+  const [typing, setTyping] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
@@ -72,10 +73,13 @@ export function SearchPanel(): React.ReactElement {
       setSearched(false)
       setNextCursor(null)
       setHasMore(false)
+      setTyping(false)
       return
     }
 
+    setTyping(true)
     debounceRef.current = setTimeout(() => {
+      setTyping(false)
       executeSearch(value)
     }, 300)
   }
@@ -95,6 +99,7 @@ export function SearchPanel(): React.ReactElement {
       clearTimeout(debounceRef.current)
       debounceRef.current = null
     }
+    setTyping(false)
     if (query.trim()) {
       executeSearch(query)
     }
@@ -132,6 +137,7 @@ export function SearchPanel(): React.ReactElement {
         <Button type="submit" variant="outline" disabled={!query.trim()}>
           Search
         </Button>
+        {typing && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
       </form>
 
       {hasCJK(query) && (

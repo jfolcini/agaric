@@ -31,9 +31,16 @@ describe('KeyboardShortcuts', () => {
   it('shows all shortcut entries', () => {
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
+    // Verify category headers
+    expect(screen.getByText('Navigation')).toBeInTheDocument()
+    expect(screen.getByText('Editing')).toBeInTheDocument()
+    expect(screen.getByText('Pickers')).toBeInTheDocument()
+    expect(screen.getByText('UI')).toBeInTheDocument()
+
     // Verify all shortcuts are present
     expect(screen.getByText('Move to previous block')).toBeInTheDocument()
     expect(screen.getByText('Move to next block')).toBeInTheDocument()
+    expect(screen.getByText('Create new block below')).toBeInTheDocument()
     expect(screen.getByText('Delete block')).toBeInTheDocument()
     expect(screen.getByText('Merge with previous')).toBeInTheDocument()
     expect(screen.getByText('Indent block')).toBeInTheDocument()
@@ -41,12 +48,15 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText('Tag picker')).toBeInTheDocument()
     expect(screen.getByText('Block link picker')).toBeInTheDocument()
     expect(screen.getByText('Show keyboard shortcuts')).toBeInTheDocument()
+    expect(screen.getByText('Close dialog / cancel editing')).toBeInTheDocument()
 
     // Verify key labels
+    expect(screen.getByText('Enter')).toBeInTheDocument()
     expect(screen.getByText('Tab')).toBeInTheDocument()
     expect(screen.getByText('Shift + Tab')).toBeInTheDocument()
     expect(screen.getByText('# in editor')).toBeInTheDocument()
     expect(screen.getByText('[[ in editor')).toBeInTheDocument()
+    expect(screen.getByText('Escape')).toBeInTheDocument()
   })
 
   it('opens sheet when ? key is pressed on document', () => {

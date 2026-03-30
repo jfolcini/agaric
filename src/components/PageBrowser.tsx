@@ -116,7 +116,16 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       {!loading && pages.length === 0 && (
         <div className="page-browser-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           <FileText className="mx-auto mb-2 h-5 w-5" />
-          No pages yet. Create one to get started.
+          No pages yet.
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-3 mx-auto flex items-center gap-1"
+            onClick={handleCreatePage}
+          >
+            <Plus className="h-4 w-4" />
+            Create your first page
+          </Button>
         </div>
       )}
 
