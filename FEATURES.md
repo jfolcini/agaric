@@ -3,7 +3,7 @@
 > Exhaustive feature inventory for Block Notes. Every entry maps to an ADR, a
 > Logseq comparison gap, or both. Use this as the canonical development guide.
 >
-> **Last updated:** 2026-03-30
+> **Last updated:** 2026-03-31
 
 ## Status Legend
 
@@ -133,6 +133,9 @@
 | 38 | Viewport virtualization (Intersection Observer) | Done | 1.5 | U | Unit: useViewportObserver.test.ts (12) |
 | 39 | Multi-line within a block (Shift+Enter) | Done | 1.5 | U | Unit: use-block-keyboard.test.ts (1 — Shift+Enter does nothing, TipTap default) |
 | 40 | Block-level selection (multi-select with Esc + arrows) | Planned | — | — | |
+| 41 | Visual tree lines and bullet points | Planned | — | — | Indentation-only hierarchy hard to scan; Logseq uses bullets + tree lines |
+| 42 | Batch property fetch (single IPC call) | Planned | — | — | Current N+1 getProperties per block on mount is slow for large trees |
+| 43 | Global resolve cache (Zustand store) | Planned | — | — | Resolve cache ref-based hack; listBlocks duplicated per mount |
 
 ---
 
@@ -252,13 +255,17 @@
 | 108 | Journal as default landing page | Done | 1.5 | C | Comp: App.test.tsx (1 — "defaults to Journal view") |
 | 109 | Daily / Weekly / Monthly view modes | Done | 1.5 | C | Comp: JournalPage.test.tsx (13) |
 | 110 | Date picker / calendar navigation | Done | 1.5 | C | Comp: JournalPage.test.tsx (3) |
-| 111 | Scrollable past journals (7 days + load older) | Done | 1.5 | none | Weekly/monthly stacking tested in JournalPage; "Load older days" not explicitly tested |
+| 111 | Scrollable past journals (7 days + load older) | Partial | 1.5 | none | Weekly: 7-day sections. Monthly: stacks all month days (perf issue). No "Load older days" button or infinite scroll |
 | 112 | Content indicators per day | Done | 1.5 | none | No dedicated test |
 | 113 | "Open in page editor" per journal day | Done | 1.5 | C | Comp: JournalPage.test.tsx (2) |
 | 114 | Journal templates (auto-populate new days) | Planned | — | — | |
 | 115 | Configurable date format for journal titles | Planned | — | — | |
 | 116 | Natural language date input ("next friday") | Planned | — | — | |
 | 117 | /date slash command | Done | 1.5 | C | Comp: BlockTree.test.tsx (searchSlashCommands returns all 4 commands including 'date') |
+| 118 | Auto-create today's journal page on launch | Planned | — | — | User must click "Add block" on empty today; Logseq auto-creates |
+| 119 | Journal keyboard nav shortcuts (g n / g p / g t) | Planned | — | — | Power users expect fast date navigation |
+| 120 | Monthly view as calendar grid | Planned | — | — | Current stacked 28-31 sections is a perf issue; replace with grid |
+| 121 | "Load older days" infinite scroll | Planned | — | — | No way to access journal entries beyond current view |
 
 ---
 
@@ -334,6 +341,7 @@
 | 148 | Ctrl+. keyboard shortcut for toggle | Done | 1.5 | none | No dedicated test for the keyboard shortcut binding |
 | 149 | Client-side collapse state | Done | 1.5 | C | Comp: SortableBlock.test.tsx (expanded/collapsed state rendering tests) |
 | 150 | Zoom into block (focus mode — subtree only) | Planned | — | — | |
+| 151 | Persist collapse state across sessions | Planned | — | — | localStorage or `collapsed` block property. Current state lost on reload |
 
 ---
 

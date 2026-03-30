@@ -446,6 +446,92 @@ describe('useBlockStore', () => {
       const blocks = useBlockStore.getState().blocks
       expect(blocks.map((b) => b.id)).toEqual(['A', 'B', 'C'])
     })
+
+    it('splits heading + paragraph into two blocks', async () => {
+      const block = makeBlock({ id: 'A', position: 0 })
+      useBlockStore.setState({ blocks: [block] })
+
+      // edit('A', '# Title') — first block is heading
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: '# Title',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+      // createBelow('A', 'Paragraph') — second block is paragraph
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'B',
+        block_type: 'text',
+        content: 'Paragraph',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+
+      await useBlockStore.getState().splitBlock('A', '# Title\nParagraph')
+
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks).toHaveLength(2)
+      expect(blocks[0].content).toBe('# Title')
+      expect(blocks[1].content).toBe('Paragraph')
+    })
+
+    it('does NOT split single code block (multi-line content is one block)', async () => {
+      const codeContent = '```\ncode line 1\ncode line 2\n```'
+      const block = makeBlock({ id: 'A', position: 0, content: codeContent })
+      useBlockStore.setState({ blocks: [block] })
+
+      // Single code block → blockCount = 1, serialized matches input → no edit, no split
+      await useBlockStore.getState().splitBlock('A', codeContent)
+
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0].content).toBe(codeContent)
+    })
+
+    it('does NOT split single heading (single block)', async () => {
+      const block = makeBlock({ id: 'A', position: 0, content: '' })
+      useBlockStore.setState({ blocks: [block] })
+
+      await useBlockStore.getState().splitBlock('A', '## Just a heading')
+
+      // Single heading → blockCount = 1 → no split, no edit needed since content unchanged
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks).toHaveLength(1)
+    })
+
+    it('filters empty paragraphs between content blocks', async () => {
+      const block = makeBlock({ id: 'A', position: 0 })
+      useBlockStore.setState({ blocks: [block] })
+
+      // 'hello\n\nworld' → 3 parsed blocks: paragraph("hello"), empty paragraph, paragraph("world")
+      // After filtering empty: 2 blocks
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'hello',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'B',
+        block_type: 'text',
+        content: 'world',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+
+      await useBlockStore.getState().splitBlock('A', 'hello\n\nworld')
+
+      const blocks = useBlockStore.getState().blocks
+      expect(blocks).toHaveLength(2)
+      expect(blocks[0].content).toBe('hello')
+      expect(blocks[1].content).toBe('world')
+    })
   })
 
   // ---------------------------------------------------------------------------

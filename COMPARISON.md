@@ -18,10 +18,12 @@
 | Block references `((uuid))` | Inline reference renders source content, live-updating | Not implemented -- `[[ULID]]` links to pages/blocks but does NOT embed content inline | **Critical gap** |
 | Block embeds `{{embed ((uuid))}}` | Full content + children rendered inline, editable in-place | Not implemented | **Critical gap** |
 | Block properties `key:: value` | Inline `key:: value` syntax on lines after block content | `block_properties` table with typed values (text, num, date, ref). Backend supports it. No UI for viewing/editing properties | **UI gap** -- backend ready, frontend missing |
-| Collapse/expand children | Click arrow or `Ctrl+Up/Down` | Chevron toggle, `Ctrl+.` shortcut, client-side state, focus rescue | None |
+| Collapse/expand children | Click arrow or `Ctrl+Up/Down` | Chevron toggle, `Ctrl+.` shortcut, client-side state, focus rescue | Partial -- collapse state lost on page reload (not persisted) |
 | Zoom into block (focus mode) | `Alt+Right` focuses on block + descendants only | Not implemented | **Gap** |
 | Move block up/down | `Alt+Shift+Up/Down` | Drag-and-drop reordering (tree-aware) | Partial -- no keyboard shortcut for move up/down |
 | Block-level selection | `Esc` + arrow keys for multi-block selection | Not implemented | **Gap** |
+| Visual hierarchy (bullets / tree lines) | Bullet points + tree lines for nesting | Indentation only — no bullets or tree lines | **UX gap** |
+| Cross-block undo | Ctrl+Z works across blocks within session | Undo scoped per block mount — Ctrl+Z never crosses flush boundary | **UX gap** (intentional ADR-02, but frustrating) |
 
 ### 2. Page Model
 
@@ -46,8 +48,8 @@
 | ~~Strikethrough~~ | `~~text~~` | Not implemented in org parser | **Gap** |
 | ==Highlight== | `^^text^^` | Not implemented | **Gap** |
 | `Inline code` | `` `code` `` | `~code~` (org-mode) | None |
-| Headings in blocks | `# H1`, `## H2`, etc. inside blocks | Not implemented -- blocks are flat content | **Gap** |
-| Code blocks with syntax highlighting | ````python ... ``` `` | Not implemented | **Gap** |
+| Headings in blocks | `# H1`, `## H2`, etc. inside blocks | Parsed and rendered in static view (styled h1-h6). No syntax highlighting in editor | Partial -- static rendering works, editor support incomplete |
+| Code blocks with syntax highlighting | ````python ... ``` `` | Code blocks parsed + rendered in `<pre><code>` blocks. No syntax highlighting | Partial -- no language-aware highlighting |
 | Math/LaTeX | `$$E=mc^2$$` inline and block | Not implemented | **Gap** |
 | Tables | Markdown tables | Not implemented | **Gap** |
 | Blockquotes | `> quote` | Not implemented | **Gap** |
@@ -67,7 +69,7 @@
 | Block embeds | `{{embed ((uuid))}}` -- full tree rendered inline, editable | Not implemented | **Critical gap** |
 | Page embeds | `{{embed [[page]]}}` -- entire page content inline | Not implemented | **Gap** |
 | Tags as links | `#tag` = `[[tag]]` -- tags ARE pages | Tags are separate entities (`block_type = 'tag'`). `#[ULID]` renders as tag chip | Different model -- tags are not pages. This is a design choice, not necessarily a gap |
-| External links | `[text](url)` | Not implemented in org parser (no URL link syntax) | **Gap** |
+| External links | `[text](url)` | Markdown-style `[text](url)` supported in serializer and editor. External links open in browser from static view | None |
 | Backlinks panel | Linked + Unlinked references at bottom of every page, grouped by source | `BacklinksPanel` component -- shows blocks linking via `[[ULID]]`. No unlinked references | Partial -- no unlinked references |
 | Page graph (local) | Visual graph of connections for one page | Not implemented (out of scope per user) | Noted, not priority |
 | Custom link labels | `[display text]([[page]])` or `[label](((uuid)))` | Not implemented | **Gap** |
@@ -129,12 +131,13 @@
 |---|---|---|---|
 | Auto-created daily page | Created at midnight, date as title | `JournalPage` component -- auto-creates page with `YYYY-MM-DD` content on first block | Comparable |
 | Default landing page | Opens to today's journal | App opens to journal view | None |
-| Date navigation | `g n`/`g p` for next/prev day, date picker | Scrollable multi-day view (7 days + "Load older days"), today at top | Comparable -- different UX (scrollable vs single-day nav) |
-| Scrollable past journals | Past days stacked below today | 7 days stacked, each with own BlockTree, "Load older days" button | None |
+| Date navigation | `g n`/`g p` for next/prev day, date picker | Prev/next buttons per mode, calendar date picker, Today button. No keyboard shortcuts (g n/g p) | Partial -- no keyboard shortcuts for journal navigation |
+| Scrollable past journals | Past days stacked below today | Daily: single day. Weekly: 7-day sections. Monthly: stacked all-month sections (not a grid). No "Load older days" button or infinite scroll | **Gap** -- monthly renders 28-31 sections with full BlockTrees (performance issue) |
 | Journal templates | Auto-populated via `config.edn` | Not implemented | **Gap** |
 | Configurable date format | `:journal/page-title-format` | Fixed `YYYY-MM-DD` | Minor gap |
 | Natural language dates | Type "next friday" in date picker | Not implemented | **Gap** |
 | "On this day" queries | Datalog query for same date last year | Not implemented (requires query system) | **Gap** |
+| Auto-create today's journal | Daily page created on app launch | Not implemented — user must click "Add block" on empty today | **UX gap** |
 
 ### 10. Search
 
@@ -205,17 +208,22 @@
 - Backlinks on topic pages create timeline of thoughts
 
 **Block Notes current state:**
-- Scrollable multi-day journal view (7 days + "Load older days")
+- Scrollable multi-day journal view (daily/weekly/monthly modes)
 - Each day section with its own BlockTree, date header, "Add block"
 - Task markers (TODO/DOING/DONE) with click-to-cycle and Ctrl+Enter
-- Block collapse/expand with chevron toggle and Ctrl+.
+- Block collapse/expand with chevron toggle and Ctrl+. (state not persisted)
 - "Open in page editor" link per day
+- Calendar date picker with content dots
 
 **Gaps to close:**
 1. Journal templates (auto-populate new journal pages)
 2. Task queries to surface TODOs across all journal days
+3. Auto-create today's journal page on app launch
+4. "Load older days" / infinite scroll for past entries
+5. Monthly view should be calendar grid, not 31 stacked sections
+6. Keyboard shortcuts for date navigation (g n / g p / g t)
 
-**Verdict: Good.** Core daily journal workflow works with multi-day scrolling, inline task marking, and collapsible blocks. Missing templates and task dashboard.
+**Verdict: Functional but incomplete.** Core daily journal workflow works for a single day, but multi-day views are problematic (monthly is a performance issue), no templates, no task dashboard, and no keyboard navigation shortcuts. Not ready to replace Logseq for serious journalers.
 
 ---
 
@@ -284,16 +292,15 @@
 **Block Notes current state:**
 - Can create page for meeting, add blocks underneath
 - Can link to other pages via `[[ULID]]`
+- Task markers (TODO/DOING/DONE) for action items
 - No templates
-- No task markers for action items
 - No query system for follow-up
 
 **Gaps to close:**
 1. Templates
-2. Task markers
-3. Inline queries for person/project pages
+2. Inline queries for person/project pages
 
-**Verdict: Minimal.** Can take notes in blocks, but none of the workflow automation.
+**Verdict: Basic.** Can take notes and mark action items, but none of the workflow automation.
 
 ---
 
@@ -367,13 +374,19 @@ This is a deep feature set. Minimum viable:
 | # | Feature | Why Important | Backend Ready? |
 |---|---------|--------------|----------------|
 | 8 | Templates | Reusable structures for journals, meetings, projects | Need template storage + insertion |
-| 9 | Scrollable past journals | Journal-centric workflow | **Done** -- 7-day stacked view + "Load older days" |
+| 9 | Scrollable past journals / "Load older days" | Journal-centric workflow | **Not implemented** -- monthly view is 28-31 stacked sections |
 | 10 | Property-based queries | Project management, PARA method | Need new query command |
 | 11 | Scheduled/deadline semantics | Task management with dates | Timestamps parsed, need semantic layer |
-| 12 | Strikethrough + highlight syntax | Formatting parity | Org parser extension |
-| 13 | External link syntax | Basic web linking | Org parser extension |
-| 14 | Move block up/down keyboard shortcut | Fast outliner editing | Frontend only |
-| 15 | Zoom into block | Focus on subtree | Frontend only |
+| 12 | Strikethrough + highlight syntax | Formatting parity | Serializer extension |
+| 13 | Move block up/down keyboard shortcut | Fast outliner editing | Frontend only |
+| 14 | Zoom into block | Focus on subtree | Frontend only |
+| 15 | Persist collapse state | Users lose outline on reload | localStorage or block property |
+| 16 | Visual tree lines / bullets | Outline hard to scan without hierarchy cues | CSS + component change |
+| 17 | Auto-create today's journal on launch | First-time UX is blank | Frontend only |
+| 18 | Journal keyboard nav shortcuts (g n / g p) | Power users expect fast date nav | Frontend only |
+| 19 | Monthly view as calendar grid | Current stacked view renders 31 BlockTrees | Replace renderMonthly() |
+| 20 | Batch property fetch (single IPC) | Current N+1 fetch slows page load | New backend command |
+| 21 | Global resolve cache (Zustand store) | Duplicated listBlocks calls per mount | Refactor |
 
 ### Tier 3 -- Nice to Have (polish and parity)
 
@@ -425,23 +438,23 @@ Not everything is a gap. Block Notes has architectural advantages:
 
 | Category | Logseq | Block Notes | Notes |
 |---|:---:|:---:|---|
-| Block CRUD | 10 | 10 | Collapse/expand added |
+| Block CRUD | 10 | 9 | Collapse state not persisted. No visual bullets/tree lines. Cross-block undo missing |
 | Page management | 9 | 7 | Missing aliases, namespaces, page properties UI |
-| Editor formatting | 9 | 5 | Bold/italic/code + slash commands. No headings, tables, code blocks, highlight |
-| Linking system | 10 | 5 | Have page links + backlinks. Missing block refs, embeds, unlinked refs |
+| Editor formatting | 9 | 6 | Bold/italic/code + headings/code blocks (static). No tables, highlight, strikethrough in editor |
+| Linking system | 10 | 5 | Have page links + backlinks + external links. Missing block refs, embeds, unlinked refs |
 | Properties | 8 | 7 | Backend + API complete. Task marker is first property UI. No general editor |
 | Tags | 8 | 7 | Good filtering. Tags not unified with pages (design choice) |
 | Query system | 9 | 2 | Only tag queries + FTS. No inline queries, no property/task queries |
 | Task management | 8 | 5 | TODO/DOING/DONE + checkboxes + /commands. No priority, scheduling, queries |
-| Daily journal | 8 | 8 | Tri-mode (daily/weekly/monthly), calendar picker, date linking. No templates |
+| Daily journal | 8 | 6 | Tri-mode view, calendar picker. Monthly view is perf issue. No templates, no auto-create today, no keyboard nav |
 | Search | 8 | 7 | Good FTS5. Missing scope filters, unlinked references |
 | Templates | 7 | 0 | Not started |
 | Sync/storage | 5 | 8 | Our architecture is fundamentally better, but sync not exposed yet |
 | Data integrity | 4 | 9 | Op log + hashing + recovery is far ahead |
-| Performance arch | 6 | 9 | CQRS + cursor pagination + Tauri 2 |
+| Performance arch | 6 | 8 | CQRS + cursor pagination + Tauri 2. N+1 property fetch, resolve preload issues |
 | Import/export | 7 | 0 | Not started |
 
-**Overall: Block Notes has a rock-solid foundation (data model, sync, integrity, performance) but is missing the user-facing features that make Logseq's workflows possible. The priority is building up from Tier 1 gaps.**
+**Overall: Block Notes has a rock-solid foundation (data model, sync, integrity, performance) but is missing the user-facing features that make Logseq's workflows possible. The priority is building up from Tier 1 gaps. Key UX issues (collapse persistence, cross-block undo, visual hierarchy, monthly view) need fixing alongside feature gaps.**
 
 ---
 

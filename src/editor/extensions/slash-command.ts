@@ -5,7 +5,7 @@
  * with available commands (TODO, DOING, DONE, Date).
  * On selection, delegates to the onCommand callback.
  *
- * Follows the same pattern as TagPicker and BlockLinkPicker.
+ * Follows the same pattern as AtTagPicker and BlockLinkPicker.
  */
 
 import type { Editor } from '@tiptap/core'

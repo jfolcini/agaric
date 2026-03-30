@@ -56,6 +56,18 @@ vi.mock('lucide-react', () => ({
 import userEvent from '@testing-library/user-event'
 import { SortableBlock } from '../SortableBlock'
 
+// Create a minimal mock sortable return value
+function makeSortable() {
+  return {
+    attributes: {},
+    listeners: {},
+    setNodeRef: vi.fn(),
+    transform: null,
+    transition: undefined,
+    isDragging: false,
+  }
+}
+
 // Create a minimal mock roving editor handle
 function makeRovingEditor() {
   return {
@@ -711,5 +723,82 @@ describe('SortableBlock task marker', () => {
     )
 
     expect(container.querySelector('.line-through')).not.toBeInTheDocument()
+  })
+})
+
+describe('gutter alignment', () => {
+  it('collapse toggle has mt-1.5 for first-line alignment', () => {
+    mockUseSortable.mockReturnValue(makeSortable())
+    render(
+      <SortableBlock
+        blockId="B1"
+        content="test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+      />,
+    )
+    const collapseBtn = screen.getByRole('button', { name: /collapse/i })
+    expect(collapseBtn.className).toContain('mt-1.5')
+  })
+
+  it('collapse spacer has mt-1.5 when no children', () => {
+    mockUseSortable.mockReturnValue(makeSortable())
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren={false}
+      />,
+    )
+    const spacer = container.querySelector('.collapse-spacer')
+    expect(spacer?.className).toContain('mt-1.5')
+  })
+
+  it('task marker has mt-1.5 for first-line alignment', () => {
+    mockUseSortable.mockReturnValue(makeSortable())
+    render(
+      <SortableBlock
+        blockId="B1"
+        content="test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+    const marker = screen.getByRole('button', { name: /set as todo/i })
+    expect(marker.className).toContain('mt-1.5')
+  })
+
+  it('drag handle has mt-1.5 and p-0.5 for alignment', () => {
+    mockUseSortable.mockReturnValue(makeSortable())
+    render(
+      <SortableBlock
+        blockId="B1"
+        content="test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+    const handle = screen.getByRole('button', { name: /drag/i })
+    expect(handle.className).toContain('mt-1.5')
+    expect(handle.className).toContain('p-0.5')
+  })
+
+  it('delete button has mt-1.5 and p-0.5 for alignment', () => {
+    mockUseSortable.mockReturnValue(makeSortable())
+    render(
+      <SortableBlock
+        blockId="B1"
+        content="test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+    const deleteBtn = screen.getByRole('button', { name: /delete/i })
+    expect(deleteBtn.className).toContain('mt-1.5')
+    expect(deleteBtn.className).toContain('p-0.5')
   })
 })

@@ -462,4 +462,96 @@ describe('StaticBlock', () => {
     expect(code?.textContent).toBe('**not bold**')
     expect(container.querySelector('strong')).not.toBeInTheDocument()
   })
+
+  // -- Heading rendering ------------------------------------------------------
+
+  describe('heading rendering', () => {
+    it('renders h1 heading with correct class', () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content="# Main Title" onFocus={vi.fn()} />,
+      )
+      const h1 = container.querySelector('h1')
+      expect(h1).toBeInTheDocument()
+      expect(h1).toHaveTextContent('Main Title')
+    })
+
+    it('renders h2 through h6 heading levels', () => {
+      for (let level = 2; level <= 6; level++) {
+        const content = `${'#'.repeat(level)} Level ${level}`
+        const { container, unmount } = render(
+          <StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />,
+        )
+        const heading = container.querySelector(`h${level}`)
+        expect(heading).toBeInTheDocument()
+        expect(heading).toHaveTextContent(`Level ${level}`)
+        unmount()
+      }
+    })
+
+    it('renders heading with inline bold mark', () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content="## **bold** heading" onFocus={vi.fn()} />,
+      )
+      const h2 = container.querySelector('h2')
+      expect(h2).toBeInTheDocument()
+      expect(h2?.querySelector('strong')).toHaveTextContent('bold')
+    })
+
+    it('renders heading with block_link token', () => {
+      render(
+        <StaticBlock
+          blockId="B1"
+          content="# Title [[01ARZ3NDEKTSV4RRFFQ69G5FAV]]"
+          onFocus={vi.fn()}
+          resolveBlockTitle={() => 'My Page'}
+        />,
+      )
+      expect(screen.getByText('My Page')).toBeInTheDocument()
+    })
+  })
+
+  // -- Code block rendering ---------------------------------------------------
+
+  describe('code block rendering', () => {
+    it('renders code block with pre and code elements', () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content={'```\nconst x = 1\n```'} onFocus={vi.fn()} />,
+      )
+      const pre = container.querySelector('pre')
+      expect(pre).toBeInTheDocument()
+      const code = pre?.querySelector('code')
+      expect(code).toHaveTextContent('const x = 1')
+    })
+
+    it('renders multi-line code block preserving content', () => {
+      const content = '```\nfunction hello() {\n  return "world"\n}\n```'
+      const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+      const code = container.querySelector('code')
+      expect(code?.textContent).toContain('function hello()')
+      expect(code?.textContent).toContain('return "world"')
+    })
+
+    it('renders mixed content: paragraph + code block + paragraph', () => {
+      const content = 'Before\n```\ncode here\n```\nAfter'
+      const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+      expect(container.textContent).toContain('Before')
+      expect(container.querySelector('code')).toHaveTextContent('code here')
+      expect(container.textContent).toContain('After')
+    })
+
+    it('renders empty code block', () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content={'```\n```'} onFocus={vi.fn()} />,
+      )
+      const pre = container.querySelector('pre')
+      expect(pre).toBeInTheDocument()
+    })
+
+    it('passes a11y with heading and code block content', async () => {
+      const { container } = render(
+        <StaticBlock blockId="B1" content={'# Title\n```\ncode\n```'} onFocus={vi.fn()} />,
+      )
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
 })

@@ -24,7 +24,6 @@ import { BlockLink } from './extensions/block-link'
 import { BlockLinkPicker } from './extensions/block-link-picker'
 import { ExternalLink } from './extensions/external-link'
 import { SlashCommand } from './extensions/slash-command'
-import { TagPicker } from './extensions/tag-picker'
 import { TagRef } from './extensions/tag-ref'
 import { parse, serialize } from './markdown-serializer'
 import type { PickerItem } from './SuggestionList'
@@ -144,7 +143,6 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         onNavigate: (id: string) => onNavigateRef.current?.(id),
         resolveStatus: (id: string) => resolveBlockStatusRef.current?.(id) ?? 'active',
       }),
-      TagPicker.configure({ items: searchTags }),
       AtTagPicker.configure({ items: searchTags }),
       BlockLinkPicker.configure({
         items: searchPages,
