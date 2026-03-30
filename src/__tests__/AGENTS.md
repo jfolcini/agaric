@@ -357,6 +357,11 @@ RTL `cleanup()` is registered manually in `afterEach` since vitest globals are d
 4. **Both paths** — every store action and component interaction tests success AND error responses
 5. **Backend contract** — tests verify exact `invoke` call signatures (command name, argument shape, null vs undefined)
 6. **Meaningful assertions** — `toHaveBeenCalledWith` with exact args, not just `toHaveBeenCalled`
+7. **Zero flaky tests** — Flaky tests are bugs. Tests must pass 100% of the time. Common causes and fixes:
+   - **Debounce races** — use `vi.useFakeTimers()` + `vi.advanceTimersByTime()` for debounced inputs. Never rely on real wall-clock timing.
+   - **Render order** — use `waitFor` / `findBy*` for async state updates. Never assert synchronously after an async action.
+   - **Store leaks** — always reset Zustand stores in `beforeEach`. Missing resets cause test-order-dependent failures.
+   - **Mock ordering** — `mockResolvedValueOnce` consumes in call order. If a component calls `invoke` multiple times on mount, chain `Once` calls in the right order or use `mockImplementation` with command dispatch.
 
 ## Common Pitfalls
 

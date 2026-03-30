@@ -581,10 +581,18 @@ mod tests {
         // Independently delete the child first.
         let t1 = soft_delete_block(&pool, CHILD).await.unwrap().unwrap();
 
+        // Ensure the next wall-clock timestamp is strictly after t1.
+        // now_rfc3339() has millisecond precision — without this sleep,
+        // both calls can land in the same millisecond, making t1 == t2.
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
         // Cascade-delete parent: CTE does NOT traverse through the
         // already-deleted child, so grandchild is NOT reached.
         let (t2, count) = cascade_soft_delete(&pool, PARENT).await.unwrap();
-        assert_ne!(t1, t2);
+        assert_ne!(
+            t1, t2,
+            "cascade timestamp must differ from independent delete timestamp"
+        );
         assert_eq!(count, 1, "only the parent should be newly deleted");
 
         assert_eq!(get_deleted_at(&pool, PARENT).await, Some(t2));

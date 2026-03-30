@@ -341,6 +341,10 @@ criterion_main!(benches);
 4. **Descriptive assertion messages** — Every `assert!` includes a message string explaining expected behavior.
 5. **Error path coverage** — Every command tests at minimum: nonexistent ID (→ NotFound), deleted block (→ NotFound), invalid input (→ Validation).
 6. **Op log verification** — After state-changing operations, verify op_log entries: count, op_type, payload contents, hash integrity.
+7. **Zero flaky tests** — Flaky tests are bugs. Tests must pass 100% of the time with `--retries 0`. Common causes and fixes:
+   - **Timestamp collisions** — `now_rfc3339()` has millisecond precision. Two calls in the same ms produce identical timestamps. If a test asserts `t1 != t2` on consecutive operations, insert `tokio::time::sleep(Duration::from_millis(2)).await` between them. Better: use `FIXED_TS` constants when the test doesn't need real wall-clock time.
+   - **Materializer races** — Background tasks can race with the next test write. Always call `settle()` / `settle_bg_tasks()` / `mat.flush_background()` between materializer-triggering operations. Never assert on queue depth without a flush barrier.
+   - **Non-deterministic ordering** — `FxHashSet` iteration order is not stable. Use `BTreeSet` or sort results before comparing. Collect into `HashSet` and use `assert!(set.contains(...))` instead of `assert_eq!(vec[0], ...)`.
 
 ## Common Pitfalls
 
@@ -359,3 +363,5 @@ criterion_main!(benches);
 7. **Integration test files are `mod` includes, not separate binaries** — `integration_tests.rs` and `command_integration_tests.rs` are `#[cfg(test)] mod` in `lib.rs`. They share the same test binary as unit tests. The only separate test binary is `tests/serializer_tests.rs`.
 
 8. **Test helper duplication is intentional** — Each module defines its own `test_pool()`, `insert_block()`, etc. This is by design: tests are self-contained, no shared test utility crate.
+
+9. **Timestamp assertions need a sleep guard** — `now_rfc3339()` has millisecond precision. If a test needs two distinct timestamps from consecutive operations, add `tokio::time::sleep(Duration::from_millis(2)).await` between them. Never write `assert_ne!(t1, t2)` on consecutive wall-clock timestamps without a sleep guard.
