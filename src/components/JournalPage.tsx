@@ -173,107 +173,150 @@ export function JournalPage({
 
   const todayStr = formatDate(new Date())
 
-  /** Render a single day section with BlockTree. */
-  function renderDaySection(entry: DayEntry, headingLevel: 'h2' | 'h3' = 'h3') {
+  /** Render a single day section with heading + BlockTree or compact empty state. */
+  function renderDaySection(
+    entry: DayEntry,
+    headingLevel: 'h2' | 'h3' = 'h3',
+    options?: { hideHeading?: boolean; compact?: boolean },
+  ) {
     const isToday = entry.dateStr === todayStr
-    const Heading = headingLevel
+    const Heading = headingLevel === 'h2' ? 'h2' : 'h3'
+    const compact = options?.compact ?? false
 
     return (
       <section key={entry.dateStr} aria-label={`Journal for ${entry.displayDate}`}>
-        <div className="flex items-center gap-2 mb-2">
-          <Heading
-            className={cn(
-              headingLevel === 'h2'
-                ? 'text-base font-medium'
-                : 'text-sm font-medium text-muted-foreground',
-              isToday && headingLevel === 'h3' && 'text-foreground',
-            )}
-          >
-            {entry.displayDate}
-            {isToday && (
-              <span className="ml-2 text-xs text-muted-foreground font-normal">(Today)</span>
-            )}
-          </Heading>
-          {entry.pageId && onNavigateToPage && (
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`Open ${entry.dateStr} in editor`}
-              onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
+        {/* Day heading — hidden in daily mode since header shows the date */}
+        {!options?.hideHeading && (
+          <div className="flex items-center gap-2 mb-2">
+            <Heading
+              className={cn(
+                headingLevel === 'h2'
+                  ? 'text-base font-medium'
+                  : 'text-sm font-medium text-muted-foreground',
+                isToday && headingLevel === 'h3' && 'text-foreground',
+              )}
             >
-              <ExternalLink className="h-3.5 w-3.5" />
-            </Button>
-          )}
-        </div>
-
-        {entry.pageId && <BlockTree parentId={entry.pageId} />}
-
-        {!entry.pageId && (
-          <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-            <CalendarIcon className="mx-auto mb-2 h-5 w-5" />
-            No blocks for {entry.dateStr}.
+              {entry.displayDate}
+              {isToday && (
+                <span className="ml-2 text-xs text-muted-foreground font-normal">(Today)</span>
+              )}
+            </Heading>
+            {entry.pageId && onNavigateToPage && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Open ${entry.dateStr} in editor`}
+                onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        )}
+        {/* In daily mode (heading hidden), still show the "open in editor" link */}
+        {options?.hideHeading && entry.pageId && onNavigateToPage && (
+          <div className="flex items-center gap-2 mb-2">
             <Button
               variant="ghost"
               size="sm"
-              className="mt-3 mx-auto flex items-center gap-1"
-              onClick={() => handleAddBlock(entry.dateStr)}
+              className="text-muted-foreground"
+              aria-label={`Open ${entry.dateStr} in editor`}
+              onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
             >
-              <Plus className="h-4 w-4" />
-              Add your first block
+              <ExternalLink className="h-3.5 w-3.5 mr-1" />
+              Open in page editor
             </Button>
           </div>
         )}
 
-        <div className="mt-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground"
-            onClick={() => handleAddBlock(entry.dateStr)}
-          >
-            <Plus className="h-4 w-4" />
-            Add block
-          </Button>
-        </div>
+        {entry.pageId && <BlockTree parentId={entry.pageId} onNavigateToPage={onNavigateToPage} />}
+
+        {/* Empty state: compact for multi-day views, full for daily */}
+        {!entry.pageId &&
+          (compact ? (
+            <button
+              type="button"
+              className="w-full rounded-md border border-dashed px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent/50 transition-colors"
+              onClick={() => handleAddBlock(entry.dateStr)}
+            >
+              <Plus className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
+              Add block
+            </button>
+          ) : (
+            <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+              <CalendarIcon className="mx-auto mb-2 h-5 w-5" />
+              No blocks for {entry.displayDate}.
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-3 mx-auto flex items-center gap-1"
+                onClick={() => handleAddBlock(entry.dateStr)}
+              >
+                <Plus className="h-4 w-4" />
+                Add your first block
+              </Button>
+            </div>
+          ))}
+
+        {/* "Add block" button — only shown when there IS content (otherwise the empty state has the CTA) */}
+        {entry.pageId && (
+          <div className="mt-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={() => handleAddBlock(entry.dateStr)}
+            >
+              <Plus className="h-4 w-4" />
+              Add block
+            </Button>
+          </div>
+        )}
       </section>
     )
   }
 
-  /** Render daily view — single day with full BlockTree. */
+  /** Render daily view — single day, heading hidden (header shows date). */
   function renderDaily() {
     const entry = makeDayEntry(currentDate)
-    return <div className="space-y-4">{renderDaySection(entry, 'h2')}</div>
+    return <div className="space-y-4">{renderDaySection(entry, 'h2', { hideHeading: true })}</div>
   }
 
-  /** Render weekly view — Mon-Sun, each day as a section. */
+  /** Render weekly view — Mon-Sun, each day as a compact section with separator. */
   function renderWeekly() {
     const days = getWeekDays(currentDate)
     return (
-      <div className="space-y-6">
-        {days.map((d) => {
+      <div className="space-y-1">
+        {days.map((d, i) => {
           const entry = makeDayEntry(d)
           const isToday = entry.dateStr === todayStr
-          return renderDaySection(entry, isToday ? 'h2' : 'h3')
+          return (
+            <div key={entry.dateStr}>
+              {i > 0 && <div className="border-t border-border my-3" />}
+              {renderDaySection(entry, isToday ? 'h2' : 'h3', { compact: true })}
+            </div>
+          )
         })}
       </div>
     )
   }
 
-  /** Render monthly view — stacked day sections for the whole month (like weekly but for a month). */
+  /** Render monthly view — stacked day sections for the whole month (compact, with separators). */
   function renderMonthly() {
     const monthStart = startOfMonth(currentDate)
     const monthEnd = endOfMonth(currentDate)
     const days = eachDayOfInterval({ start: monthStart, end: monthEnd })
-    const entries = days.map((d) => makeDayEntry(d))
 
     return (
-      <div className="space-y-4">
-        {entries.map((entry) => {
+      <div className="space-y-1">
+        {days.map((d, i) => {
+          const entry = makeDayEntry(d)
           const isToday = entry.dateStr === todayStr
           return (
-            <section key={entry.dateStr} aria-label={`Journal for ${entry.displayDate}`}>
-              {renderDaySection(entry, isToday ? 'h2' : 'h3')}
-            </section>
+            <div key={entry.dateStr}>
+              {i > 0 && <div className="border-t border-border my-3" />}
+              {renderDaySection(entry, isToday ? 'h2' : 'h3', { compact: true })}
+            </div>
           )
         })}
       </div>

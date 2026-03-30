@@ -2,23 +2,27 @@
  * Calendar — a shadcn-style wrapper around react-day-picker v9.
  *
  * Provides Tailwind styling consistent with the app's design system.
- * Supports week numbers and Monday-start weeks for the journal's
- * floating date picker.
+ * Supports week numbers (clickable) and Monday-start weeks.
  */
 
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import type * as React from 'react'
-import { DayPicker } from 'react-day-picker'
+import { DayPicker, type DayPickerProps } from 'react-day-picker'
 
 import { buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+
+export type CalendarProps = DayPickerProps & {
+  /** Called when a week number is clicked with the week number and the dates in that week. */
+  onWeekNumberClick?: (weekNumber: number, dates: Date[]) => void
+}
 
 function Calendar({
   className,
   classNames,
   showOutsideDays = true,
+  onWeekNumberClick,
   ...props
-}: React.ComponentProps<typeof DayPicker>) {
+}: CalendarProps) {
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
@@ -27,16 +31,17 @@ function Calendar({
         root: 'rdp',
         months: 'flex flex-col sm:flex-row gap-2',
         month: 'flex flex-col gap-4',
-        month_caption: 'flex justify-center pt-1 relative items-center text-sm font-medium',
+        month_caption:
+          'flex justify-center pt-1 pb-2 relative items-center text-sm font-medium h-10',
         caption_label: 'text-sm font-medium',
         nav: 'flex items-center gap-1',
         button_previous: cn(
           buttonVariants({ variant: 'outline' }),
-          'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 absolute left-1',
+          'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 absolute left-0',
         ),
         button_next: cn(
           buttonVariants({ variant: 'outline' }),
-          'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 absolute right-1',
+          'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 absolute right-0',
         ),
         month_grid: 'w-full border-collapse space-y-1',
         weekdays: 'flex',
@@ -58,8 +63,7 @@ function Calendar({
         disabled: 'text-muted-foreground opacity-50',
         range_middle: 'aria-selected:bg-accent aria-selected:text-accent-foreground',
         hidden: 'invisible',
-        week_number:
-          'text-[0.7rem] text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground',
+        week_number: 'text-[0.7rem] text-muted-foreground w-8 text-center',
         week_number_header: 'text-[0.7rem] text-muted-foreground w-8',
         ...classNames,
       }}
@@ -68,6 +72,25 @@ function Calendar({
           const Icon = orientation === 'left' ? ChevronLeft : ChevronRight
           return <Icon className="size-4" {...chevronProps} />
         },
+        // Custom WeekNumber component to make week numbers clickable
+        ...(onWeekNumberClick
+          ? {
+              WeekNumber: ({ children, week }) => {
+                const dates = week?.days?.map((d: { date: Date }) => d.date) ?? []
+                const weekNum = typeof children === 'number' ? children : Number(children)
+                return (
+                  <button
+                    type="button"
+                    className="text-[0.7rem] text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground hover:bg-accent rounded-md transition-colors"
+                    onClick={() => onWeekNumberClick(weekNum, dates)}
+                    aria-label={`Go to week ${weekNum}`}
+                  >
+                    {children}
+                  </button>
+                )
+              },
+            }
+          : {}),
       }}
       {...props}
     />

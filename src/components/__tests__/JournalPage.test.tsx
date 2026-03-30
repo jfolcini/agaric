@@ -112,7 +112,7 @@ describe('JournalPage', () => {
       expect(sections[0]).toHaveAccessibleName(`Journal for ${todayDisplay}`)
     })
 
-    it('renders today with h2 header in daily mode', async () => {
+    it('daily mode hides date heading (shown in header bar instead)', async () => {
       mockedInvoke.mockResolvedValue(emptyPage)
 
       renderJournal()
@@ -121,8 +121,9 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      const h2s = screen.getAllByRole('heading', { level: 2 })
-      expect(h2s).toHaveLength(1)
+      // Daily mode: heading is hidden, date is in the header controls
+      const h2s = screen.queryAllByRole('heading', { level: 2 })
+      expect(h2s).toHaveLength(0)
     })
 
     it('shows empty state with "No blocks" when no page exists for the day', async () => {
@@ -482,7 +483,7 @@ describe('JournalPage', () => {
       // Click the "Add block" button in today's section
       const sections = screen.getAllByRole('region')
       const todaySection = sections[0]
-      const addBtn = within(todaySection).getByRole('button', { name: /^add block$/i })
+      const addBtn = within(todaySection).getByRole('button', { name: /add.*block/i })
       await user.click(addBtn)
 
       await waitFor(() => {
@@ -534,7 +535,7 @@ describe('JournalPage', () => {
 
       const sections = screen.getAllByRole('region')
       const todaySection = sections[0]
-      const addBtn = within(todaySection).getByRole('button', { name: /^add block$/i })
+      const addBtn = within(todaySection).getByRole('button', { name: /add.*block/i })
       await user.click(addBtn)
 
       await waitFor(() => {

@@ -80,7 +80,7 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByRole('tab', { name: /daily view/i })).toBeInTheDocument()
     })
-    expect(screen.getAllByRole('button', { name: /add block/i }).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByRole('button', { name: /add.*block/i }).length).toBeGreaterThanOrEqual(1)
   })
 
   it('switches to Pages view', async () => {
