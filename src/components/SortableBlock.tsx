@@ -80,7 +80,7 @@ export function SortableBlock({
       {hasChildren ? (
         <button
           type="button"
-          className="collapse-toggle flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground"
+          className="collapse-toggle flex-shrink-0 p-0.5 mt-1.5 text-muted-foreground hover:text-foreground"
           onClick={() => onToggleCollapse?.(blockId)}
           aria-label={isCollapsed ? 'Expand children' : 'Collapse children'}
         >
@@ -90,11 +90,11 @@ export function SortableBlock({
           />
         </button>
       ) : (
-        <span className="collapse-spacer flex-shrink-0 w-[19px]" />
+        <span className="collapse-spacer flex-shrink-0 w-[19px] mt-1.5" />
       )}
       <button
         type="button"
-        className="task-marker flex-shrink-0 p-0.5 transition-colors"
+        className="task-marker flex-shrink-0 p-0.5 mt-1.5 transition-colors"
         onClick={(e) => {
           e.stopPropagation()
           onToggleTodo?.(blockId)
@@ -117,7 +117,7 @@ export function SortableBlock({
       </button>
       <button
         type="button"
-        className="drag-handle flex-shrink-0 cursor-grab opacity-30 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-foreground"
+        className="drag-handle flex-shrink-0 cursor-grab opacity-30 group-hover:opacity-100 transition-opacity p-0.5 mt-1.5 text-muted-foreground hover:text-foreground"
         aria-label="Drag to reorder"
         {...attributes}
         {...listeners}
@@ -127,7 +127,7 @@ export function SortableBlock({
       {onDelete && (
         <button
           type="button"
-          className="delete-handle flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10"
+          className="delete-handle flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 mt-1.5 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10"
           aria-label="Delete block"
           onClick={() => onDelete(blockId)}
         >

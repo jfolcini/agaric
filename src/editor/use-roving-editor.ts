@@ -8,8 +8,10 @@
 
 import Bold from '@tiptap/extension-bold'
 import Code from '@tiptap/extension-code'
+import CodeBlock from '@tiptap/extension-code-block'
 import Document from '@tiptap/extension-document'
 import HardBreak from '@tiptap/extension-hard-break'
+import Heading from '@tiptap/extension-heading'
 import History from '@tiptap/extension-history'
 import Italic from '@tiptap/extension-italic'
 import Paragraph from '@tiptap/extension-paragraph'
@@ -17,6 +19,7 @@ import Placeholder from '@tiptap/extension-placeholder'
 import Text from '@tiptap/extension-text'
 import { type Editor, useEditor } from '@tiptap/react'
 import { useCallback, useRef } from 'react'
+import { AtTagPicker } from './extensions/at-tag-picker'
 import { BlockLink } from './extensions/block-link'
 import { BlockLinkPicker } from './extensions/block-link-picker'
 import { ExternalLink } from './extensions/external-link'
@@ -126,6 +129,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Bold,
       Italic,
       Code,
+      CodeBlock,
+      Heading.configure({ levels: [1, 2, 3, 4, 5, 6] }),
       HardBreak,
       History,
       ExternalLink,
@@ -140,6 +145,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         resolveStatus: (id: string) => resolveBlockStatusRef.current?.(id) ?? 'active',
       }),
       TagPicker.configure({ items: searchTags }),
+      AtTagPicker.configure({ items: searchTags }),
       BlockLinkPicker.configure({
         items: searchPages,
         onCreate: (label: string) => {

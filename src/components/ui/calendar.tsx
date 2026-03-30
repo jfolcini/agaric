@@ -14,6 +14,8 @@ import { cn } from '@/lib/utils'
 export type CalendarProps = DayPickerProps & {
   /** Called when a week number is clicked with the week number and the dates in that week. */
   onWeekNumberClick?: (weekNumber: number, dates: Date[]) => void
+  /** Called when the month caption label is clicked with the month's Date. */
+  onMonthClick?: (month: Date) => void
 }
 
 function Calendar({
@@ -21,6 +23,7 @@ function Calendar({
   classNames,
   showOutsideDays = true,
   onWeekNumberClick,
+  onMonthClick,
   ...props
 }: CalendarProps) {
   return (
@@ -58,7 +61,7 @@ function Calendar({
         range_end: 'day-range-end',
         selected:
           'bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground rounded-md',
-        today: 'bg-accent text-accent-foreground rounded-md',
+        today: 'bg-accent text-accent-foreground rounded-md ring-2 ring-primary/50',
         outside: 'outside text-muted-foreground aria-selected:text-muted-foreground opacity-50',
         disabled: 'text-muted-foreground opacity-50',
         range_middle: 'aria-selected:bg-accent aria-selected:text-accent-foreground',
@@ -84,6 +87,26 @@ function Calendar({
                     className="text-[0.7rem] text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground hover:bg-accent rounded-md transition-colors"
                     onClick={() => onWeekNumberClick(weekNum, dates)}
                     aria-label={`Go to week ${weekNum}`}
+                  >
+                    {children}
+                  </button>
+                )
+              },
+            }
+          : {}),
+        ...(onMonthClick
+          ? {
+              CaptionLabel: ({
+                children,
+                ...labelProps
+              }: React.HTMLAttributes<HTMLSpanElement>) => {
+                return (
+                  <button
+                    type="button"
+                    className="text-sm font-medium cursor-pointer hover:text-primary hover:underline transition-colors"
+                    onClick={() => onMonthClick(props.defaultMonth ?? new Date())}
+                    aria-label="Go to monthly view"
+                    {...labelProps}
                   >
                     {children}
                   </button>

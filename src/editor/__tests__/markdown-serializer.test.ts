@@ -6,8 +6,10 @@ import {
   bold,
   boldItalic,
   code,
+  codeBlock,
   doc,
   hardBreak,
+  heading,
   italic,
   paragraph,
   tagRef,
@@ -156,7 +158,7 @@ describe('serialize', () => {
 
     it('unknown top-level node stripped with warning', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      const unknown = { type: 'heading', content: [] } as unknown as ParagraphNode
+      const unknown = { type: 'blockquote', content: [] } as unknown as ParagraphNode
       expect(serialize(doc(unknown, paragraph(text('ok'))))).toBe('\nok')
       expect(warn).toHaveBeenCalledOnce()
       warn.mockRestore()
@@ -963,5 +965,86 @@ describe('external links', () => {
         expect(serialize(parse(input))).toBe(input)
       })
     }
+  })
+})
+
+// -- headings -----------------------------------------------------------------
+
+describe('headings', () => {
+  it('parses # heading', () => {
+    expect(parse('# Hello')).toEqual(doc(heading(1, text('Hello'))))
+  })
+
+  it('parses ## through ###### heading levels', () => {
+    for (let level = 2; level <= 6; level++) {
+      const prefix = '#'.repeat(level)
+      expect(parse(`${prefix} Level ${level}`)).toEqual(doc(heading(level, text(`Level ${level}`))))
+    }
+  })
+
+  it('parses heading with inline marks', () => {
+    expect(parse('## **bold** heading')).toEqual(doc(heading(2, bold('bold'), text(' heading'))))
+  })
+
+  it('serializes heading level 1', () => {
+    expect(serialize(doc(heading(1, text('Title'))))).toBe('# Title')
+  })
+
+  it('serializes heading level 3', () => {
+    expect(serialize(doc(heading(3, text('Section'))))).toBe('### Section')
+  })
+
+  it('round-trips heading with marks', () => {
+    const md = '## **bold** *italic*'
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('heading followed by paragraph', () => {
+    const md = '# Title\nSome text'
+    const result = parse(md)
+    expect(result.content).toHaveLength(2)
+    expect(result.content?.[0].type).toBe('heading')
+    expect(result.content?.[1].type).toBe('paragraph')
+  })
+
+  it('empty heading', () => {
+    expect(serialize(doc(heading(1)))).toBe('# ')
+  })
+})
+
+// -- code blocks --------------------------------------------------------------
+
+describe('code blocks', () => {
+  it('parses fenced code block', () => {
+    const md = '```\nconsole.log("hi")\n```'
+    expect(parse(md)).toEqual(doc(codeBlock('console.log("hi")')))
+  })
+
+  it('parses multi-line code block', () => {
+    const md = '```\nline1\nline2\nline3\n```'
+    expect(parse(md)).toEqual(doc(codeBlock('line1\nline2\nline3')))
+  })
+
+  it('serializes code block', () => {
+    expect(serialize(doc(codeBlock('const x = 1')))).toBe('```\nconst x = 1\n```')
+  })
+
+  it('round-trips code block', () => {
+    const md = '```\nfunction hello() {\n  return "world"\n}\n```'
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('empty code block', () => {
+    const md = '```\n```'
+    expect(parse(md)).toEqual(doc(codeBlock('')))
+  })
+
+  it('code block with heading and paragraph', () => {
+    const md = '# Title\n```\ncode\n```\nAfter'
+    const result = parse(md)
+    expect(result.content).toHaveLength(3)
+    expect(result.content?.[0].type).toBe('heading')
+    expect(result.content?.[1].type).toBe('codeBlock')
+    expect(result.content?.[2].type).toBe('paragraph')
   })
 })

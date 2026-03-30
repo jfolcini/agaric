@@ -1,14 +1,14 @@
 /**
  * FormattingToolbar — always-visible toolbar rendered above the active editor.
  *
- * Buttons: Bold, Italic, Code | Undo, Redo.
+ * Buttons: Bold, Italic, Code | External Link, Code Block | Undo, Redo.
  * Uses onMouseDown + preventDefault so clicks never steal focus from TipTap.
  * Active marks are highlighted via aria-pressed + bg-accent.
  */
 
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
-import { Bold, Code, Italic, Redo2, Undo2 } from 'lucide-react'
+import { Bold, Code, FileCode2, Italic, Link2, Redo2, Undo2 } from 'lucide-react'
 import type React from 'react'
 import { Button } from './ui/button'
 import { Separator } from './ui/separator'
@@ -24,6 +24,8 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
       bold: ctx.editor.isActive('bold'),
       italic: ctx.editor.isActive('italic'),
       code: ctx.editor.isActive('code'),
+      link: ctx.editor.isActive('link'),
+      codeBlock: ctx.editor.isActive('codeBlock'),
       canUndo: ctx.editor.can().undo(),
       canRedo: ctx.editor.can().redo(),
     }),
@@ -69,6 +71,42 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
         }}
       >
         <Code size={14} />
+      </Button>
+
+      <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
+
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="External link"
+        aria-pressed={state.link}
+        className={state.link ? 'bg-accent text-accent-foreground' : ''}
+        onMouseDown={(e) => {
+          e.preventDefault()
+          if (state.link) {
+            editor.chain().focus().unsetLink().run()
+          } else {
+            const url = window.prompt('URL:')
+            if (url) {
+              editor.chain().focus().setLink({ href: url }).run()
+            }
+          }
+        }}
+      >
+        <Link2 size={14} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Code block"
+        aria-pressed={state.codeBlock}
+        className={state.codeBlock ? 'bg-accent text-accent-foreground' : ''}
+        onMouseDown={(e) => {
+          e.preventDefault()
+          editor.chain().focus().toggleCodeBlock().run()
+        }}
+      >
+        <FileCode2 size={14} />
       </Button>
 
       <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />

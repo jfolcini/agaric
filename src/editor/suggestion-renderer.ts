@@ -28,8 +28,10 @@ function updatePosition(
     top = rect.top - popupHeight - 4
   }
 
-  // Clamp horizontal position so popup doesn't overflow right edge
-  let left = rect.left
+  // Position at the end of the trigger text (where cursor is), not the start.
+  // For multi-char triggers like [[, clientRect spans the trigger — we want
+  // the right edge so the popup appears where the user is typing.
+  let left = rect.width > 1 ? rect.right : rect.left
   const popupWidth = el.offsetWidth || 240
   if (left + popupWidth > viewportWidth - 8) {
     left = viewportWidth - popupWidth - 8

@@ -33,6 +33,7 @@ import {
 } from '@dnd-kit/sortable'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { parse } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
@@ -453,7 +454,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     const blockId = rovingEditor.activeBlockId // capture BEFORE unmount nullifies it
     const changed = rovingEditor.unmount()
     if (changed !== null) {
-      if (changed.includes('\n')) {
+      // Use the parser to detect multi-block content (headings, code blocks, etc.)
+      // A single code block or heading with newlines should NOT split.
+      const doc = parse(changed)
+      const blockCount = doc.content?.length ?? 0
+      if (blockCount > 1) {
         splitBlock(blockId, changed)
       } else {
         // Check for checkbox markdown syntax before saving

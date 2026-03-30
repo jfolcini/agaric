@@ -151,6 +151,23 @@
   margin: 0;
 }
 
+/* Heading styles inside the editor */
+.ProseMirror h1 { @apply text-2xl font-bold; margin: 0; }
+.ProseMirror h2 { @apply text-xl font-bold; margin: 0; }
+.ProseMirror h3 { @apply text-lg font-semibold; margin: 0; }
+.ProseMirror h4 { @apply text-base font-semibold; margin: 0; }
+.ProseMirror h5 { @apply text-sm font-semibold; margin: 0; }
+.ProseMirror h6 { @apply text-xs font-semibold uppercase tracking-wide; margin: 0; }
+
+/* Code block styles inside the editor */
+.ProseMirror pre {
+  @apply bg-muted rounded-md px-3 py-2 text-sm font-mono;
+  margin: 0;
+}
+.ProseMirror pre code {
+  @apply bg-transparent p-0 text-sm font-mono;
+}
+
 /* Placeholder text (via TipTap Placeholder extension) */
 .ProseMirror p.is-editor-empty:first-child::before {
   @apply text-muted-foreground/60 pointer-events-none float-left h-0;

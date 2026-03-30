@@ -23,6 +23,8 @@ const mockEditorState = {
   bold: false,
   italic: false,
   code: false,
+  link: false,
+  codeBlock: false,
   canUndo: false,
   canRedo: false,
 }
@@ -46,12 +48,18 @@ const mockRun = vi.fn()
 const mockToggleBold = vi.fn(() => ({ run: mockRun }))
 const mockToggleItalic = vi.fn(() => ({ run: mockRun }))
 const mockToggleCode = vi.fn(() => ({ run: mockRun }))
+const mockToggleCodeBlock = vi.fn(() => ({ run: mockRun }))
+const mockSetLink = vi.fn(() => ({ run: mockRun }))
+const mockUnsetLink = vi.fn(() => ({ run: mockRun }))
 const mockUndo = vi.fn(() => ({ run: mockRun }))
 const mockRedo = vi.fn(() => ({ run: mockRun }))
 const mockFocus = vi.fn(() => ({
   toggleBold: mockToggleBold,
   toggleItalic: mockToggleItalic,
   toggleCode: mockToggleCode,
+  toggleCodeBlock: mockToggleCodeBlock,
+  setLink: mockSetLink,
+  unsetLink: mockUnsetLink,
   undo: mockUndo,
   redo: mockRedo,
 }))
@@ -69,6 +77,8 @@ describe('FormattingToolbar', () => {
     mockEditorState.bold = false
     mockEditorState.italic = false
     mockEditorState.code = false
+    mockEditorState.link = false
+    mockEditorState.codeBlock = false
     mockEditorState.canUndo = false
     mockEditorState.canRedo = false
   })
@@ -81,21 +91,25 @@ describe('FormattingToolbar', () => {
       expect(container.querySelector('.formatting-toolbar')).toBeInTheDocument()
     })
 
-    it('renders all five formatting buttons', () => {
+    it('renders all seven formatting buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Italic' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Code' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'External link' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Redo' })).toBeInTheDocument()
     })
 
-    it('renders a separator between formatting and history groups', () => {
+    it('renders separators between button groups', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      const sep = screen.getByTestId('separator')
-      expect(sep).toBeInTheDocument()
-      expect(sep).toHaveAttribute('data-orientation', 'vertical')
+      const seps = screen.getAllByTestId('separator')
+      expect(seps).toHaveLength(2)
+      for (const sep of seps) {
+        expect(sep).toHaveAttribute('data-orientation', 'vertical')
+      }
     })
   })
 
@@ -220,6 +234,52 @@ describe('FormattingToolbar', () => {
 
       expect(mockRedo).toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalled()
+    })
+  })
+
+  // ── New button actions ───────────────────────────────────────────────
+
+  describe('new button actions', () => {
+    it('toggles external link — prompts for URL when not active', () => {
+      const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('https://example.com')
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.mouseDown(screen.getByRole('button', { name: 'External link' }))
+
+      expect(promptSpy).toHaveBeenCalledWith('URL:')
+      expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
+      promptSpy.mockRestore()
+    })
+
+    it('unsets link when link is active', () => {
+      mockEditorState.link = true
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.mouseDown(screen.getByRole('button', { name: 'External link' }))
+
+      expect(mockUnsetLink).toHaveBeenCalled()
+    })
+
+    it('toggles code block via editor chain', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.mouseDown(screen.getByRole('button', { name: 'Code block' }))
+
+      expect(mockToggleCodeBlock).toHaveBeenCalled()
+      expect(mockRun).toHaveBeenCalled()
+    })
+
+    it('shows External link as pressed when link is active', () => {
+      mockEditorState.link = true
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'External link' })
+      expect(btn).toHaveAttribute('aria-pressed', 'true')
+      expect(btn.className).toContain('bg-accent')
+    })
+
+    it('shows Code block as pressed when active', () => {
+      mockEditorState.codeBlock = true
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Code block' })
+      expect(btn).toHaveAttribute('aria-pressed', 'true')
+      expect(btn.className).toContain('bg-accent')
     })
   })
 

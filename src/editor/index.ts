@@ -2,9 +2,11 @@
  * TipTap editor configuration — minimal extension set per ADR-01.
  *
  * No starter-kit. Individual extensions only. Block-level Markdown
- * (headings, lists, blockquotes) is explicitly excluded.
+ * (headings, code blocks) supported via the markdown serializer.
  */
 
+export type { AtTagPickerOptions } from './extensions/at-tag-picker'
+export { AtTagPicker } from './extensions/at-tag-picker'
 export type { BlockLinkOptions } from './extensions/block-link'
 export { BlockLink } from './extensions/block-link'
 export type { BlockLinkPickerOptions } from './extensions/block-link-picker'

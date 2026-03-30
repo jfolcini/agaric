@@ -2,6 +2,7 @@
  * Markdown serializer for the block-notes content format (ADR-20).
  *
  * Converts between ProseMirror JSON documents and a locked Markdown subset:
+ *   blocks: # heading  ```code```
  *   marks:  **bold**  *italic*  `code`  [text](url)
  *   tokens: #[ULID]  [[ULID]]
  *
@@ -10,7 +11,9 @@
 
 import type {
   BlockLinkNode,
+  CodeBlockNode,
   DocNode,
+  HeadingNode,
   InlineNode,
   ParagraphNode,
   PMMark,
@@ -243,12 +246,27 @@ function serializeParagraph(node: ParagraphNode): string {
   return result
 }
 
+function serializeHeading(node: HeadingNode): string {
+  const prefix = `${'#'.repeat(node.attrs.level)} `
+  if (!node.content || node.content.length === 0) return prefix
+  return prefix + serializeParagraph({ type: 'paragraph', content: [...node.content] })
+}
+
+function serializeCodeBlock(node: CodeBlockNode): string {
+  const code = node.content?.[0]?.text ?? ''
+  return `\`\`\`\n${code}\n\`\`\``
+}
+
 export function serialize(doc: DocNode): string {
   if (!doc.content || doc.content.length === 0) return ''
   return doc.content
     .map((node) => {
       if (node.type === 'paragraph') return serializeParagraph(node)
-      console.warn(`[serializer] unknown top-level node type: "${node.type}" — stripped`)
+      if (node.type === 'heading') return serializeHeading(node)
+      if (node.type === 'codeBlock') return serializeCodeBlock(node)
+      console.warn(
+        `[serializer] unknown top-level node type: "${(node as { type: string }).type}" — stripped`,
+      )
       return ''
     })
     .join('\n')
@@ -420,179 +438,219 @@ export function parse(markdown: string): DocNode {
   if (markdown.length === 0) return { type: 'doc' }
 
   const lines = markdown.split('\n')
-  const paragraphs: ParagraphNode[] = []
+  const blocks: (ParagraphNode | HeadingNode | CodeBlockNode)[] = []
+  let i = 0
 
-  for (const line of lines) {
-    const nodes: InlineNode[] = []
-    const s: Scanner = { src: line, pos: 0 }
-    let buf = ''
-    let inBold = false
-    let inItalic = false
-    let inCode = false
+  while (i < lines.length) {
+    const line = lines[i]
 
-    // Track positions where marks were opened so we can revert if unclosed
-    let boldOpenPos = -1
-    let italicOpenPos = -1
-    // Snapshots of nodes array length at mark open (for unclosed mark revert)
-    let boldOpenNodeLen = 0
-    let italicOpenNodeLen = 0
-    let codeOpenNodeLen = 0
-
-    function currentMarks(): PMMark[] {
-      const m: PMMark[] = []
-      if (inBold) m.push({ type: 'bold' })
-      if (inItalic) m.push({ type: 'italic' })
-      return m
+    // Fenced code block: ```
+    if (line.startsWith('```')) {
+      const codeLines: string[] = []
+      i++ // skip opening fence
+      while (i < lines.length && !lines[i].startsWith('```')) {
+        codeLines.push(lines[i])
+        i++
+      }
+      if (i < lines.length) i++ // skip closing fence
+      const code = codeLines.join('\n')
+      if (code.length === 0) {
+        blocks.push({ type: 'codeBlock' })
+      } else {
+        blocks.push({ type: 'codeBlock', content: [{ type: 'text', text: code }] })
+      }
+      continue
     }
 
-    while (s.pos < s.src.length) {
-      const ch = peek(s)
-
-      // Code span: backtick toggles, everything else inside is literal
-      if (ch === '`') {
-        if (inCode) {
-          buf = flushText(buf, [{ type: 'code' }], nodes)
-          inCode = false
-          s.pos++
-          continue
-        }
-        buf = flushText(buf, currentMarks(), nodes)
-        codeOpenNodeLen = nodes.length
-        inCode = true
-        s.pos++
-        continue
+    // Heading: # to ######
+    const headingMatch = line.match(/^(#{1,6}) (.*)$/)
+    if (headingMatch) {
+      const level = headingMatch[1].length
+      const content = headingMatch[2]
+      const inlineNodes = parseLine(content)
+      if (inlineNodes.length === 0) {
+        blocks.push({ type: 'heading', attrs: { level } })
+      } else {
+        blocks.push({ type: 'heading', attrs: { level }, content: inlineNodes })
       }
+      i++
+      continue
+    }
+
+    // Regular paragraph
+    const inlineNodes = parseLine(line)
+    if (inlineNodes.length === 0) {
+      blocks.push({ type: 'paragraph' })
+    } else {
+      blocks.push({ type: 'paragraph', content: inlineNodes })
+    }
+    i++
+  }
+
+  if (blocks.length === 0) return { type: 'doc' }
+  return { type: 'doc', content: blocks }
+}
+
+/** Parse a single line of inline content into InlineNode[]. */
+function parseLine(line: string): InlineNode[] {
+  const nodes: InlineNode[] = []
+  const s: Scanner = { src: line, pos: 0 }
+  let buf = ''
+  let inBold = false
+  let inItalic = false
+  let inCode = false
+
+  // Track positions where marks were opened so we can revert if unclosed
+  let boldOpenPos = -1
+  let italicOpenPos = -1
+  // Snapshots of nodes array length at mark open (for unclosed mark revert)
+  let boldOpenNodeLen = 0
+  let italicOpenNodeLen = 0
+  let codeOpenNodeLen = 0
+
+  function currentMarks(): PMMark[] {
+    const m: PMMark[] = []
+    if (inBold) m.push({ type: 'bold' })
+    if (inItalic) m.push({ type: 'italic' })
+    return m
+  }
+
+  while (s.pos < s.src.length) {
+    const ch = peek(s)
+
+    // Code span: backtick toggles, everything else inside is literal
+    if (ch === '`') {
       if (inCode) {
-        buf += ch
+        buf = flushText(buf, [{ type: 'code' }], nodes)
+        inCode = false
         s.pos++
         continue
       }
+      buf = flushText(buf, currentMarks(), nodes)
+      codeOpenNodeLen = nodes.length
+      inCode = true
+      s.pos++
+      continue
+    }
+    if (inCode) {
+      buf += ch
+      s.pos++
+      continue
+    }
 
-      // Escape sequences (only outside code spans)
-      if (ch === '\\' && s.pos + 1 < s.src.length) {
-        const next = peek(s, 1)
-        if (
-          next === '*' ||
-          next === '`' ||
-          next === '\\' ||
-          next === '#' ||
-          next === '[' ||
-          next === ']'
-        ) {
-          buf += next
-          s.pos += 2
-          continue
-        }
-      }
-
-      // Tokens: #[ULID] and [[ULID]]
-      const token = tryConsumeToken(s)
-      if (token) {
-        buf = flushText(buf, currentMarks(), nodes)
-        nodes.push(token)
-        continue
-      }
-
-      // External link: [text](url) — single [ not followed by [
-      if (ch === '[' && peek(s, 1) !== '[') {
-        const linkMatch = probeExternalLink(s)
-        if (linkMatch) {
-          buf = flushText(buf, currentMarks(), nodes)
-          const linkNodes = consumeExternalLink(s, linkMatch, currentMarks())
-          nodes.push(...linkNodes)
-          continue
-        }
-      }
-
-      // Bold: **
-      if (ch === '*' && peek(s, 1) === '*') {
-        if (inBold) {
-          // Close bold
-          buf = flushText(buf, currentMarks(), nodes)
-          inBold = false
-          s.pos += 2
-          continue
-        }
-        // Open bold
-        buf = flushText(buf, currentMarks(), nodes)
-        boldOpenPos = s.pos
-        boldOpenNodeLen = nodes.length
-        inBold = true
+    // Escape sequences (only outside code spans)
+    if (ch === '\\' && s.pos + 1 < s.src.length) {
+      const next = peek(s, 1)
+      if (
+        next === '*' ||
+        next === '`' ||
+        next === '\\' ||
+        next === '#' ||
+        next === '[' ||
+        next === ']'
+      ) {
+        buf += next
         s.pos += 2
         continue
       }
+    }
 
-      // Italic: single *
-      if (ch === '*') {
-        if (inItalic) {
-          // Close italic
-          buf = flushText(buf, currentMarks(), nodes)
-          inItalic = false
-          s.pos++
-          continue
-        }
-        // Open italic
+    // Tokens: #[ULID] and [[ULID]]
+    const token = tryConsumeToken(s)
+    if (token) {
+      buf = flushText(buf, currentMarks(), nodes)
+      nodes.push(token)
+      continue
+    }
+
+    // External link: [text](url) — single [ not followed by [
+    if (ch === '[' && peek(s, 1) !== '[') {
+      const linkMatch = probeExternalLink(s)
+      if (linkMatch) {
         buf = flushText(buf, currentMarks(), nodes)
-        italicOpenPos = s.pos
-        italicOpenNodeLen = nodes.length
-        inItalic = true
+        const linkNodes = consumeExternalLink(s, linkMatch, currentMarks())
+        nodes.push(...linkNodes)
+        continue
+      }
+    }
+
+    // Bold: **
+    if (ch === '*' && peek(s, 1) === '*') {
+      if (inBold) {
+        // Close bold
+        buf = flushText(buf, currentMarks(), nodes)
+        inBold = false
+        s.pos += 2
+        continue
+      }
+      // Open bold
+      buf = flushText(buf, currentMarks(), nodes)
+      boldOpenPos = s.pos
+      boldOpenNodeLen = nodes.length
+      inBold = true
+      s.pos += 2
+      continue
+    }
+
+    // Italic: single *
+    if (ch === '*') {
+      if (inItalic) {
+        // Close italic
+        buf = flushText(buf, currentMarks(), nodes)
+        inItalic = false
         s.pos++
         continue
       }
-
-      buf += ch
+      // Open italic
+      buf = flushText(buf, currentMarks(), nodes)
+      italicOpenPos = s.pos
+      italicOpenNodeLen = nodes.length
+      inItalic = true
       s.pos++
+      continue
     }
 
-    // End of line: handle unclosed marks by reverting to plain text
-    // Process in reverse order of opening to properly revert nested unclosed marks
-    if (inCode) {
-      const revertedNodes = nodes.splice(codeOpenNodeLen)
-      buf = `\`${revertedNodes.map(nodeToPlainText).join('')}${buf}`
-      inCode = false
-    }
+    buf += ch
+    s.pos++
+  }
 
-    if (inItalic) {
-      const revertedNodes = nodes.splice(italicOpenNodeLen)
-      if (inBold && boldOpenPos > italicOpenPos) {
-        // Bold was opened inside this italic — reconstruct the ** delimiter
-        const splitAt = boldOpenNodeLen - italicOpenNodeLen
-        const before = revertedNodes.slice(0, splitAt)
-        const after = revertedNodes.slice(splitAt)
-        buf = `*${before.map(nodeToPlainText).join('')}**${after.map(nodeToPlainText).join('')}${buf}`
-        inBold = false
-      } else {
-        buf = `*${revertedNodes.map(nodeToPlainText).join('')}${buf}`
-      }
-      inItalic = false
-    }
+  // End of line: handle unclosed marks by reverting to plain text
+  // Process in reverse order of opening to properly revert nested unclosed marks
+  if (inCode) {
+    const revertedNodes = nodes.splice(codeOpenNodeLen)
+    buf = `\`${revertedNodes.map(nodeToPlainText).join('')}${buf}`
+  }
 
-    if (inBold) {
-      const revertedNodes = nodes.splice(boldOpenNodeLen)
-      buf = `**${revertedNodes.map(nodeToPlainText).join('')}${buf}`
+  if (inItalic) {
+    const revertedNodes = nodes.splice(italicOpenNodeLen)
+    if (inBold && boldOpenPos > italicOpenPos) {
+      // Bold was opened inside this italic — reconstruct the ** delimiter
+      const splitAt = boldOpenNodeLen - italicOpenNodeLen
+      const before = revertedNodes.slice(0, splitAt)
+      const after = revertedNodes.slice(splitAt)
+      buf = `*${before.map(nodeToPlainText).join('')}**${after.map(nodeToPlainText).join('')}${buf}`
       inBold = false
-    }
-
-    // Flush remaining text — merge into last node if it's an unmarked text node
-    if (buf.length > 0) {
-      const last = nodes.length > 0 ? nodes[nodes.length - 1] : null
-      if (last && last.type === 'text' && (!last.marks || last.marks.length === 0)) {
-        ;(nodes[nodes.length - 1] as { text: string }).text += buf
-      } else {
-        nodes.push({ type: 'text', text: buf })
-      }
-    }
-
-    if (nodes.length === 0) {
-      paragraphs.push({ type: 'paragraph' })
     } else {
-      paragraphs.push({ type: 'paragraph', content: nodes })
+      buf = `*${revertedNodes.map(nodeToPlainText).join('')}${buf}`
     }
   }
 
-  /* v8 ignore next -- split('\n') always yields ≥1 element; unreachable */
-  if (paragraphs.length === 0) return { type: 'doc' }
-  return { type: 'doc', content: paragraphs }
+  if (inBold) {
+    const revertedNodes = nodes.splice(boldOpenNodeLen)
+    buf = `**${revertedNodes.map(nodeToPlainText).join('')}${buf}`
+  }
+
+  // Flush remaining text — merge into last node if it's an unmarked text node
+  if (buf.length > 0) {
+    const last = nodes.length > 0 ? nodes[nodes.length - 1] : null
+    if (last && last.type === 'text' && (!last.marks || last.marks.length === 0)) {
+      ;(nodes[nodes.length - 1] as { text: string }).text += buf
+    } else {
+      nodes.push({ type: 'text', text: buf })
+    }
+  }
+
+  return nodes
 }
 
 // -- Helpers ------------------------------------------------------------------

@@ -54,14 +54,27 @@ export interface ParagraphNode {
   readonly content?: readonly InlineNode[]
 }
 
+export interface HeadingNode {
+  readonly type: 'heading'
+  readonly attrs: { readonly level: number }
+  readonly content?: readonly InlineNode[]
+}
+
+export interface CodeBlockNode {
+  readonly type: 'codeBlock'
+  readonly content?: readonly [TextNode]
+}
+
 export type InlineNode = TextNode | TagRefNode | BlockLinkNode | HardBreakNode
+
+export type BlockLevelNode = ParagraphNode | HeadingNode | CodeBlockNode
 
 export interface DocNode {
   readonly type: 'doc'
-  readonly content?: readonly ParagraphNode[]
+  readonly content?: readonly BlockLevelNode[]
 }
 
-export type PMNode = DocNode | ParagraphNode | InlineNode
+export type PMNode = DocNode | BlockLevelNode | InlineNode
 
 // -- Builder helpers (for tests + internal use) -------------------------------
 
@@ -106,7 +119,17 @@ export function paragraph(...nodes: InlineNode[]): ParagraphNode {
   return { type: 'paragraph', content: nodes }
 }
 
-export function doc(...paragraphs: ParagraphNode[]): DocNode {
-  if (paragraphs.length === 0) return { type: 'doc' }
-  return { type: 'doc', content: paragraphs }
+export function heading(level: number, ...nodes: InlineNode[]): HeadingNode {
+  if (nodes.length === 0) return { type: 'heading', attrs: { level } }
+  return { type: 'heading', attrs: { level }, content: nodes }
+}
+
+export function codeBlock(code: string): CodeBlockNode {
+  if (code.length === 0) return { type: 'codeBlock' }
+  return { type: 'codeBlock', content: [{ type: 'text', text: code }] }
+}
+
+export function doc(...blocks: BlockLevelNode[]): DocNode {
+  if (blocks.length === 0) return { type: 'doc' }
+  return { type: 'doc', content: blocks }
 }

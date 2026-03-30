@@ -10,7 +10,7 @@
 
 import type React from 'react'
 import { parse } from '../editor/markdown-serializer'
-import type { DocNode, InlineNode } from '../editor/types'
+import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
 
 export interface StaticBlockProps {
   blockId: string
@@ -49,15 +49,9 @@ export function renderRichContent(
   const elements: React.ReactNode[] = []
   let keyIdx = 0
 
-  for (let pIdx = 0; pIdx < doc.content.length; pIdx++) {
-    const p = doc.content[pIdx]
-    // Space separator between paragraphs (mirrors old renderPlainText join(' '))
-    if (pIdx > 0) {
-      elements.push(<span key={`sep-${keyIdx++}`}> </span>)
-    }
-    if (!p.content) continue
-
-    for (const node of p.content as readonly InlineNode[]) {
+  /** Render inline content nodes into React elements. */
+  function renderInline(content: readonly InlineNode[]) {
+    for (const node of content) {
       switch (node.type) {
         case 'text': {
           const linkMark = node.marks?.find((m) => m.type === 'link')
@@ -136,6 +130,50 @@ export function renderRichContent(
         default:
           break
       }
+    }
+  }
+
+  for (let bIdx = 0; bIdx < doc.content.length; bIdx++) {
+    const block = doc.content[bIdx] as BlockLevelNode
+    // Space separator between blocks
+    if (bIdx > 0) {
+      elements.push(<span key={`sep-${keyIdx++}`}> </span>)
+    }
+
+    if (block.type === 'heading') {
+      const HeadingTag = `h${block.attrs.level}` as keyof JSX.IntrinsicElements
+      const headingClasses: Record<number, string> = {
+        1: 'text-2xl font-bold',
+        2: 'text-xl font-bold',
+        3: 'text-lg font-semibold',
+        4: 'text-base font-semibold',
+        5: 'text-sm font-semibold',
+        6: 'text-xs font-semibold uppercase tracking-wide',
+      }
+      const cls = headingClasses[block.attrs.level] ?? ''
+      const startIdx = keyIdx++
+      const inlineElements: React.ReactNode[] = []
+      if (block.content) {
+        const prevLen = elements.length
+        renderInline(block.content)
+        inlineElements.push(...elements.splice(prevLen))
+      }
+      elements.push(
+        <HeadingTag key={`h-${startIdx}`} className={cls}>
+          {inlineElements}
+        </HeadingTag>,
+      )
+    } else if (block.type === 'codeBlock') {
+      const code = block.content?.[0]?.text ?? ''
+      elements.push(
+        <pre key={`code-${keyIdx++}`} className="bg-muted rounded-md px-3 py-2 text-sm font-mono">
+          <code>{code}</code>
+        </pre>,
+      )
+    } else {
+      // paragraph
+      if (!block.content) continue
+      renderInline(block.content as readonly InlineNode[])
     }
   }
 

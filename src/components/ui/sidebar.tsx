@@ -316,8 +316,15 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
 }
 
 function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
-  const { toggleSidebar, setSidebarWidth, sidebarWidth, setIsResizing, setOpen } = useSidebar()
-  const dragState = React.useRef({ dragging: false, startX: 0, startWidth: 0, moved: false })
+  const { toggleSidebar, setSidebarWidth, sidebarWidth, setIsResizing, setOpen, open } =
+    useSidebar()
+  const dragState = React.useRef({
+    dragging: false,
+    startX: 0,
+    startWidth: 0,
+    moved: false,
+    wasCollapsed: false,
+  })
 
   const onDoubleClick = React.useCallback(() => {
     setSidebarWidth(SIDEBAR_WIDTH_DEFAULT)
@@ -331,7 +338,9 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
       const state = dragState.current
       state.dragging = true
       state.startX = e.clientX
-      state.startWidth = sidebarWidth
+      state.wasCollapsed = !open
+      // When collapsed, start from 0 so dragging right opens smoothly
+      state.startWidth = open ? sidebarWidth : 0
       state.moved = false
 
       const onMouseMove = (ev: MouseEvent) => {
@@ -340,6 +349,10 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
         if (Math.abs(delta) > 2 && !state.moved) {
           state.moved = true
           setIsResizing(true)
+          // When dragging from collapsed state, open the sidebar
+          if (state.wasCollapsed) {
+            setOpen(true)
+          }
         }
         if (state.moved) {
           const newWidth = state.startWidth + delta
@@ -377,7 +390,7 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
       document.documentElement.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
     },
-    [sidebarWidth, setSidebarWidth, toggleSidebar, setIsResizing, setOpen],
+    [open, sidebarWidth, setSidebarWidth, toggleSidebar, setIsResizing, setOpen],
   )
 
   return (

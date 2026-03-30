@@ -10,6 +10,7 @@
  */
 
 import { create } from 'zustand'
+import { parse, serialize } from '../editor/markdown-serializer'
 import type { BlockRow, PageResponse } from '../lib/tauri'
 import { createBlock, deleteBlock, editBlock, listBlocks, moveBlock } from '../lib/tauri'
 import { buildFlatTree, type FlatBlock, getDragDescendants } from '../lib/tree-utils'
@@ -169,17 +170,32 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   },
 
   splitBlock: async (blockId: string, markdown: string) => {
-    const lines = markdown.split('\n')
-    if (lines.length <= 1) return
+    // Parse markdown into block-level nodes (paragraphs, headings, code blocks)
+    // and split each into a separate block. Empty paragraphs are skipped.
+    const doc = parse(markdown)
+    const blocks = doc.content ?? []
+    if (blocks.length <= 1) {
+      // Single block or empty — just edit, no split needed
+      const content = blocks.length === 1 ? serialize({ type: 'doc', content: [blocks[0]] }) : ''
+      if (content !== markdown) await get().edit(blockId, content)
+      return
+    }
 
-    // First line: edit the original block
-    const [first, ...rest] = lines
+    // Filter out empty paragraphs
+    const nonEmpty = blocks.filter(
+      (b) => b.type !== 'paragraph' || (b.content && b.content.length > 0),
+    )
+    if (nonEmpty.length === 0) return
+
+    // First block: edit the original
+    const first = serialize({ type: 'doc', content: [nonEmpty[0]] })
     await get().edit(blockId, first)
 
-    // Subsequent lines: create new blocks below, in order
+    // Remaining blocks: create new blocks below, in order
     let lastId = blockId
-    for (const line of rest) {
-      const newId = await get().createBelow(lastId, line)
+    for (let i = 1; i < nonEmpty.length; i++) {
+      const content = serialize({ type: 'doc', content: [nonEmpty[i]] })
+      const newId = await get().createBelow(lastId, content)
       if (newId) lastId = newId
     }
   },

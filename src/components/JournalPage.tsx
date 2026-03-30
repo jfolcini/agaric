@@ -480,6 +480,10 @@ export function JournalControls(): React.ReactElement {
                       setCalendarOpen(false)
                     }
                   }}
+                  onMonthClick={(month: Date) => {
+                    navigateToDate(month, 'monthly')
+                    setCalendarOpen(false)
+                  }}
                   modifiers={{ hasContent: highlightedDays }}
                   modifiersClassNames={{ hasContent: 'has-content-dot' }}
                 />
@@ -491,8 +495,8 @@ export function JournalControls(): React.ReactElement {
                     bottom: 2px;
                     left: 50%;
                     transform: translateX(-50%);
-                    width: 4px;
-                    height: 4px;
+                    width: 5px;
+                    height: 5px;
                     border-radius: 50%;
                     background: hsl(var(--primary));
                   }

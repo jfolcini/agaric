@@ -386,35 +386,25 @@ describe('useBlockStore', () => {
       expect(blocks[2].content).toBe('line3')
     })
 
-    it('handles empty first line in split', async () => {
+    it('handles empty first line in split — filters empty paragraphs', async () => {
       const block = makeBlock({ id: 'A', position: 0, content: '' })
       useBlockStore.setState({ blocks: [block] })
 
-      // edit('A', '') → invoke('edit_block', ...)
+      // Empty paragraph filtered → only 'text' remains → single block, just edit
       mockedInvoke.mockResolvedValueOnce({
         id: 'A',
         block_type: 'text',
-        content: '',
-        parent_id: null,
-        position: 0,
-        deleted_at: null,
-      })
-      // createBelow('A', 'text') → invoke('create_block', ...)
-      mockedInvoke.mockResolvedValueOnce({
-        id: 'B',
-        block_type: 'text',
         content: 'text',
         parent_id: null,
-        position: 1,
+        position: 0,
         deleted_at: null,
       })
 
       await useBlockStore.getState().splitBlock('A', '\ntext')
 
       const blocks = useBlockStore.getState().blocks
-      expect(blocks).toHaveLength(2)
-      expect(blocks[0].content).toBe('')
-      expect(blocks[1].content).toBe('text')
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0].content).toBe('text')
     })
 
     it('chains createBelow sequentially using previous new id', async () => {
