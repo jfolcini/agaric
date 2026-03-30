@@ -633,6 +633,40 @@
 
 ---
 
+## Session 8 — 2026-03-30
+
+### UX Review Findings — Triage & Fix
+
+#### [12:00] UX-TODOS.md review — 4 parallel review subagents
+- Reviewed all 13 UX findings from UX-TODOS.md against current source code
+- **9 of 13 already resolved** in prior commits (issues #1-4, #6-9, #13)
+- **4 confirmed** needing fixes: #5 (detail panel layout), #10 (button disabled state), #11 (tag prefix highlight), #12 (sidebar active state)
+- Updated UX-TODOS.md with RESOLVED/CONFIRMED status for each
+
+#### [12:05] Build subagent A: Issue 5 fix [REVIEWED]
+- **Worktree:** /tmp/wt-ux-issue5
+- **Change:** Added `max-h-60 overflow-y-auto` to PageEditor detail panel content div
+- **Test:** Added bounded-height assertion test (23/23 pass)
+
+#### [12:05] Build subagent B: Issues 10, 11, 12 fixes [REVIEWED]
+- **Worktree:** /tmp/wt-ux-polish
+- **Changes:**
+  - button.tsx: `disabled:opacity-50` → `disabled:opacity-35`
+  - TagFilterPanel.tsx: Added `HighlightPrefix` component for bold prefix matching
+  - sidebar.tsx: Added `data-[active=true]:border-l-2 border-l-primary`
+- **Tests:** Added prefix highlight test + updated 3 existing tests (21/21 pass)
+
+#### [12:10] Review subagents (2 parallel) — both APPROVED
+- No issues found in either fix set
+- All tests verified passing
+
+#### [12:12] Merge & commit
+- Merged from worktrees, 582 frontend tests pass
+- All prek hooks pass (biome, tsc, vitest)
+- **Commit:** fcf6354
+
+---
+
 <!-- Template:
 #### [HH:MM] Subagent: <title> [BUILT|REVIEWED]
 - **Tasks:** <task IDs>
