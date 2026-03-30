@@ -1111,13 +1111,22 @@ pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<Bloc
 // ---------------------------------------------------------------------------
 
 /// Lightweight metadata returned by [`batch_resolve_inner`].
-#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow, specta::Type)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct ResolvedBlock {
     pub id: String,
     /// `content` column — page title, tag name, or content text (truncated).
     pub title: Option<String>,
     pub block_type: String,
     pub deleted: bool,
+}
+
+/// Internal row type for the batch_resolve query (sqlx-compatible).
+#[derive(Debug, sqlx::FromRow)]
+struct ResolvedBlockRow {
+    id: String,
+    title: Option<String>,
+    block_type: String,
+    deleted: Option<bool>,
 }
 
 /// Batch-resolve block metadata for a list of IDs in a single query.
@@ -1142,20 +1151,29 @@ pub async fn batch_resolve_inner(
 
     let ids_json = serde_json::to_string(&ids)?;
 
-    let rows: Vec<ResolvedBlock> = sqlx::query_as(
-        "SELECT \
-             id, \
-             content AS title, \
-             block_type, \
-             CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END AS deleted \
-           FROM blocks \
-           WHERE id IN (SELECT value FROM json_each(?1))",
+    let rows = sqlx::query_as!(
+        ResolvedBlockRow,
+        r#"SELECT
+             id,
+             content AS title,
+             block_type,
+             (CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS "deleted: bool"
+           FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?1))"#,
+        ids_json,
     )
-    .bind(&ids_json)
     .fetch_all(pool)
     .await?;
 
-    Ok(rows)
+    Ok(rows
+        .into_iter()
+        .map(|r| ResolvedBlock {
+            id: r.id,
+            title: r.title,
+            block_type: r.block_type,
+            deleted: r.deleted.unwrap_or(false),
+        })
+        .collect())
 }
 
 /// Add a tag to a block.
