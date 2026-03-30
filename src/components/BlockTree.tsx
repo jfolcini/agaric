@@ -249,11 +249,12 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     const q = query.toLowerCase()
 
     // Use the preloaded pages list for instant, complete results.
-    // Falls back to API call if cache hasn't loaded yet.
+    // Falls back to API call if cache hasn't loaded yet, and caches the result.
     let source = pagesListRef.current
     if (source.length === 0) {
       const resp = await listBlocks({ blockType: 'page', limit: 500 })
       source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
+      pagesListRef.current = source
     }
 
     const matches: PickerItem[] = source
@@ -276,6 +277,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     // Populate resolve cache so the link chip shows the title immediately
     blockInfoCache.current.set(block.id, { title: label, deleted: false })
     pagesListRef.current = [...pagesListRef.current, { id: block.id, title: label }]
+    setResolveVersion((v) => v + 1)
     return block.id
   }, [])
 
@@ -339,6 +341,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       try {
         // Fetch all pages
         const pagesResp = await listBlocks({ blockType: 'page', limit: 1000 })
+        if (cancelled) return
         const pagesList: Array<{ id: string; title: string }> = []
         for (const p of pagesResp.items) {
           const title = p.content ?? 'Untitled'
@@ -352,6 +355,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
         // Fetch all tags
         const tags = await listTagsByPrefix({ prefix: '' })
+        if (cancelled) return
         for (const t of tags) {
           blockInfoCache.current.set(t.tag_id, {
             title: t.name,
@@ -373,14 +377,22 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         if (uncached.size > 0) {
           await Promise.all(
             [...uncached].map(async (id) => {
+              if (cancelled) return
               try {
                 const blk = await getBlock(id)
-                blockInfoCache.current.set(id, {
-                  title: blk.content?.slice(0, 60) || `[[${id.slice(0, 8)}...]]`,
-                  deleted: blk.deleted_at !== null,
-                })
+                if (!cancelled) {
+                  blockInfoCache.current.set(id, {
+                    title: blk.content?.slice(0, 60) || `[[${id.slice(0, 8)}...]]`,
+                    deleted: blk.deleted_at !== null,
+                  })
+                }
               } catch {
-                blockInfoCache.current.set(id, { title: `[[${id.slice(0, 8)}...]]`, deleted: true })
+                if (!cancelled) {
+                  blockInfoCache.current.set(id, {
+                    title: `[[${id.slice(0, 8)}...]]`,
+                    deleted: true,
+                  })
+                }
               }
             }),
           )

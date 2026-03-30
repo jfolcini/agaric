@@ -87,17 +87,21 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
 
     Promise.all(
       [...idsToResolve].map(async (id) => {
+        if (cancelled) return
         try {
           const b = await getBlock(id)
-          resolveCache.current.set(id, {
-            title:
-              b.content?.slice(0, 60) ||
-              (b.block_type === 'tag' ? `#${id.slice(0, 8)}...` : `[[${id.slice(0, 8)}...]]`),
-            deleted: b.deleted_at !== null,
-          })
+          if (!cancelled) {
+            resolveCache.current.set(id, {
+              title:
+                b.content?.slice(0, 60) ||
+                (b.block_type === 'tag' ? `#${id.slice(0, 8)}...` : `[[${id.slice(0, 8)}...]]`),
+              deleted: b.deleted_at !== null,
+            })
+          }
         } catch {
-          // Block not found — mark as deleted
-          resolveCache.current.set(id, { title: `[[${id.slice(0, 8)}...]]`, deleted: true })
+          if (!cancelled) {
+            resolveCache.current.set(id, { title: `[[${id.slice(0, 8)}...]]`, deleted: true })
+          }
         }
       }),
     ).then(() => {

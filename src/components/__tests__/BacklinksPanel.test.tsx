@@ -355,6 +355,103 @@ describe('BacklinksPanel', () => {
       expect(await screen.findByText('(empty)')).toBeInTheDocument()
     })
 
+    it('resolves ULIDs from paginated Load more results', async () => {
+      const ULID_P1 = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+      const ULID_P2 = '01CRZ3NDEKTSV4RRFFQ69G5FAV'
+      let callCount = 0
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+        if (cmd === 'get_backlinks') {
+          callCount++
+          if (callCount === 1) {
+            return {
+              items: [makeBlock('BL1AAAAAAAAAAAAAAAAAAAAAA', `See [[${ULID_P1}]]`)],
+              next_cursor: 'cursor1',
+              has_more: true,
+            }
+          }
+          return {
+            items: [makeBlock('BL2BBBBBBBBBBBBBBBBBBBBBB', `Also [[${ULID_P2}]]`)],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_block') {
+          if (args?.blockId === ULID_P1) return makeBlock(ULID_P1, 'Page One', 'page')
+          if (args?.blockId === ULID_P2) return makeBlock(ULID_P2, 'Page Two', 'page')
+        }
+        return emptyPage
+      })
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      // First page should resolve
+      await waitFor(() => {
+        expect(container.querySelector('.block-link-chip')).toHaveTextContent('Page One')
+      })
+
+      // Click Load more
+      const loadMoreBtn = screen.getByText('Load more')
+      await userEvent.click(loadMoreBtn)
+
+      // Second page ULIDs should also resolve
+      await waitFor(() => {
+        const chips = container.querySelectorAll('.block-link-chip')
+        expect(chips).toHaveLength(2)
+        expect(chips[1]).toHaveTextContent('Page Two')
+      })
+    })
+
+    it('handles getBlock network error without crashing', async () => {
+      const BAD_ULID = '01ZZZ3NDEKTSV4RRFFQ69G5FAV'
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_backlinks') {
+          return {
+            items: [makeBlock('BL1CCCCCCCCCCCCCCCCCCCCCC', `See [[${BAD_ULID}]]`)],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_block') {
+          throw new Error('Network error')
+        }
+        return emptyPage
+      })
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      // Should show fallback text, not crash
+      await waitFor(() => {
+        const chip = container.querySelector('.block-link-chip')
+        expect(chip).toBeInTheDocument()
+        expect(chip).toHaveTextContent(`[[${BAD_ULID.slice(0, 8)}...]]`)
+      })
+    })
+
+    it('renders plain text backlinks without unnecessary getBlock calls', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_backlinks') {
+          return {
+            items: [makeBlock('BL1DDDDDDDDDDDDDDDDDDDDDD', 'Just plain text, no links')],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_block') {
+          throw new Error('Should not be called')
+        }
+        return emptyPage
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Just plain text, no links')).toBeInTheDocument()
+      })
+      // get_block should NOT have been called since there are no ULID tokens
+      expect(mockedInvoke).not.toHaveBeenCalledWith('get_block', expect.anything())
+    })
+
     it('has no a11y violations with rich content', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'get_backlinks') {

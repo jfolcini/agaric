@@ -3,11 +3,11 @@ import { expect, test } from '@playwright/test'
 /**
  * E2E tests for inner links ([[ULID]] block links).
  *
- * The mock layer (tauri-mock.ts) provides seed data with:
- * - SEED_PAGE_001 ("Getting Started") with children containing [[SEED_PAGE_002]] links
- * - SEED_PAGE_002 ("Quick Notes")
- * - SEED_BLOCK_004 with #[SEED_TAG_001] and #[SEED_TAG_002] tag references
- * - SEED_BLOCK_005 with **bold** formatted text
+ * The mock layer (tauri-mock.ts) provides seed data with valid 26-char ULIDs:
+ * - 00000000000000000000PAGE01 ("Getting Started") with child blocks containing
+ *   [[00000000000000000000PAGE02]] links and #[000000000000000000000TAG01] tag refs
+ * - 00000000000000000000PAGE02 ("Quick Notes")
+ * - Bold text: **Use the search panel** in BLOCK_GS_5
  */
 test.describe('Inner links', () => {
   test.beforeEach(async ({ page }) => {
@@ -23,7 +23,7 @@ test.describe('Inner links', () => {
     await page.getByText('Getting Started').click()
     await expect(page.locator('header').getByText('Getting Started')).toBeVisible()
 
-    // Block GS_2 contains [[SEED_PAGE_002]] — should render as "Quick Notes" chip
+    // Block GS_2 contains [[00000000000000000000PAGE02]] — should render as "Quick Notes" chip
     const linkChip = page.locator('.block-link-chip', { hasText: 'Quick Notes' })
     await expect(linkChip).toBeVisible()
   })
@@ -48,7 +48,7 @@ test.describe('Inner links', () => {
     await page.getByRole('button', { name: 'Pages' }).click()
     await page.getByText('Getting Started').click()
 
-    // Block GS_4 contains #[SEED_TAG_001] — should render as tag chip with "work"
+    // Block GS_4 contains #[000000000000000000000TAG01] — should render as tag chip with "work"
     const tagChip = page.locator('.tag-ref-chip', { hasText: 'work' })
     await expect(tagChip).toBeVisible()
   })
@@ -103,32 +103,5 @@ test.describe('Inner links', () => {
     // "Quick Notes" should appear in the suggestions
     const suggestion = suggestionList.locator('.suggestion-item', { hasText: 'Quick Notes' })
     await expect(suggestion).toBeVisible({ timeout: 3000 })
-  })
-
-  test('broken links show deleted styling', async ({ page }) => {
-    // Navigate to Pages → Getting Started
-    await page.getByRole('button', { name: 'Pages' }).click()
-    await page.getByText('Getting Started').click()
-
-    // Create a new page, add a link to it, then delete the page
-    // For now, verify that the block-link-deleted class exists in CSS
-    // (full broken link flow requires multiple steps that depend on mock state)
-    const stylesheets = await page.evaluate(() => {
-      const rules: string[] = []
-      for (const sheet of document.styleSheets) {
-        try {
-          for (const rule of sheet.cssRules) {
-            if (rule.cssText.includes('block-link-deleted')) {
-              rules.push(rule.cssText)
-            }
-          }
-        } catch {
-          // Cross-origin stylesheets throw
-        }
-      }
-      return rules
-    })
-    // The CSS class should be defined (strikethrough/opacity for broken links)
-    expect(stylesheets.length).toBeGreaterThanOrEqual(0)
   })
 })

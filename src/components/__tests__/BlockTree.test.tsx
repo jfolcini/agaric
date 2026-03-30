@@ -10,7 +10,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -21,6 +21,7 @@ import { useBlockStore } from '../../stores/blocks'
 let capturedSearchTags: ((query: string) => PickerItem[] | Promise<PickerItem[]>) | undefined
 let capturedSearchPages: ((query: string) => PickerItem[] | Promise<PickerItem[]>) | undefined
 let capturedOnCreatePage: ((label: string) => Promise<string>) | undefined
+let capturedOnNavigate: ((id: string) => void) | undefined
 let capturedSearchSlashCommands:
   | ((query: string) => PickerItem[] | Promise<PickerItem[]>)
   | undefined
@@ -31,12 +32,14 @@ vi.mock('../../editor/use-roving-editor', () => ({
     searchTags?: (query: string) => PickerItem[] | Promise<PickerItem[]>
     searchPages?: (query: string) => PickerItem[] | Promise<PickerItem[]>
     onCreatePage?: (label: string) => Promise<string>
+    onNavigate?: (id: string) => void
     searchSlashCommands?: (query: string) => PickerItem[] | Promise<PickerItem[]>
     onSlashCommand?: (item: PickerItem) => void
   }) => {
     capturedSearchTags = opts.searchTags
     capturedSearchPages = opts.searchPages
     capturedOnCreatePage = opts.onCreatePage
+    capturedOnNavigate = opts.onNavigate
     capturedSearchSlashCommands = opts.searchSlashCommands
     capturedOnSlashCommand = opts.onSlashCommand
     return {
@@ -128,6 +131,7 @@ beforeEach(() => {
   capturedSearchTags = undefined
   capturedSearchPages = undefined
   capturedOnCreatePage = undefined
+  capturedOnNavigate = undefined
   capturedSearchSlashCommands = undefined
   capturedOnSlashCommand = undefined
   useBlockStore.setState({
@@ -1273,5 +1277,297 @@ describe('BlockTree cross-page navigation', () => {
     })
     // No crash — prop is accepted
     expect(onNav).not.toHaveBeenCalled()
+  })
+})
+
+// =========================================================================
+// Resolve cache preload tests
+// =========================================================================
+
+describe('BlockTree resolve cache preload', () => {
+  it('preload fetches all pages and tags on mount', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchTags).toBeDefined()
+    })
+
+    // Preload should call list_blocks for pages and list_tags_by_prefix
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'list_blocks',
+      expect.objectContaining({ blockType: 'page', limit: 1000 }),
+    )
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'list_tags_by_prefix',
+      expect.objectContaining({ prefix: '' }),
+    )
+  })
+
+  it('preload fetches uncached ULIDs found in block content', async () => {
+    const CONTENT_ULID = '01TESTUNCACHED0000000BLKX1'
+    const blockWithLink = {
+      id: 'B1',
+      block_type: 'content',
+      content: `See [[${CONTENT_ULID}]] here`,
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+      archived_at: null,
+      is_conflict: false,
+    }
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'list_blocks' && args?.blockType === 'page') {
+        return emptyPage // preload page fetch — no pages match this ULID
+      }
+      if (cmd === 'list_blocks') {
+        // load() call — return block with link content
+        return { items: [blockWithLink], next_cursor: null, has_more: false }
+      }
+      if (cmd === 'list_tags_by_prefix') {
+        return [] // no tags
+      }
+      if (cmd === 'get_block' && args?.blockId === CONTENT_ULID) {
+        return {
+          id: CONTENT_ULID,
+          block_type: 'content',
+          content: 'Referenced block',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        }
+      }
+      if (cmd === 'get_properties') return []
+      return emptyPage
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(
+      () => {
+        // Preload should call get_block for the uncached ULID
+        expect(mockedInvoke).toHaveBeenCalledWith('get_block', { blockId: CONTENT_ULID })
+      },
+      { timeout: 3000 },
+    )
+  })
+
+  it('preload handles API errors gracefully', async () => {
+    mockedInvoke.mockRejectedValue(new Error('Network failure'))
+
+    render(<BlockTree />)
+
+    // Should not crash — component renders empty state
+    await waitFor(() => {
+      expect(
+        screen.getByText('No blocks yet. Click + Add block below to start writing.'),
+      ).toBeInTheDocument()
+    })
+  })
+})
+
+// =========================================================================
+// handleNavigate tests
+// =========================================================================
+
+describe('BlockTree handleNavigate', () => {
+  it('navigates to page block via onNavigateToPage', async () => {
+    const PAGE_ID = '01TESTPAGE00000000000NAV01'
+    const onNav = vi.fn()
+
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_block' && args?.blockId === PAGE_ID) {
+        return {
+          id: PAGE_ID,
+          block_type: 'page',
+          content: 'Target Page Title',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        }
+      }
+      if (cmd === 'get_properties') return []
+      return emptyPage
+    })
+
+    render(<BlockTree onNavigateToPage={onNav} />)
+
+    await waitFor(() => {
+      expect(capturedOnNavigate).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnNavigate?.(PAGE_ID)
+    })
+
+    await waitFor(() => {
+      expect(onNav).toHaveBeenCalledWith(PAGE_ID, 'Target Page Title')
+    })
+  })
+
+  it('navigates to content block in different tree — fetches parent title', async () => {
+    const CONTENT_ID = '01TESTCONT00000000000NAV02'
+    const PARENT_ID = '01TESTPAGE00000000000NAV03'
+    const onNav = vi.fn()
+
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_block' && args?.blockId === CONTENT_ID) {
+        return {
+          id: CONTENT_ID,
+          block_type: 'content',
+          content: 'Some block text',
+          parent_id: PARENT_ID,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        }
+      }
+      if (cmd === 'get_block' && args?.blockId === PARENT_ID) {
+        return {
+          id: PARENT_ID,
+          block_type: 'page',
+          content: 'Parent Page Title',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        }
+      }
+      if (cmd === 'get_properties') return []
+      return emptyPage
+    })
+
+    // parentId differs from PARENT_ID so handleNavigate goes cross-page
+    render(<BlockTree parentId="DIFFERENT_PARENT" onNavigateToPage={onNav} />)
+
+    await waitFor(() => {
+      expect(capturedOnNavigate).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnNavigate?.(CONTENT_ID)
+    })
+
+    await waitFor(() => {
+      // Should navigate to parent page with its title, NOT the content block's text
+      expect(onNav).toHaveBeenCalledWith(PARENT_ID, 'Parent Page Title')
+    })
+  })
+
+  it('handles missing/deleted block without crashing', async () => {
+    const onNav = vi.fn()
+
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_block') throw new Error('Block not found')
+      if (cmd === 'get_properties') return []
+      return emptyPage
+    })
+
+    render(<BlockTree onNavigateToPage={onNav} />)
+
+    await waitFor(() => {
+      expect(capturedOnNavigate).toBeDefined()
+    })
+
+    // Should not throw
+    await act(async () => {
+      capturedOnNavigate?.('01NONEXISTENT00000000BLK01')
+    })
+
+    // onNavigateToPage should NOT be called for missing blocks
+    expect(onNav).not.toHaveBeenCalled()
+  })
+})
+
+// =========================================================================
+// searchPages cache tests
+// =========================================================================
+
+describe('BlockTree searchPages caching', () => {
+  it('searchPages fallback caches results for subsequent calls', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchPages).toBeDefined()
+    })
+
+    // First call — cache empty, triggers API call
+    const pagesResp = {
+      items: [
+        {
+          id: 'P1',
+          block_type: 'page',
+          content: 'Alpha Page',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(pagesResp)
+    const result1 = await capturedSearchPages?.('alpha')
+
+    expect(result1).toEqual([
+      { id: 'P1', label: 'Alpha Page' },
+      { id: '__create__', label: 'alpha', isCreate: true },
+    ])
+
+    // Second call — should NOT trigger another API call (cached)
+    const callsBefore = mockedInvoke.mock.calls.length
+    const result2 = await capturedSearchPages?.('alpha')
+    const callsAfter = mockedInvoke.mock.calls.length
+
+    // No new invoke calls should have been made
+    expect(callsAfter).toBe(callsBefore)
+    expect(result2).toEqual([
+      { id: 'P1', label: 'Alpha Page' },
+      { id: '__create__', label: 'alpha', isCreate: true },
+    ])
+  })
+
+  it('onCreatePage adds new page to search results', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnCreatePage).toBeDefined()
+    })
+
+    // Mock create_block
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'NEW_PAGE_ID',
+      block_type: 'page',
+      content: 'Freshly Created',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+      archived_at: null,
+      is_conflict: false,
+    })
+
+    await capturedOnCreatePage?.('Freshly Created')
+
+    // The new page should appear in searchPages
+    const results = await capturedSearchPages?.('freshly')
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).toContain('NEW_PAGE_ID')
   })
 })

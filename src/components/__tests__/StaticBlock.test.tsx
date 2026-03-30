@@ -414,4 +414,52 @@ describe('StaticBlock', () => {
     expect(container.querySelector('strong')?.textContent).toBe('important')
     expect(screen.getByText('My Page')).toBeInTheDocument()
   })
+
+  // -- Mark combinations ------------------------------------------------------
+
+  it('renders italic external link with <em> wrapping the link span', () => {
+    const content = '*[click](https://example.com)*'
+    const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+    const em = container.querySelector('em')
+    expect(em).toBeInTheDocument()
+    const link = em?.querySelector('.external-link')
+    expect(link).toBeInTheDocument()
+    expect(link?.textContent).toBe('click')
+  })
+
+  it('renders mixed bold, italic, and plain text segments', () => {
+    const content = '**bold** and *italic* and plain'
+    const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+    expect(container.querySelector('strong')?.textContent).toBe('bold')
+    expect(container.querySelector('em')?.textContent).toBe('italic')
+    expect(container.textContent).toContain('and')
+    expect(container.textContent).toContain('plain')
+  })
+
+  it('renders bold text between block_link and tag_ref nodes', () => {
+    const ULID1 = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+    const ULID2 = '01BRZ3NDEKTSV4RRFFQ69G5FAV'
+    const content = `[[${ULID1}]] **important** #[${ULID2}]`
+    const { container } = render(
+      <StaticBlock
+        blockId="B1"
+        content={content}
+        onFocus={vi.fn()}
+        resolveBlockTitle={() => 'Page'}
+        resolveTagName={() => '#Tag'}
+      />,
+    )
+    expect(screen.getByText('Page')).toBeInTheDocument()
+    expect(container.querySelector('strong')?.textContent).toBe('important')
+    expect(screen.getByText('#Tag')).toBeInTheDocument()
+  })
+
+  it('renders code span without processing inner marks', () => {
+    const content = '`**not bold**`'
+    const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+    const code = container.querySelector('code')
+    expect(code).toBeInTheDocument()
+    expect(code?.textContent).toBe('**not bold**')
+    expect(container.querySelector('strong')).not.toBeInTheDocument()
+  })
 })

@@ -28,21 +28,23 @@ function todayDate(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-/** Deterministic IDs for seed data so tests and components can reference them. */
+/** Deterministic IDs for seed data so tests and components can reference them.
+ *  Must be valid 26-char Crockford base32 ULIDs so [[id]] and #[id] tokens
+ *  parse correctly through the markdown serializer. */
 export const SEED_IDS = {
-  PAGE_GETTING_STARTED: 'SEED_PAGE_001',
-  PAGE_QUICK_NOTES: 'SEED_PAGE_002',
-  PAGE_DAILY: 'SEED_PAGE_003',
-  BLOCK_GS_1: 'SEED_BLOCK_001',
-  BLOCK_GS_2: 'SEED_BLOCK_002',
-  BLOCK_GS_3: 'SEED_BLOCK_003',
-  BLOCK_GS_4: 'SEED_BLOCK_004',
-  BLOCK_GS_5: 'SEED_BLOCK_005',
-  BLOCK_DAILY_1: 'SEED_BLOCK_006',
-  BLOCK_DAILY_2: 'SEED_BLOCK_007',
-  TAG_WORK: 'SEED_TAG_001',
-  TAG_PERSONAL: 'SEED_TAG_002',
-  TAG_IDEA: 'SEED_TAG_003',
+  PAGE_GETTING_STARTED: '00000000000000000000PAGE01',
+  PAGE_QUICK_NOTES: '00000000000000000000PAGE02',
+  PAGE_DAILY: '00000000000000000000PAGE03',
+  BLOCK_GS_1: '0000000000000000000BLOCK01',
+  BLOCK_GS_2: '0000000000000000000BLOCK02',
+  BLOCK_GS_3: '0000000000000000000BLOCK03',
+  BLOCK_GS_4: '0000000000000000000BLOCK04',
+  BLOCK_GS_5: '0000000000000000000BLOCK05',
+  BLOCK_DAILY_1: '0000000000000000000BLOCK06',
+  BLOCK_DAILY_2: '0000000000000000000BLOCK07',
+  TAG_WORK: '000000000000000000000TAG01',
+  TAG_PERSONAL: '000000000000000000000TAG02',
+  TAG_IDEA: '000000000000000000000TAG03',
 } as const
 
 function makeBlock(
@@ -278,8 +280,8 @@ export function setupMock(): void {
       case 'get_backlinks': {
         const a = args as Record<string, unknown>
         const targetId = a.blockId as string
-        // Scan all blocks for [[targetId]] tokens to find backlinks
-        const LINK_RE = /\[\[([^\]]+)\]\]/g
+        // Scan all blocks for [[ULID]] tokens matching the target
+        const LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
         const backlinkItems = [...blocks.values()].filter((b) => {
           if (b.deleted_at) return false
           const content = (b.content as string) ?? ''
