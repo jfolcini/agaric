@@ -853,4 +853,115 @@ describe('external links', () => {
       })
     }
   })
+
+  describe('brackets and parens inside link label', () => {
+    // Serialize: text with special chars in the label gets escaped properly
+    // Round-trip: serialize → parse → serialize must be idempotent
+
+    it('serialize: single [ in label is escaped', () => {
+      expect(serialize(doc(paragraph(linked('a [ b', 'https://x.com'))))).toBe(
+        '[a \\[ b](https://x.com)',
+      )
+    })
+
+    it('serialize: single ] in label is escaped', () => {
+      expect(serialize(doc(paragraph(linked('a ] b', 'https://x.com'))))).toBe(
+        '[a \\] b](https://x.com)',
+      )
+    })
+
+    it('serialize: balanced [] pair in label', () => {
+      expect(serialize(doc(paragraph(linked('a [b] c', 'https://x.com'))))).toBe(
+        '[a \\[b\\] c](https://x.com)',
+      )
+    })
+
+    it('serialize: parens in label (not escaped)', () => {
+      expect(serialize(doc(paragraph(linked('hello (world)', 'https://x.com'))))).toBe(
+        '[hello (world)](https://x.com)',
+      )
+    })
+
+    it('serialize: ]( sequence in label is escaped', () => {
+      expect(serialize(doc(paragraph(linked('a ]( b', 'https://x.com'))))).toBe(
+        '[a \\]( b](https://x.com)',
+      )
+    })
+
+    it('serialize: mixed []() in label', () => {
+      expect(serialize(doc(paragraph(linked('x [y] and (z)', 'https://x.com'))))).toBe(
+        '[x \\[y\\] and (z)](https://x.com)',
+      )
+    })
+
+    it('serialize: multiple unbalanced ] in label', () => {
+      expect(serialize(doc(paragraph(linked(']]]', 'https://x.com'))))).toBe(
+        '[\\]\\]\\]](https://x.com)',
+      )
+    })
+
+    it('serialize: multiple unbalanced [ in label', () => {
+      expect(serialize(doc(paragraph(linked('[[[', 'https://x.com'))))).toBe(
+        '[\\[\\[\\[](https://x.com)',
+      )
+    })
+
+    it('serialize: unbalanced parens in label', () => {
+      expect(serialize(doc(paragraph(linked(')))(((', 'https://x.com'))))).toBe(
+        '[)))(((](https://x.com)',
+      )
+    })
+
+    // Parse: escaped brackets in label are unescaped correctly
+    it('parse: escaped [ in label', () => {
+      expect(parse('[a \\[ b](https://x.com)')).toEqual(
+        doc(paragraph(linked('a [ b', 'https://x.com'))),
+      )
+    })
+
+    it('parse: escaped ] in label', () => {
+      expect(parse('[a \\] b](https://x.com)')).toEqual(
+        doc(paragraph(linked('a ] b', 'https://x.com'))),
+      )
+    })
+
+    it('parse: escaped ]( in label does not split link', () => {
+      expect(parse('[a \\]( b](https://x.com)')).toEqual(
+        doc(paragraph(linked('a ]( b', 'https://x.com'))),
+      )
+    })
+
+    it('parse: multiple escaped brackets in label', () => {
+      expect(parse('[\\[\\]\\[\\]](https://x.com)')).toEqual(
+        doc(paragraph(linked('[][]', 'https://x.com'))),
+      )
+    })
+
+    it('parse: parens in label are literal (no escaping needed)', () => {
+      expect(parse('[hello (world)](https://x.com)')).toEqual(
+        doc(paragraph(linked('hello (world)', 'https://x.com'))),
+      )
+    })
+
+    // Round-trip: serialize(parse(s)) === s for all these edge cases
+    const roundTripCases: [string, string][] = [
+      ['[ in label', '[a \\[ b](https://x.com)'],
+      ['] in label', '[a \\] b](https://x.com)'],
+      ['balanced [] in label', '[a \\[b\\] c](https://x.com)'],
+      ['parens in label', '[hello (world)](https://x.com)'],
+      [']( in label', '[a \\]( b](https://x.com)'],
+      ['mixed []() in label', '[x \\[y\\] and (z)](https://x.com)'],
+      ['multiple ] in label', '[\\]\\]\\]](https://x.com)'],
+      ['multiple [ in label', '[\\[\\[\\[](https://x.com)'],
+      ['unbalanced parens in label', '[)))(((](https://x.com)'],
+      ['empty brackets in label', '[\\[\\]](https://x.com)'],
+      ['] [ ]( ) mixed in label', '[\\] \\[ \\]( )](https://x.com)'],
+    ]
+
+    for (const [name, input] of roundTripCases) {
+      it(`round-trip: ${name}`, () => {
+        expect(serialize(parse(input))).toBe(input)
+      })
+    }
+  })
 })
