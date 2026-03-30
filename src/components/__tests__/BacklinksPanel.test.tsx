@@ -33,6 +33,18 @@ function makeBlock(id: string, content: string, blockType = 'content') {
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }
 
+/** Default mock: route invoke calls by command name. */
+function mockInvokeWith(backlinksResponse: unknown, extras?: Record<string, unknown>) {
+  // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+  mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+    if (cmd === 'get_backlinks') return backlinksResponse
+    if (cmd === 'get_properties') return [] // no properties by default
+    if (cmd === 'batch_resolve') return []
+    if (extras?.[cmd] !== undefined) return extras[cmd]
+    return emptyPage
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
 })
@@ -45,7 +57,7 @@ describe('BacklinksPanel', () => {
   })
 
   it('renders empty state when no backlinks found', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    mockInvokeWith(emptyPage)
 
     render(<BacklinksPanel blockId="BLOCK001" />)
 
@@ -53,7 +65,7 @@ describe('BacklinksPanel', () => {
   })
 
   it('calls get_backlinks with correct params on mount', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
+    mockInvokeWith(emptyPage)
 
     render(<BacklinksPanel blockId="BLOCK001" />)
 
@@ -75,7 +87,7 @@ describe('BacklinksPanel', () => {
       next_cursor: null,
       has_more: false,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    mockInvokeWith(page)
 
     render(<BacklinksPanel blockId="TARGET01" />)
 
@@ -97,7 +109,7 @@ describe('BacklinksPanel', () => {
       next_cursor: 'cursor_page2',
       has_more: true,
     }
-    mockedInvoke.mockResolvedValueOnce(page1)
+    mockInvokeWith(page1)
 
     render(<BacklinksPanel blockId="TARGET01" />)
 
@@ -117,7 +129,16 @@ describe('BacklinksPanel', () => {
       next_cursor: null,
       has_more: false,
     }
-    mockedInvoke.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2)
+    let callCount = 0
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'get_backlinks') {
+        callCount++
+        return callCount === 1 ? page1 : page2
+      }
+      if (cmd === 'get_properties') return []
+      return emptyPage
+    })
 
     render(<BacklinksPanel blockId="TARGET01" />)
 
@@ -138,7 +159,7 @@ describe('BacklinksPanel', () => {
   })
 
   it('reloads when blockId changes', async () => {
-    mockedInvoke.mockResolvedValue(emptyPage)
+    mockInvokeWith(emptyPage)
 
     const { rerender } = render(<BacklinksPanel blockId="BLOCK_A" />)
 
@@ -167,7 +188,7 @@ describe('BacklinksPanel', () => {
       next_cursor: null,
       has_more: false,
     }
-    mockedInvoke.mockResolvedValueOnce(page)
+    mockInvokeWith(page)
 
     const { container } = render(<BacklinksPanel blockId="TARGET01" />)
 
@@ -185,7 +206,12 @@ describe('BacklinksPanel', () => {
   })
 
   it('handles error from getBacklinks without crashing', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'get_backlinks') throw new Error('network failure')
+      if (cmd === 'get_properties') return []
+      return emptyPage
+    })
 
     render(<BacklinksPanel blockId="BLOCK001" />)
 
@@ -498,6 +524,159 @@ describe('BacklinksPanel', () => {
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // -- Filter tests -----------------------------------------------------------
+
+  describe('filters', () => {
+    const backlinkItems = [
+      makeBlock('01HAAAAA00000000000001', 'Content block', 'content'),
+      makeBlock('01HBBBBB00000000000002', 'Page block', 'page'),
+      makeBlock('01HCCCCC00000000000003', 'Tag block', 'tag'),
+    ]
+
+    it('renders filter dropdowns', async () => {
+      mockInvokeWith({ items: backlinkItems, next_cursor: null, has_more: false })
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('Content block')
+
+      expect(screen.getByLabelText('Filter by type')).toBeInTheDocument()
+      expect(screen.getByLabelText('Filter by status')).toBeInTheDocument()
+      expect(screen.getByLabelText('Filter by date')).toBeInTheDocument()
+    })
+
+    it('filters by block type', async () => {
+      const user = userEvent.setup()
+      mockInvokeWith({ items: backlinkItems, next_cursor: null, has_more: false })
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('Content block')
+      expect(screen.getByText('Page block')).toBeInTheDocument()
+      expect(screen.getByText('Tag block')).toBeInTheDocument()
+
+      // Filter to pages only
+      await user.selectOptions(screen.getByLabelText('Filter by type'), 'page')
+
+      expect(screen.getByText('Page block')).toBeInTheDocument()
+      expect(screen.queryByText('Content block')).not.toBeInTheDocument()
+      expect(screen.queryByText('Tag block')).not.toBeInTheDocument()
+    })
+
+    it('filters by task status', async () => {
+      const user = userEvent.setup()
+      const items = [
+        makeBlock('01HAAAAA00000000000001', 'Todo item', 'content'),
+        makeBlock('01HBBBBB00000000000002', 'Done item', 'content'),
+        makeBlock('01HCCCCC00000000000003', 'No status item', 'content'),
+      ]
+
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+        if (cmd === 'get_backlinks') {
+          return { items, next_cursor: null, has_more: false }
+        }
+        if (cmd === 'get_properties') {
+          const blockId = (args as { blockId: string }).blockId
+          if (blockId === '01HAAAAA00000000000001')
+            return [{ key: 'todo', value_text: 'TODO', value_num: null, value_date: null, value_ref: null }]
+          if (blockId === '01HBBBBB00000000000002')
+            return [{ key: 'todo', value_text: 'DONE', value_num: null, value_date: null, value_ref: null }]
+          return []
+        }
+        return emptyPage
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('Todo item')
+
+      // Filter to TODO only
+      await user.selectOptions(screen.getByLabelText('Filter by status'), 'TODO')
+
+      await waitFor(() => {
+        expect(screen.getByText('Todo item')).toBeInTheDocument()
+        expect(screen.queryByText('Done item')).not.toBeInTheDocument()
+        expect(screen.queryByText('No status item')).not.toBeInTheDocument()
+      })
+    })
+
+    it('shows "no match" message when filters exclude all results', async () => {
+      const user = userEvent.setup()
+      mockInvokeWith({
+        items: [makeBlock('01HAAAAA00000000000001', 'Only content', 'content')],
+        next_cursor: null,
+        has_more: false,
+      })
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('Only content')
+
+      // Filter to tags — no tags exist
+      await user.selectOptions(screen.getByLabelText('Filter by type'), 'tag')
+
+      expect(screen.getByText('No backlinks match the current filters')).toBeInTheDocument()
+    })
+
+    it('clears all filters with Clear button', async () => {
+      const user = userEvent.setup()
+      mockInvokeWith({
+        items: [makeBlock('01HAAAAA00000000000001', 'Block A', 'content')],
+        next_cursor: null,
+        has_more: false,
+      })
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('Block A')
+
+      // Apply a filter
+      await user.selectOptions(screen.getByLabelText('Filter by type'), 'page')
+      expect(screen.queryByText('Block A')).not.toBeInTheDocument()
+
+      // Click Clear
+      await user.click(screen.getByText('Clear'))
+
+      // Block should reappear
+      expect(screen.getByText('Block A')).toBeInTheDocument()
+    })
+
+    it('shows task status badge for TODO/DOING/DONE blocks', async () => {
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+        if (cmd === 'get_backlinks') {
+          return {
+            items: [makeBlock('01HAAAAA00000000000001', 'In progress item', 'content')],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_properties') {
+          return [{ key: 'todo', value_text: 'DOING', value_num: null, value_date: null, value_ref: null }]
+        }
+        return emptyPage
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await waitFor(() => {
+        expect(screen.getByText('DOING')).toBeInTheDocument()
+      })
+    })
+
+    it('has no a11y violations with filter bar', async () => {
+      mockInvokeWith({
+        items: [makeBlock('B1', 'accessible')],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
     })
   })
 })

@@ -42,20 +42,20 @@
 |----------|------|---------|---------|---------|------|-------|
 | 1. Block Model & Structure | 14 | 0 | 0 | 1 | 0 | 15 |
 | 2. Page Management | 5 | 0 | 1 | 2 | 0 | 8 |
-| 3. Editor Core (TipTap) | 15 | 0 | 0 | 1 | 0 | 16 |
-| 4. Text Formatting | 3 | 0 | 1 | 5 | 2 | 11 |
+| 3. Editor Core (TipTap) | 15 | 0 | 0 | 4 | 0 | 19 |
+| 4. Text Formatting | 3 | 0 | 3 | 3 | 2 | 11 |
 | 5. Content Serialization | 8 | 0 | 0 | 0 | 0 | 8 |
 | 6. Linking & References | 7 | 0 | 1 | 1 | 2 | 11 |
 | 7. Tag System | 11 | 0 | 0 | 0 | 0 | 11 |
 | 8. Properties System | 3 | 3 | 0 | 4 | 0 | 10 |
 | 9. Task Management | 4 | 0 | 1 | 4 | 1 | 10 |
-| 10. Daily Journal | 7 | 0 | 0 | 3 | 1 | 11 |
+| 10. Daily Journal | 7 | 0 | 1 | 7 | 0 | 15 |
 | 11. Search & FTS | 6 | 0 | 0 | 2 | 0 | 8 |
 | 12. Query System | 2 | 0 | 1 | 4 | 0 | 7 |
 | 13. History & Versioning | 4 | 0 | 0 | 0 | 0 | 4 |
 | 14. Trash & Recovery | 5 | 0 | 0 | 0 | 0 | 5 |
 | 15. Drag-and-Drop & Reordering | 4 | 0 | 0 | 1 | 0 | 5 |
-| 16. Collapse & Focus | 3 | 0 | 0 | 1 | 0 | 4 |
+| 16. Collapse & Focus | 3 | 0 | 0 | 2 | 0 | 5 |
 | 17. Conflict Resolution | 5 | 0 | 0 | 0 | 0 | 5 |
 | 18. Sync Protocol | 0 | 0 | 0 | 11 | 0 | 11 |
 | 19. Snapshots & Compaction | 4 | 0 | 0 | 1 | 0 | 5 |
@@ -71,7 +71,7 @@
 | 29. Security & Integrity | 5 | 0 | 0 | 1 | 0 | 6 |
 | 30. Auto-updates | 0 | 0 | 0 | 2 | 0 | 2 |
 | 31. Future Ideas | 0 | 0 | 0 | 0 | 4 | 4 |
-| **Total** | **147** | **3** | **8** | **61** | **12** | **231** |
+| **Total** | **146** | **3** | **11** | **66** | **11** | **237** |
 
 ---
 
@@ -149,8 +149,8 @@
 | 44 | Formatting toolbar (Bold/Italic/Code/Undo/Redo) | Done | 2 | C | Comp: FormattingToolbar.test.tsx (18), StaticBlock.test.tsx (6) |
 | 45 | Strikethrough (`~~text~~`) | Planned | — | — | |
 | 46 | Highlight (`==text==`) | Planned | — | — | |
-| 47 | Headings within blocks (`# H1`, `## H2`) | Planned | — | — | |
-| 48 | Code blocks with syntax highlighting | Planned | — | — | |
+| 47 | Headings within blocks (`# H1`, `## H2`) | Partial | 2 | C | Parsed and rendered in StaticBlock (styled h1-h6). No heading support in TipTap editor |
+| 48 | Code blocks with syntax highlighting | Partial | 2 | C | Parsed and rendered in StaticBlock (`<pre><code>`). No language-aware highlighting |
 | 49 | Math/LaTeX rendering (`$$E=mc^2$$`) | Planned | — | — | |
 | 50 | Tables within blocks | Planned | — | — | |
 | 51 | Blockquotes (`> quote`) | Idea | — | — | |
@@ -555,6 +555,8 @@ its own design discussion before being split into implementation tasks.
 | 186 | CJK text rendering | Done | No dedicated test | Implicit; add explicit CJK block create + read test if desired |
 | 204 | Zustand journal store | Done | No unit tests | Add journal store test for mode switching and date navigation |
 | 212 | 8 database indexes | Done | No dedicated test | Implicit via query perf; add explicit index existence check if desired |
+| — | Block merge with complex content (headings, code) | Done | No test for merge edge cases | `handleMergeWithPrev` ProseMirror position fragile with headings/code |
+| — | Auto-split with headings/code blocks | Done | No test for split with complex content | splitBlock parser-based split not tested with multi-block-type content |
 
 ---
 
