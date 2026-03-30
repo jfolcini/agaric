@@ -1,6 +1,6 @@
 # Developer Documentation — Block Notes App
 
-Local-first block-based note-taking app (Logseq/Obsidian-like). React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log with CQRS materializer for offline-first sync.
+Local-first block-based note-taking app inspired by Org-mode and Logseq. React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log with CQRS materializer for offline-first sync.
 
 > **No changes to this file (AGENTS.md) without explicit user approval. Ever.**
 
@@ -80,6 +80,10 @@ During development iteration, run only the relevant check:
 - **Tarpaulin** — expensive (~60s). Only run when working on coverage gaps.
 - **Minimum bar:** Every exported function gets happy-path + error-path tests. Components get render + interaction + `axe(container)` a11y tests.
 - **Test location:** `#[cfg(test)] mod tests` for Rust, `__tests__/` dirs for frontend.
+
+Detailed conventions, patterns, and pitfalls:
+- **Rust:** `src-tauri/tests/AGENTS.md`
+- **Frontend:** `src/__tests__/AGENTS.md`
 
 ## Subagent Workflow
 
