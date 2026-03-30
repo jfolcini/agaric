@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 10 — 2026-03-30 — Journal Workflow Features
+
+### Task: Implement journal workflow (excluding templates)
+
+**Features built** (4 parallel + 1 sequential subagent):
+
+**Wave 1** (parallel):
+- **1A: Scrollable past journals** — JournalPage rewritten to show 7 stacked days + "Load older days". 13 new tests.
+- **1B: Backend property commands** — `set_property`, `delete_property`, `get_properties` Tauri commands + frontend wrappers + mock. 5 new Rust tests.
+- **1C: Collapse/expand children** — Chevron toggle, `Ctrl+.` shortcut, client-side state, focus rescue. 16 new tests.
+
+**Wave 2** (sequential, depends on 1B):
+- **Task markers (TODO/DOING/DONE)** — Block properties for task state, visual icons, click-to-cycle, `Ctrl+Enter` shortcut. 21 new tests.
+
+**Results**: Commit `c9ac3fc` — 13 files changed. 686 frontend + 885 Rust = 1,571 total tests.
+
+**COMPARISON.md updated**: Journal workflow verdict upgraded Partial → Good. Task management 0 → 4. Block CRUD 9 → 10. Daily journal 5 → 7. Tier 1 items #1 and #4 marked Done. Tier 2 item #9 marked Done.
+
+---
+
 ## Session 9 — 2026-03-30 — sqlx Migration + UX Polish Remaining Items
 
 ### Task 1: Migrate ~147 sqlx runtime queries to compile-time macros (REVIEW-LATER #1)

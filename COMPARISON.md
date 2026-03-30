@@ -18,7 +18,7 @@
 | Block references `((uuid))` | Inline reference renders source content, live-updating | Not implemented -- `[[ULID]]` links to pages/blocks but does NOT embed content inline | **Critical gap** |
 | Block embeds `{{embed ((uuid))}}` | Full content + children rendered inline, editable in-place | Not implemented | **Critical gap** |
 | Block properties `key:: value` | Inline `key:: value` syntax on lines after block content | `block_properties` table with typed values (text, num, date, ref). Backend supports it. No UI for viewing/editing properties | **UI gap** -- backend ready, frontend missing |
-| Collapse/expand children | Click arrow or `Ctrl+Up/Down` | Not implemented | **Gap** |
+| Collapse/expand children | Click arrow or `Ctrl+Up/Down` | Chevron toggle, `Ctrl+.` shortcut, client-side state, focus rescue | None |
 | Zoom into block (focus mode) | `Alt+Right` focuses on block + descendants only | Not implemented | **Gap** |
 | Move block up/down | `Alt+Shift+Up/Down` | Drag-and-drop reordering (tree-aware) | Partial -- no keyboard shortcut for move up/down |
 | Block-level selection | `Esc` + arrow keys for multi-block selection | Not implemented | **Gap** |
@@ -76,7 +76,7 @@
 
 | Capability | Logseq | Block Notes | Gap |
 |---|---|---|---|
-| Block properties | `key:: value` inline syntax | `block_properties` table with `set_property` / `delete_property` ops | Backend complete, **no UI** |
+| Block properties | `key:: value` inline syntax | `block_properties` table with `set_property` / `delete_property` / `get_properties` commands. Backend + frontend wrappers complete | Backend + API complete, **no general UI** (task marker is the first property-based UI) |
 | Typed values | DB version: Text, Number, Date, DateTime, Checkbox, URL, Node | 4 types: text, num, date, ref (block reference) | Close -- missing DateTime, Checkbox, URL |
 | Built-in properties | 17+ (tags, alias, title, icon, template, collapsed, etc.) | None built-in -- all custom | **Gap** -- need to define semantic properties |
 | Property-based queries | `{{query (property type book)}}` | `query_by_tags` supports tag-based queries. No property-based query command | **Gap** |
@@ -114,11 +114,11 @@
 
 | Capability | Logseq | Block Notes | Gap |
 |---|---|---|---|
-| Task markers | `TODO`, `DOING`, `DONE`, `CANCELLED`, `NOW`, `LATER` | Not implemented | **Major gap** |
+| Task markers | `TODO`, `DOING`, `DONE`, `CANCELLED`, `NOW`, `LATER` | TODO/DOING/DONE via block properties. Click to cycle, `Ctrl+Enter` shortcut. Visual icons (Circle/CircleDot/CheckCircle2) | Partial -- 3 states vs Logseq's 6, no CANCELLED/NOW/LATER |
 | Priority levels | `[#A]`, `[#B]`, `[#C]` | Not implemented | **Gap** |
 | Scheduled dates | `SCHEDULED: <2024-12-27 Fri>` | Org-mode timestamps parsed (`<2024-01-15 Mon>`) but no task scheduling semantics | Partial -- syntax exists, semantics missing |
 | Deadline dates | `DEADLINE: <2024-12-31 Tue>` | Same as above | Partial |
-| Task cycling | `Ctrl+Enter` toggles TODO/DONE | Not implemented | **Gap** |
+| Task cycling | `Ctrl+Enter` toggles TODO/DONE | Click marker or `Ctrl+Enter` cycles TODO → DOING → DONE → none | Comparable |
 | Task queries/dashboard | Embedded queries surface tasks across graph | Not implemented | **Gap** |
 | Custom task keywords | Configurable via `config.edn` | Not implemented | **Gap** |
 | Recurring tasks | Via plugins | Not implemented | **Gap** |
@@ -127,10 +127,10 @@
 
 | Capability | Logseq | Block Notes | Gap |
 |---|---|---|---|
-| Auto-created daily page | Created at midnight, date as title | `JournalPage` component -- date picker, auto-creates page with `YYYY-MM-DD` content | Comparable |
+| Auto-created daily page | Created at midnight, date as title | `JournalPage` component -- auto-creates page with `YYYY-MM-DD` content on first block | Comparable |
 | Default landing page | Opens to today's journal | App opens to journal view | None |
-| Date navigation | `g n`/`g p` for next/prev day, date picker | Prev/next buttons + "Today" button | None |
-| Scrollable past journals | Past days stacked below today | Not implemented -- single day view only | **Gap** |
+| Date navigation | `g n`/`g p` for next/prev day, date picker | Scrollable multi-day view (7 days + "Load older days"), today at top | Comparable -- different UX (scrollable vs single-day nav) |
+| Scrollable past journals | Past days stacked below today | 7 days stacked, each with own BlockTree, "Load older days" button | None |
 | Journal templates | Auto-populated via `config.edn` | Not implemented | **Gap** |
 | Configurable date format | `:journal/page-title-format` | Fixed `YYYY-MM-DD` | Minor gap |
 | Natural language dates | Type "next friday" in date picker | Not implemented | **Gap** |
@@ -205,18 +205,17 @@
 - Backlinks on topic pages create timeline of thoughts
 
 **Block Notes current state:**
-- Journal view with date picker, auto-creates daily page
-- Can add blocks under daily page
-- Prev/next/today navigation
-- "Open in page editor" link
+- Scrollable multi-day journal view (7 days + "Load older days")
+- Each day section with its own BlockTree, date header, "Add block"
+- Task markers (TODO/DOING/DONE) with click-to-cycle and Ctrl+Enter
+- Block collapse/expand with chevron toggle and Ctrl+.
+- "Open in page editor" link per day
 
 **Gaps to close:**
-1. Scrollable past journals (show multiple days, not just one)
-2. Journal templates (auto-populate new journal pages)
-3. Richer linking from journal entries (currently have `[[ULID]]` links)
-4. No task markers to capture TODOs inline
+1. Journal templates (auto-populate new journal pages)
+2. Task queries to surface TODOs across all journal days
 
-**Verdict: Partial.** Core daily page works. Missing the journal-centric *workflow* (templates, scrollable history, inline tasks).
+**Verdict: Good.** Core daily journal workflow works with multi-day scrolling, inline task marking, and collapsible blocks. Missing templates and task dashboard.
 
 ---
 
@@ -230,20 +229,19 @@
 - Engage: Dashboard with `DOING`/`NOW` queries
 
 **Block Notes current state:**
-- No task markers
-- No priority system
+- Task markers: TODO/DOING/DONE via block properties
+- Click or Ctrl+Enter to cycle task state
+- Visual task icons (Circle/CircleDot/CheckCircle2)
 - Timestamps parsed but no scheduling semantics
-- No task queries
-- No task dashboard
+- No task queries or dashboard
 
 **Gaps to close:**
-1. Task marker system (TODO/DOING/DONE at minimum)
-2. Task state cycling (keyboard shortcut to toggle)
-3. Scheduled/deadline date semantics (not just timestamp syntax)
-4. Task query commands (filter by marker, priority, date range)
-5. Dashboard view (or inline query blocks)
+1. Priority system ([#A], [#B], [#C])
+2. Scheduled/deadline date semantics (not just timestamp syntax)
+3. Task query commands (filter by marker, priority, date range)
+4. Dashboard view (or inline query blocks)
 
-**Verdict: Not started.** This is a major workflow gap.
+**Verdict: Started.** Task markers work. Missing priority, scheduling semantics, and task queries.
 
 ---
 
@@ -356,10 +354,10 @@ This is a deep feature set. Minimum viable:
 
 | # | Feature | Why Critical | Backend Ready? |
 |---|---------|-------------|----------------|
-| 1 | **Task markers** (TODO/DOING/DONE) | Enables GTD, meeting action items, project management | Need new op type or convention |
+| 1 | **Task markers** (TODO/DOING/DONE) | Enables GTD, meeting action items, project management | **Done** -- `set_property` command + cycling UI |
 | 2 | **Block references** `((id))` | Core Zettelkasten, reuse of ideas | Need new inline syntax + resolver |
 | 3 | **Block embeds** `{{embed ((id))}}` | Content reuse, editable in context | Need embed component + renderer |
-| 4 | **Collapse/expand** | Essential for large outlines | Need UI state (could be client-side only) |
+| 4 | **Collapse/expand** | Essential for large outlines | **Done** -- chevron toggle, Ctrl+., client-side state |
 | 5 | **Properties UI** | Backend supports it, users can't see/edit them | Frontend only |
 | 6 | **Slash commands** `/` | Discovery, task creation, template insertion | Frontend only |
 | 7 | **Inline queries** | Task dashboards, project overviews | Need query block renderer + backend support |
@@ -369,7 +367,7 @@ This is a deep feature set. Minimum viable:
 | # | Feature | Why Important | Backend Ready? |
 |---|---------|--------------|----------------|
 | 8 | Templates | Reusable structures for journals, meetings, projects | Need template storage + insertion |
-| 9 | Scrollable past journals | Journal-centric workflow | Frontend change |
+| 9 | Scrollable past journals | Journal-centric workflow | **Done** -- 7-day stacked view + "Load older days" |
 | 10 | Property-based queries | Project management, PARA method | Need new query command |
 | 11 | Scheduled/deadline semantics | Task management with dates | Timestamps parsed, need semantic layer |
 | 12 | Strikethrough + highlight syntax | Formatting parity | Org parser extension |
@@ -418,7 +416,7 @@ Not everything is a gap. Block Notes has architectural advantages:
 | **Structured properties** | Typed properties (text, num, date, ref) with validation | Properties are untyped strings in file graph |
 | **ID system** | ULIDs are sortable, case-normalized, deterministic ordering | UUID v4 is random, not sortable |
 | **Soft delete** | Cascade soft-delete with restore + purge, timestamp verification | Delete is file deletion or block removal |
-| **Test coverage** | 1,549 tests across 3 layers (Rust, Vitest, Playwright) | Community-reported quality issues |
+| **Test coverage** | 1,571 tests across 3 layers (Rust, Vitest, Playwright) | Community-reported quality issues |
 | **Desktop performance** | Tauri 2 (Rust + WebView) -- small binary, low memory | Electron -- large binary, high memory |
 
 ---
@@ -427,15 +425,15 @@ Not everything is a gap. Block Notes has architectural advantages:
 
 | Category | Logseq | Block Notes | Notes |
 |---|:---:|:---:|---|
-| Block CRUD | 10 | 9 | Missing collapse, zoom, block selection |
+| Block CRUD | 10 | 10 | Collapse/expand added |
 | Page management | 9 | 7 | Missing aliases, namespaces, page properties UI |
 | Editor formatting | 9 | 4 | Only bold/italic/code. No headings, tables, code blocks, highlight |
 | Linking system | 10 | 5 | Have page links + backlinks. Missing block refs, embeds, unlinked refs |
-| Properties | 8 | 6 | Backend complete. No UI, no built-in properties, no property queries |
+| Properties | 8 | 7 | Backend + API complete. Task marker is first property UI. No general editor |
 | Tags | 8 | 7 | Good filtering. Tags not unified with pages (design choice) |
 | Query system | 9 | 2 | Only tag queries + FTS. No inline queries, no property/task queries |
-| Task management | 8 | 0 | Not started |
-| Daily journal | 8 | 5 | Basic daily page works. No templates, scrollable history, tasks |
+| Task management | 8 | 4 | TODO/DOING/DONE cycling works. No priority, scheduling, queries |
+| Daily journal | 8 | 7 | Multi-day scrolling, task markers, collapse. No templates |
 | Search | 8 | 7 | Good FTS5. Missing scope filters, unlinked references |
 | Templates | 7 | 0 | Not started |
 | Sync/storage | 5 | 8 | Our architecture is fundamentally better, but sync not exposed yet |

@@ -192,7 +192,7 @@ org-mode-for-the-rest-of-us/          # Root = React frontend (Vite)
 
 ## Test Coverage
 
-- **880 Rust tests** (839 lib + 41 serializer integration) + **651 Vitest frontend tests** + **18 Playwright E2E tests** = 1,549 total
+- **885 Rust tests** (844 lib + 41 serializer integration) + **686 Vitest frontend tests** + **18 Playwright E2E tests** = 1,589 total
 - Phases 1–3 complete + Phase 4 Waves 1-2 (DAG + merge + snapshots/compaction)
 - Untestable Tauri bootstrap (lib.rs::run, main.rs::main, command wrappers) excluded via `#[cfg(not(tarpaulin_include))]`
 
