@@ -35,6 +35,7 @@ const SCHEMA_VERSION: u32 = 1;
 // Row types (CBOR + DB round-trip)
 // ---------------------------------------------------------------------------
 
+/// A single block row captured in a snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BlockSnapshot {
     pub id: String,
@@ -48,12 +49,14 @@ pub struct BlockSnapshot {
     pub conflict_source: Option<String>,
 }
 
+/// A block–tag association captured in a snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BlockTagSnapshot {
     pub block_id: String,
     pub tag_id: String,
 }
 
+/// A block property row captured in a snapshot (key–value with typed values).
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BlockPropertySnapshot {
     pub block_id: String,
@@ -64,12 +67,14 @@ pub struct BlockPropertySnapshot {
     pub value_ref: Option<String>,
 }
 
+/// A block-to-block link captured in a snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BlockLinkSnapshot {
     pub source_id: String,
     pub target_id: String,
 }
 
+/// A file attachment row captured in a snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct AttachmentSnapshot {
     pub id: String,
@@ -86,6 +91,7 @@ pub struct AttachmentSnapshot {
 // Aggregate types
 // ---------------------------------------------------------------------------
 
+/// All core tables bundled together for snapshot serialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotTables {
     pub blocks: Vec<BlockSnapshot>,
@@ -95,6 +101,7 @@ pub struct SnapshotTables {
     pub attachments: Vec<AttachmentSnapshot>,
 }
 
+/// Complete snapshot: schema version, op frontier, and all table data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotData {
     pub schema_version: u32,
@@ -109,6 +116,7 @@ pub struct SnapshotData {
 // ---------------------------------------------------------------------------
 
 /// Encode SnapshotData to zstd-compressed CBOR bytes.
+#[must_use = "encoded bytes must be stored or transmitted"]
 pub fn encode_snapshot(data: &SnapshotData) -> Result<Vec<u8>, AppError> {
     let mut cbor_buf = Vec::new();
     ciborium::into_writer(data, &mut cbor_buf)
@@ -119,6 +127,7 @@ pub fn encode_snapshot(data: &SnapshotData) -> Result<Vec<u8>, AppError> {
 }
 
 /// Decode zstd-compressed CBOR bytes to SnapshotData.
+#[must_use = "decoded snapshot data must be applied or inspected"]
 pub fn decode_snapshot(data: &[u8]) -> Result<SnapshotData, AppError> {
     let decompressed =
         zstd::decode_all(data).map_err(|e| AppError::Snapshot(format!("zstd decompress: {e}")))?;
@@ -861,7 +870,7 @@ mod tests {
 
         // Insert a recent op (now)
         insert_block(&pool, "block-1", "recent").await;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::now_rfc3339();
         insert_op_at(&pool, device_id, "block-1", &now).await;
 
         // Compact with 90-day retention — all ops are recent
@@ -928,7 +937,7 @@ mod tests {
 
         // Insert a block with a recent op
         insert_block(&pool, "block-new", "new").await;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::now_rfc3339();
         insert_op_at(&pool, device_id, "block-new", &now).await;
 
         // Compact with 90-day retention
@@ -1156,7 +1165,7 @@ mod tests {
         insert_op_at(&pool, "device-B", "block-B1", "2024-01-15T00:00:00Z").await;
 
         insert_block(&pool, "block-B2", "recent from B").await;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::now_rfc3339();
         insert_op_at(&pool, "device-B", "block-B2", &now).await;
 
         // Compact
@@ -1480,5 +1489,245 @@ mod tests {
         // get_latest_snapshot returns only the most recent
         let (latest_id, _) = get_latest_snapshot(&pool).await.unwrap().unwrap();
         assert_eq!(latest_id, snap3);
+    }
+
+    // =======================================================================
+    // 22. empty_blocks_map_round_trip (REVIEW-LATER #56)
+    // =======================================================================
+
+    /// Snapshot with a completely empty blocks map and all-empty tables
+    /// round-trips correctly through encode→decode.
+    #[test]
+    fn empty_blocks_map_round_trip() {
+        let data = SnapshotData {
+            schema_version: SCHEMA_VERSION,
+            snapshot_device_id: "dev-empty".to_string(),
+            up_to_seqs: BTreeMap::new(),
+            up_to_hash: "empty-hash".to_string(),
+            tables: SnapshotTables {
+                blocks: vec![],
+                block_tags: vec![],
+                block_properties: vec![],
+                block_links: vec![],
+                attachments: vec![],
+            },
+        };
+
+        let encoded = encode_snapshot(&data).unwrap();
+        let decoded = decode_snapshot(&encoded).unwrap();
+
+        assert_eq!(decoded.schema_version, SCHEMA_VERSION);
+        assert_eq!(decoded.snapshot_device_id, "dev-empty");
+        assert_eq!(decoded.up_to_hash, "empty-hash");
+        assert!(decoded.up_to_seqs.is_empty(), "up_to_seqs should be empty");
+        assert!(decoded.tables.blocks.is_empty());
+        assert!(decoded.tables.block_tags.is_empty());
+        assert!(decoded.tables.block_properties.is_empty());
+        assert!(decoded.tables.block_links.is_empty());
+        assert!(decoded.tables.attachments.is_empty());
+    }
+
+    // =======================================================================
+    // 23. large_text_field_round_trip (REVIEW-LATER #56)
+    // =======================================================================
+
+    /// Snapshot with very large text fields (>10KB) round-trips correctly
+    /// through zstd compression + CBOR encoding.
+    #[test]
+    fn large_text_field_round_trip() {
+        let large_content = "x".repeat(15_000); // 15KB
+        assert!(large_content.len() > 10_000);
+
+        let mut up_to_seqs = BTreeMap::new();
+        up_to_seqs.insert("dev".to_string(), 1);
+
+        let data = SnapshotData {
+            schema_version: SCHEMA_VERSION,
+            snapshot_device_id: "dev-large".to_string(),
+            up_to_seqs,
+            up_to_hash: "h".to_string(),
+            tables: SnapshotTables {
+                blocks: vec![BlockSnapshot {
+                    id: "b-large".to_string(),
+                    block_type: "content".to_string(),
+                    content: Some(large_content.clone()),
+                    parent_id: None,
+                    position: Some(1),
+                    deleted_at: None,
+                    archived_at: None,
+                    is_conflict: 0,
+                    conflict_source: None,
+                }],
+                block_tags: vec![],
+                block_properties: vec![BlockPropertySnapshot {
+                    block_id: "b-large".to_string(),
+                    key: "notes".to_string(),
+                    value_text: Some("y".repeat(12_000)),
+                    value_num: None,
+                    value_date: None,
+                    value_ref: None,
+                }],
+                block_links: vec![],
+                attachments: vec![],
+            },
+        };
+
+        let encoded = encode_snapshot(&data).unwrap();
+        let decoded = decode_snapshot(&encoded).unwrap();
+
+        assert_eq!(decoded.tables.blocks.len(), 1);
+        assert_eq!(
+            decoded.tables.blocks[0].content.as_deref(),
+            Some(large_content.as_str())
+        );
+        assert_eq!(decoded.tables.block_properties.len(), 1);
+        assert_eq!(
+            decoded.tables.block_properties[0]
+                .value_text
+                .as_ref()
+                .unwrap()
+                .len(),
+            12_000,
+        );
+    }
+
+    // =======================================================================
+    // 24. all_nullable_fields_null_round_trip (REVIEW-LATER #56)
+    // =======================================================================
+
+    /// Snapshot where every nullable field in a block is set to None
+    /// survives encode→decode.
+    #[test]
+    fn all_nullable_fields_null_round_trip() {
+        let mut up_to_seqs = BTreeMap::new();
+        up_to_seqs.insert("dev".to_string(), 1);
+
+        let data = SnapshotData {
+            schema_version: SCHEMA_VERSION,
+            snapshot_device_id: "dev".to_string(),
+            up_to_seqs,
+            up_to_hash: "h".to_string(),
+            tables: SnapshotTables {
+                blocks: vec![BlockSnapshot {
+                    id: "b-null".to_string(),
+                    block_type: "content".to_string(),
+                    content: None,
+                    parent_id: None,
+                    position: None,
+                    deleted_at: None,
+                    archived_at: None,
+                    is_conflict: 0,
+                    conflict_source: None,
+                }],
+                block_tags: vec![],
+                block_properties: vec![BlockPropertySnapshot {
+                    block_id: "b-null".to_string(),
+                    key: "empty-prop".to_string(),
+                    value_text: None,
+                    value_num: None,
+                    value_date: None,
+                    value_ref: None,
+                }],
+                block_links: vec![],
+                attachments: vec![],
+            },
+        };
+
+        let encoded = encode_snapshot(&data).unwrap();
+        let decoded = decode_snapshot(&encoded).unwrap();
+
+        let block = &decoded.tables.blocks[0];
+        assert!(block.content.is_none(), "content should be None");
+        assert!(block.parent_id.is_none(), "parent_id should be None");
+        assert!(block.position.is_none(), "position should be None");
+        assert!(block.deleted_at.is_none(), "deleted_at should be None");
+        assert!(block.archived_at.is_none(), "archived_at should be None");
+        assert!(
+            block.conflict_source.is_none(),
+            "conflict_source should be None"
+        );
+
+        let prop = &decoded.tables.block_properties[0];
+        assert!(prop.value_text.is_none());
+        assert!(prop.value_num.is_none());
+        assert!(prop.value_date.is_none());
+        assert!(prop.value_ref.is_none());
+    }
+
+    // =======================================================================
+    // 25. encode_decode_identity (REVIEW-LATER #56)
+    // =======================================================================
+
+    /// Round-trip encode→decode is idempotent: encode→decode→encode→decode
+    /// preserves every field exactly.
+    #[test]
+    fn encode_decode_identity() {
+        let data = sample_snapshot_data();
+        let encoded = encode_snapshot(&data).unwrap();
+        let decoded = decode_snapshot(&encoded).unwrap();
+
+        // Re-encode and decode again to verify idempotency
+        let re_encoded = encode_snapshot(&decoded).unwrap();
+        let re_decoded = decode_snapshot(&re_encoded).unwrap();
+
+        // Verify all top-level fields
+        assert_eq!(decoded.schema_version, re_decoded.schema_version);
+        assert_eq!(decoded.snapshot_device_id, re_decoded.snapshot_device_id);
+        assert_eq!(decoded.up_to_hash, re_decoded.up_to_hash);
+        assert_eq!(decoded.up_to_seqs, re_decoded.up_to_seqs);
+
+        // Verify table lengths
+        assert_eq!(decoded.tables.blocks.len(), re_decoded.tables.blocks.len());
+        assert_eq!(
+            decoded.tables.block_tags.len(),
+            re_decoded.tables.block_tags.len()
+        );
+        assert_eq!(
+            decoded.tables.block_properties.len(),
+            re_decoded.tables.block_properties.len()
+        );
+        assert_eq!(
+            decoded.tables.block_links.len(),
+            re_decoded.tables.block_links.len()
+        );
+        assert_eq!(
+            decoded.tables.attachments.len(),
+            re_decoded.tables.attachments.len()
+        );
+
+        // Verify individual fields in blocks
+        for (a, b) in decoded
+            .tables
+            .blocks
+            .iter()
+            .zip(re_decoded.tables.blocks.iter())
+        {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.block_type, b.block_type);
+            assert_eq!(a.content, b.content);
+            assert_eq!(a.parent_id, b.parent_id);
+            assert_eq!(a.position, b.position);
+            assert_eq!(a.deleted_at, b.deleted_at);
+            assert_eq!(a.archived_at, b.archived_at);
+            assert_eq!(a.is_conflict, b.is_conflict);
+            assert_eq!(a.conflict_source, b.conflict_source);
+        }
+
+        // Verify attachments round-trip
+        for (a, b) in decoded
+            .tables
+            .attachments
+            .iter()
+            .zip(re_decoded.tables.attachments.iter())
+        {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.block_id, b.block_id);
+            assert_eq!(a.mime_type, b.mime_type);
+            assert_eq!(a.filename, b.filename);
+            assert_eq!(a.size_bytes, b.size_bytes);
+            assert_eq!(a.fs_path, b.fs_path);
+            assert_eq!(a.created_at, b.created_at);
+            assert_eq!(a.deleted_at, b.deleted_at);
+        }
     }
 }

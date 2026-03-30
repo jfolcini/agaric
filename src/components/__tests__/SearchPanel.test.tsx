@@ -440,4 +440,155 @@ describe('SearchPanel', () => {
     expect(navState.currentView).toBe('search')
     expect(navState.pageStack).toHaveLength(0)
   })
+
+  // =========================================================================
+  // REVIEW-LATER #58: Edge-case tests for SearchPanel
+  // =========================================================================
+
+  it('does not invoke search for explicitly empty query on submit', async () => {
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, '')
+
+    expect(mockedInvoke).not.toHaveBeenCalled()
+    // Should not show "No results found." since no search was performed
+    expect(screen.queryByText('No results found.')).not.toBeInTheDocument()
+  })
+
+  it('handles very long search query (>500 chars)', async () => {
+    const longQuery = 'a'.repeat(501)
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, longQuery)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
+        query: longQuery,
+        cursor: null,
+        limit: 50,
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('No results found.')).toBeInTheDocument()
+    })
+  })
+
+  it('handles special characters in search query', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, '<script>alert("xss")</script>')
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
+        query: '<script>alert("xss")</script>',
+        cursor: null,
+        limit: 50,
+      })
+    })
+
+    // Component should not crash — verify it's still mounted
+    expect(screen.getByPlaceholderText('Search blocks...')).toBeInTheDocument()
+  })
+
+  it('debounces rapid-fire typing and only fires for the final value', async () => {
+    vi.useFakeTimers()
+
+    mockedInvoke.mockResolvedValue({
+      items: [makeSearchResult({ content: 'final result' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+
+    // Rapid-fire typing: each change restarts the debounce
+    fireEvent.change(input, { target: { value: 'h' } })
+    fireEvent.change(input, { target: { value: 'he' } })
+    fireEvent.change(input, { target: { value: 'hel' } })
+    fireEvent.change(input, { target: { value: 'hell' } })
+    fireEvent.change(input, { target: { value: 'hello' } })
+
+    // Before debounce fires: no calls
+    expect(mockedInvoke).not.toHaveBeenCalled()
+
+    // Advance past the 300ms debounce
+    await act(async () => {
+      vi.advanceTimersByTime(300)
+    })
+
+    // Only one call with the final value
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
+      query: 'hello',
+      cursor: null,
+      limit: 50,
+    })
+  })
+
+  it('pagination: clicking Load more appends results and hides button when exhausted', async () => {
+    const user = userEvent.setup()
+
+    const page1 = {
+      items: [makeSearchResult({ id: 'P1', content: 'page one result' })],
+      next_cursor: 'cursor_1',
+      has_more: true,
+    }
+    const page2 = {
+      items: [makeSearchResult({ id: 'P2', content: 'page two result' })],
+      next_cursor: 'cursor_2',
+      has_more: true,
+    }
+    const page3 = {
+      items: [makeSearchResult({ id: 'P3', content: 'page three result' })],
+      next_cursor: null,
+      has_more: false,
+    }
+
+    mockedInvoke
+      .mockResolvedValueOnce(page1)
+      .mockResolvedValueOnce(page2)
+      .mockResolvedValueOnce(page3)
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'page')
+
+    // Wait for first page
+    await waitFor(() => {
+      expect(screen.getByText('page one result')).toBeInTheDocument()
+    })
+
+    // Load more (page 2)
+    let loadMoreBtn = screen.getByRole('button', { name: /Load more/i })
+    await user.click(loadMoreBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('page two result')).toBeInTheDocument()
+    })
+
+    // Load more (page 3 — last page)
+    loadMoreBtn = screen.getByRole('button', { name: /Load more/i })
+    await user.click(loadMoreBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('page three result')).toBeInTheDocument()
+    })
+
+    // All three results visible, Load more button gone
+    expect(screen.getByText('page one result')).toBeInTheDocument()
+    expect(screen.getByText('page two result')).toBeInTheDocument()
+    expect(screen.getByText('page three result')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Load more/i })).not.toBeInTheDocument()
+  })
 })

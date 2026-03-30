@@ -11,7 +11,6 @@
 
 use std::collections::HashSet;
 
-use chrono::Utc;
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
@@ -63,18 +62,18 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<()
     }
 
     // INSERT OR IGNORE — duplicate delivery is a no-op
-    sqlx::query(
+    sqlx::query!(
         "INSERT OR IGNORE INTO op_log \
          (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
+        record.device_id,
+        record.seq,
+        record.parent_seqs,
+        record.hash,
+        record.op_type,
+        record.payload,
+        record.created_at,
     )
-    .bind(&record.device_id)
-    .bind(record.seq)
-    .bind(&record.parent_seqs)
-    .bind(&record.hash)
-    .bind(&record.op_type)
-    .bind(&record.payload)
-    .bind(&record.created_at)
     .execute(pool)
     .await?;
 
@@ -105,16 +104,17 @@ pub async fn append_merge_op(
     let parent_seqs_json = serde_json::to_string(&sorted_parents)?;
     let op_type = op_payload.op_type_str().to_owned();
     let payload_json = serialize_inner_payload(&op_payload)?;
-    let created_at = Utc::now().to_rfc3339();
+    let created_at = crate::now_rfc3339();
 
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    let row: (i64,) =
-        sqlx::query_as("SELECT COALESCE(MAX(seq), 0) + 1 FROM op_log WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_one(&mut *tx)
-            .await?;
-    let seq = row.0;
+    let row = sqlx::query!(
+        r#"SELECT COALESCE(MAX(seq), 0) + 1 as "next_seq!: i64" FROM op_log WHERE device_id = ?"#,
+        device_id,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    let seq = row.next_seq;
 
     let hash = compute_op_hash(
         device_id,
@@ -124,18 +124,18 @@ pub async fn append_merge_op(
         &payload_json,
     );
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO op_log \
          (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
+        device_id,
+        seq,
+        parent_seqs_json,
+        hash,
+        op_type,
+        payload_json,
+        created_at,
     )
-    .bind(device_id)
-    .bind(seq)
-    .bind(&parent_seqs_json)
-    .bind(&hash)
-    .bind(&op_type)
-    .bind(&payload_json)
-    .bind(&created_at)
     .execute(&mut *tx)
     .await?;
 
@@ -230,19 +230,19 @@ pub async fn get_block_edit_heads(
     pool: &SqlitePool,
     block_id: &str,
 ) -> Result<Vec<(String, i64)>, AppError> {
-    let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT device_id, MAX(seq) AS seq \
-         FROM op_log \
-         WHERE op_type = 'edit_block' \
-           AND json_extract(payload, '$.block_id') = ? \
-         GROUP BY device_id \
-         ORDER BY device_id",
+    let rows = sqlx::query!(
+        r#"SELECT device_id as "device_id!: String", MAX(seq) AS "seq!: i64"
+         FROM op_log
+         WHERE op_type = 'edit_block'
+           AND json_extract(payload, '$.block_id') = ?
+         GROUP BY device_id
+         ORDER BY device_id"#,
+        block_id,
     )
-    .bind(block_id)
     .fetch_all(pool)
     .await?;
 
-    Ok(rows)
+    Ok(rows.into_iter().map(|r| (r.device_id, r.seq)).collect())
 }
 
 // ===========================================================================
@@ -298,7 +298,6 @@ mod tests {
     fn make_delete(block_id: &str) -> OpPayload {
         OpPayload::DeleteBlock(DeleteBlockPayload {
             block_id: block_id.into(),
-            cascade: false,
         })
     }
 
@@ -1003,7 +1002,7 @@ mod tests {
         .unwrap();
 
         // Recent edit (now) with prev_edit pointing to seq 2
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::now_rfc3339();
         let edit2 = append_local_op_at(
             &pool,
             DEV_A,

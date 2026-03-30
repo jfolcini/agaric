@@ -33,7 +33,6 @@ use crate::draft::{delete_draft, get_all_drafts};
 use crate::error::AppError;
 use crate::op::{EditBlockPayload, OpPayload};
 use crate::op_log::append_local_op_in_tx;
-use chrono::Utc;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -200,6 +199,19 @@ async fn recover_single_draft(
     // TODO: add index or extracted column for production scale — the
     // json_extract() call forces a full table scan with JSON parsing per row.
     // A LIKE pre-filter narrows candidates before the expensive json_extract.
+    //
+    // Safety: block_id is expected to be a ULID (alphanumeric, no LIKE
+    // wildcards or JSON escape characters). Assert this so the LIKE
+    // pre-filter is correct.
+    debug_assert!(
+        !draft.block_id.is_empty()
+            && draft
+                .block_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-'),
+        "block_id must be alphanumeric (ULID format), got: '{}'",
+        draft.block_id,
+    );
     let row: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM op_log \
          WHERE payload LIKE '%\"block_id\":\"' || ? || '\"%' \
@@ -228,7 +240,7 @@ async fn recover_single_draft(
         // synthetic op AND update blocks.content — same pattern as
         // commands::edit_block_inner.
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-        append_local_op_in_tx(&mut tx, device_id, op, Utc::now().to_rfc3339()).await?;
+        append_local_op_in_tx(&mut tx, device_id, op, crate::now_rfc3339()).await?;
         sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
             .bind(&draft.content)
             .bind(&draft.block_id)
@@ -273,6 +285,16 @@ pub async fn find_prev_edit(
     pool: &SqlitePool,
     block_id: &str,
 ) -> Result<Option<(String, i64)>, AppError> {
+    // Safety: block_id is expected to be a ULID (alphanumeric, no LIKE
+    // wildcards or JSON escape characters). Assert this so the LIKE
+    // pre-filter is correct.
+    debug_assert!(
+        !block_id.is_empty()
+            && block_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-'),
+        "block_id must be alphanumeric (ULID format), got: '{block_id}'",
+    );
     let maybe_row: Option<(String, i64)> = sqlx::query_as(
         "SELECT device_id, seq FROM op_log \
          WHERE payload LIKE '%\"block_id\":\"' || ? || '\"%' \
@@ -1111,5 +1133,24 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(op_count.0, 0, "no synthetic op for nonexistent block");
+    }
+
+    // === 10. #29: debug_assert on ULID format ===
+
+    #[tokio::test]
+    #[should_panic(expected = "block_id must be alphanumeric")]
+    async fn find_prev_edit_panics_on_like_wildcard_block_id() {
+        let (pool, _dir) = test_pool().await;
+        // Calling find_prev_edit with a LIKE wildcard should trigger the
+        // debug_assert (active in test/debug builds).
+        let _ = find_prev_edit(&pool, "block%id").await;
+    }
+
+    #[tokio::test]
+    async fn find_prev_edit_accepts_normal_ulid_block_id() {
+        let (pool, _dir) = test_pool().await;
+        // A normal alphanumeric ULID-like ID should not panic
+        let result = find_prev_edit(&pool, "01ARZ3NDEKTSV4RRFFQ69G5FAV").await;
+        assert!(result.is_ok(), "normal ULID block_id should be accepted");
     }
 }

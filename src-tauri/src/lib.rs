@@ -21,6 +21,16 @@ pub mod soft_delete;
 pub mod tag_query;
 pub mod ulid;
 
+/// Return the current UTC time as an RFC 3339 string with millisecond
+/// precision and a `Z` suffix (e.g. `2025-01-15T12:34:56.789Z`).
+///
+/// Every timestamp stored in the database should go through this helper so
+/// that lexicographic comparisons (e.g. op-log compaction cutoff) are
+/// consistent.  See REVIEW-LATER item #48 for context.
+pub fn now_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
 #[cfg(test)]
 mod command_integration_tests;
 #[cfg(test)]
@@ -53,6 +63,7 @@ mod specta_tests {
             crate::commands::search_blocks,
             crate::commands::query_by_tags,
             crate::commands::list_tags_by_prefix,
+            crate::commands::list_tags_for_block,
         ])
     }
 
@@ -130,6 +141,7 @@ mod specta_tests {
 #[cfg(not(tarpaulin_include))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    use db::{ReadPool, WritePool};
     use device::DeviceId;
     use materializer::Materializer;
     use tauri::Manager;
@@ -153,6 +165,7 @@ pub fn run() {
         commands::search_blocks,
         commands::query_by_tags,
         commands::list_tags_by_prefix,
+        commands::list_tags_for_block,
     ]);
 
     tauri::Builder::default()
@@ -163,16 +176,19 @@ pub fn run() {
             std::fs::create_dir_all(&app_data_dir)?;
             let db_path = app_data_dir.join("notes.db");
 
-            // Initialize the pool synchronously during setup (runs migrations)
-            let pool = tauri::async_runtime::block_on(db::init_pool(&db_path))?;
+            // Initialize separated read/write pools (ADR-04: pool separation)
+            let pools = tauri::async_runtime::block_on(db::init_pools(&db_path))?;
 
             // Read or generate a persistent device UUID (ADR-07)
             let device_id_path = app_data_dir.join("device-id");
             let device_id = device::get_or_create_device_id(&device_id_path)?;
 
             // Run crash recovery before anything else (ADR-07)
-            let report =
-                tauri::async_runtime::block_on(recovery::recover_at_boot(&pool, &device_id))?;
+            // Recovery needs write access
+            let report = tauri::async_runtime::block_on(recovery::recover_at_boot(
+                &pools.write,
+                &device_id,
+            ))?;
             if !report.drafts_recovered.is_empty() {
                 eprintln!(
                     "[boot] Recovered {} unflushed drafts",
@@ -180,11 +196,12 @@ pub fn run() {
                 );
             }
 
-            // Create materializer (spawns consumer tasks)
-            let materializer = Materializer::new(pool.clone());
+            // Create materializer (spawns consumer tasks) — uses write pool for cache rebuilds
+            let materializer = Materializer::new(pools.write.clone());
 
             // Store all in Tauri managed state
-            app.manage(pool);
+            app.manage(WritePool(pools.write));
+            app.manage(ReadPool(pools.read));
             app.manage(DeviceId(device_id));
             app.manage(materializer);
 

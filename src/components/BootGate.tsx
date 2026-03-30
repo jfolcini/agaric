@@ -18,6 +18,15 @@ export function BootGate({ children }: { children: React.ReactNode }) {
     )
   }
 
+  if (state === 'recovering') {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-2">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Recovering&hellip;</p>
+      </div>
+    )
+  }
+
   if (state === 'error') {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-4">

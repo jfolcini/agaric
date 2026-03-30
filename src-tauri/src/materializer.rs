@@ -37,7 +37,7 @@ use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 use crate::cache;
@@ -77,6 +77,11 @@ pub enum MaterializeTask {
 
 const FOREGROUND_CAPACITY: usize = 256;
 const BACKGROUND_CAPACITY: usize = 1024;
+
+/// Queue pressure warning threshold as a fraction (3/4 = 75%).
+/// A warning is logged when queue depth exceeds this fraction of capacity.
+const QUEUE_PRESSURE_NUMERATOR: usize = 3;
+const QUEUE_PRESSURE_DENOMINATOR: usize = 4;
 
 // ---------------------------------------------------------------------------
 // Lightweight payload hint structs — avoid full serde_json::Value parse
@@ -161,10 +166,14 @@ pub struct StatusInfo {
 ///
 /// `Clone`-able (all inner fields are `Clone`) so it can live in Tauri
 /// managed state and be shared across command handlers.
+///
+/// Senders are wrapped in `Arc<Mutex<Option<…>>>` so that [`shutdown`]
+/// can drop them, closing the channel and unblocking consumers even when
+/// the queues are completely full (where `try_send` would silently fail).
 #[derive(Clone)]
 pub struct Materializer {
-    fg_tx: mpsc::Sender<MaterializeTask>,
-    bg_tx: mpsc::Sender<MaterializeTask>,
+    fg_tx: Arc<Mutex<Option<mpsc::Sender<MaterializeTask>>>>,
+    bg_tx: Arc<Mutex<Option<mpsc::Sender<MaterializeTask>>>>,
     shutdown_flag: Arc<AtomicBool>,
     metrics: Arc<QueueMetrics>,
 }
@@ -194,8 +203,8 @@ impl Materializer {
         }
 
         Self {
-            fg_tx,
-            bg_tx,
+            fg_tx: Arc::new(Mutex::new(Some(fg_tx))),
+            bg_tx: Arc::new(Mutex::new(Some(bg_tx))),
             shutdown_flag,
             metrics,
         }
@@ -323,6 +332,26 @@ impl Materializer {
         eprintln!("[materializer:bg] Queue closed");
     }
 
+    // -- sender access helpers ----------------------------------------------
+
+    /// Obtain a clone of the foreground sender, or `Err` if already shut down.
+    fn fg_sender(&self) -> Result<mpsc::Sender<MaterializeTask>, AppError> {
+        self.fg_tx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .ok_or_else(|| AppError::Channel("foreground queue closed".into()))
+    }
+
+    /// Obtain a clone of the background sender, or `Err` if already shut down.
+    fn bg_sender(&self) -> Result<mpsc::Sender<MaterializeTask>, AppError> {
+        self.bg_tx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .ok_or_else(|| AppError::Channel("background queue closed".into()))
+    }
+
     // -- public API --------------------------------------------------------
 
     /// Enqueue a task on the **foreground** (low-latency) queue.
@@ -330,11 +359,11 @@ impl Materializer {
     /// Blocks (async) until space is available. Returns `Err` if the consumer
     /// has shut down.
     pub async fn enqueue_foreground(&self, task: MaterializeTask) -> Result<(), AppError> {
-        self.fg_tx
-            .send(task)
+        let tx = self.fg_sender()?;
+        tx.send(task)
             .await
             .map_err(|e| AppError::Channel(format!("foreground queue send failed: {e}")))?;
-        let depth = FOREGROUND_CAPACITY - self.fg_tx.capacity();
+        let depth = FOREGROUND_CAPACITY - tx.capacity();
         self.metrics
             .fg_high_water
             .fetch_max(depth as u64, Ordering::Relaxed);
@@ -347,11 +376,11 @@ impl Materializer {
     /// Blocks (async) until space is available. Returns `Err` if the consumer
     /// has shut down.
     pub async fn enqueue_background(&self, task: MaterializeTask) -> Result<(), AppError> {
-        self.bg_tx
-            .send(task)
+        let tx = self.bg_sender()?;
+        tx.send(task)
             .await
             .map_err(|e| AppError::Channel(format!("background queue send failed: {e}")))?;
-        let depth = BACKGROUND_CAPACITY - self.bg_tx.capacity();
+        let depth = BACKGROUND_CAPACITY - tx.capacity();
         self.metrics
             .bg_high_water
             .fetch_max(depth as u64, Ordering::Relaxed);
@@ -363,9 +392,10 @@ impl Materializer {
     /// silently dropped (stale-while-revalidate — the cache will be rebuilt
     /// on the next edit). Returns `Err` only if the consumer has shut down.
     pub fn try_enqueue_background(&self, task: MaterializeTask) -> Result<(), AppError> {
-        match self.bg_tx.try_send(task) {
+        let tx = self.bg_sender()?;
+        match tx.try_send(task) {
             Ok(()) => {
-                let depth = BACKGROUND_CAPACITY - self.bg_tx.capacity();
+                let depth = BACKGROUND_CAPACITY - tx.capacity();
                 self.metrics
                     .bg_high_water
                     .fetch_max(depth as u64, Ordering::Relaxed);
@@ -387,36 +417,42 @@ impl Materializer {
     ///
     /// Called after each successful enqueue to detect unbounded growth early.
     fn check_queue_pressure(&self) {
-        let fg_depth = FOREGROUND_CAPACITY - self.fg_tx.capacity();
-        let bg_depth = BACKGROUND_CAPACITY - self.bg_tx.capacity();
+        let fg_depth = self
+            .fg_sender()
+            .map(|tx| FOREGROUND_CAPACITY - tx.capacity())
+            .unwrap_or(0);
+        let bg_depth = self
+            .bg_sender()
+            .map(|tx| BACKGROUND_CAPACITY - tx.capacity())
+            .unwrap_or(0);
 
         // 75% thresholds: 192 for fg (256 * 0.75), 768 for bg (1024 * 0.75)
-        if fg_depth > FOREGROUND_CAPACITY * 3 / 4 {
+        if fg_depth > FOREGROUND_CAPACITY * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR {
             eprintln!(
                 "[materializer] WARNING: foreground queue pressure {fg_depth}/{FOREGROUND_CAPACITY} (>{pct}%)",
-                pct = 75
+                pct = 100 * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR
             );
         }
-        if bg_depth > BACKGROUND_CAPACITY * 3 / 4 {
+        if bg_depth > BACKGROUND_CAPACITY * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR {
             eprintln!(
                 "[materializer] WARNING: background queue pressure {bg_depth}/{BACKGROUND_CAPACITY} (>{pct}%)",
-                pct = 75
+                pct = 100 * QUEUE_PRESSURE_NUMERATOR / QUEUE_PRESSURE_DENOMINATOR
             );
         }
     }
 
     /// Gracefully shut down both consumer tasks.
     ///
-    /// Sets a shared flag and sends wake-up messages so that consumers blocked
-    /// on `recv()` unblock, notice the flag, and exit. After the consumers
-    /// exit their receivers are dropped and subsequent sends return `Err`.
+    /// Sets the shared shutdown flag, then **drops** both senders so that
+    /// consumers blocked on `recv()` see channel closure and exit — even
+    /// when the queues are completely full (where `try_send` would silently
+    /// fail).
     pub fn shutdown(&self) {
         self.shutdown_flag.store(true, Ordering::Release);
-        // Send wake-up tasks so consumers unblock from recv().
-        // These are harmless — the consumer will check the flag and exit
-        // before processing them.
-        let _ = self.fg_tx.try_send(MaterializeTask::RebuildTagsCache);
-        let _ = self.bg_tx.try_send(MaterializeTask::RebuildTagsCache);
+        // Drop the senders to close the channels. This unblocks any
+        // consumer waiting on `recv()` regardless of queue depth.
+        let _ = self.fg_tx.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let _ = self.bg_tx.lock().unwrap_or_else(|e| e.into_inner()).take();
     }
 
     /// Access the observable queue metrics (atomic counters).
@@ -426,9 +462,17 @@ impl Materializer {
 
     /// Build a [`StatusInfo`] snapshot from the current queue state.
     pub fn status(&self) -> StatusInfo {
+        let fg_depth = self
+            .fg_sender()
+            .map(|tx| FOREGROUND_CAPACITY - tx.capacity())
+            .unwrap_or(0);
+        let bg_depth = self
+            .bg_sender()
+            .map(|tx| BACKGROUND_CAPACITY - tx.capacity())
+            .unwrap_or(0);
         StatusInfo {
-            foreground_queue_depth: FOREGROUND_CAPACITY - self.fg_tx.capacity(),
-            background_queue_depth: BACKGROUND_CAPACITY - self.bg_tx.capacity(),
+            foreground_queue_depth: fg_depth,
+            background_queue_depth: bg_depth,
             total_ops_dispatched: self.metrics.fg_processed.load(Ordering::Relaxed),
             total_background_dispatched: self.metrics.bg_processed.load(Ordering::Relaxed),
             fg_high_water: self.metrics.fg_high_water.load(Ordering::Relaxed),
@@ -492,9 +536,15 @@ impl Materializer {
             }
             "edit_block" => {
                 let hint: BlockIdHint = serde_json::from_str(&record.payload)?;
-                self.try_enqueue_background(MaterializeTask::ReindexBlockLinks {
-                    block_id: hint.block_id.clone(),
-                })?;
+                debug_assert!(
+                    !hint.block_id.is_empty(),
+                    "edit_block payload has empty block_id"
+                );
+                if !hint.block_id.is_empty() {
+                    self.try_enqueue_background(MaterializeTask::ReindexBlockLinks {
+                        block_id: hint.block_id.clone(),
+                    })?;
+                }
                 // Conservatively rebuild all content-dependent caches — we cannot
                 // determine block_type from the edit payload alone without a DB
                 // lookup, so a tag rename or date change must still invalidate.
@@ -913,7 +963,6 @@ mod tests {
             &pool,
             OpPayload::DeleteBlock(DeleteBlockPayload {
                 block_id: "blk-3".into(),
-                cascade: false,
             }),
         )
         .await;
@@ -1160,7 +1209,6 @@ mod tests {
             &pool,
             OpPayload::DeleteBlock(DeleteBlockPayload {
                 block_id: "blk-db".into(),
-                cascade: true,
             }),
         )
         .await;
@@ -1273,6 +1321,42 @@ mod tests {
         assert!(
             result.is_err(),
             "enqueue_background should fail after shutdown"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_completes_even_when_queues_are_full() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create a materializer with small-capacity channels by using the
+        // standard constructor (fg=256, bg=1024). We flood the background
+        // queue via try_send to fill it, then verify shutdown still
+        // completes and unblocks the consumer.
+        let mat = Materializer::new(pool);
+
+        // Fill the background queue to capacity (try_send silently drops
+        // when full, so this loop always succeeds).
+        for _ in 0..2000 {
+            let _ = mat.try_enqueue_background(MaterializeTask::RebuildTagsCache);
+        }
+
+        // Shutdown must succeed even though queues are full — the senders
+        // are dropped, closing the channel and unblocking recv().
+        mat.shutdown();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // Verify the materializer is fully shut down.
+        let result = mat.try_enqueue_background(MaterializeTask::RebuildTagsCache);
+        assert!(
+            result.is_err(),
+            "try_enqueue_background should fail after shutdown with full queues"
+        );
+        let result = mat
+            .enqueue_foreground(MaterializeTask::RebuildTagsCache)
+            .await;
+        assert!(
+            result.is_err(),
+            "enqueue_foreground should fail after shutdown with full queues"
         );
     }
 
@@ -1729,5 +1813,25 @@ mod tests {
             status.fg_high_water >= 1,
             "fg_high_water in StatusInfo should be >= 1 after dispatch"
         );
+    }
+
+    // ======================================================================
+    // #28: empty block_id skips ReindexBlockLinks
+    // ======================================================================
+
+    #[tokio::test]
+    #[should_panic(expected = "edit_block payload has empty block_id")]
+    async fn dispatch_background_empty_block_id_triggers_debug_assert() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Build a fake edit_block record with an empty block_id.
+        // In production this shouldn't happen, but serde(default) can produce
+        // it if the payload is malformed. The debug_assert catches this.
+        let record = fake_op_record("edit_block", r#"{"to_text":"hello","prev_edit":null}"#);
+
+        // The debug_assert fires in debug/test builds, preventing the
+        // wasted no-op reindex.
+        let _ = mat.dispatch_background(&record);
     }
 }

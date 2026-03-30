@@ -321,6 +321,11 @@ export function setupMock(): void {
         }))
       }
 
+      case 'list_tags_for_block': {
+        // In-memory mock doesn't track tag associations
+        return []
+      }
+
       default:
         return null
     }

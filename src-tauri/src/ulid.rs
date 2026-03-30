@@ -437,4 +437,100 @@ mod tests {
             "round-trip through serde must produce uppercase"
         );
     }
+
+    // --- REVIEW-LATER #61 edge-case tests ---
+
+    /// Case normalization is idempotent: normalizing an already-uppercase ULID
+    /// produces the same result as normalizing it a second time.
+    #[test]
+    fn case_normalization_is_idempotent() {
+        // Start from lowercase
+        let id = BlockId::from_string(FIXTURE_ULID_LOWER).unwrap();
+        let normalized_once = id.as_str().to_string();
+
+        // Normalize again
+        let id2 = BlockId::from_string(&normalized_once).unwrap();
+        let normalized_twice = id2.as_str().to_string();
+
+        assert_eq!(
+            normalized_once, normalized_twice,
+            "normalizing an already-normalized ULID must be idempotent"
+        );
+        assert_eq!(normalized_once, FIXTURE_ULID);
+    }
+
+    /// Comparison ordering matches ULID monotonicity: a ULID with an earlier
+    /// timestamp component sorts lexicographically before one with a later
+    /// timestamp.
+    #[test]
+    fn comparison_ordering_matches_monotonicity() {
+        // FIXTURE_ULID starts with "01AR..." and FIXTURE_ULID_OTHER with "01BX..."
+        // The first 10 chars encode the timestamp; "01AR..." < "01BX..." means
+        // FIXTURE_ULID has an earlier timestamp and should sort first.
+        let earlier = BlockId::from_string(FIXTURE_ULID).unwrap();
+        let later = BlockId::from_string(FIXTURE_ULID_OTHER).unwrap();
+
+        assert!(
+            earlier.as_str() < later.as_str(),
+            "earlier-timestamp ULID should sort before later-timestamp ULID: {} vs {}",
+            earlier.as_str(),
+            later.as_str(),
+        );
+    }
+
+    /// Display → from_string round-trip preserves the value.
+    #[test]
+    fn display_from_string_round_trip() {
+        let id = BlockId::new();
+        let displayed = format!("{id}");
+        let parsed =
+            BlockId::from_string(&displayed).expect("Display output should be a valid ULID");
+        assert_eq!(
+            parsed.as_str(),
+            id.as_str(),
+            "Display -> from_string round-trip must preserve the value"
+        );
+    }
+
+    /// from_string → Display round-trip for a known fixture.
+    #[test]
+    fn from_string_display_round_trip_fixture() {
+        let id = BlockId::from_string(FIXTURE_ULID).unwrap();
+        let displayed = id.to_string();
+        assert_eq!(displayed, FIXTURE_ULID);
+        let reparsed = BlockId::from_string(&displayed).unwrap();
+        assert_eq!(reparsed.as_str(), FIXTURE_ULID);
+    }
+
+    /// Multiple ULIDs with distinct timestamps maintain strict ordering.
+    /// Uses `ulid::Ulid::from_parts` to create ULIDs with known timestamps.
+    #[test]
+    fn consecutive_ulids_maintain_ordering() {
+        let ids: Vec<BlockId> = (0..10)
+            .map(|i| {
+                // Create ULIDs with increasing timestamps (ms apart)
+                let ulid = ulid::Ulid::from_parts((1_000_000 + i) as u64, 0);
+                BlockId::from_string(ulid.to_string()).unwrap()
+            })
+            .collect();
+        let strings: Vec<String> = ids.iter().map(|id| id.as_str().to_string()).collect();
+
+        // Verify ordering is non-decreasing
+        for window in strings.windows(2) {
+            assert!(
+                window[0] <= window[1],
+                "ULID ordering violated: {} > {}",
+                window[0],
+                window[1],
+            );
+        }
+
+        // Verify all are unique
+        let unique: std::collections::HashSet<&str> = ids.iter().map(|id| id.as_str()).collect();
+        assert_eq!(
+            unique.len(),
+            10,
+            "all 10 consecutive ULIDs should be unique"
+        );
+    }
 }

@@ -8,7 +8,6 @@
 
 #![allow(dead_code)]
 
-use chrono::Utc;
 use sqlx::SqlitePool;
 
 use crate::dag;
@@ -192,7 +191,7 @@ pub async fn create_conflict_copy(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::now_rfc3339()).await?;
 
     // Insert into blocks table
     sqlx::query(
@@ -223,6 +222,7 @@ pub async fn create_conflict_copy(
 /// Timestamps are parsed via `chrono::DateTime::parse_from_rfc3339` so that
 /// different UTC representations (`+00:00` vs `Z`) compare correctly.  Falls
 /// back to lexicographic string comparison only if parsing fails.   (F05)
+#[must_use = "conflict resolution result must be applied"]
 pub fn resolve_property_conflict(
     op_a: &OpRecord,
     op_b: &OpRecord,
@@ -1513,5 +1513,181 @@ mod tests {
                 assert_eq!(theirs, "root content\nedited by B\n");
             }
         }
+    }
+
+    // =====================================================================
+    // 8. REVIEW-LATER #57 edge-case tests
+    // =====================================================================
+
+    /// Merge two identical texts: both devices make the exact same edit
+    /// to single-line content. Should merge cleanly to that identical text.
+    #[tokio::test]
+    async fn merge_text_identical_single_line_edits() {
+        let (pool, _dir) = test_pool().await;
+
+        append_local_op_at(&pool, DEV_A, make_create("B1", "original"), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        // Both devices edit to the exact same text
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "changed", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        let b_payload = r#"{"block_id":"B1","to_text":"changed","prev_edit":["device-A",1]}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        crate::dag::insert_remote_op(&pool, &b_record)
+            .await
+            .unwrap();
+
+        let result = merge_text(&pool, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 1))
+            .await
+            .unwrap();
+
+        // Single-line identical edits: diffy treats the whole line as changed
+        // by both sides identically, which resolves as clean.
+        match result {
+            MergeResult::Clean(merged) => {
+                assert_eq!(merged, "changed");
+            }
+            MergeResult::Conflict { ours, theirs, .. } => {
+                // Even if diffy reports conflict, both sides are the same
+                assert_eq!(ours, theirs, "both sides should be identical");
+            }
+        }
+    }
+
+    /// Merge two empty strings: create with "", both devices edit to "" (no-op).
+    /// Should merge cleanly to empty.
+    #[tokio::test]
+    async fn merge_text_both_sides_remain_empty() {
+        let (pool, _dir) = test_pool().await;
+
+        append_local_op_at(&pool, DEV_A, make_create("B1", ""), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        // Device A: stays empty
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B: also stays empty
+        let b_payload = r#"{"block_id":"B1","to_text":"","prev_edit":["device-A",1]}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        crate::dag::insert_remote_op(&pool, &b_record)
+            .await
+            .unwrap();
+
+        let result = merge_text(&pool, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 1))
+            .await
+            .unwrap();
+
+        match result {
+            MergeResult::Clean(merged) => {
+                assert_eq!(merged, "", "merging two empty strings should produce empty");
+            }
+            MergeResult::Conflict { .. } => {
+                panic!("merging identical empty strings should not conflict");
+            }
+        }
+    }
+
+    /// Merge when base is empty but both sides add multi-line content.
+    /// Both additions start at position 0, so a conflict is expected.
+    #[tokio::test]
+    async fn merge_text_empty_base_both_add_multiline() {
+        let (pool, _dir) = test_pool().await;
+
+        append_local_op_at(&pool, DEV_A, make_create("B1", ""), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        // Device A adds multiple lines
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "line A1\nline A2\n", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B adds different multiple lines
+        let b_payload =
+            r#"{"block_id":"B1","to_text":"line B1\nline B2\n","prev_edit":["device-A",1]}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        crate::dag::insert_remote_op(&pool, &b_record)
+            .await
+            .unwrap();
+
+        let result = merge_text(&pool, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 1))
+            .await
+            .unwrap();
+
+        match result {
+            MergeResult::Conflict {
+                ancestor,
+                ours,
+                theirs,
+            } => {
+                assert_eq!(ancestor, "", "ancestor should be empty");
+                assert_eq!(ours, "line A1\nline A2\n");
+                assert_eq!(theirs, "line B1\nline B2\n");
+            }
+            MergeResult::Clean(merged) => {
+                // Some merge tools may resolve this cleanly
+                assert!(
+                    merged.contains("line A1") && merged.contains("line B1"),
+                    "clean merge should contain both additions: {merged}"
+                );
+            }
+        }
+    }
+
+    /// Property conflict where both sides set the exact same value.
+    /// LWW must still deterministically pick a winner (commutativity).
+    #[test]
+    fn resolve_property_conflict_identical_values_both_sides() {
+        let op_a = make_prop_record(DEV_A, 1, FIXED_TS, "B1", "status", "done");
+        let op_b = make_prop_record(DEV_B, 1, FIXED_TS_LATER, "B1", "status", "done");
+
+        let result = resolve_property_conflict(&op_a, &op_b).unwrap();
+        // B has later timestamp, so B wins
+        assert_eq!(result.winner_device, DEV_B);
+        assert_eq!(result.winner_value.value_text, Some("done".into()));
+
+        // Commutativity: swap args, same winner
+        let result_ba = resolve_property_conflict(&op_b, &op_a).unwrap();
+        assert_eq!(result_ba.winner_device, DEV_B);
+        assert_eq!(result_ba.winner_value.value_text, Some("done".into()));
+    }
+
+    /// Property conflict where both sides set the same value with the same timestamp.
+    /// Tiebreaker (device_id) must still produce a deterministic winner.
+    #[test]
+    fn resolve_property_conflict_identical_values_same_timestamp() {
+        let op_a = make_prop_record(DEV_A, 1, FIXED_TS, "B1", "color", "red");
+        let op_b = make_prop_record(DEV_B, 1, FIXED_TS, "B1", "color", "red");
+
+        let result_ab = resolve_property_conflict(&op_a, &op_b).unwrap();
+        let result_ba = resolve_property_conflict(&op_b, &op_a).unwrap();
+
+        assert_eq!(
+            result_ab.winner_device, result_ba.winner_device,
+            "must be commutative even with identical values"
+        );
+        // device-B > device-A lexicographically
+        assert_eq!(result_ab.winner_device, DEV_B);
     }
 }

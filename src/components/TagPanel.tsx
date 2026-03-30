@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { BlockRow } from '../lib/tauri'
-import { addTag, createBlock, listBlocks, removeTag } from '../lib/tauri'
+import { addTag, createBlock, listBlocks, listTagsForBlock, removeTag } from '../lib/tauri'
 
 interface TagPanelProps {
   /** The block to manage tags for. */
@@ -46,6 +46,11 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
     setAppliedTagIds(new Set())
     setQuery('')
     setShowPicker(false)
+    if (blockId) {
+      listTagsForBlock(blockId)
+        .then((tagIds) => setAppliedTagIds(new Set(tagIds)))
+        .catch(() => {})
+    }
   }, [blockId])
 
   const handleAddTag = useCallback(

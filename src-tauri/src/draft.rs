@@ -15,7 +15,7 @@ use sqlx::SqlitePool;
 
 use crate::error::AppError;
 use crate::op::{EditBlockPayload, OpPayload};
-use crate::op_log::{append_local_op, OpRecord};
+use crate::op_log::{append_local_op_in_tx, OpRecord};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,7 +37,7 @@ pub struct Draft {
 ///
 /// Called by the frontend every ~2 s during active typing.
 pub async fn save_draft(pool: &SqlitePool, block_id: &str, content: &str) -> Result<(), AppError> {
-    let updated_at = Utc::now().to_rfc3339();
+    let updated_at = crate::now_rfc3339();
     sqlx::query(
         "INSERT OR REPLACE INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)",
     )
@@ -70,19 +70,35 @@ pub async fn save_draft_if_changed(
 
 /// Delete a draft row for the given block (if it exists).
 pub async fn delete_draft(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
+    sqlx::query!("DELETE FROM block_drafts WHERE block_id = ?", block_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Delete a draft row within an existing transaction.
+///
+/// The caller is responsible for committing the transaction.
+/// Used by [`flush_draft`] to atomically delete the draft in the same
+/// transaction that appends the op.
+pub async fn delete_draft_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    block_id: &str,
+) -> Result<(), AppError> {
     sqlx::query("DELETE FROM block_drafts WHERE block_id = ?")
         .bind(block_id)
-        .execute(pool)
+        .execute(&mut **tx)
         .await?;
     Ok(())
 }
 
 /// Return a single draft by block ID, or `None` if no draft exists.
 pub async fn get_draft(pool: &SqlitePool, block_id: &str) -> Result<Option<Draft>, AppError> {
-    let draft = sqlx::query_as::<_, Draft>(
+    let draft = sqlx::query_as!(
+        Draft,
         "SELECT block_id, content, updated_at FROM block_drafts WHERE block_id = ?",
+        block_id,
     )
-    .bind(block_id)
     .fetch_optional(pool)
     .await?;
     Ok(draft)
@@ -90,7 +106,8 @@ pub async fn get_draft(pool: &SqlitePool, block_id: &str) -> Result<Option<Draft
 
 /// Return all draft rows ordered by `updated_at` ascending.
 pub async fn get_all_drafts(pool: &SqlitePool) -> Result<Vec<Draft>, AppError> {
-    let drafts = sqlx::query_as::<_, Draft>(
+    let drafts = sqlx::query_as!(
+        Draft,
         "SELECT block_id, content, updated_at FROM block_drafts ORDER BY updated_at ASC",
     )
     .fetch_all(pool)
@@ -100,22 +117,19 @@ pub async fn get_all_drafts(pool: &SqlitePool) -> Result<Vec<Draft>, AppError> {
 
 /// Return the number of drafts currently stored.
 pub async fn draft_count(pool: &SqlitePool) -> Result<i64, AppError> {
-    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_drafts")
+    let rec = sqlx::query!(r#"SELECT COUNT(*) as "count: i64" FROM block_drafts"#)
         .fetch_one(pool)
         .await?;
-    Ok(count)
+    Ok(rec.count)
 }
 
 /// Flush a draft: write an `edit_block` op and then delete the draft row.
 ///
 /// This is the blur / window-focus-loss path.
 ///
-/// **Atomicity note:** the op append and draft deletion are *not* wrapped in a
-/// single transaction because [`append_local_op`] manages its own internal
-/// transaction.  If the process crashes after the op is committed but before
-/// the draft is deleted, an orphaned draft row will remain.  This is benign:
-/// the op has already been recorded, and the stale draft will be visible via
-/// [`get_all_drafts`] on next startup for the frontend to discard or re-flush.
+/// Both the op append and the draft deletion are wrapped in a single
+/// IMMEDIATE transaction. If any step fails the entire transaction is
+/// rolled back, preventing orphaned drafts or duplicate ops on retry.
 pub async fn flush_draft(
     pool: &SqlitePool,
     device_id: &str,
@@ -129,9 +143,10 @@ pub async fn flush_draft(
         prev_edit,
     });
 
-    let record = append_local_op(pool, device_id, op).await?;
-
-    delete_draft(pool, block_id).await?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let record = append_local_op_in_tx(&mut tx, device_id, op, Utc::now().to_rfc3339()).await?;
+    delete_draft_in_tx(&mut tx, block_id).await?;
+    tx.commit().await?;
 
     Ok(record)
 }
@@ -483,5 +498,135 @@ mod tests {
             get_draft(&pool, BLOCK_B).await.unwrap().is_some(),
             "other block's draft must be untouched"
         );
+    }
+
+    // ── delete_draft_in_tx ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn delete_draft_in_tx_removes_row_on_commit() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft(&pool, BLOCK_A, "content").await.unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        delete_draft_in_tx(&mut tx, BLOCK_A).await.unwrap();
+        tx.commit().await.unwrap();
+
+        assert!(
+            get_draft(&pool, BLOCK_A).await.unwrap().is_none(),
+            "draft must be gone after committed tx"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_draft_in_tx_rollback_preserves_row() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft(&pool, BLOCK_A, "content").await.unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        delete_draft_in_tx(&mut tx, BLOCK_A).await.unwrap();
+        tx.rollback().await.unwrap();
+
+        assert!(
+            get_draft(&pool, BLOCK_A).await.unwrap().is_some(),
+            "draft must survive a rolled-back tx"
+        );
+    }
+
+    // ── flush_draft atomicity ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn flush_draft_is_atomic_op_and_draft_delete_share_transaction() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft(&pool, BLOCK_A, "atomic content").await.unwrap();
+
+        let record = flush_draft(&pool, DEVICE, BLOCK_A, "atomic content", None)
+            .await
+            .unwrap();
+
+        // Op committed
+        let op = crate::op_log::get_op_by_seq(&pool, DEVICE, record.seq)
+            .await
+            .unwrap();
+        assert_eq!(op.op_type, "edit_block", "op must be committed");
+
+        // Draft deleted
+        assert_eq!(
+            draft_count(&pool).await.unwrap(),
+            0,
+            "draft must be deleted atomically with op commit"
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_draft_rollback_neither_op_nor_draft_deleted() {
+        use crate::op_log::{append_local_op_in_tx, get_latest_seq};
+
+        let (pool, _dir) = test_pool().await;
+
+        save_draft(&pool, BLOCK_A, "rollback test").await.unwrap();
+
+        let seq_before = get_latest_seq(&pool, DEVICE).await.unwrap();
+
+        // Manually replicate flush_draft's logic but roll back instead
+        // of committing, to prove rollback semantics.
+        {
+            let op = OpPayload::EditBlock(EditBlockPayload {
+                block_id: BLOCK_A.to_owned(),
+                to_text: "rollback test".to_owned(),
+                prev_edit: None,
+            });
+
+            let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+            append_local_op_in_tx(&mut tx, DEVICE, op, chrono::Utc::now().to_rfc3339())
+                .await
+                .unwrap();
+            delete_draft_in_tx(&mut tx, BLOCK_A).await.unwrap();
+            tx.rollback().await.unwrap();
+        }
+
+        // Op must NOT have been committed
+        let seq_after = get_latest_seq(&pool, DEVICE).await.unwrap();
+        assert_eq!(
+            seq_before, seq_after,
+            "op_log seq must not advance after rollback"
+        );
+
+        // Draft must still exist
+        assert!(
+            get_draft(&pool, BLOCK_A).await.unwrap().is_some(),
+            "draft must survive a rolled-back flush"
+        );
+        assert_eq!(
+            draft_count(&pool).await.unwrap(),
+            1,
+            "draft count must remain 1 after rollback"
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_draft_sequential_flushes_produce_chained_ops() {
+        let (pool, _dir) = test_pool().await;
+
+        save_draft(&pool, BLOCK_A, "v1").await.unwrap();
+        let r1 = flush_draft(&pool, DEVICE, BLOCK_A, "v1", None)
+            .await
+            .unwrap();
+        assert_eq!(r1.seq, 1);
+
+        save_draft(&pool, BLOCK_A, "v2").await.unwrap();
+        let r2 = flush_draft(&pool, DEVICE, BLOCK_A, "v2", None)
+            .await
+            .unwrap();
+        assert_eq!(r2.seq, 2, "second flush must chain to seq 2");
+
+        // Both ops are in the log, no drafts remain
+        assert_eq!(draft_count(&pool).await.unwrap(), 0);
+        let ops = crate::op_log::get_ops_since(&pool, DEVICE, 0)
+            .await
+            .unwrap();
+        assert_eq!(ops.len(), 2, "both ops must be persisted");
     }
 }

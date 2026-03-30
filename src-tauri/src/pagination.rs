@@ -25,6 +25,12 @@ use crate::error::AppError;
 // Constants
 // ---------------------------------------------------------------------------
 
+/// Default page size when no limit is specified by the client.
+const DEFAULT_PAGE_SIZE: i64 = 50;
+
+/// Maximum page size the client may request.
+const MAX_PAGE_SIZE: i64 = 200;
+
 /// Sentinel substituted for NULL `position` in keyset comparisons.
 ///
 /// Children with `position = NULL` (e.g. tag associations) are sorted *after*
@@ -68,7 +74,9 @@ pub struct HistoryEntry {
 /// - `seq` — set by `list_block_history` (keyset on `seq, device_id`).
 ///   For history queries `id` stores `device_id` as the tie-breaker
 ///   because the op_log PK is `(device_id, seq)`.
-/// - `rank` + `seq` — set by `search_fts` (`seq` stores `fts_rowid`).
+/// - `rank` — set by `search_fts` (keyset on `rank, id` with epsilon
+///   comparison `ABS(rank - cursor_rank) < 1e-9` to avoid exact float
+///   equality).  `id` stores `block_id` as the deterministic tiebreaker.
 /// - `id` — always present; serves as the tie-breaker in every keyset.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Cursor {
@@ -106,6 +114,7 @@ pub struct PageResponse<T: specta::Type> {
 
 impl Cursor {
     /// Encode to opaque base64 representation.
+    #[must_use = "encoded cursor string must be returned to the client"]
     pub fn encode(&self) -> Result<String, AppError> {
         let json = serde_json::to_string(self)?;
         Ok(URL_SAFE_NO_PAD.encode(json.as_bytes()))
@@ -124,9 +133,9 @@ impl Cursor {
 }
 
 impl PageRequest {
-    /// Build a page request, clamping `limit` to \[1, 200\] (default 50).
+    /// Build a page request, clamping `limit` to \[1, [`MAX_PAGE_SIZE`]\] (default [`DEFAULT_PAGE_SIZE`]).
     pub fn new(after: Option<String>, limit: Option<i64>) -> Result<Self, AppError> {
-        let limit = limit.unwrap_or(50).clamp(1, 200);
+        let limit = limit.unwrap_or(DEFAULT_PAGE_SIZE).clamp(1, MAX_PAGE_SIZE);
         let after = match after {
             Some(s) => Some(Cursor::decode(&s)?),
             None => None,
@@ -201,23 +210,24 @@ pub async fn list_children(
     };
 
     // ?6 = NULL_POSITION_SENTINEL, reused in IFNULL() for ORDER BY + keyset.
-    let rows = sqlx::query_as::<_, BlockRow>(
-        "SELECT id, block_type, content, parent_id, position, \
-                deleted_at, archived_at, is_conflict \
-         FROM blocks \
-         WHERE parent_id IS ?1 AND deleted_at IS NULL \
-           AND (?2 IS NULL OR (\
-                IFNULL(position, ?6) > ?3 \
-                OR (IFNULL(position, ?6) = ?3 AND id > ?4))) \
-         ORDER BY IFNULL(position, ?6) ASC, id ASC \
-         LIMIT ?5",
+    let rows = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id, block_type, content, parent_id, position,
+                deleted_at, archived_at, is_conflict as "is_conflict: bool"
+         FROM blocks
+         WHERE parent_id IS ?1 AND deleted_at IS NULL
+           AND (?2 IS NULL OR (
+                IFNULL(position, ?6) > ?3
+                OR (IFNULL(position, ?6) = ?3 AND id > ?4)))
+         ORDER BY IFNULL(position, ?6) ASC, id ASC
+         LIMIT ?5"#,
+        parent_id,              // ?1
+        cursor_flag,            // ?2
+        cursor_pos,             // ?3
+        cursor_id,              // ?4
+        fetch_limit,            // ?5
+        NULL_POSITION_SENTINEL, // ?6
     )
-    .bind(parent_id) // ?1
-    .bind(cursor_flag) // ?2
-    .bind(cursor_pos) // ?3
-    .bind(&cursor_id) // ?4
-    .bind(fetch_limit) // ?5
-    .bind(NULL_POSITION_SENTINEL) // ?6
     .fetch_all(pool)
     .await?;
 
@@ -246,19 +256,20 @@ pub async fn list_by_type(
         None => (None, String::new()),
     };
 
-    let rows = sqlx::query_as::<_, BlockRow>(
-        "SELECT id, block_type, content, parent_id, position, \
-                deleted_at, archived_at, is_conflict \
-         FROM blocks \
-         WHERE block_type = ?1 AND deleted_at IS NULL \
-           AND (?2 IS NULL OR id > ?3) \
-         ORDER BY id ASC \
-         LIMIT ?4",
+    let rows = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id, block_type, content, parent_id, position,
+                deleted_at, archived_at, is_conflict as "is_conflict: bool"
+         FROM blocks
+         WHERE block_type = ?1 AND deleted_at IS NULL
+           AND (?2 IS NULL OR id > ?3)
+         ORDER BY id ASC
+         LIMIT ?4"#,
+        block_type,  // ?1
+        cursor_flag, // ?2
+        cursor_id,   // ?3
+        fetch_limit, // ?4
     )
-    .bind(block_type) // ?1
-    .bind(cursor_flag) // ?2
-    .bind(&cursor_id) // ?3
-    .bind(fetch_limit) // ?4
     .fetch_all(pool)
     .await?;
 
@@ -292,20 +303,21 @@ pub async fn list_trash(
             None => (None, String::new(), String::new()),
         };
 
-    let rows = sqlx::query_as::<_, BlockRow>(
-        "SELECT id, block_type, content, parent_id, position, \
-                deleted_at, archived_at, is_conflict \
-         FROM blocks \
-         WHERE deleted_at IS NOT NULL AND is_conflict = 0 \
-           AND (?1 IS NULL OR (\
-                deleted_at < ?2 OR (deleted_at = ?2 AND id > ?3))) \
-         ORDER BY deleted_at DESC, id ASC \
-         LIMIT ?4",
+    let rows = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id, block_type, content, parent_id, position,
+                deleted_at, archived_at, is_conflict as "is_conflict: bool"
+         FROM blocks
+         WHERE deleted_at IS NOT NULL AND is_conflict = 0
+           AND (?1 IS NULL OR (
+                deleted_at < ?2 OR (deleted_at = ?2 AND id > ?3)))
+         ORDER BY deleted_at DESC, id ASC
+         LIMIT ?4"#,
+        cursor_flag, // ?1
+        cursor_del,  // ?2
+        cursor_id,   // ?3
+        fetch_limit, // ?4
     )
-    .bind(cursor_flag) // ?1
-    .bind(&cursor_del) // ?2
-    .bind(&cursor_id) // ?3
-    .bind(fetch_limit) // ?4
     .fetch_all(pool)
     .await?;
 
@@ -335,20 +347,21 @@ pub async fn list_by_tag(
         None => (None, String::new()),
     };
 
-    let rows = sqlx::query_as::<_, BlockRow>(
-        "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                b.deleted_at, b.archived_at, b.is_conflict \
-         FROM block_tags bt \
-         JOIN blocks b ON b.id = bt.block_id \
-         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0 \
-           AND (?2 IS NULL OR b.id > ?3) \
-         ORDER BY b.id ASC \
-         LIMIT ?4",
+    let rows = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+                b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool"
+         FROM block_tags bt
+         JOIN blocks b ON b.id = bt.block_id
+         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0
+           AND (?2 IS NULL OR b.id > ?3)
+         ORDER BY b.id ASC
+         LIMIT ?4"#,
+        tag_id,      // ?1
+        cursor_flag, // ?2
+        cursor_id,   // ?3
+        fetch_limit, // ?4
     )
-    .bind(tag_id) // ?1
-    .bind(cursor_flag) // ?2
-    .bind(&cursor_id) // ?3
-    .bind(fetch_limit) // ?4
     .fetch_all(pool)
     .await?;
 
@@ -379,20 +392,21 @@ pub async fn list_agenda(
         None => (None, String::new()),
     };
 
-    let rows = sqlx::query_as::<_, BlockRow>(
-        "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                b.deleted_at, b.archived_at, b.is_conflict \
-         FROM agenda_cache ac \
-         JOIN blocks b ON b.id = ac.block_id \
-         WHERE ac.date = ?1 AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR b.id > ?3) \
-         ORDER BY b.id ASC \
-         LIMIT ?4",
+    let rows = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+                b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool"
+         FROM agenda_cache ac
+         JOIN blocks b ON b.id = ac.block_id
+         WHERE ac.date = ?1 AND b.deleted_at IS NULL
+           AND (?2 IS NULL OR b.id > ?3)
+         ORDER BY b.id ASC
+         LIMIT ?4"#,
+        date,        // ?1
+        cursor_flag, // ?2
+        cursor_id,   // ?3
+        fetch_limit, // ?4
     )
-    .bind(date) // ?1
-    .bind(cursor_flag) // ?2
-    .bind(&cursor_id) // ?3
-    .bind(fetch_limit) // ?4
     .fetch_all(pool)
     .await?;
 
@@ -421,20 +435,21 @@ pub async fn list_backlinks(
         None => (None, String::new()),
     };
 
-    let rows = sqlx::query_as::<_, BlockRow>(
-        "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                b.deleted_at, b.archived_at, b.is_conflict \
-         FROM block_links bl \
-         JOIN blocks b ON b.id = bl.source_id \
-         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR b.id > ?3) \
-         ORDER BY b.id ASC \
-         LIMIT ?4",
+    let rows = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+                b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool"
+         FROM block_links bl
+         JOIN blocks b ON b.id = bl.source_id
+         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL
+           AND (?2 IS NULL OR b.id > ?3)
+         ORDER BY b.id ASC
+         LIMIT ?4"#,
+        target_id,   // ?1
+        cursor_flag, // ?2
+        cursor_id,   // ?3
+        fetch_limit, // ?4
     )
-    .bind(target_id) // ?1
-    .bind(cursor_flag) // ?2
-    .bind(&cursor_id) // ?3
-    .bind(fetch_limit) // ?4
     .fetch_all(pool)
     .await?;
 
@@ -475,7 +490,8 @@ pub async fn list_block_history(
             None => (None, 0, String::new()),
         };
 
-    let rows = sqlx::query_as::<_, HistoryEntry>(
+    let rows = sqlx::query_as!(
+        HistoryEntry,
         "SELECT device_id, seq, op_type, payload, created_at \
          FROM op_log \
          WHERE payload LIKE '%\"block_id\":\"' || ?1 || '\"%' \
@@ -484,12 +500,12 @@ pub async fn list_block_history(
                 seq < ?3 OR (seq = ?3 AND device_id < ?5))) \
          ORDER BY seq DESC, device_id DESC \
          LIMIT ?4",
+        block_id,         // ?1
+        cursor_flag,      // ?2
+        cursor_seq,       // ?3
+        fetch_limit,      // ?4
+        cursor_device_id, // ?5
     )
-    .bind(block_id) // ?1
-    .bind(cursor_flag) // ?2
-    .bind(cursor_seq) // ?3
-    .bind(fetch_limit) // ?4
-    .bind(&cursor_device_id) // ?5
     .fetch_all(pool)
     .await?;
 
@@ -517,18 +533,19 @@ pub async fn list_conflicts(
         None => (None, String::new()),
     };
 
-    let rows = sqlx::query_as::<_, BlockRow>(
-        "SELECT id, block_type, content, parent_id, position, \
-                deleted_at, archived_at, is_conflict \
-         FROM blocks \
-         WHERE is_conflict = 1 AND deleted_at IS NULL \
-           AND (?1 IS NULL OR id > ?2) \
-         ORDER BY id ASC \
-         LIMIT ?3",
+    let rows = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id, block_type, content, parent_id, position,
+                deleted_at, archived_at, is_conflict as "is_conflict: bool"
+         FROM blocks
+         WHERE is_conflict = 1 AND deleted_at IS NULL
+           AND (?1 IS NULL OR id > ?2)
+         ORDER BY id ASC
+         LIMIT ?3"#,
+        cursor_flag, // ?1
+        cursor_id,   // ?2
+        fetch_limit, // ?3
     )
-    .bind(cursor_flag) // ?1
-    .bind(&cursor_id) // ?2
-    .bind(fetch_limit) // ?3
     .fetch_all(pool)
     .await?;
 

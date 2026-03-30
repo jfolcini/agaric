@@ -14,10 +14,12 @@ use specta::Type;
 use sqlx::SqlitePool;
 use tauri::State;
 
+use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::fts;
 use crate::materializer::{Materializer, StatusInfo};
+use crate::now_rfc3339;
 use crate::op::{
     AddTagPayload, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload,
     OpPayload, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
@@ -212,7 +214,7 @@ pub async fn create_block_inner(
     }
 
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
     // 5. Insert into blocks table within same transaction
     sqlx::query(
@@ -293,7 +295,7 @@ pub async fn edit_block_inner(
     });
 
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
     // 4. Update blocks table within same transaction.
     // `AND deleted_at IS NULL` guard prevents overwriting content on a
@@ -328,7 +330,6 @@ pub async fn delete_block_inner(
 ) -> Result<DeleteResponse, AppError> {
     let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: block_id.clone(),
-        cascade: true,
     });
 
     // Single IMMEDIATE transaction: validation + op_log + cascade soft-delete.
@@ -352,10 +353,10 @@ pub async fn delete_block_inner(
 
     // Append to op_log within transaction
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
     // Cascade soft-delete within same transaction
-    let now = Utc::now().to_rfc3339();
+    let now = now_rfc3339();
     let result = sqlx::query(
         "WITH RECURSIVE descendants(id) AS ( \
              SELECT id FROM blocks WHERE id = ? \
@@ -430,7 +431,7 @@ pub async fn restore_block_inner(
 
     // Append to op_log within transaction
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
     // Restore within same transaction
     let result = sqlx::query(
@@ -496,7 +497,7 @@ pub async fn purge_block_inner(
 
     // Append to op_log within transaction
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
     // --- Inline physical purge (previously soft_delete::purge_block) ---
     // Defer FK checks until commit — the entire subtree will be gone by then
@@ -695,11 +696,33 @@ pub async fn move_block_inner(
         if exists.is_none() {
             return Err(AppError::NotFound(format!("parent block '{pid}'")));
         }
+
+        // Cycle detection: walk all ancestors of the new parent using a
+        // recursive CTE. If block_id appears among the ancestors, reparenting
+        // would create a cycle (e.g. moving A under its own grandchild C in
+        // a chain A→B→C).
+        let cycle: Option<(i64,)> = sqlx::query_as(
+            "WITH RECURSIVE ancestors(id) AS ( \
+                 SELECT parent_id FROM blocks WHERE id = ? \
+                 UNION ALL \
+                 SELECT b.parent_id FROM blocks b \
+                 INNER JOIN ancestors a ON b.id = a.id \
+                 WHERE a.id IS NOT NULL \
+             ) \
+             SELECT 1 FROM ancestors WHERE id = ?",
+        )
+        .bind(pid)
+        .bind(&block_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if cycle.is_some() {
+            return Err(AppError::Validation("cycle detected".into()));
+        }
     }
 
     // 4. Append to op_log within transaction
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
     // 5. Update blocks table within same transaction
     sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
@@ -722,6 +745,202 @@ pub async fn move_block_inner(
     })
 }
 
+/// Reorder a block among its siblings, handling position collisions.
+///
+/// Unlike [`move_block_inner`] which blindly sets a caller-supplied position,
+/// this function **computes** a safe position that avoids collisions with
+/// existing siblings.  It implements the "batch renumber" strategy described
+/// in REVIEW-LATER #2.
+///
+/// # Parameters
+///
+/// * `block_id` – the block being moved.
+/// * `parent_id` – destination parent (`None` = root level).
+/// * `after_id` – the sibling **after which** to place the block.
+///   `None` means "place first" (smallest position).
+///
+/// # Algorithm
+///
+/// 1. Look up `after_id`'s position → `before_pos`.
+/// 2. Find the next sibling's position → `next_pos`.
+/// 3. If `next_pos − before_pos > 1`: a gap exists → `new_position = before_pos + 1`.
+/// 4. If `next_pos − before_pos ≤ 1`: no gap → **shift** all siblings with
+///    `position > before_pos` up by 1, then `new_position = before_pos + 1`.
+/// 5. When `after_id` is `None`: place at position 1, shifting existing
+///    siblings up if necessary.
+pub async fn reorder_block_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    parent_id: Option<String>,
+    after_id: Option<String>,
+) -> Result<MoveResponse, AppError> {
+    // 1. Pure-logic validations (no DB needed)
+    if let Some(ref pid) = parent_id {
+        if pid == &block_id {
+            return Err(AppError::InvalidOperation(format!(
+                "block '{block_id}' cannot be its own parent"
+            )));
+        }
+    }
+    if let Some(ref aid) = after_id {
+        if aid == &block_id {
+            return Err(AppError::Validation(
+                "after_id cannot be the same as block_id".into(),
+            ));
+        }
+    }
+
+    // 2. Begin IMMEDIATE transaction
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // 3. Validate block exists and is not deleted (TOCTOU-safe inside tx)
+    let existing: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
+            .bind(&block_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if existing.is_none() {
+        return Err(AppError::NotFound(format!(
+            "block '{block_id}' (not found or deleted)"
+        )));
+    }
+
+    // 4. Validate parent exists and is not deleted (if provided)
+    if let Some(ref pid) = parent_id {
+        let exists: Option<(i64,)> =
+            sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
+                .bind(pid)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if exists.is_none() {
+            return Err(AppError::NotFound(format!("parent block '{pid}'")));
+        }
+    }
+
+    // 5. Compute the new position
+    let new_position: i64 = if let Some(ref after_id_val) = after_id {
+        // --- Place after a specified sibling ---
+
+        // Validate after_id is a sibling under the target parent
+        let after_row: Option<(Option<i64>,)> = sqlx::query_as(
+            "SELECT position FROM blocks \
+             WHERE id = ?1 AND parent_id IS ?2 AND deleted_at IS NULL",
+        )
+        .bind(after_id_val)
+        .bind(&parent_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let (after_pos_opt,) = after_row.ok_or_else(|| {
+            AppError::NotFound(format!(
+                "after_id '{after_id_val}' is not a sibling under the given parent"
+            ))
+        })?;
+
+        let before_pos = after_pos_opt.unwrap_or(0);
+
+        // Find the next sibling by position (excluding the block being moved)
+        let next_row: Option<(i64,)> = sqlx::query_as(
+            "SELECT position FROM blocks \
+             WHERE parent_id IS ?1 AND position > ?2 AND id != ?3 \
+               AND deleted_at IS NULL AND position IS NOT NULL \
+             ORDER BY position ASC LIMIT 1",
+        )
+        .bind(&parent_id)
+        .bind(before_pos)
+        .bind(&block_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        match next_row {
+            Some((next_pos,)) if next_pos - before_pos <= 1 => {
+                // Consecutive (or overlapping) — batch-shift all subsequent siblings
+                sqlx::query(
+                    "UPDATE blocks SET position = position + 1 \
+                     WHERE parent_id IS ?1 AND position > ?2 AND id != ?3 \
+                       AND deleted_at IS NULL AND position IS NOT NULL",
+                )
+                .bind(&parent_id)
+                .bind(before_pos)
+                .bind(&block_id)
+                .execute(&mut *tx)
+                .await?;
+                before_pos + 1
+            }
+            Some(_) | None => {
+                // Gap exists or no next sibling — no shift needed
+                before_pos + 1
+            }
+        }
+    } else {
+        // --- Place at the beginning ---
+        let min_row: Option<(Option<i64>,)> = sqlx::query_as(
+            "SELECT MIN(position) FROM blocks \
+             WHERE parent_id IS ?1 AND id != ?2 \
+               AND deleted_at IS NULL AND position IS NOT NULL",
+        )
+        .bind(&parent_id)
+        .bind(&block_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        // `MIN()` returns NULL when there are no rows or all positions are NULL.
+        let min_pos = min_row.and_then(|(v,)| v);
+
+        match min_pos {
+            Some(min) if min <= 1 => {
+                // No gap at front — shift all siblings up by 1
+                sqlx::query(
+                    "UPDATE blocks SET position = position + 1 \
+                     WHERE parent_id IS ?1 AND id != ?2 \
+                       AND deleted_at IS NULL AND position IS NOT NULL",
+                )
+                .bind(&parent_id)
+                .bind(&block_id)
+                .execute(&mut *tx)
+                .await?;
+                1
+            }
+            Some(_) | None => {
+                // Gap at front or no siblings — just use 1
+                1
+            }
+        }
+    };
+
+    // 6. Build OpPayload (reuses MoveBlock — same logical operation)
+    let payload = OpPayload::MoveBlock(MoveBlockPayload {
+        block_id: block_id.clone(),
+        new_parent_id: parent_id.clone(),
+        new_position,
+    });
+
+    // 7. Append to op_log within transaction
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+
+    // 8. Update block's parent and position
+    sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
+        .bind(&parent_id)
+        .bind(new_position)
+        .bind(&block_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    // 9. Dispatch background cache tasks (fire-and-forget)
+    let _ = materializer.dispatch_background(&op_record);
+
+    Ok(MoveResponse {
+        block_id,
+        new_parent_id: parent_id,
+        new_position,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn list_blocks_inner(
     pool: &SqlitePool,
@@ -733,6 +952,26 @@ pub async fn list_blocks_inner(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
+    // Reject conflicting filters: only one of the exclusive filter parameters
+    // may be set. `parent_id` is the default (list children) so it only
+    // counts as a filter when explicitly provided alongside another.
+    let filter_count = [
+        parent_id.is_some(),
+        block_type.is_some(),
+        tag_id.is_some(),
+        show_deleted == Some(true),
+        agenda_date.is_some(),
+    ]
+    .iter()
+    .filter(|&&b| b)
+    .count();
+
+    if filter_count > 1 {
+        return Err(AppError::Validation(
+            "conflicting filters: only one of parent_id, block_type, tag_id, show_deleted, agenda_date may be set".to_string(),
+        ));
+    }
+
     // F06: Clamp page_size to [1, 100] to prevent oversized result sets
     // or nonsensical zero/negative limits.
     let clamped_limit = limit.map(|l| l.clamp(1, 100));
@@ -829,7 +1068,7 @@ pub async fn add_tag_inner(
 
     // 3. Append to op_log within transaction
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
     // 4. Insert into block_tags within same transaction
     sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
@@ -891,7 +1130,7 @@ pub async fn remove_tag_inner(
 
     // 3. Append to op_log within transaction
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
     // 4. Delete from block_tags within same transaction
     sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
@@ -1004,6 +1243,14 @@ pub async fn list_tags_by_prefix_inner(
     tag_query::list_tags_by_prefix(pool, &prefix).await
 }
 
+/// List all tag_ids currently associated with a block.
+pub async fn list_tags_for_block_inner(
+    pool: &SqlitePool,
+    block_id: String,
+) -> Result<Vec<String>, AppError> {
+    tag_query::list_tags_for_block(pool, &block_id).await
+}
+
 // ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
@@ -1027,7 +1274,7 @@ fn sanitize_internal_error(err: AppError) -> AppError {
 #[tauri::command]
 #[specta::specta]
 pub async fn create_block(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_type: String,
@@ -1036,7 +1283,7 @@ pub async fn create_block(
     position: Option<i64>,
 ) -> Result<BlockResponse, AppError> {
     create_block_inner(
-        &pool,
+        &pool.0,
         &device_id.0,
         &materializer,
         block_type,
@@ -1052,13 +1299,13 @@ pub async fn create_block(
 #[tauri::command]
 #[specta::specta]
 pub async fn edit_block(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: String,
     to_text: String,
 ) -> Result<BlockResponse, AppError> {
-    edit_block_inner(&pool, &device_id.0, &materializer, block_id, to_text)
+    edit_block_inner(&pool.0, &device_id.0, &materializer, block_id, to_text)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1067,12 +1314,12 @@ pub async fn edit_block(
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_block(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: String,
 ) -> Result<DeleteResponse, AppError> {
-    delete_block_inner(&pool, &device_id.0, &materializer, block_id)
+    delete_block_inner(&pool.0, &device_id.0, &materializer, block_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1081,27 +1328,33 @@ pub async fn delete_block(
 #[tauri::command]
 #[specta::specta]
 pub async fn restore_block(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: String,
     deleted_at_ref: String,
 ) -> Result<RestoreResponse, AppError> {
-    restore_block_inner(&pool, &device_id.0, &materializer, block_id, deleted_at_ref)
-        .await
-        .map_err(sanitize_internal_error)
+    restore_block_inner(
+        &pool.0,
+        &device_id.0,
+        &materializer,
+        block_id,
+        deleted_at_ref,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn purge_block(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: String,
 ) -> Result<PurgeResponse, AppError> {
-    purge_block_inner(&pool, &device_id.0, &materializer, block_id)
+    purge_block_inner(&pool.0, &device_id.0, &materializer, block_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1110,7 +1363,7 @@ pub async fn purge_block(
 #[tauri::command]
 #[specta::specta]
 pub async fn move_block(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: String,
@@ -1118,7 +1371,7 @@ pub async fn move_block(
     new_position: i64,
 ) -> Result<MoveResponse, AppError> {
     move_block_inner(
-        &pool,
+        &pool.0,
         &device_id.0,
         &materializer,
         block_id,
@@ -1134,7 +1387,7 @@ pub async fn move_block(
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
 pub async fn list_blocks(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, ReadPool>,
     parent_id: Option<String>,
     block_type: Option<String>,
     tag_id: Option<String>,
@@ -1144,7 +1397,7 @@ pub async fn list_blocks(
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     list_blocks_inner(
-        &pool,
+        &pool.0,
         parent_id,
         block_type,
         tag_id,
@@ -1160,11 +1413,8 @@ pub async fn list_blocks(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
-pub async fn get_block(
-    pool: State<'_, SqlitePool>,
-    block_id: String,
-) -> Result<BlockRow, AppError> {
-    get_block_inner(&pool, block_id)
+pub async fn get_block(pool: State<'_, ReadPool>, block_id: String) -> Result<BlockRow, AppError> {
+    get_block_inner(&pool.0, block_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1173,13 +1423,13 @@ pub async fn get_block(
 #[tauri::command]
 #[specta::specta]
 pub async fn add_tag(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: String,
     tag_id: String,
 ) -> Result<TagResponse, AppError> {
-    add_tag_inner(&pool, &device_id.0, &materializer, block_id, tag_id)
+    add_tag_inner(&pool.0, &device_id.0, &materializer, block_id, tag_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1188,13 +1438,13 @@ pub async fn add_tag(
 #[tauri::command]
 #[specta::specta]
 pub async fn remove_tag(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: String,
     tag_id: String,
 ) -> Result<TagResponse, AppError> {
-    remove_tag_inner(&pool, &device_id.0, &materializer, block_id, tag_id)
+    remove_tag_inner(&pool.0, &device_id.0, &materializer, block_id, tag_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1203,12 +1453,12 @@ pub async fn remove_tag(
 #[tauri::command]
 #[specta::specta]
 pub async fn get_backlinks(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, ReadPool>,
     block_id: String,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    get_backlinks_inner(&pool, block_id, cursor, limit)
+    get_backlinks_inner(&pool.0, block_id, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1217,12 +1467,12 @@ pub async fn get_backlinks(
 #[tauri::command]
 #[specta::specta]
 pub async fn get_block_history(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, ReadPool>,
     block_id: String,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<HistoryEntry>, AppError> {
-    get_block_history_inner(&pool, block_id, cursor, limit)
+    get_block_history_inner(&pool.0, block_id, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1231,11 +1481,11 @@ pub async fn get_block_history(
 #[tauri::command]
 #[specta::specta]
 pub async fn get_conflicts(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, ReadPool>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    get_conflicts_inner(&pool, cursor, limit)
+    get_conflicts_inner(&pool.0, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1251,12 +1501,12 @@ pub async fn get_status(materializer: State<'_, Materializer>) -> Result<StatusI
 #[tauri::command]
 #[specta::specta]
 pub async fn search_blocks(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, ReadPool>,
     query: String,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    search_blocks_inner(&pool, query, cursor, limit)
+    search_blocks_inner(&pool.0, query, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1265,14 +1515,14 @@ pub async fn search_blocks(
 #[tauri::command]
 #[specta::specta]
 pub async fn query_by_tags(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, ReadPool>,
     tag_ids: Vec<String>,
     prefixes: Vec<String>,
     mode: String,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    query_by_tags_inner(&pool, tag_ids, prefixes, mode, cursor, limit)
+    query_by_tags_inner(&pool.0, tag_ids, prefixes, mode, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1281,10 +1531,22 @@ pub async fn query_by_tags(
 #[tauri::command]
 #[specta::specta]
 pub async fn list_tags_by_prefix(
-    pool: State<'_, SqlitePool>,
+    pool: State<'_, ReadPool>,
     prefix: String,
 ) -> Result<Vec<TagCacheRow>, AppError> {
-    list_tags_by_prefix_inner(&pool, prefix)
+    list_tags_by_prefix_inner(&pool.0, prefix)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_tags_for_block(
+    pool: State<'_, SqlitePool>,
+    block_id: String,
+) -> Result<Vec<String>, AppError> {
+    list_tags_for_block_inner(&pool, block_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2177,6 +2439,129 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_blocks_rejects_conflicting_filters() {
+        let (pool, _dir) = test_pool().await;
+
+        // parent_id + block_type
+        let result = list_blocks_inner(
+            &pool,
+            Some("P1".into()),
+            Some("page".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("conflicting filters")),
+            "parent_id + block_type should be rejected: {result:?}"
+        );
+
+        // tag_id + show_deleted
+        let result = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            Some("T1".into()),
+            Some(true),
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("conflicting filters")),
+            "tag_id + show_deleted should be rejected: {result:?}"
+        );
+
+        // parent_id + agenda_date
+        let result = list_blocks_inner(
+            &pool,
+            Some("P1".into()),
+            None,
+            None,
+            None,
+            Some("2025-01-15".into()),
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("conflicting filters")),
+            "parent_id + agenda_date should be rejected: {result:?}"
+        );
+
+        // Three filters at once
+        let result = list_blocks_inner(
+            &pool,
+            Some("P1".into()),
+            Some("page".into()),
+            Some("T1".into()),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("conflicting filters")),
+            "three filters should be rejected: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_blocks_single_filter_is_accepted() {
+        let (pool, _dir) = test_pool().await;
+
+        // Each single filter should succeed (may return empty results — that's fine).
+        assert!(
+            list_blocks_inner(&pool, Some("P1".into()), None, None, None, None, None, None)
+                .await
+                .is_ok(),
+            "parent_id alone should be accepted"
+        );
+        assert!(
+            list_blocks_inner(
+                &pool,
+                None,
+                Some("page".into()),
+                None,
+                None,
+                None,
+                None,
+                None
+            )
+            .await
+            .is_ok(),
+            "block_type alone should be accepted"
+        );
+        assert!(
+            list_blocks_inner(&pool, None, None, None, Some(true), None, None, None)
+                .await
+                .is_ok(),
+            "show_deleted alone should be accepted"
+        );
+        // show_deleted=false should NOT count as a filter
+        assert!(
+            list_blocks_inner(
+                &pool,
+                None,
+                Some("page".into()),
+                None,
+                Some(false),
+                None,
+                None,
+                None
+            )
+            .await
+            .is_ok(),
+            "block_type + show_deleted=false should be accepted (false is not a filter)"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn list_blocks_empty_db_returns_empty_page() {
         let (pool, _dir) = test_pool().await;
 
@@ -2441,6 +2826,444 @@ mod tests {
             err.to_string().contains("cannot be its own parent"),
             "error message should explain the constraint"
         );
+    }
+
+    // ======================================================================
+    // reorder_block
+    // ======================================================================
+
+    /// Helper: returns `(id, position)` pairs for all non-deleted children of
+    /// `parent_id`, ordered by `position ASC, id ASC`.
+    async fn sibling_positions(pool: &SqlitePool, parent_id: Option<&str>) -> Vec<(String, i64)> {
+        let rows: Vec<(String, Option<i64>)> = sqlx::query_as(
+            "SELECT id, position FROM blocks \
+             WHERE parent_id IS ?1 AND deleted_at IS NULL \
+             ORDER BY IFNULL(position, 9999999) ASC, id ASC",
+        )
+        .bind(parent_id)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        rows.into_iter()
+            .map(|(id, pos)| (id, pos.unwrap_or(0)))
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_consecutive_positions_shifts_siblings() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Setup: parent with 3 children at consecutive positions 10, 11, 12
+        insert_block(&pool, "RO_PAR", "page", "parent", None, Some(1)).await;
+        insert_block(&pool, "RO_A", "content", "a", Some("RO_PAR"), Some(10)).await;
+        insert_block(&pool, "RO_B", "content", "b", Some("RO_PAR"), Some(11)).await;
+        insert_block(&pool, "RO_C", "content", "c", Some("RO_PAR"), Some(12)).await;
+        // Block to reorder (currently elsewhere under same parent)
+        insert_block(&pool, "RO_X", "content", "x", Some("RO_PAR"), Some(99)).await;
+
+        // Reorder RO_X after RO_A (between A@10 and B@11 — consecutive)
+        let resp = reorder_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "RO_X".into(),
+            Some("RO_PAR".into()),
+            Some("RO_A".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.block_id, "RO_X");
+        assert_eq!(resp.new_position, 11, "should insert at before_pos + 1");
+
+        // Verify sibling order: A=10, X=11, B=12, C=13
+        let siblings = sibling_positions(&pool, Some("RO_PAR")).await;
+        assert_eq!(
+            siblings,
+            vec![
+                ("RO_A".into(), 10),
+                ("RO_X".into(), 11),
+                ("RO_B".into(), 12),
+                ("RO_C".into(), 13),
+            ],
+            "B and C should have been shifted up by 1; X inserted at 11"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_single_position_gap_no_shift() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Setup: children at positions 10, 12 (gap of 2)
+        insert_block(&pool, "RG_PAR", "page", "parent", None, Some(1)).await;
+        insert_block(&pool, "RG_A", "content", "a", Some("RG_PAR"), Some(10)).await;
+        insert_block(&pool, "RG_B", "content", "b", Some("RG_PAR"), Some(12)).await;
+        insert_block(&pool, "RG_X", "content", "x", Some("RG_PAR"), Some(99)).await;
+
+        // Reorder RG_X after RG_A (between A@10 and B@12 — gap exists)
+        let resp = reorder_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "RG_X".into(),
+            Some("RG_PAR".into()),
+            Some("RG_A".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.new_position, 11, "should use the gap at 11");
+
+        // Verify: B stays at 12 (no shift)
+        let siblings = sibling_positions(&pool, Some("RG_PAR")).await;
+        assert_eq!(
+            siblings,
+            vec![
+                ("RG_A".into(), 10),
+                ("RG_X".into(), 11),
+                ("RG_B".into(), 12),
+            ],
+            "B should NOT have been shifted (gap existed)"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_zero_position_edge_case() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Setup: children at positions 1, 2 (starting from 1)
+        insert_block(&pool, "RZ_PAR", "page", "parent", None, Some(1)).await;
+        insert_block(&pool, "RZ_A", "content", "a", Some("RZ_PAR"), Some(1)).await;
+        insert_block(&pool, "RZ_B", "content", "b", Some("RZ_PAR"), Some(2)).await;
+        insert_block(&pool, "RZ_X", "content", "x", Some("RZ_PAR"), Some(3)).await;
+
+        // Reorder RZ_X to the beginning (after_id = None)
+        let resp =
+            reorder_block_inner(&pool, DEV, &mat, "RZ_X".into(), Some("RZ_PAR".into()), None)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            resp.new_position, 1,
+            "should be placed at position 1 (beginning)"
+        );
+
+        // All existing siblings should have been shifted up
+        let siblings = sibling_positions(&pool, Some("RZ_PAR")).await;
+        assert_eq!(
+            siblings,
+            vec![("RZ_X".into(), 1), ("RZ_A".into(), 2), ("RZ_B".into(), 3),],
+            "A and B should have been shifted up; X placed at 1"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_to_beginning_with_gap() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Setup: children at positions 5, 10 (gap at front)
+        insert_block(&pool, "RF_PAR", "page", "parent", None, Some(1)).await;
+        insert_block(&pool, "RF_A", "content", "a", Some("RF_PAR"), Some(5)).await;
+        insert_block(&pool, "RF_B", "content", "b", Some("RF_PAR"), Some(10)).await;
+        insert_block(&pool, "RF_X", "content", "x", Some("RF_PAR"), Some(15)).await;
+
+        // Reorder RF_X to beginning (after_id = None, gap at front)
+        let resp =
+            reorder_block_inner(&pool, DEV, &mat, "RF_X".into(), Some("RF_PAR".into()), None)
+                .await
+                .unwrap();
+
+        assert_eq!(resp.new_position, 1, "should use position 1 (gap at front)");
+
+        // A and B should NOT have been shifted (gap existed)
+        let siblings = sibling_positions(&pool, Some("RF_PAR")).await;
+        assert_eq!(
+            siblings,
+            vec![("RF_X".into(), 1), ("RF_A".into(), 5), ("RF_B".into(), 10),],
+            "existing siblings should not be shifted when gap exists at front"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_after_last_sibling() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Setup: children at positions 10, 20
+        insert_block(&pool, "RL_PAR", "page", "parent", None, Some(1)).await;
+        insert_block(&pool, "RL_A", "content", "a", Some("RL_PAR"), Some(10)).await;
+        insert_block(&pool, "RL_B", "content", "b", Some("RL_PAR"), Some(20)).await;
+        insert_block(&pool, "RL_X", "content", "x", Some("RL_PAR"), Some(5)).await;
+
+        // Reorder RL_X after RL_B (last sibling — no next sibling)
+        let resp = reorder_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "RL_X".into(),
+            Some("RL_PAR".into()),
+            Some("RL_B".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.new_position, 21, "should be placed at after_pos + 1");
+
+        let siblings = sibling_positions(&pool, Some("RL_PAR")).await;
+        assert_eq!(
+            siblings,
+            vec![
+                ("RL_A".into(), 10),
+                ("RL_B".into(), 20),
+                ("RL_X".into(), 21),
+            ],
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_consecutive_chain_all_shifted() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Setup: 5 children at consecutive positions 1..=5
+        insert_block(&pool, "RC_PAR", "page", "parent", None, Some(1)).await;
+        for i in 1..=5_i64 {
+            let id = format!("RC_{i}");
+            insert_block(
+                &pool,
+                &id,
+                "content",
+                &format!("child {i}"),
+                Some("RC_PAR"),
+                Some(i),
+            )
+            .await;
+        }
+        insert_block(&pool, "RC_X", "content", "x", Some("RC_PAR"), Some(99)).await;
+
+        // Reorder RC_X after RC_2 (between RC_2@2 and RC_3@3 — consecutive)
+        let resp = reorder_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "RC_X".into(),
+            Some("RC_PAR".into()),
+            Some("RC_2".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.new_position, 3);
+
+        // RC_3, RC_4, RC_5 should all be shifted up by 1
+        let siblings = sibling_positions(&pool, Some("RC_PAR")).await;
+        assert_eq!(
+            siblings,
+            vec![
+                ("RC_1".into(), 1),
+                ("RC_2".into(), 2),
+                ("RC_X".into(), 3),
+                ("RC_3".into(), 4),
+                ("RC_4".into(), 5),
+                ("RC_5".into(), 6),
+            ],
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_no_siblings_uses_position_one() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Setup: parent with no children except the block being moved
+        insert_block(&pool, "RN_PAR", "page", "parent", None, Some(1)).await;
+        insert_block(&pool, "RN_X", "content", "x", None, Some(1)).await;
+
+        // Reorder RN_X under RN_PAR at beginning (no existing siblings)
+        let resp =
+            reorder_block_inner(&pool, DEV, &mat, "RN_X".into(), Some("RN_PAR".into()), None)
+                .await
+                .unwrap();
+
+        assert_eq!(resp.new_position, 1);
+        assert_eq!(resp.new_parent_id, Some("RN_PAR".into()));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_at_root_level() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Setup: root-level blocks at consecutive positions
+        insert_block(&pool, "RR_A", "page", "a", None, Some(1)).await;
+        insert_block(&pool, "RR_B", "page", "b", None, Some(2)).await;
+        insert_block(&pool, "RR_X", "page", "x", None, Some(3)).await;
+
+        // Reorder RR_X after RR_A (parent_id = None, consecutive positions)
+        let resp = reorder_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "RR_X".into(),
+            None, // root level
+            Some("RR_A".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.new_position, 2);
+        assert!(resp.new_parent_id.is_none());
+
+        let siblings = sibling_positions(&pool, None).await;
+        assert_eq!(
+            siblings,
+            vec![("RR_A".into(), 1), ("RR_X".into(), 2), ("RR_B".into(), 3),],
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_nonexistent_block_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = reorder_block_inner(&pool, DEV, &mat, "NONEXISTENT".into(), None, None).await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_after_id_same_as_block_id_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "RS_X", "content", "x", None, Some(1)).await;
+
+        let result =
+            reorder_block_inner(&pool, DEV, &mat, "RS_X".into(), None, Some("RS_X".into())).await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "after_id == block_id should return Validation error"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_self_parent_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "RSP_X", "content", "x", None, Some(1)).await;
+
+        let result =
+            reorder_block_inner(&pool, DEV, &mat, "RSP_X".into(), Some("RSP_X".into()), None).await;
+
+        assert!(
+            matches!(result, Err(AppError::InvalidOperation(_))),
+            "block_id == parent_id should return InvalidOperation"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_logs_move_block_op() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "RO2_PAR", "page", "parent", None, Some(1)).await;
+        insert_block(&pool, "RO2_A", "content", "a", Some("RO2_PAR"), Some(10)).await;
+        insert_block(&pool, "RO2_X", "content", "x", Some("RO2_PAR"), Some(20)).await;
+
+        reorder_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "RO2_X".into(),
+            Some("RO2_PAR".into()),
+            Some("RO2_A".into()),
+        )
+        .await
+        .unwrap();
+
+        // Verify op_log entry
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND op_type = 'move_block'",
+        )
+        .bind(DEV)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count.0, 1, "reorder should log exactly one move_block op");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reorder_invalid_after_id_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        insert_block(&pool, "RI_PAR", "page", "parent", None, Some(1)).await;
+        insert_block(&pool, "RI_X", "content", "x", Some("RI_PAR"), Some(1)).await;
+
+        // after_id does not exist
+        let result = reorder_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "RI_X".into(),
+            Some("RI_PAR".into()),
+            Some("NONEXISTENT".into()),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "nonexistent after_id should return NotFound"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn move_block_cycle_grandchild_to_grandparent_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Build A→B→C hierarchy
+        insert_block(&pool, "CYC_A", "page", "A", None, Some(1)).await;
+        insert_block(&pool, "CYC_B", "content", "B", Some("CYC_A"), Some(1)).await;
+        insert_block(&pool, "CYC_C", "content", "C", Some("CYC_B"), Some(1)).await;
+
+        // Try moving A under C — should create cycle A→B→C→A
+        let result =
+            move_block_inner(&pool, DEV, &mat, "CYC_A".into(), Some("CYC_C".into()), 1).await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "moving A under its grandchild C should detect cycle, got: {result:?}"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("cycle detected"),
+            "error message should mention cycle detection"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn move_block_to_non_ancestor_succeeds() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Build A→B and separate C
+        insert_block(&pool, "NC_A", "page", "A", None, Some(1)).await;
+        insert_block(&pool, "NC_B", "content", "B", Some("NC_A"), Some(1)).await;
+        insert_block(&pool, "NC_C", "page", "C", None, Some(2)).await;
+
+        // Move B under C — no cycle, should succeed
+        let resp = move_block_inner(&pool, DEV, &mat, "NC_B".into(), Some("NC_C".into()), 1)
+            .await
+            .unwrap();
+
+        assert_eq!(resp.new_parent_id, Some("NC_C".into()));
     }
 
     // ======================================================================

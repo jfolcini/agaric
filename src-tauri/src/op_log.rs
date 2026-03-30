@@ -5,7 +5,6 @@
 
 #![allow(dead_code)]
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
@@ -52,7 +51,7 @@ pub async fn append_local_op(
     device_id: &str,
     op_payload: OpPayload,
 ) -> Result<OpRecord, AppError> {
-    append_local_op_at(pool, device_id, op_payload, Utc::now().to_rfc3339()).await
+    append_local_op_at(pool, device_id, op_payload, crate::now_rfc3339()).await
 }
 
 /// Append a local operation within an existing transaction.
@@ -87,12 +86,13 @@ pub async fn append_local_op_in_tx(
     // NOTE: `COALESCE(MAX(seq), 0) + 1` is efficient here because the
     // PRIMARY KEY (device_id, seq) gives SQLite a B-tree index that makes
     // `MAX(seq) WHERE device_id = ?` an O(log n) seek, not a table scan.
-    let row: (i64,) =
-        sqlx::query_as("SELECT COALESCE(MAX(seq), 0) + 1 FROM op_log WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_one(&mut **tx)
-            .await?;
-    let seq = row.0;
+    let row = sqlx::query!(
+        r#"SELECT COALESCE(MAX(seq), 0) + 1 as "next_seq!: i64" FROM op_log WHERE device_id = ?"#,
+        device_id,
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+    let seq = row.next_seq;
 
     // Phase 1: linear chain — parent is the previous op from this device,
     // or null for the genesis op.
@@ -119,17 +119,17 @@ pub async fn append_local_op_in_tx(
         &payload_json,
     );
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
+        device_id,
+        seq,
+        parent_seqs,
+        hash,
+        op_type,
+        payload_json,
+        created_at,
     )
-    .bind(device_id)
-    .bind(seq)
-    .bind(&parent_seqs)
-    .bind(&hash)
-    .bind(&op_type)
-    .bind(&payload_json)
-    .bind(&created_at)
     .execute(&mut **tx)
     .await?;
 
@@ -194,12 +194,13 @@ pub async fn get_op_by_seq(
     device_id: &str,
     seq: i64,
 ) -> Result<OpRecord, AppError> {
-    sqlx::query_as::<_, OpRecord>(
+    sqlx::query_as!(
+        OpRecord,
         "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
          FROM op_log WHERE device_id = ? AND seq = ?",
+        device_id,
+        seq,
     )
-    .bind(device_id)
-    .bind(seq)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound(format!("op_log ({device_id}, {seq})")))
@@ -207,12 +208,13 @@ pub async fn get_op_by_seq(
 
 /// Return the latest sequence number for a device, or 0 if none exist.
 pub async fn get_latest_seq(pool: &SqlitePool, device_id: &str) -> Result<i64, AppError> {
-    let row: (i64,) =
-        sqlx::query_as("SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_one(pool)
-            .await?;
-    Ok(row.0)
+    let row = sqlx::query!(
+        r#"SELECT COALESCE(MAX(seq), 0) as "latest_seq!: i64" FROM op_log WHERE device_id = ?"#,
+        device_id,
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(row.latest_seq)
 }
 
 /// Return all ops for a device with `seq > after_seq`, ordered ascending.
@@ -224,12 +226,13 @@ pub async fn get_ops_since(
     device_id: &str,
     after_seq: i64,
 ) -> Result<Vec<OpRecord>, AppError> {
-    let rows = sqlx::query_as::<_, OpRecord>(
+    let rows = sqlx::query_as!(
+        OpRecord,
         "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
          FROM op_log WHERE device_id = ? AND seq > ? ORDER BY seq ASC",
+        device_id,
+        after_seq,
     )
-    .bind(device_id)
-    .bind(after_seq)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -304,7 +307,6 @@ mod tests {
                 "delete_block",
                 OpPayload::DeleteBlock(DeleteBlockPayload {
                     block_id: "BLK001".into(),
-                    cascade: true,
                 }),
             ),
             (

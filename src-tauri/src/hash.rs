@@ -34,6 +34,7 @@
 /// Returns the hash as a lowercase hex string (64 chars for blake3's 256-bit
 /// output).
 #[inline]
+#[must_use]
 pub fn compute_op_hash(
     device_id: &str,
     seq: i64,
@@ -74,6 +75,7 @@ pub fn compute_op_hash(
 /// Uses constant-time comparison to prevent timing side-channel leaks,
 /// even though the inputs are not secret — defence in depth.
 #[inline]
+#[must_use]
 pub fn verify_op_hash(
     stored_hash: &str,
     device_id: &str,

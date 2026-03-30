@@ -91,7 +91,7 @@ impl FromStr for OpType {
 // Payload structs — one per OpType variant
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateBlockPayload {
     pub block_id: String,
     pub block_type: String,
@@ -100,7 +100,7 @@ pub struct CreateBlockPayload {
     pub content: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditBlockPayload {
     pub block_id: String,
     pub to_text: String,
@@ -109,43 +109,44 @@ pub struct EditBlockPayload {
     pub prev_edit: Option<(String, i64)>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Delete always cascades to all descendants (ADR-06). The `cascade` field
+/// was removed — it was always `true` and never read by any code path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteBlockPayload {
     pub block_id: String,
-    pub cascade: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestoreBlockPayload {
     pub block_id: String,
     pub deleted_at_ref: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PurgeBlockPayload {
     pub block_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveBlockPayload {
     pub block_id: String,
     pub new_parent_id: Option<String>,
     pub new_position: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddTagPayload {
     pub block_id: String,
     pub tag_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoveTagPayload {
     pub block_id: String,
     pub tag_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetPropertyPayload {
     pub block_id: String,
     pub key: String,
@@ -155,13 +156,13 @@ pub struct SetPropertyPayload {
     pub value_ref: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeletePropertyPayload {
     pub block_id: String,
     pub key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddAttachmentPayload {
     pub attachment_id: String,
     pub block_id: String,
@@ -171,7 +172,7 @@ pub struct AddAttachmentPayload {
     pub fs_path: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteAttachmentPayload {
     pub attachment_id: String,
 }
@@ -183,7 +184,7 @@ pub struct DeleteAttachmentPayload {
 /// Wrapper enum for all op payloads. Uses serde's internally-tagged
 /// representation so that serialized JSON includes `"op_type": "..."` alongside
 /// the payload fields.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op_type", rename_all = "snake_case")]
 pub enum OpPayload {
     CreateBlock(CreateBlockPayload),
@@ -310,16 +311,39 @@ impl OpPayload {
     }
 }
 
-/// Validate that a [`SetPropertyPayload`] has exactly one non-null value field.
+/// Validate that a [`SetPropertyPayload`] has exactly one non-null value field
+/// and that the `key` matches the allowed format.
 ///
 /// The schema allows multiple value columns (text, num, date, ref) but the
 /// domain invariant is that exactly one must be set per operation. This
 /// function enforces that invariant at the command layer, before the payload
 /// is appended to the op log.
 ///
-/// Returns `Ok(())` if exactly one is `Some`, or an `AppError::Validation`
-/// describing the violation.
+/// Key format: alphanumeric characters, hyphens, and underscores only,
+/// 1–64 characters. This prevents garbage keys that could break UI rendering
+/// or sync.
+///
+/// Returns `Ok(())` if valid, or an `AppError::Validation` describing the
+/// violation.
 pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error::AppError> {
+    // Validate key format: alphanumeric + hyphens + underscores, 1-64 chars
+    if p.key.is_empty() || p.key.len() > 64 {
+        return Err(crate::error::AppError::Validation(format!(
+            "property key must be 1-64 characters, got {} characters",
+            p.key.len()
+        )));
+    }
+    if !p
+        .key
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(crate::error::AppError::Validation(format!(
+            "property key must contain only alphanumeric characters, hyphens, and underscores, got '{}'",
+            p.key
+        )));
+    }
+
     // Reject NaN / Infinity — these are not valid domain values and would
     // corrupt downstream consumers that expect finite numbers.
     if let Some(num) = p.value_num {
@@ -402,7 +426,6 @@ mod tests {
             }),
             OpPayload::DeleteBlock(DeleteBlockPayload {
                 block_id: "B1".into(),
-                cascade: true,
             }),
             OpPayload::RestoreBlock(RestoreBlockPayload {
                 block_id: "B1".into(),
@@ -1001,6 +1024,95 @@ mod tests {
             "expected Validation error, got: {err:?}"
         );
         assert!(err.to_string().contains("found 2"));
+    }
+
+    // -----------------------------------------------------------------------
+    // 13b. Key format validation (#23)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_set_property_accepts_valid_keys() {
+        for key in [
+            "due",
+            "priority",
+            "my-key",
+            "my_key",
+            "key123",
+            "a",
+            &"k".repeat(64),
+        ] {
+            let p = SetPropertyPayload {
+                block_id: "B1".into(),
+                key: key.into(),
+                value_text: Some("v".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            };
+            assert!(
+                validate_set_property(&p).is_ok(),
+                "key '{key}' should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_set_property_rejects_empty_key() {
+        let p = SetPropertyPayload {
+            block_id: "B1".into(),
+            key: "".into(),
+            value_text: Some("v".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        };
+        let err = validate_set_property(&p).unwrap_err();
+        assert!(
+            matches!(err, crate::error::AppError::Validation(_)),
+            "empty key should be rejected"
+        );
+        assert!(err.to_string().contains("1-64 characters"));
+    }
+
+    #[test]
+    fn validate_set_property_rejects_too_long_key() {
+        let p = SetPropertyPayload {
+            block_id: "B1".into(),
+            key: "k".repeat(65),
+            value_text: Some("v".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        };
+        let err = validate_set_property(&p).unwrap_err();
+        assert!(
+            matches!(err, crate::error::AppError::Validation(_)),
+            "65-char key should be rejected"
+        );
+        assert!(err.to_string().contains("1-64 characters"));
+    }
+
+    #[test]
+    fn validate_set_property_rejects_special_char_keys() {
+        for key in ["bad key", "key.name", "key/name", "key@here", "k!ey", "a b"] {
+            let p = SetPropertyPayload {
+                block_id: "B1".into(),
+                key: key.into(),
+                value_text: Some("v".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            };
+            let err = validate_set_property(&p).unwrap_err();
+            assert!(
+                matches!(err, crate::error::AppError::Validation(_)),
+                "key '{key}' should be rejected"
+            );
+            assert!(
+                err.to_string().contains("alphanumeric"),
+                "error should mention alphanumeric for key '{key}'"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------

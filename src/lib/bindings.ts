@@ -141,6 +141,14 @@ async listTagsByPrefix(prefix: string) : Promise<Result<TagCacheRow[], { kind: s
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async listTagsForBlock(blockId: string) : Promise<Result<string[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_tags_for_block", { blockId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

@@ -29,6 +29,7 @@ use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse};
 /// Escape special LIKE pattern characters (`%`, `_`, `\`) so user-supplied
 /// prefix strings match literally.  The escaped value must be used with
 /// `LIKE ?1 ESCAPE '\'`.
+#[must_use]
 fn escape_like(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for ch in input.chars() {
@@ -291,6 +292,27 @@ pub async fn list_tags_by_prefix(
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+// ---------------------------------------------------------------------------
+// Public: list_tags_for_block
+// ---------------------------------------------------------------------------
+
+/// List all tag_ids associated with a block.
+///
+/// Queries the `block_tags` join table (source of truth for tag associations)
+/// and returns the tag_ids in sorted order. Returns an empty `Vec` when the
+/// block has no tags or does not exist.
+pub async fn list_tags_for_block(
+    pool: &SqlitePool,
+    block_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT tag_id FROM block_tags WHERE block_id = ?1 ORDER BY tag_id")
+            .bind(block_id)
+            .fetch_all(pool)
+            .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -936,6 +958,49 @@ mod tests {
         let result = list_tags_by_prefix(&pool, "100%").await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "100%_done");
+    }
+
+    // ======================================================================
+    // list_tags_for_block
+    // ======================================================================
+
+    #[tokio::test]
+    async fn list_tags_for_block_returns_tag_ids() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "TAG_A", "tag", "alpha").await;
+        insert_block(&pool, "TAG_B", "tag", "beta").await;
+        insert_block(&pool, "BLK_1", "content", "hello").await;
+
+        insert_tag_assoc(&pool, "BLK_1", "TAG_A").await;
+        insert_tag_assoc(&pool, "BLK_1", "TAG_B").await;
+
+        let result = list_tags_for_block(&pool, "BLK_1").await.unwrap();
+
+        assert_eq!(result.len(), 2);
+        // Ordered by tag_id
+        assert_eq!(result[0], "TAG_A");
+        assert_eq!(result[1], "TAG_B");
+    }
+
+    #[tokio::test]
+    async fn list_tags_for_block_no_tags_returns_empty() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLK_1", "content", "no tags").await;
+
+        let result = list_tags_for_block(&pool, "BLK_1").await.unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_tags_for_block_nonexistent_block_returns_empty() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = list_tags_for_block(&pool, "DOES_NOT_EXIST").await.unwrap();
+
+        assert!(result.is_empty());
     }
 
     #[tokio::test]

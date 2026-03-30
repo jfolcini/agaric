@@ -10,7 +10,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { PickerItem } from '../../editor/SuggestionList'
@@ -353,5 +353,125 @@ describe('BlockTree picker wiring', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+})
+
+// =========================================================================
+// REVIEW-LATER #59: Edge-case tests for BlockTree rendering
+// =========================================================================
+
+describe('BlockTree rendering edge cases', () => {
+  it('renders deeply nested blocks (3+ levels)', async () => {
+    const deepBlocks = [
+      {
+        id: 'ROOT',
+        block_type: 'content',
+        content: 'Root',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+        archived_at: null,
+        is_conflict: false,
+      },
+      {
+        id: 'L1',
+        block_type: 'content',
+        content: 'Level 1',
+        parent_id: 'ROOT',
+        position: 0,
+        deleted_at: null,
+        archived_at: null,
+        is_conflict: false,
+      },
+      {
+        id: 'L2',
+        block_type: 'content',
+        content: 'Level 2',
+        parent_id: 'L1',
+        position: 0,
+        deleted_at: null,
+        archived_at: null,
+        is_conflict: false,
+      },
+      {
+        id: 'L3',
+        block_type: 'content',
+        content: 'Level 3',
+        parent_id: 'L2',
+        position: 0,
+        deleted_at: null,
+        archived_at: null,
+        is_conflict: false,
+      },
+    ]
+
+    mockedInvoke.mockResolvedValueOnce({
+      items: deepBlocks,
+      next_cursor: null,
+      has_more: false,
+    })
+
+    useBlockStore.setState({ blocks: deepBlocks, loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    // All 4 blocks should be rendered (BlockTree renders flat list)
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-ROOT')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-L1')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-L2')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-L3')).toBeInTheDocument()
+    })
+
+    // Empty state should NOT be shown
+    expect(document.querySelector('.block-tree-empty')).not.toBeInTheDocument()
+  })
+
+  it('renders empty state when children array is empty', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    useBlockStore.setState({ blocks: [], loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      const emptyEl = document.querySelector('.block-tree-empty')
+      expect(emptyEl).toBeInTheDocument()
+    })
+
+    // No sortable blocks should be rendered
+    expect(document.querySelector('[data-testid^="sortable-block-"]')).not.toBeInTheDocument()
+  })
+
+  it('renders single root block with no children', async () => {
+    const singleBlock = [
+      {
+        id: 'ONLY',
+        block_type: 'content',
+        content: 'Only block',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+        archived_at: null,
+        is_conflict: false,
+      },
+    ]
+
+    mockedInvoke.mockResolvedValueOnce({
+      items: singleBlock,
+      next_cursor: null,
+      has_more: false,
+    })
+
+    useBlockStore.setState({ blocks: singleBlock, loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-ONLY')).toBeInTheDocument()
+    })
+
+    // Empty state should NOT be shown
+    expect(document.querySelector('.block-tree-empty')).not.toBeInTheDocument()
   })
 })

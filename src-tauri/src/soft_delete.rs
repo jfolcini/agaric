@@ -7,7 +7,6 @@
 //! - **purge**: physically removes a block, its descendants, and all dependent
 //!   rows from every FK-referencing table.  Irreversible.
 
-use chrono::Utc;
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
@@ -21,12 +20,10 @@ use crate::error::AppError;
 /// Returns `None` if the block does not exist, `Some(true)` if deleted,
 /// `Some(false)` if alive.
 pub async fn is_deleted(pool: &SqlitePool, block_id: &str) -> Result<Option<bool>, AppError> {
-    let row: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
-            .bind(block_id)
-            .fetch_optional(pool)
-            .await?;
-    Ok(row.map(|(deleted_at,)| deleted_at.is_some()))
+    let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id,)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|r| r.deleted_at.is_some()))
 }
 
 /// Return the IDs of a block and all its descendants via recursive CTE.
@@ -34,7 +31,7 @@ pub async fn is_deleted(pool: &SqlitePool, block_id: &str) -> Result<Option<bool
 /// Includes already-deleted descendants (unlike cascade which skips them).
 /// Returns an empty `Vec` if the block does not exist.
 pub async fn get_descendants(pool: &SqlitePool, block_id: &str) -> Result<Vec<String>, AppError> {
-    let rows: Vec<(String,)> = sqlx::query_as(
+    let rows = sqlx::query!(
         "WITH RECURSIVE descendants(id) AS ( \
              SELECT id FROM blocks WHERE id = ? \
              UNION ALL \
@@ -42,11 +39,11 @@ pub async fn get_descendants(pool: &SqlitePool, block_id: &str) -> Result<Vec<St
              INNER JOIN descendants d ON b.parent_id = d.id \
          ) \
          SELECT id FROM descendants",
+        block_id,
     )
-    .bind(block_id)
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().map(|(id,)| id).collect())
+    Ok(rows.into_iter().map(|r| r.id).collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -61,13 +58,14 @@ pub async fn soft_delete_block(
     pool: &SqlitePool,
     block_id: &str,
 ) -> Result<Option<String>, AppError> {
-    let now = Utc::now().to_rfc3339();
-    let result =
-        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL")
-            .bind(&now)
-            .bind(block_id)
-            .execute(pool)
-            .await?;
+    let now = crate::now_rfc3339();
+    let result = sqlx::query!(
+        "UPDATE blocks SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+        now,
+        block_id
+    )
+    .execute(pool)
+    .await?;
     if result.rows_affected() == 0 {
         Ok(None)
     } else {
@@ -91,10 +89,10 @@ pub async fn cascade_soft_delete(
     pool: &SqlitePool,
     block_id: &str,
 ) -> Result<(String, u64), AppError> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::now_rfc3339();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "WITH RECURSIVE descendants(id) AS ( \
              SELECT id FROM blocks WHERE id = ? \
              UNION ALL \
@@ -105,9 +103,9 @@ pub async fn cascade_soft_delete(
          UPDATE blocks SET deleted_at = ? \
          WHERE id IN (SELECT id FROM descendants) \
            AND deleted_at IS NULL",
+        block_id,
+        now,
     )
-    .bind(block_id)
-    .bind(&now)
     .execute(&mut *tx)
     .await?;
 
@@ -135,7 +133,7 @@ pub async fn restore_block(
 ) -> Result<u64, AppError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "WITH RECURSIVE descendants(id) AS ( \
              SELECT id FROM blocks WHERE id = ? \
              UNION ALL \
@@ -145,9 +143,9 @@ pub async fn restore_block(
          UPDATE blocks SET deleted_at = NULL \
          WHERE id IN (SELECT id FROM descendants) \
            AND deleted_at = ?",
+        block_id,
+        deleted_at_ref,
     )
-    .bind(block_id)
-    .bind(deleted_at_ref)
     .execute(&mut *tx)
     .await?;
 
@@ -252,7 +250,16 @@ pub async fn purge_block(pool: &SqlitePool, block_id: &str) -> Result<u64, AppEr
     .execute(&mut *tx)
     .await?;
 
-    // attachments
+    // attachments — collect fs_path values BEFORE deleting rows so we can
+    // remove the physical files after the transaction commits successfully.
+    let attachment_paths: Vec<(String,)> = sqlx::query_as(&format!(
+        "{DESC_CTE} SELECT fs_path FROM attachments \
+         WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(block_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
     sqlx::query(&format!(
         "{DESC_CTE} DELETE FROM attachments \
          WHERE block_id IN (SELECT id FROM descendants)"
@@ -299,6 +306,19 @@ pub async fn purge_block(pool: &SqlitePool, block_id: &str) -> Result<u64, AppEr
 
     let count = result.rows_affected();
     tx.commit().await?;
+
+    // Post-commit: delete physical attachment files from disk.
+    // This MUST happen after commit — if we deleted files first and the
+    // transaction rolled back, we'd lose files still referenced by DB rows.
+    // Worst case here: orphan files on disk (better than dangling DB refs).
+    for (path,) in &attachment_paths {
+        if let Err(e) = std::fs::remove_file(path) {
+            // Log but don't fail — the DB rows are already gone.
+            // NotFound is expected if the file was already cleaned up.
+            eprintln!("[purge] warning: failed to remove attachment file {path}: {e}");
+        }
+    }
+
     Ok(count)
 }
 
@@ -1020,6 +1040,115 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count.0, 0, "attachments rows should be purged");
+    }
+
+    #[tokio::test]
+    async fn purge_block_deletes_attachment_files_on_disk() {
+        let (pool, dir) = test_pool().await;
+
+        // Create two real files in the temp directory.
+        let file1 = dir.path().join("att_file1.png");
+        let file2 = dir.path().join("att_file2.jpg");
+        std::fs::write(&file1, b"fake png data").unwrap();
+        std::fs::write(&file2, b"fake jpg data").unwrap();
+        assert!(file1.exists(), "precondition: file1 exists");
+        assert!(file2.exists(), "precondition: file2 exists");
+
+        insert_block(&pool, BLOCK_A, "content", "has attachments", None, None).await;
+
+        // Two attachment rows pointing at real files.
+        for (att_id, path) in [
+            ("ATT_F1", file1.to_str().unwrap()),
+            ("ATT_F2", file2.to_str().unwrap()),
+        ] {
+            sqlx::query(
+                "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(att_id)
+            .bind(BLOCK_A)
+            .bind("image/png")
+            .bind("photo.png")
+            .bind(1024_i64)
+            .bind(path)
+            .bind("2025-01-01T00:00:00Z")
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        purge_block(&pool, BLOCK_A).await.unwrap();
+
+        assert!(
+            !file1.exists(),
+            "attachment file1 should be deleted from disk after purge"
+        );
+        assert!(
+            !file2.exists(),
+            "attachment file2 should be deleted from disk after purge"
+        );
+    }
+
+    #[tokio::test]
+    async fn purge_block_without_attachments_succeeds() {
+        // Ensures purge works fine when there are no attachment rows at all
+        // (the SELECT returns an empty Vec and the file-deletion loop is a no-op).
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, BLOCK_A, "content", "no attachments here", None, None).await;
+
+        let count = purge_block(&pool, BLOCK_A).await.unwrap();
+        assert_eq!(count, 1, "block should be purged");
+        assert!(!block_exists(&pool, BLOCK_A).await, "block should be gone");
+    }
+
+    #[tokio::test]
+    async fn purge_block_handles_missing_attachment_file_gracefully() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(
+            &pool,
+            BLOCK_A,
+            "content",
+            "attachment with missing file",
+            None,
+            None,
+        )
+        .await;
+
+        // Attachment row points to a non-existent file path.
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("ATT_GONE")
+        .bind(BLOCK_A)
+        .bind("application/pdf")
+        .bind("report.pdf")
+        .bind(2048_i64)
+        .bind("/tmp/definitely_does_not_exist_12345.pdf")
+        .bind("2025-01-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Should succeed despite the missing file — errors are logged, not propagated.
+        let count = purge_block(&pool, BLOCK_A).await.unwrap();
+        assert_eq!(
+            count, 1,
+            "block should be purged even when attachment file is missing"
+        );
+
+        let att_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM attachments WHERE block_id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            att_count.0, 0,
+            "attachment DB rows should be purged regardless"
+        );
     }
 
     #[tokio::test]

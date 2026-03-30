@@ -329,6 +329,7 @@ const MAX_SEARCH_RESULTS: i64 = 100;
 /// FTS5 operators (`OR`, `AND`, `NOT`, `*`, `NEAR`, column filters, etc.)
 /// from being interpreted as query syntax while still allowing multi-term
 /// implicit-AND matching.
+#[must_use]
 fn sanitize_fts_query(query: &str) -> String {
     query
         .split_whitespace()
@@ -352,14 +353,19 @@ struct FtsSearchRow {
     deleted_at: Option<String>,
     archived_at: Option<String>,
     is_conflict: bool,
-    // FTS ranking fields (for cursor)
+    // FTS ranking field (for cursor)
     search_rank: f64,
-    fts_rowid: i64,
 }
 
 /// Search blocks via FTS5 MATCH with cursor-based pagination.
 ///
-/// Results are ordered by FTS5 rank (best match first) with rowid as tiebreaker.
+/// Results are ordered by FTS5 rank (best match first) with `block_id` as
+/// tiebreaker.  The cursor is a composite `(rank, id)` pair.  Rank comparison
+/// uses an epsilon of 1e-9 (`ABS(rank - cursor_rank) < 1e-9`) instead of exact
+/// float equality, which avoids potential duplicate or missing results caused by
+/// floating-point precision drift between cursor serialization and SQLite
+/// re-computation of the FTS5 rank.
+///
 /// Empty/whitespace queries return an empty response (no error).
 ///
 /// The search limit is capped at [`MAX_SEARCH_RESULTS`] (100) per page,
@@ -400,28 +406,31 @@ pub async fn search_fts(
     let effective_limit = page.limit.min(MAX_SEARCH_RESULTS);
     let fetch_limit = effective_limit + 1;
 
-    let (cursor_flag, cursor_rank, cursor_rowid): (Option<i64>, f64, i64) =
+    // Composite cursor: (rank, block_id).  Block ID is a deterministic
+    // tiebreaker that avoids reliance on exact float equality for rank.
+    let (cursor_flag, cursor_rank, cursor_id): (Option<i64>, f64, String) =
         match page.after.as_ref() {
-            Some(c) => (Some(1), c.rank.unwrap_or(0.0), c.seq.unwrap_or(0)),
-            None => (None, 0.0, 0),
+            Some(c) => (Some(1), c.rank.unwrap_or(0.0), c.id.clone()),
+            None => (None, 0.0, String::new()),
         };
 
     let rows = sqlx::query_as::<_, FtsSearchRow>(
         "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
                 b.deleted_at, b.archived_at, b.is_conflict, \
-                fts.rank as search_rank, fts.rowid as fts_rowid \
+                fts.rank as search_rank \
          FROM fts_blocks fts \
          JOIN blocks b ON b.id = fts.block_id \
          WHERE fts_blocks MATCH ?1 \
            AND b.deleted_at IS NULL AND b.is_conflict = 0 \
-           AND (?2 IS NULL OR fts.rank > ?3 OR (fts.rank = ?3 AND fts.rowid > ?4)) \
-         ORDER BY fts.rank, fts.rowid \
+           AND (?2 IS NULL OR fts.rank > ?3 \
+                OR (ABS(fts.rank - ?3) < 1e-9 AND b.id > ?4)) \
+         ORDER BY fts.rank, b.id \
          LIMIT ?5",
     )
     .bind(&sanitized) // ?1 -- sanitized FTS5 query
     .bind(cursor_flag) // ?2
     .bind(cursor_rank) // ?3
-    .bind(cursor_rowid) // ?4
+    .bind(&cursor_id) // ?4
     .bind(fetch_limit) // ?5
     .fetch_all(pool)
     .await
@@ -465,7 +474,7 @@ pub async fn search_fts(
                 id: last_fts.id.clone(),
                 position: None,
                 deleted_at: None,
-                seq: Some(last_fts.fts_rowid),
+                seq: None,
                 rank: Some(last_fts.search_rank),
             }
             .encode()?,
@@ -1510,5 +1519,208 @@ mod tests {
         assert_eq!(sanitize_fts_query("test*"), "\"test*\"");
         assert_eq!(sanitize_fts_query("(group)"), "\"(group)\"");
         assert_eq!(sanitize_fts_query("col:value"), "\"col:value\"");
+    }
+
+    // ======================================================================
+    // FTS pagination with identical/close ranks (REVIEW-LATER #3 fix)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn search_pagination_identical_ranks_no_duplicates_no_skips() {
+        // All blocks have identical content → identical FTS5 rank.
+        // The composite cursor (rank, block_id) with epsilon comparison must
+        // paginate correctly using block_id as the deterministic tiebreaker.
+        let (pool, _dir) = test_pool().await;
+
+        // Use 6 blocks with identical content to test multi-page traversal
+        // at page_size=2 (3 pages).
+        const BLK_E: &str = "01HQBLKE00000000000000BKE1";
+        const BLK_F: &str = "01HQBLKF00000000000000BKF1";
+
+        let ids = [BLOCK_A, BLOCK_B, BLOCK_C, BLOCK_D, BLK_E, BLK_F];
+        for (i, id) in ids.iter().enumerate() {
+            insert_block(
+                &pool,
+                id,
+                "content",
+                "identical searchword",
+                None,
+                Some(i as i64),
+            )
+            .await;
+        }
+        rebuild_fts_index(&pool).await.unwrap();
+
+        // Walk all pages collecting IDs
+        let mut all_ids: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut pages = 0;
+
+        loop {
+            let page = PageRequest::new(cursor.clone(), Some(2)).unwrap();
+            let result = search_fts(&pool, "identical", &page).await.unwrap();
+
+            for item in &result.items {
+                all_ids.push(item.id.clone());
+            }
+
+            pages += 1;
+            if !result.has_more {
+                break;
+            }
+            cursor = result.next_cursor;
+            assert!(pages <= 4, "too many pages — possible infinite loop");
+        }
+
+        // Verify: exactly 6 results, no duplicates, all blocks present
+        let unique: std::collections::HashSet<&str> = all_ids.iter().map(|s| s.as_str()).collect();
+        assert_eq!(
+            all_ids.len(),
+            6,
+            "all 6 blocks should be returned across pages"
+        );
+        assert_eq!(
+            unique.len(),
+            6,
+            "no duplicate IDs across pages with identical ranks"
+        );
+        for id in &ids {
+            assert!(
+                unique.contains(*id),
+                "block {id} should be present in results"
+            );
+        }
+
+        // Verify results are ordered by block_id (tiebreaker) within same rank
+        for window in all_ids.windows(2) {
+            assert!(
+                window[0] <= window[1],
+                "results should be ordered by block_id within same rank: {} should come before {}",
+                window[0],
+                window[1]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn search_cursor_round_trip_with_float_rank() {
+        // Verify cursor encoding/decoding preserves float rank correctly
+        // and the decoded cursor produces correct results.
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(
+            &pool,
+            BLOCK_A,
+            "content",
+            "apple banana cherry",
+            None,
+            Some(0),
+        )
+        .await;
+        insert_block(&pool, BLOCK_B, "content", "apple banana", None, Some(1)).await;
+        insert_block(&pool, BLOCK_C, "content", "apple", None, Some(2)).await;
+        rebuild_fts_index(&pool).await.unwrap();
+
+        // First page: limit 1
+        let page1 = PageRequest::new(None, Some(1)).unwrap();
+        let result1 = search_fts(&pool, "apple", &page1).await.unwrap();
+        assert_eq!(result1.items.len(), 1);
+        assert!(result1.has_more);
+        assert!(result1.next_cursor.is_some());
+
+        // Decode the cursor and verify rank is present
+        let cursor_str = result1.next_cursor.clone().unwrap();
+        let decoded = Cursor::decode(&cursor_str).unwrap();
+        assert!(decoded.rank.is_some(), "FTS cursor should contain rank");
+        assert!(
+            !decoded.id.is_empty(),
+            "FTS cursor should contain block_id as tiebreaker"
+        );
+        // seq should NOT be set for FTS cursors (was the old fts_rowid approach)
+        assert!(
+            decoded.seq.is_none(),
+            "FTS cursor should not use seq (old fts_rowid approach)"
+        );
+
+        // Second page using the cursor
+        let page2 = PageRequest::new(result1.next_cursor, Some(1)).unwrap();
+        let result2 = search_fts(&pool, "apple", &page2).await.unwrap();
+        assert_eq!(result2.items.len(), 1);
+
+        // Verify no duplicate between page 1 and page 2
+        assert_ne!(
+            result1.items[0].id, result2.items[0].id,
+            "consecutive pages should not return the same block"
+        );
+
+        // Third page
+        let page3 = PageRequest::new(result2.next_cursor, Some(1)).unwrap();
+        let result3 = search_fts(&pool, "apple", &page3).await.unwrap();
+        assert_eq!(result3.items.len(), 1);
+        assert!(!result3.has_more);
+
+        // Collect all IDs and verify completeness
+        let all_ids: Vec<&str> = vec![
+            &result1.items[0].id,
+            &result2.items[0].id,
+            &result3.items[0].id,
+        ]
+        .into_iter()
+        .map(|s| s.as_str())
+        .collect();
+        let unique: std::collections::HashSet<&str> = all_ids.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            3,
+            "all 3 blocks should be returned across pages"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_pagination_close_ranks_epsilon_boundary() {
+        // Verify that blocks with very close (but not identical) ranks are
+        // correctly paginated — the epsilon comparison should not conflate
+        // truly different ranks.
+        let (pool, _dir) = test_pool().await;
+
+        // Create blocks with slightly different content so ranks differ.
+        // "searchterm" is the common keyword; extra unique words affect rank.
+        insert_block(
+            &pool,
+            BLOCK_A,
+            "content",
+            "searchterm extra extra extra",
+            None,
+            Some(0),
+        )
+        .await;
+        insert_block(&pool, BLOCK_B, "content", "searchterm extra", None, Some(1)).await;
+        insert_block(&pool, BLOCK_C, "content", "searchterm", None, Some(2)).await;
+        rebuild_fts_index(&pool).await.unwrap();
+
+        // Walk all pages with limit=1
+        let mut all_ids: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut pages = 0;
+
+        loop {
+            let page = PageRequest::new(cursor.clone(), Some(1)).unwrap();
+            let result = search_fts(&pool, "searchterm", &page).await.unwrap();
+
+            for item in &result.items {
+                all_ids.push(item.id.clone());
+            }
+
+            pages += 1;
+            if !result.has_more {
+                break;
+            }
+            cursor = result.next_cursor;
+            assert!(pages <= 5, "too many pages — possible infinite loop");
+        }
+
+        let unique: std::collections::HashSet<&str> = all_ids.iter().map(|s| s.as_str()).collect();
+        assert_eq!(all_ids.len(), 3, "all 3 blocks should be returned");
+        assert_eq!(unique.len(), 3, "no duplicates across pages");
     }
 }

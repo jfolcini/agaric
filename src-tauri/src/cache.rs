@@ -14,7 +14,6 @@
 
 #![allow(dead_code)]
 
-use chrono::Utc;
 use regex::Regex;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
@@ -52,14 +51,14 @@ fn ulid_link_re() -> &'static Regex {
 /// left-joined with `block_tags` usage counts. Tags with zero usage are
 /// included.
 pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::now_rfc3339();
     let mut tx = pool.begin().await?;
 
-    sqlx::query("DELETE FROM tags_cache")
+    sqlx::query!("DELETE FROM tags_cache")
         .execute(&mut *tx)
         .await?;
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT OR IGNORE INTO tags_cache (tag_id, name, usage_count, updated_at)
          SELECT b.id, b.content, COALESCE(t.cnt, 0), ?
          FROM blocks b
@@ -73,8 +72,8 @@ pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
          WHERE b.block_type = 'tag' AND b.deleted_at IS NULL AND b.content IS NOT NULL
            AND b.is_conflict = 0
          ORDER BY b.id",
+        now,
     )
-    .bind(&now)
     .execute(&mut *tx)
     .await?;
 
@@ -91,21 +90,21 @@ pub async fn rebuild_tags_cache(pool: &SqlitePool) -> Result<(), AppError> {
 /// Deletes all existing rows and re-populates from `blocks` where
 /// `block_type = 'page'` and not soft-deleted.
 pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
-    let now = Utc::now().to_rfc3339();
+    let now = crate::now_rfc3339();
     let mut tx = pool.begin().await?;
 
-    sqlx::query("DELETE FROM pages_cache")
+    sqlx::query!("DELETE FROM pages_cache")
         .execute(&mut *tx)
         .await?;
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO pages_cache (page_id, title, updated_at)
          SELECT id, content, ?
          FROM blocks
          WHERE block_type = 'page' AND deleted_at IS NULL AND content IS NOT NULL
            AND is_conflict = 0",
+        now,
     )
-    .bind(&now)
     .execute(&mut *tx)
     .await?;
 
@@ -126,14 +125,14 @@ pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
 pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
 
-    sqlx::query("DELETE FROM agenda_cache")
+    sqlx::query!("DELETE FROM agenda_cache")
         .execute(&mut *tx)
         .await?;
 
     // Both sources combined in a single INSERT via UNION ALL to reduce
     // round-trips.  Properties appear first so they win on PK conflicts
     // (INSERT OR IGNORE keeps the first row for a given (date, block_id)).
-    sqlx::query(
+    sqlx::query!(
         "INSERT OR IGNORE INTO agenda_cache (date, block_id, source)
          SELECT bp.value_date, bp.block_id, 'property:' || bp.key
          FROM block_properties bp
@@ -148,6 +147,11 @@ pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
          WHERE t.block_type = 'tag'
            AND t.content LIKE 'date/%'
            AND LENGTH(t.content) = 15
+           AND SUBSTR(t.content, 6, 4) GLOB '[0-9][0-9][0-9][0-9]'
+           AND SUBSTR(t.content, 10, 1) = '-'
+           AND SUBSTR(t.content, 11, 2) GLOB '[0-9][0-9]'
+           AND SUBSTR(t.content, 13, 1) = '-'
+           AND SUBSTR(t.content, 14, 2) GLOB '[0-9][0-9]'
            AND b.deleted_at IS NULL
            AND t.deleted_at IS NULL
            AND b.is_conflict = 0",
@@ -174,16 +178,17 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
 
     // 1. Get current content (combined with step 2 in the same tx to avoid
     //    an extra connection round-trip).
-    let row: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL")
-            .bind(block_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let row = sqlx::query!(
+        "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        block_id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
 
     let content = match row {
-        Some((Some(c),)) => c,
-        // Block not found or deleted or content is NULL — remove all links
-        _ => String::new(),
+        Some(r) => r.content.unwrap_or_default(),
+        // Block not found or deleted — remove all links
+        None => String::new(),
     };
 
     // 2. Parse [[ULID]] tokens
@@ -193,13 +198,14 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
         .collect();
 
     // 3. Get existing outbound links (same tx — consistent snapshot)
-    let existing_rows: Vec<(String,)> =
-        sqlx::query_as("SELECT target_id FROM block_links WHERE source_id = ?")
-            .bind(block_id)
-            .fetch_all(&mut *tx)
-            .await?;
+    let existing_rows = sqlx::query!(
+        "SELECT target_id FROM block_links WHERE source_id = ?",
+        block_id,
+    )
+    .fetch_all(&mut *tx)
+    .await?;
 
-    let old_targets: HashSet<String> = existing_rows.into_iter().map(|(t,)| t).collect();
+    let old_targets: HashSet<String> = existing_rows.into_iter().map(|r| r.target_id).collect();
 
     // 4. Diff
     let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
@@ -211,24 +217,27 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
     }
 
     for target in &to_delete {
-        sqlx::query("DELETE FROM block_links WHERE source_id = ? AND target_id = ?")
-            .bind(block_id)
-            .bind(*target)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM block_links WHERE source_id = ? AND target_id = ?",
+            block_id,
+            *target,
+        )
+        .execute(&mut *tx)
+        .await?;
     }
 
     for target in &to_insert {
         // Use INSERT ... SELECT ... WHERE EXISTS to skip targets that don't
         // exist in the blocks table. INSERT OR IGNORE does NOT suppress FK
         // violations in SQLite — only PK/UNIQUE/NOT NULL/CHECK conflicts.
-        sqlx::query(
-            "INSERT OR IGNORE INTO block_links (source_id, target_id) \
+        let t = *target;
+        sqlx::query!(
+            "INSERT OR IGNORE INTO block_links (source_id, target_id)
              SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+            block_id,
+            t,
+            t,
         )
-        .bind(block_id)
-        .bind(*target)
-        .bind(*target)
         .execute(&mut *tx)
         .await?;
     }
@@ -830,6 +839,48 @@ mod tests {
             count_rows(&pool, "agenda_cache").await,
             0,
             "16-char date tag must NOT match"
+        );
+    }
+
+    #[tokio::test]
+    async fn agenda_cache_non_date_15_char_string_excluded() {
+        let (pool, _dir) = test_pool().await;
+
+        // 15 chars but not a valid date pattern — e.g. "date/ABCDEFGHIJ"
+        let fake = "date/ABCDEFGHIJ";
+        assert_eq!(fake.len(), 15);
+
+        insert_block(&pool, "DTAG1", "tag", fake).await;
+        insert_block(&pool, "BLK01", "content", "note").await;
+        add_tag(&pool, "BLK01", "DTAG1").await;
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            0,
+            "15-char non-date string must be excluded by GLOB validation"
+        );
+    }
+
+    #[tokio::test]
+    async fn agenda_cache_date_tag_with_bad_separator_excluded() {
+        let (pool, _dir) = test_pool().await;
+
+        // 15 chars, starts with date/, but uses dots instead of dashes
+        let bad_sep = "date/2025.03.20";
+        assert_eq!(bad_sep.len(), 15);
+
+        insert_block(&pool, "DTAG1", "tag", bad_sep).await;
+        insert_block(&pool, "BLK01", "content", "note").await;
+        add_tag(&pool, "BLK01", "DTAG1").await;
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            0,
+            "date tag with bad separators must be excluded"
         );
     }
 
