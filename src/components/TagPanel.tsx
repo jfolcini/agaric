@@ -105,7 +105,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
 
   if (!blockId) {
     return (
-      <div className="tag-panel rounded-lg border border-dashed p-6 text-center">
+      <div className="tag-panel rounded-lg border border-dashed p-8 text-center">
         <div className="tag-panel-empty text-sm text-muted-foreground">
           Select a block to manage tags
         </div>
@@ -154,7 +154,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <div className="tag-picker-list max-h-40 space-y-1 overflow-y-auto" role="listbox">
+          <div className="tag-picker-list max-h-60 space-y-1 overflow-y-auto" role="listbox">
             {availableTags.map((tag) => (
               <button
                 key={tag.id}

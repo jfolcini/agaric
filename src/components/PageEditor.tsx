@@ -115,7 +115,7 @@ export function PageEditor({
           aria-label="Page title"
           contentEditable
           suppressContentEditableWarning
-          className="flex-1 text-xl font-semibold outline-none focus:ring-2 focus:ring-ring/50 rounded px-1"
+          className="flex-1 text-xl font-semibold outline-none focus:ring-2 focus:ring-ring/50 rounded-md px-1 hover:bg-accent/5 focus-within:bg-accent/5 transition-colors"
           onInput={handleTitleInput}
           onBlur={handleTitleBlur}
           onKeyDown={handleTitleKeyDown}

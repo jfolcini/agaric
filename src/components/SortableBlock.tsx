@@ -50,7 +50,7 @@ export function SortableBlock({
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.5 : 1,
+    opacity: isDragging ? 0.7 : 1,
     paddingLeft: depth > 0 ? depth * INDENT_WIDTH : undefined,
   }
 
@@ -59,11 +59,11 @@ export function SortableBlock({
       ref={setNodeRef}
       style={style}
       data-block-id={blockId}
-      className="sortable-block group flex items-start"
+      className="sortable-block group flex items-start gap-1"
     >
       <button
         type="button"
-        className="drag-handle flex-shrink-0 cursor-grab opacity-0 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-foreground"
+        className="drag-handle flex-shrink-0 cursor-grab opacity-30 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-foreground"
         aria-label="Drag to reorder"
         {...attributes}
         {...listeners}
@@ -73,7 +73,7 @@ export function SortableBlock({
       {onDelete && (
         <button
           type="button"
-          className="delete-handle flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-destructive"
+          className="delete-handle flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10"
           aria-label="Delete block"
           onClick={() => onDelete(blockId)}
         >

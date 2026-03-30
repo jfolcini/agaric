@@ -75,7 +75,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
         <Code size={14} />
       </Button>
 
-      <Separator orientation="vertical" className="mx-1 h-4" />
+      <Separator orientation="vertical" className="border-l border-border mx-1 h-5" />
 
       <Button
         variant="ghost"

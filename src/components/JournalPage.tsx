@@ -7,7 +7,7 @@
  * The "Add block" button auto-creates the daily page if needed.
  */
 
-import { ChevronLeft, ChevronRight, ExternalLink, Plus } from 'lucide-react'
+import { Calendar, ChevronLeft, ChevronRight, ExternalLink, Plus } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -131,7 +131,7 @@ export function JournalPage({
         <div className="flex items-center gap-2">
           <span className="text-base font-medium">{formatDateDisplay(date)}</span>
           {!isToday && (
-            <Button variant="ghost" size="sm" onClick={goToToday}>
+            <Button variant="outline" size="sm" onClick={goToToday}>
               Today
             </Button>
           )}
@@ -157,6 +157,7 @@ export function JournalPage({
         <div className="space-y-1">
           <Skeleton className="h-10 w-full rounded-lg" />
           <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-8 w-full rounded-lg" />
         </div>
       )}
 
@@ -166,7 +167,8 @@ export function JournalPage({
       {/* Empty state — no daily page for this date */}
       {!pageLoading && !dailyPageId && (
         <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          No blocks for {formatDateDisplay(date)}. Add one below.
+          <Calendar className="mx-auto mb-2 h-5 w-5" />
+          No blocks for {dateStr}. Use + Add block below to start writing.
         </div>
       )}
 

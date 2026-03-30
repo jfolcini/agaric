@@ -10,6 +10,7 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { HistoryEntry } from '../lib/tauri'
 import { editBlock, getBlockHistory } from '../lib/tauri'
 
@@ -99,8 +100,9 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   return (
     <div className="history-panel space-y-4">
       {loading && entries.length === 0 && (
-        <div className="history-panel-loading text-sm text-muted-foreground">
-          Loading history...
+        <div className="history-panel-loading space-y-2">
+          <Skeleton className="h-14 w-full rounded-lg" />
+          <Skeleton className="h-14 w-full rounded-lg" />
         </div>
       )}
 
@@ -118,11 +120,11 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
           return (
             <div
               key={entry.seq}
-              className="history-item flex items-start justify-between gap-3 rounded-lg border bg-card p-3"
+              className="history-item flex items-start justify-between gap-3 rounded-lg border bg-card p-4"
             >
               <div className="history-item-content flex flex-col gap-1 min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="history-item-type shrink-0">
+                  <Badge variant="secondary" className="history-item-type shrink-0">
                     {entry.op_type}
                   </Badge>
                   <span className="history-item-time text-xs text-muted-foreground">

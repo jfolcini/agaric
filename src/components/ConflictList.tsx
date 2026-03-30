@@ -6,7 +6,7 @@
  * with two-click confirmation on Discard.
  */
 
-import { AlertTriangle, Check, X } from 'lucide-react'
+import { AlertTriangle, Check, GitMerge, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
@@ -80,7 +80,8 @@ export function ConflictList(): React.ReactElement {
 
       {!loading && blocks.length === 0 && (
         <div className="conflict-list-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          No conflicts
+          <GitMerge className="mx-auto mb-2 h-5 w-5" />
+          No conflicts. Conflicts appear when the same block is edited on multiple devices.
         </div>
       )}
 
@@ -88,13 +89,15 @@ export function ConflictList(): React.ReactElement {
         {blocks.map((block) => (
           <div
             key={block.id}
-            className="conflict-item flex items-center justify-between rounded-lg border bg-card p-3"
+            className="conflict-item flex items-center justify-between rounded-lg border bg-card p-4"
           >
-            <div className="conflict-item-content flex items-center gap-3">
-              <Badge variant="outline" className="conflict-item-type shrink-0">
+            <div className="conflict-item-content flex min-w-0 items-center gap-3">
+              <Badge variant="secondary" className="conflict-item-type shrink-0">
                 {block.block_type}
               </Badge>
-              <span className="conflict-item-text text-sm">{block.content ?? '(empty)'}</span>
+              <span className="conflict-item-text text-sm truncate">
+                {block.content ?? '(empty)'}
+              </span>
             </div>
             <div className="conflict-item-actions flex items-center gap-2">
               <Button
@@ -107,9 +110,9 @@ export function ConflictList(): React.ReactElement {
                 Keep
               </Button>
               {confirmDiscardId === block.id ? (
-                <span className="conflict-discard-confirm flex items-center gap-1.5 text-sm">
-                  <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
-                  <span>Discard forever?</span>
+                <div className="conflict-discard-confirm flex items-center gap-2 rounded-md bg-destructive/10 px-3 py-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-destructive shrink-0" />
+                  <span className="text-sm">Discard forever?</span>
                   <Button
                     variant="destructive"
                     size="xs"
@@ -126,12 +129,12 @@ export function ConflictList(): React.ReactElement {
                   >
                     No
                   </Button>
-                </span>
+                </div>
               ) : (
                 <Button
-                  variant="ghost"
+                  variant="destructive"
                   size="sm"
-                  className="conflict-discard-btn text-destructive hover:text-destructive"
+                  className="conflict-discard-btn"
                   onClick={() => setConfirmDiscardId(block.id)}
                 >
                   <X className="h-3.5 w-3.5" />

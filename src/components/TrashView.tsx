@@ -5,7 +5,7 @@
  * Supports restore (p15-t24) and permanent purge (p15-t25).
  */
 
-import { AlertTriangle, RotateCcw } from 'lucide-react'
+import { AlertTriangle, RotateCcw, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
@@ -73,7 +73,8 @@ export function TrashView(): React.ReactElement {
 
       {!loading && blocks.length === 0 && (
         <div className="trash-view-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          Trash is empty.
+          <Trash2 className="mx-auto mb-2 h-5 w-5" />
+          Nothing in trash. Deleted items will appear here.
         </div>
       )}
 
@@ -81,13 +82,13 @@ export function TrashView(): React.ReactElement {
         {blocks.map((block) => (
           <div
             key={block.id}
-            className="trash-item flex items-center justify-between rounded-lg border bg-card p-3"
+            className="trash-item flex items-center justify-between rounded-lg border bg-card p-4"
           >
-            <div className="trash-item-content flex items-center gap-3">
-              <Badge variant="outline" className="trash-item-type shrink-0">
+            <div className="trash-item-content flex min-w-0 items-center gap-3">
+              <Badge variant="secondary" className="trash-item-type shrink-0">
                 {block.block_type}
               </Badge>
-              <span className="trash-item-text text-sm">{block.content ?? '(empty)'}</span>
+              <span className="trash-item-text text-sm truncate">{block.content ?? '(empty)'}</span>
               <span className="trash-item-date text-xs text-muted-foreground">
                 Deleted: {block.deleted_at ? new Date(block.deleted_at).toLocaleDateString() : ''}
               </span>
@@ -103,9 +104,9 @@ export function TrashView(): React.ReactElement {
                 Restore
               </Button>
               {confirmPurgeId === block.id ? (
-                <span className="trash-purge-confirm flex items-center gap-1.5 text-sm">
-                  <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
-                  <span>Delete forever?</span>
+                <div className="trash-purge-confirm flex items-center gap-2 rounded-md bg-destructive/10 px-3 py-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-destructive shrink-0" />
+                  <span className="text-sm">Delete forever?</span>
                   <Button
                     variant="destructive"
                     size="xs"
@@ -122,12 +123,12 @@ export function TrashView(): React.ReactElement {
                   >
                     No
                   </Button>
-                </span>
+                </div>
               ) : (
                 <Button
-                  variant="ghost"
+                  variant="destructive"
                   size="sm"
-                  className="trash-purge-btn text-destructive hover:text-destructive"
+                  className="trash-purge-btn"
                   onClick={() => setConfirmPurgeId(block.id)}
                 >
                   Purge

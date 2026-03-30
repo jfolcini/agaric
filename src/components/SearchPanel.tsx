@@ -8,8 +8,10 @@
  *  - CJK limitation notice (p3-t6)
  */
 
+import { Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -148,17 +150,18 @@ export function SearchPanel(): React.ReactElement {
 
       {searched && !loading && results.length === 0 && (
         <div className="search-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          No results found.
+          <Search className="mx-auto mb-2 h-5 w-5 text-muted-foreground" />
+          No results found. Try different keywords or check your spelling.
         </div>
       )}
 
       {results.length > 0 && (
-        <div className="search-results space-y-2">
+        <div className="search-results space-y-3">
           {results.map((block) => (
             <button
               key={block.id}
               type="button"
-              className="w-full cursor-pointer rounded-lg border bg-card p-3 text-left hover:bg-accent/50"
+              className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50"
               onClick={() => handleResultClick(block)}
             >
               <div className="flex items-center gap-2">
@@ -166,9 +169,7 @@ export function SearchPanel(): React.ReactElement {
                   {block.content || '(empty)'}
                 </span>
                 {(block.block_type === 'tag' || block.block_type === 'page') && (
-                  <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                    {block.block_type}
-                  </span>
+                  <Badge variant="secondary">{block.block_type}</Badge>
                 )}
               </div>
             </button>

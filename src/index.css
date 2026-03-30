@@ -152,3 +152,14 @@
   opacity: 0.5;
   text-decoration: line-through;
 }
+
+/* Inline token chips — block links and tag references rendered in StaticBlock */
+.block-link-chip {
+  @apply inline-flex items-center rounded-md bg-accent px-1.5 py-0.5 text-sm font-medium text-accent-foreground;
+}
+.block-link-chip:hover {
+  @apply bg-accent/80;
+}
+.tag-ref-chip {
+  @apply inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-sm font-medium;
+}

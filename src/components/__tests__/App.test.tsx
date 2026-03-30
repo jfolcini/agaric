@@ -136,7 +136,9 @@ describe('App', () => {
 
     // TrashView should render its empty state
     await waitFor(() => {
-      expect(screen.getByText('Trash is empty.')).toBeInTheDocument()
+      expect(
+        screen.getByText(/Nothing in trash\. Deleted items will appear here\./),
+      ).toBeInTheDocument()
     })
   })
 
@@ -186,7 +188,11 @@ describe('App', () => {
 
     // ConflictList should render its empty state
     await waitFor(() => {
-      expect(screen.getByText('No conflicts')).toBeInTheDocument()
+      expect(
+        screen.getByText(
+          /No conflicts\. Conflicts appear when the same block is edited on multiple devices\./,
+        ),
+      ).toBeInTheDocument()
     })
   })
 

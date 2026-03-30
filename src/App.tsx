@@ -141,14 +141,20 @@ function App() {
               {headerLabel}
             </span>
           </header>
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 overflow-y-auto p-4 md:p-6">
             {currentView === 'journal' && <JournalPage onNavigateToPage={handlePageSelect} />}
             {currentView === 'search' && <SearchPanel />}
             {currentView === 'pages' && <PageBrowser onPageSelect={handlePageSelect} />}
             {currentView === 'tags' && (
               <div className="space-y-8">
                 <TagList onTagClick={(tagId, tagName) => navigateToPage(tagId, tagName)} />
-                <hr className="border-border" />
+                <div className="flex items-center gap-4">
+                  <div className="flex-1 border-t border-border" />
+                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Filter
+                  </span>
+                  <div className="flex-1 border-t border-border" />
+                </div>
                 <TagFilterPanel />
               </div>
             )}

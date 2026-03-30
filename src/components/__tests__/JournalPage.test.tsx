@@ -114,7 +114,7 @@ describe('JournalPage', () => {
     const { container } = render(<JournalPage />)
 
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
-    expect(skeletons.length).toBe(2)
+    expect(skeletons.length).toBe(3)
   })
 
   it('renders BlockTree with correct parentId when daily page exists', async () => {

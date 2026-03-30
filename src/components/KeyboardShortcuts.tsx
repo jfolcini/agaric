@@ -93,19 +93,19 @@ export function KeyboardShortcuts({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b">
-                <th className="pb-2 text-left font-medium text-muted-foreground">Shortcut</th>
-                <th className="pb-2 text-left font-medium text-muted-foreground">Action</th>
+                <th className="pb-2 text-left font-semibold text-foreground">Shortcut</th>
+                <th className="pb-2 text-left font-semibold text-foreground">Action</th>
               </tr>
             </thead>
             <tbody>
               {SHORTCUTS.map((shortcut) => (
                 <tr key={shortcut.keys} className="border-b last:border-0">
-                  <td className="py-2 pr-4">
-                    <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+                  <td className="py-3 pr-4">
+                    <kbd className="rounded border border-border bg-muted px-2 py-1 font-mono text-xs font-semibold shadow-sm">
                       {shortcut.keys}
                     </kbd>
                   </td>
-                  <td className="py-2 text-muted-foreground">{shortcut.description}</td>
+                  <td className="py-3 text-muted-foreground">{shortcut.description}</td>
                 </tr>
               ))}
             </tbody>

@@ -452,7 +452,7 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
       onDragCancel={handleDragCancel}
     >
       <SortableContext items={visibleItems.map((b) => b.id)} strategy={verticalListSortingStrategy}>
-        <div className="block-tree space-y-0.5">
+        <div className="block-tree space-y-1">
           {visibleItems.map((block) => {
             const isFocused = focusedBlockId === block.id
             // Show projected depth during drag for the active item's over target
@@ -498,7 +498,7 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
           })}
           {blocks.length === 0 && (
             <div className="block-tree-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-              <p>No blocks yet. Start typing to create one.</p>
+              <p>No blocks yet. Click + Add block below to start writing.</p>
             </div>
           )}
         </div>

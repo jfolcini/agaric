@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { getBlock, listTagsByPrefix, queryByTags } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
@@ -245,7 +246,7 @@ export function TagFilterPanel(): React.ReactElement {
       {/* Matching tags from prefix search */}
       {filteredMatching.length > 0 && (
         <div className="rounded-lg border bg-card p-3">
-          <h4 className="mb-2 text-xs font-medium text-muted-foreground">Matching tags</h4>
+          <h4 className="mb-2 text-sm font-medium text-muted-foreground">Matching tags</h4>
           <div className="space-y-1">
             {filteredMatching.map((tag) => (
               <div
@@ -272,7 +273,11 @@ export function TagFilterPanel(): React.ReactElement {
 
       {/* Loading indicator */}
       {loading && results.length === 0 && (
-        <div className="tag-filter-loading text-sm text-muted-foreground">Loading results...</div>
+        <div className="tag-filter-loading space-y-3">
+          <Skeleton className="h-12 w-full rounded-lg" />
+          <Skeleton className="h-12 w-full rounded-lg" />
+          <Skeleton className="h-12 w-full rounded-lg" />
+        </div>
       )}
 
       {/* Empty results */}
@@ -284,13 +289,13 @@ export function TagFilterPanel(): React.ReactElement {
 
       {/* Results */}
       {results.length > 0 && (
-        <div className="tag-filter-results space-y-2">
-          <h4 className="text-xs font-medium text-muted-foreground">Results ({results.length})</h4>
+        <div className="tag-filter-results space-y-3">
+          <h4 className="text-sm font-medium text-muted-foreground">Results ({results.length})</h4>
           {results.map((block) => (
             <button
               key={block.id}
               type="button"
-              className="w-full cursor-pointer rounded-lg border bg-card p-3 text-left hover:bg-accent/50"
+              className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50"
               onClick={() => handleResultClick(block)}
             >
               <div className="flex items-center gap-2">
@@ -298,9 +303,7 @@ export function TagFilterPanel(): React.ReactElement {
                   {block.content || '(empty)'}
                 </span>
                 {(block.block_type === 'tag' || block.block_type === 'page') && (
-                  <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                    {block.block_type}
-                  </span>
+                  <Badge variant="secondary">{block.block_type}</Badge>
                 )}
               </div>
             </button>

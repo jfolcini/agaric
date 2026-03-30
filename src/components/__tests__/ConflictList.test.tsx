@@ -58,7 +58,11 @@ describe('ConflictList', () => {
 
     render(<ConflictList />)
 
-    expect(await screen.findByText('No conflicts')).toBeInTheDocument()
+    expect(
+      await screen.findByText(
+        /No conflicts\. Conflicts appear when the same block is edited on multiple devices\./,
+      ),
+    ).toBeInTheDocument()
   })
 
   it('renders conflict items with type badge and content', async () => {
@@ -297,7 +301,11 @@ describe('ConflictList', () => {
 
     // Should render empty state (error silently caught), not crash
     await waitFor(() => {
-      expect(screen.getByText('No conflicts')).toBeInTheDocument()
+      expect(
+        screen.getByText(
+          /No conflicts\. Conflicts appear when the same block is edited on multiple devices\./,
+        ),
+      ).toBeInTheDocument()
     })
   })
 

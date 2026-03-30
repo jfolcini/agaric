@@ -70,7 +70,7 @@ describe('SearchPanel', () => {
 
   it('shows no results before first search', () => {
     render(<SearchPanel />)
-    expect(screen.queryByText('No results found.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/No results found/)).not.toBeInTheDocument()
     expect(screen.queryByText('Searching...')).not.toBeInTheDocument()
   })
 
@@ -138,7 +138,7 @@ describe('SearchPanel', () => {
     typeAndSubmit(input, 'nothing')
 
     await waitFor(() => {
-      expect(screen.getByText('No results found.')).toBeInTheDocument()
+      expect(screen.getByText(/No results found/)).toBeInTheDocument()
     })
   })
 
@@ -249,7 +249,7 @@ describe('SearchPanel', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('test content')).not.toBeInTheDocument()
-      expect(screen.queryByText('No results found.')).not.toBeInTheDocument()
+      expect(screen.queryByText(/No results found/)).not.toBeInTheDocument()
     })
   })
 
@@ -310,7 +310,7 @@ describe('SearchPanel', () => {
     })
 
     // No results shown and no error banner — silent failure
-    expect(screen.queryByText('No results found.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/No results found/)).not.toBeInTheDocument()
   })
 
   it('has a search landmark', () => {
@@ -453,7 +453,7 @@ describe('SearchPanel', () => {
 
     expect(mockedInvoke).not.toHaveBeenCalled()
     // Should not show "No results found." since no search was performed
-    expect(screen.queryByText('No results found.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/No results found/)).not.toBeInTheDocument()
   })
 
   it('handles very long search query (>500 chars)', async () => {
@@ -474,7 +474,7 @@ describe('SearchPanel', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText('No results found.')).toBeInTheDocument()
+      expect(screen.getByText(/No results found/)).toBeInTheDocument()
     })
   })
 

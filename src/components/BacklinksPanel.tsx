@@ -10,6 +10,7 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { getBacklinks } from '../lib/tauri'
 
@@ -61,6 +62,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
     return (
       <div className="backlinks-panel rounded-lg border border-dashed p-6 text-center">
         <div className="backlinks-panel-empty text-sm text-muted-foreground">
+          <Link className="mx-auto mb-2 h-5 w-5 opacity-40" />
           Select a block to see backlinks
         </div>
       </div>
@@ -70,8 +72,9 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
   return (
     <div className="backlinks-panel space-y-4">
       {loading && blocks.length === 0 && (
-        <div className="backlinks-panel-loading text-sm text-muted-foreground">
-          Loading backlinks...
+        <div className="backlinks-panel-loading space-y-2">
+          <Skeleton className="h-12 w-full rounded-lg" />
+          <Skeleton className="h-12 w-full rounded-lg" />
         </div>
       )}
 
@@ -86,9 +89,9 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
         {blocks.map((block) => (
           <div
             key={block.id}
-            className="backlink-item flex items-center gap-3 rounded-lg border bg-card p-3"
+            className="backlink-item flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-accent/50 cursor-default"
           >
-            <Badge variant="outline" className="backlink-item-type shrink-0">
+            <Badge variant="secondary" className="backlink-item-type shrink-0">
               {block.block_type}
             </Badge>
             <span className="backlink-item-text text-sm flex-1 truncate">

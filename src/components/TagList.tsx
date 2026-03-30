@@ -113,7 +113,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       </form>
 
       {loading && (
-        <div className="space-y-1">
+        <div className="space-y-2">
           <Skeleton className="h-10 w-full rounded-lg" />
           <Skeleton className="h-10 w-full rounded-lg" />
           <Skeleton className="h-10 w-full rounded-lg" />
@@ -122,12 +122,13 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
 
       {!loading && tags.length === 0 && (
         <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          No tags yet. Create one above.
+          <Tag className="mx-auto mb-2 h-5 w-5 text-muted-foreground" />
+          No tags yet. Create one above to organize your blocks.
         </div>
       )}
 
       {tags.length > 0 && (
-        <div className="space-y-1">
+        <div className="space-y-2">
           {tags.map((tag) => (
             <div
               key={tag.id}
@@ -146,7 +147,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                 variant="ghost"
                 size="icon-xs"
                 aria-label="Delete tag"
-                className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                className="shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
                 onClick={() => setDeleteTarget({ id: tag.id, name: tag.content || 'Unnamed' })}
               >
                 <Trash2 className="h-3.5 w-3.5" />

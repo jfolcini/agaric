@@ -104,7 +104,7 @@ describe('SortableBlock', () => {
     expect(screen.getByTestId('grip-vertical-icon')).toBeInTheDocument()
   })
 
-  it('applies opacity: 0.5 during drag', () => {
+  it('applies opacity: 0.7 during drag', () => {
     mockUseSortable.mockReturnValue({
       attributes: {},
       listeners: {},
@@ -124,7 +124,7 @@ describe('SortableBlock', () => {
     )
 
     const wrapper = container.firstElementChild as HTMLElement
-    expect(wrapper.style.opacity).toBe('0.5')
+    expect(wrapper.style.opacity).toBe('0.7')
   })
 
   it('applies opacity: 1 when not dragging', () => {

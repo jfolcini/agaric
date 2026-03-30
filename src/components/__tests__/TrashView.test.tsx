@@ -63,7 +63,9 @@ describe('TrashView', () => {
 
     render(<TrashView />)
 
-    expect(await screen.findByText('Trash is empty.')).toBeInTheDocument()
+    expect(
+      await screen.findByText(/Nothing in trash\. Deleted items will appear here\./),
+    ).toBeInTheDocument()
   })
 
   it('renders deleted blocks with restore and purge buttons', async () => {
@@ -220,7 +222,7 @@ describe('TrashView', () => {
 
     render(<TrashView />)
 
-    await screen.findByText('Trash is empty.')
+    await screen.findByText(/Nothing in trash\. Deleted items will appear here\./)
     expect(screen.queryByRole('button', { name: /Load more/i })).not.toBeInTheDocument()
   })
 
