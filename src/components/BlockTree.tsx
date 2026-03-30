@@ -55,6 +55,7 @@ import {
 } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
 import { INDENT_WIDTH, SortableBlock } from './SortableBlock'
+import { Calendar } from './ui/calendar'
 
 /** Cached info about a block/tag for resolve callbacks. */
 interface BlockInfo {
@@ -118,6 +119,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   // ── Block properties (task state) ─────────────────────────────────
   const [blockProperties, setBlockProperties] = useState<Map<string, PropertyRow[]>>(new Map())
+
+  // ── Date picker for /DATE command ─────────────────────────────────
+  const [datePickerOpen, setDatePickerOpen] = useState(false)
 
   /** Get the current todo state for a block from the properties cache. */
   const getTodoState = useCallback(
@@ -442,25 +446,33 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       }
 
       if (item.id === 'date') {
-        // Insert today's date as a block link
-        const today = new Date()
-        const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-
-        // Find or create the date page
-        const resp = await listBlocks({ blockType: 'page', limit: 500 })
-        let datePageId = resp.items.find((b) => b.content === dateStr)?.id
-        if (!datePageId) {
-          const newPage = await createBlock({ blockType: 'page', content: dateStr })
-          datePageId = newPage.id
-        }
-
-        // Insert block link at cursor
-        if (rovingEditor.editor && datePageId) {
-          rovingEditor.editor.chain().focus().insertBlockLink(datePageId).run()
-        }
+        // Open the date picker — the actual link insertion happens in handleDatePick
+        setDatePickerOpen(true)
       }
     },
-    [focusedBlockId, rovingEditor],
+    [focusedBlockId],
+  )
+
+  /** Handle date selection from the /DATE picker. Finds or creates the date page and inserts a block link. */
+  const handleDatePick = useCallback(
+    async (d: Date) => {
+      setDatePickerOpen(false)
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+      // Find or create the date page
+      const resp = await listBlocks({ blockType: 'page', limit: 500 })
+      let datePageId = resp.items.find((b) => b.content === dateStr)?.id
+      if (!datePageId) {
+        const newPage = await createBlock({ blockType: 'page', content: dateStr })
+        datePageId = newPage.id
+      }
+
+      // Insert block link at cursor position in the editor
+      if (rovingEditor.editor && datePageId) {
+        rovingEditor.editor.chain().focus().insertBlockLink(datePageId).run()
+      }
+    },
+    [rovingEditor],
   )
 
   // Keep the slash command ref in sync
@@ -745,84 +757,106 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   }
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      measuring={measuring}
-      onDragStart={handleDragStart}
-      onDragMove={handleDragMove}
-      onDragOver={handleDragOver}
-      onDragEnd={handleDragEnd}
-      onDragCancel={handleDragCancel}
-    >
-      <SortableContext items={visibleItems.map((b) => b.id)} strategy={verticalListSortingStrategy}>
-        <div className="block-tree space-y-1">
-          {visibleItems.map((block) => {
-            const isFocused = focusedBlockId === block.id
-            // Show projected depth during drag for the active item's over target
-            const projectedDepth =
-              projected && activeId && overId === block.id ? projected.depth : block.depth
+    <>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        measuring={measuring}
+        onDragStart={handleDragStart}
+        onDragMove={handleDragMove}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
+      >
+        <SortableContext
+          items={visibleItems.map((b) => b.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          <div className="block-tree space-y-1">
+            {visibleItems.map((block) => {
+              const isFocused = focusedBlockId === block.id
+              // Show projected depth during drag for the active item's over target
+              const projectedDepth =
+                projected && activeId && overId === block.id ? projected.depth : block.depth
 
-            // Focused block is never virtualized — always render fully
-            if (!isFocused && viewport.isOffscreen(block.id)) {
-              return (
-                <div
-                  key={block.id}
-                  ref={viewport.observeRef}
-                  data-block-id={block.id}
-                  className="block-placeholder"
-                  style={{ minHeight: viewport.getHeight(block.id) }}
-                />
-              )
-            }
-            return (
-              <div key={block.id} ref={viewport.observeRef} data-block-id={block.id}>
-                {/* Drop indicator: shows where the dragged block will land */}
-                {projected && overId === block.id && activeId !== block.id && (
+              // Focused block is never virtualized — always render fully
+              if (!isFocused && viewport.isOffscreen(block.id)) {
+                return (
                   <div
-                    className="drop-indicator h-0.5 bg-primary rounded-full"
-                    style={{ marginLeft: projected.depth * INDENT_WIDTH }}
+                    key={block.id}
+                    ref={viewport.observeRef}
+                    data-block-id={block.id}
+                    className="block-placeholder"
+                    style={{ minHeight: viewport.getHeight(block.id) }}
                   />
-                )}
-                <SortableBlock
-                  blockId={block.id}
-                  content={block.content ?? ''}
-                  isFocused={isFocused}
-                  depth={block.id === activeId ? projectedDepth : block.depth}
-                  rovingEditor={rovingEditor}
-                  onNavigate={handleNavigate}
-                  onDelete={(id) => remove(id)}
-                  resolveBlockTitle={resolveBlockTitle}
-                  resolveTagName={resolveTagName}
-                  resolveBlockStatus={resolveBlockStatus}
-                  resolveTagStatus={resolveTagStatus}
-                  hasChildren={hasChildrenSet.has(block.id)}
-                  isCollapsed={collapsedIds.has(block.id)}
-                  onToggleCollapse={toggleCollapse}
-                  todoState={getTodoState(block.id)}
-                  onToggleTodo={handleToggleTodo}
-                />
+                )
+              }
+              return (
+                <div key={block.id} ref={viewport.observeRef} data-block-id={block.id}>
+                  {/* Drop indicator: shows where the dragged block will land */}
+                  {projected && overId === block.id && activeId !== block.id && (
+                    <div
+                      className="drop-indicator h-0.5 bg-primary rounded-full"
+                      style={{ marginLeft: projected.depth * INDENT_WIDTH }}
+                    />
+                  )}
+                  <SortableBlock
+                    blockId={block.id}
+                    content={block.content ?? ''}
+                    isFocused={isFocused}
+                    depth={block.id === activeId ? projectedDepth : block.depth}
+                    rovingEditor={rovingEditor}
+                    onNavigate={handleNavigate}
+                    onDelete={(id) => remove(id)}
+                    resolveBlockTitle={resolveBlockTitle}
+                    resolveTagName={resolveTagName}
+                    resolveBlockStatus={resolveBlockStatus}
+                    resolveTagStatus={resolveTagStatus}
+                    hasChildren={hasChildrenSet.has(block.id)}
+                    isCollapsed={collapsedIds.has(block.id)}
+                    onToggleCollapse={toggleCollapse}
+                    todoState={getTodoState(block.id)}
+                    onToggleTodo={handleToggleTodo}
+                  />
+                </div>
+              )
+            })}
+            {blocks.length === 0 && (
+              <div className="block-tree-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                <p>No blocks yet. Click + Add block below to start writing.</p>
               </div>
-            )
-          })}
-          {blocks.length === 0 && (
-            <div className="block-tree-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-              <p>No blocks yet. Click + Add block below to start writing.</p>
-            </div>
-          )}
-        </div>
-      </SortableContext>
-      {/* Drag overlay: floating preview of the dragged block */}
-      <DragOverlay dropAnimation={null}>
-        {activeBlock ? (
-          <div
-            className="sortable-block-overlay rounded border bg-background/90 px-3 py-1.5 shadow-lg text-sm opacity-80"
-            style={{ maxWidth: 320 }}
-          >
-            {(activeBlock.content ?? '').slice(0, 80) || 'Empty block'}
+            )}
           </div>
-        ) : null}
-      </DragOverlay>
-    </DndContext>
+        </SortableContext>
+        {/* Drag overlay: floating preview of the dragged block */}
+        <DragOverlay dropAnimation={null}>
+          {activeBlock ? (
+            <div
+              className="sortable-block-overlay rounded border bg-background/90 px-3 py-1.5 shadow-lg text-sm opacity-80"
+              style={{ maxWidth: 320 }}
+            >
+              {(activeBlock.content ?? '').slice(0, 80) || 'Empty block'}
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+
+      {/* Floating date picker for /DATE slash command */}
+      {datePickerOpen && (
+        <>
+          {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
+          <div className="fixed inset-0 z-40" onClick={() => setDatePickerOpen(false)} />
+          <div className="fixed left-1/2 top-1/3 z-50 -translate-x-1/2 rounded-md border bg-popover p-2 shadow-lg">
+            <Calendar
+              mode="single"
+              weekStartsOn={1}
+              showOutsideDays
+              onSelect={(day) => day && handleDatePick(day)}
+            />
+          </div>
+        </>
+      )}
+    </>
   )
 }
