@@ -652,9 +652,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   // ── Enter: save + create new block below + focus it ────────────────
   const handleEnterCreateBlock = useCallback(async () => {
     if (!focusedBlockId) return
-    // Flush current editor content
+    // Flush current editor content and unfocus before creating new block
+    // to prevent the blur handler from firing and causing double operations
     const blockId = focusedBlockId
     handleFlush()
+    setFocused(null) // explicitly clear focus before async createBelow
     // Create an empty block below and focus it
     const newId = await createBelow(blockId)
     if (newId) {

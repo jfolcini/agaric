@@ -18,22 +18,6 @@ import { FormattingToolbar } from '../FormattingToolbar'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
-// Mock BubbleMenu to just render children (it needs a real DOM for positioning)
-vi.mock('@tiptap/react/menus', () => ({
-  BubbleMenu: ({
-    children,
-    className,
-  }: {
-    children: React.ReactNode
-    editor: unknown
-    className?: string
-  }) => (
-    <div data-testid="bubble-menu" className={className}>
-      {children}
-    </div>
-  ),
-}))
-
 // Mock useEditorState to return controlled state
 const mockEditorState = {
   bold: false,
@@ -92,9 +76,9 @@ describe('FormattingToolbar', () => {
   // ── Rendering ────────────────────────────────────────────────────────
 
   describe('rendering', () => {
-    it('renders inside BubbleMenu wrapper', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      expect(screen.getByTestId('bubble-menu')).toBeInTheDocument()
+    it('renders as an always-visible toolbar div', () => {
+      const { container } = render(<FormattingToolbar editor={makeEditor()} />)
+      expect(container.querySelector('.formatting-toolbar')).toBeInTheDocument()
     })
 
     it('renders all five formatting buttons', () => {

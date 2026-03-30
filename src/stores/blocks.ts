@@ -107,7 +107,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
 
     try {
       const result = await createBlock({
-        blockType: 'text',
+        blockType: 'content',
         content,
         parentId: afterBlock.parent_id ?? undefined,
         position: (afterBlock.position ?? 0) + 1,

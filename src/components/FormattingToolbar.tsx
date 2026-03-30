@@ -1,5 +1,5 @@
 /**
- * FormattingToolbar — BubbleMenu that appears when text is selected.
+ * FormattingToolbar — always-visible toolbar rendered above the active editor.
  *
  * Buttons: Bold, Italic, Code | Undo, Redo.
  * Uses onMouseDown + preventDefault so clicks never steal focus from TipTap.
@@ -8,7 +8,6 @@
 
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
-import { BubbleMenu } from '@tiptap/react/menus'
 import { Bold, Code, Italic, Redo2, Undo2 } from 'lucide-react'
 import type React from 'react'
 import { Button } from './ui/button'
@@ -31,10 +30,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
   })
 
   return (
-    <BubbleMenu
-      editor={editor}
-      className="formatting-toolbar flex items-center gap-0.5 rounded-lg border bg-background p-1 shadow-md"
-    >
+    <div className="formatting-toolbar flex items-center gap-0.5 rounded-md border bg-muted/50 p-0.5 mb-1">
       <Button
         variant="ghost"
         size="icon-xs"
@@ -101,6 +97,6 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
       >
         <Redo2 size={14} />
       </Button>
-    </BubbleMenu>
+    </div>
   )
 }

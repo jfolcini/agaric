@@ -86,7 +86,7 @@ export function PageEditor({
       // createBlock from the Tauri API directly and reload.
       const { createBlock } = await import('../lib/tauri')
       const result = await createBlock({
-        blockType: 'text',
+        blockType: 'content',
         content: '',
         parentId: pageId,
         position: 0,

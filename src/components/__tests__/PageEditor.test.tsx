@@ -82,7 +82,7 @@ const mockedInvoke = vi.mocked(invoke)
 function makeBlock(id: string, content: string, parentId: string | null = null, position = 0) {
   return {
     id,
-    block_type: 'text',
+    block_type: 'content',
     content,
     parent_id: parentId,
     position,
@@ -222,7 +222,7 @@ describe('PageEditor', () => {
     // Mock createBlock response for the new block
     mockedInvoke.mockResolvedValueOnce({
       id: 'B2',
-      block_type: 'text',
+      block_type: 'content',
       content: '',
       parent_id: 'PAGE_1',
       position: 1,
@@ -235,7 +235,7 @@ describe('PageEditor', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-        blockType: 'text',
+        blockType: 'content',
         content: '',
         parentId: 'PAGE_1',
         position: 1,
@@ -262,7 +262,7 @@ describe('PageEditor', () => {
     // Mock createBlock response for the new block
     mockedInvoke.mockResolvedValueOnce({
       id: 'B1',
-      block_type: 'text',
+      block_type: 'content',
       content: '',
       parent_id: 'PAGE_1',
       position: 0,
@@ -281,7 +281,7 @@ describe('PageEditor', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-        blockType: 'text',
+        blockType: 'content',
         content: '',
         parentId: 'PAGE_1',
         position: 0,
