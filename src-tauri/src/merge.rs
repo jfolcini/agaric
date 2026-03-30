@@ -157,17 +157,21 @@ pub async fn create_conflict_copy(
     conflict_content: &str,
 ) -> Result<OpRecord, AppError> {
     // 1. Query the original block for metadata
-    let original: Option<(String, Option<String>, Option<i64>)> =
-        sqlx::query_as("SELECT block_type, parent_id, position FROM blocks WHERE id = ?")
-            .bind(original_block_id)
-            .fetch_optional(pool)
-            .await?;
+    let original = sqlx::query!(
+        "SELECT block_type, parent_id, position FROM blocks WHERE id = ?",
+        original_block_id
+    )
+    .fetch_optional(pool)
+    .await?;
 
-    let (block_type, parent_id, position) = original.ok_or_else(|| {
+    let original = original.ok_or_else(|| {
         AppError::NotFound(format!(
             "original block '{original_block_id}' for conflict copy"
         ))
     })?;
+    let block_type = original.block_type;
+    let parent_id = original.parent_id;
+    let position = original.position;
 
     // 2. Generate a new block ID
     let new_block_id = BlockId::new();
@@ -684,16 +688,17 @@ mod tests {
         assert!(payload.parent_id.is_none()); // matches original
 
         // Verify the block in the blocks table
-        let row: (i64, Option<String>) =
-            sqlx::query_as("SELECT is_conflict, conflict_source FROM blocks WHERE id = ?")
-                .bind(&payload.block_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let row = sqlx::query!(
+            r#"SELECT is_conflict as "is_conflict: bool", conflict_source FROM blocks WHERE id = ?"#,
+            payload.block_id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
-        assert_eq!(row.0, 1, "is_conflict should be 1");
+        assert!(row.is_conflict, "is_conflict should be true");
         assert_eq!(
-            row.1,
+            row.conflict_source,
             Some("B1".to_owned()),
             "conflict_source should point to original"
         );
@@ -1031,14 +1036,15 @@ mod tests {
                 assert_eq!(payload.block_type, "content");
 
                 // Verify is_conflict=1 in DB
-                let row: (i64, Option<String>) =
-                    sqlx::query_as("SELECT is_conflict, conflict_source FROM blocks WHERE id = ?")
-                        .bind(&payload.block_id)
-                        .fetch_one(&pool)
-                        .await
-                        .unwrap();
-                assert_eq!(row.0, 1);
-                assert_eq!(row.1, Some("B1".to_owned()));
+                let row = sqlx::query!(
+                    r#"SELECT is_conflict as "is_conflict: bool", conflict_source FROM blocks WHERE id = ?"#,
+                    payload.block_id
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                assert!(row.is_conflict);
+                assert_eq!(row.conflict_source, Some("B1".to_owned()));
             }
             other => panic!("expected ConflictCopy, got: {:?}", other),
         }

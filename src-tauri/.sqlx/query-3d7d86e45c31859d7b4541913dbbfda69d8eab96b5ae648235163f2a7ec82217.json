@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id, content, updated_at FROM block_drafts ORDER BY updated_at ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3d7d86e45c31859d7b4541913dbbfda69d8eab96b5ae648235163f2a7ec82217"
+}

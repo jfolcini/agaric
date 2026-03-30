@@ -99,13 +99,13 @@ pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, A
         tag_ids.push(cap[1].to_string());
     }
     for tag_id in &tag_ids {
-        let name: Option<(Option<String>,)> = sqlx::query_as(
+        let name = sqlx::query_scalar!(
             "SELECT content FROM blocks WHERE id = ? AND block_type = 'tag' AND deleted_at IS NULL",
+            tag_id
         )
-        .bind(tag_id)
         .fetch_optional(pool)
         .await?;
-        let replacement = name.and_then(|(c,)| c).unwrap_or_default();
+        let replacement = name.flatten().unwrap_or_default();
         let pattern = format!("#[{tag_id}]");
         result = result.replace(&pattern, &replacement);
     }
@@ -116,13 +116,13 @@ pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, A
         page_ids.push(cap[1].to_string());
     }
     for page_id in &page_ids {
-        let title: Option<(Option<String>,)> = sqlx::query_as(
+        let title = sqlx::query_scalar!(
             "SELECT content FROM blocks WHERE id = ? AND block_type = 'page' AND deleted_at IS NULL",
+            page_id
         )
-        .bind(page_id)
         .fetch_optional(pool)
         .await?;
-        let replacement = title.and_then(|(c,)| c).unwrap_or_default();
+        let replacement = title.flatten().unwrap_or_default();
         let pattern = format!("[[{page_id}]]");
         result = result.replace(&pattern, &replacement);
     }
@@ -181,31 +181,33 @@ fn strip_for_fts_with_maps(
 /// the FTS entry. If the block is deleted, a conflict, or has no content,
 /// removes it from the index instead.
 pub async fn update_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
-    let row: Option<(String, Option<String>, Option<String>, bool)> =
-        sqlx::query_as("SELECT id, content, deleted_at, is_conflict FROM blocks WHERE id = ?")
-            .bind(block_id)
-            .fetch_optional(pool)
-            .await?;
+    let row = sqlx::query!(
+        r#"SELECT id, content, deleted_at, is_conflict as "is_conflict: bool" FROM blocks WHERE id = ?"#,
+        block_id
+    )
+    .fetch_optional(pool)
+    .await?;
 
     match row {
         None => {
             // Block doesn't exist — remove from FTS if present
             return remove_fts_for_block(pool, block_id).await;
         }
-        Some((_, _, Some(_), _)) => {
+        Some(ref r) if r.deleted_at.is_some() => {
             // deleted_at IS NOT NULL — remove from FTS
             return remove_fts_for_block(pool, block_id).await;
         }
-        Some((_, _, _, true)) => {
+        Some(ref r) if r.is_conflict => {
             // is_conflict = 1 — remove from FTS
             return remove_fts_for_block(pool, block_id).await;
         }
-        Some((_, None, _, _)) => {
+        Some(ref r) if r.content.is_none() => {
             // content IS NULL — remove from FTS
             return remove_fts_for_block(pool, block_id).await;
         }
-        Some((_, Some(content), None, false)) => {
+        Some(r) => {
             // Active block with content — strip and index
+            let content = r.content.unwrap();
             let stripped = strip_for_fts(&content, pool).await?;
 
             // Delete existing entry
@@ -249,27 +251,27 @@ pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
 /// [`update_fts_for_block`] instead.
 pub async fn rebuild_fts_index(pool: &SqlitePool) -> Result<(), AppError> {
     // Load all tag names
-    let tag_rows: Vec<(String, Option<String>)> = sqlx::query_as(
+    let tag_rows = sqlx::query!(
         "SELECT id, content FROM blocks \
-         WHERE block_type = 'tag' AND deleted_at IS NULL AND is_conflict = 0",
+         WHERE block_type = 'tag' AND deleted_at IS NULL AND is_conflict = 0"
     )
     .fetch_all(pool)
     .await?;
     let tag_names: HashMap<String, String> = tag_rows
         .into_iter()
-        .filter_map(|(id, content)| content.map(|c| (id, c)))
+        .filter_map(|r| r.content.map(|c| (r.id, c)))
         .collect();
 
     // Load all page titles
-    let page_rows: Vec<(String, Option<String>)> = sqlx::query_as(
+    let page_rows = sqlx::query!(
         "SELECT id, content FROM blocks \
-         WHERE block_type = 'page' AND deleted_at IS NULL AND is_conflict = 0",
+         WHERE block_type = 'page' AND deleted_at IS NULL AND is_conflict = 0"
     )
     .fetch_all(pool)
     .await?;
     let page_titles: HashMap<String, String> = page_rows
         .into_iter()
-        .filter_map(|(id, content)| content.map(|c| (id, c)))
+        .filter_map(|r| r.content.map(|c| (r.id, c)))
         .collect();
 
     // Start transaction
@@ -281,18 +283,19 @@ pub async fn rebuild_fts_index(pool: &SqlitePool) -> Result<(), AppError> {
         .await?;
 
     // Select all active blocks with content
-    let blocks: Vec<(String, String)> = sqlx::query_as(
+    let blocks = sqlx::query!(
         "SELECT id, content FROM blocks \
-         WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL",
+         WHERE deleted_at IS NULL AND is_conflict = 0 AND content IS NOT NULL"
     )
     .fetch_all(&mut *tx)
     .await?;
 
     // Strip and insert each block
-    for (block_id, content) in &blocks {
+    for row in &blocks {
+        let content = row.content.as_deref().unwrap_or("");
         let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
         sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
-            .bind(block_id)
+            .bind(&row.id)
             .bind(&stripped)
             .execute(&mut *tx)
             .await?;
@@ -415,17 +418,17 @@ pub async fn search_fts(
         };
 
     let rows = sqlx::query_as::<_, FtsSearchRow>(
-        "SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
-                b.deleted_at, b.archived_at, b.is_conflict, \
-                fts.rank as search_rank \
-         FROM fts_blocks fts \
-         JOIN blocks b ON b.id = fts.block_id \
-         WHERE fts_blocks MATCH ?1 \
-           AND b.deleted_at IS NULL AND b.is_conflict = 0 \
-           AND (?2 IS NULL OR fts.rank > ?3 \
-                OR (ABS(fts.rank - ?3) < 1e-9 AND b.id > ?4)) \
-         ORDER BY fts.rank, b.id \
-         LIMIT ?5",
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+                b.deleted_at, b.archived_at, b.is_conflict,
+                fts.rank as search_rank
+         FROM fts_blocks fts
+         JOIN blocks b ON b.id = fts.block_id
+         WHERE fts_blocks MATCH ?1
+           AND b.deleted_at IS NULL AND b.is_conflict = 0
+           AND (?2 IS NULL OR fts.rank > ?3
+                OR (ABS(fts.rank - ?3) < 1e-9 AND b.id > ?4))
+         ORDER BY fts.rank, b.id
+         LIMIT ?5"#,
     )
     .bind(&sanitized) // ?1 -- sanitized FTS5 query
     .bind(cursor_flag) // ?2
@@ -783,12 +786,14 @@ mod tests {
         // Should not error and should not index
         update_fts_for_block(&pool, BLOCK_A).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?")
-            .bind(BLOCK_A)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0);
+        let count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?",
+            BLOCK_A
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 0);
     }
 
     // ======================================================================
@@ -890,11 +895,11 @@ mod tests {
 
         rebuild_fts_index(&pool).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fts_blocks")
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM fts_blocks")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 1, "only block with content should be indexed");
+        assert_eq!(count, 1, "only block with content should be indexed");
     }
 
     #[tokio::test]

@@ -298,39 +298,44 @@ mod tests {
 
     /// Insert a block with the given type and content.
     async fn insert_block(pool: &SqlitePool, id: &str, block_type: &str, content: &str) {
-        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)")
-            .bind(id)
-            .bind(block_type)
-            .bind(content)
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            id,
+            block_type,
+            content,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     /// Insert a block with NULL content (content column omitted).
     async fn insert_block_null_content(pool: &SqlitePool, id: &str, block_type: &str) {
-        sqlx::query("INSERT INTO blocks (id, block_type) VALUES (?, ?)")
-            .bind(id)
-            .bind(block_type)
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type) VALUES (?, ?)",
+            id,
+            block_type,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     /// Soft-delete a block using a fixed, deterministic timestamp.
     async fn soft_delete_block(pool: &SqlitePool, id: &str) {
-        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
-            .bind(FIXED_DELETED_AT)
-            .bind(id)
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "UPDATE blocks SET deleted_at = ? WHERE id = ?",
+            FIXED_DELETED_AT,
+            id,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     /// Mark a block as a conflict (is_conflict = 1).
     async fn mark_conflict(pool: &SqlitePool, id: &str) {
-        sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
-            .bind(id)
+        sqlx::query!("UPDATE blocks SET is_conflict = 1 WHERE id = ?", id)
             .execute(pool)
             .await
             .unwrap();
@@ -338,22 +343,24 @@ mod tests {
 
     /// Associate a block with a tag via `block_tags`.
     async fn add_tag(pool: &SqlitePool, block_id: &str, tag_id: &str) {
-        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-            .bind(block_id)
-            .bind(tag_id)
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)",
+            block_id,
+            tag_id,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     /// Set a date property on a block.
     async fn set_property(pool: &SqlitePool, block_id: &str, key: &str, value_date: Option<&str>) {
-        sqlx::query(
+        sqlx::query!(
             "INSERT OR REPLACE INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)",
+            block_id,
+            key,
+            value_date,
         )
-        .bind(block_id)
-        .bind(key)
-        .bind(value_date)
         .execute(pool)
         .await
         .unwrap();
@@ -381,21 +388,20 @@ mod tests {
 
         rebuild_tags_cache(&pool).await.unwrap();
 
-        let rows: Vec<(String, String, i64)> =
-            sqlx::query_as("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY name")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let rows = sqlx::query!("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY name")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
 
         assert_eq!(rows.len(), 2, "both tags must appear in cache");
         assert_eq!(
-            rows[0],
-            ("TAG02".into(), "low-priority".into(), 0),
+            (&rows[0].tag_id, rows[0].name.as_str(), rows[0].usage_count),
+            (&"TAG02".to_string(), "low-priority", 0),
             "unused tag must have count 0"
         );
         assert_eq!(
-            rows[1],
-            ("TAG01".into(), "urgent".into(), 1),
+            (&rows[1].tag_id, rows[1].name.as_str(), rows[1].usage_count),
+            (&"TAG01".to_string(), "urgent", 1),
             "tagged-once tag must have count 1"
         );
     }
@@ -458,15 +464,15 @@ mod tests {
 
         rebuild_tags_cache(&pool).await.unwrap();
 
-        let rows: Vec<(String, i64)> = sqlx::query_as("SELECT tag_id, usage_count FROM tags_cache")
+        let rows = sqlx::query!("SELECT tag_id, usage_count FROM tags_cache")
             .fetch_all(&pool)
             .await
             .unwrap();
 
         assert_eq!(rows.len(), 1);
         assert_eq!(
-            rows[0],
-            ("TAG01".into(), 0),
+            (&rows[0].tag_id, rows[0].usage_count),
+            (&"TAG01".to_string(), 0),
             "unused tag must appear with count 0"
         );
     }
@@ -503,12 +509,14 @@ mod tests {
 
         rebuild_tags_cache(&pool).await.unwrap();
 
-        let row: (i64,) =
-            sqlx::query_as("SELECT usage_count FROM tags_cache WHERE tag_id = 'HTAG'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(row.0, 5, "usage count must aggregate all tagged blocks");
+        let row = sqlx::query!("SELECT usage_count FROM tags_cache WHERE tag_id = 'HTAG'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            row.usage_count, 5,
+            "usage count must aggregate all tagged blocks"
+        );
     }
 
     #[tokio::test]
@@ -520,23 +528,29 @@ mod tests {
         add_tag(&pool, "BLK01", "TAG01").await;
 
         rebuild_tags_cache(&pool).await.unwrap();
-        let first: Vec<(String, String, i64)> =
-            sqlx::query_as("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id")
+        let first: Vec<_> =
+            sqlx::query!("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
 
         rebuild_tags_cache(&pool).await.unwrap();
-        let second: Vec<(String, String, i64)> =
-            sqlx::query_as("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id")
+        let second: Vec<_> =
+            sqlx::query!("SELECT tag_id, name, usage_count FROM tags_cache ORDER BY tag_id")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
 
         assert_eq!(
-            first, second,
+            first.len(),
+            second.len(),
             "consecutive rebuilds must produce identical results"
         );
+        for (a, b) in first.iter().zip(second.iter()) {
+            assert_eq!(a.tag_id, b.tag_id);
+            assert_eq!(a.name, b.name);
+            assert_eq!(a.usage_count, b.usage_count);
+        }
     }
 
     // ====================================================================
@@ -553,15 +567,20 @@ mod tests {
 
         rebuild_pages_cache(&pool).await.unwrap();
 
-        let rows: Vec<(String, String)> =
-            sqlx::query_as("SELECT page_id, title FROM pages_cache ORDER BY title")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let rows = sqlx::query!("SELECT page_id, title FROM pages_cache ORDER BY title")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
 
         assert_eq!(rows.len(), 2, "only page-type blocks must appear");
-        assert_eq!(rows[0], ("PAGE01".into(), "My First Page".into()));
-        assert_eq!(rows[1], ("PAGE02".into(), "My Second Page".into()));
+        assert_eq!(
+            (rows[0].page_id.as_str(), rows[0].title.as_str()),
+            ("PAGE01", "My First Page"),
+        );
+        assert_eq!(
+            (rows[1].page_id.as_str(), rows[1].title.as_str()),
+            ("PAGE02", "My Second Page"),
+        );
     }
 
     #[tokio::test]
@@ -622,23 +641,27 @@ mod tests {
         insert_block(&pool, "PAGE01", "page", "Stable Page").await;
 
         rebuild_pages_cache(&pool).await.unwrap();
-        let first: Vec<(String, String)> =
-            sqlx::query_as("SELECT page_id, title FROM pages_cache ORDER BY page_id")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let first: Vec<_> = sqlx::query!("SELECT page_id, title FROM pages_cache ORDER BY page_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
 
         rebuild_pages_cache(&pool).await.unwrap();
-        let second: Vec<(String, String)> =
-            sqlx::query_as("SELECT page_id, title FROM pages_cache ORDER BY page_id")
+        let second: Vec<_> =
+            sqlx::query!("SELECT page_id, title FROM pages_cache ORDER BY page_id")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
 
         assert_eq!(
-            first, second,
+            first.len(),
+            second.len(),
             "consecutive rebuilds must produce identical results"
         );
+        for (a, b) in first.iter().zip(second.iter()) {
+            assert_eq!(a.page_id, b.page_id);
+            assert_eq!(a.title, b.title);
+        }
     }
 
     // ====================================================================
@@ -654,16 +677,23 @@ mod tests {
 
         rebuild_agenda_cache(&pool).await.unwrap();
 
-        let rows: Vec<(String, String, String)> =
-            sqlx::query_as("SELECT date, block_id, source FROM agenda_cache")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let rows = sqlx::query!("SELECT date, block_id, source FROM agenda_cache")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
 
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].0, "2025-01-15", "date must match property value");
-        assert_eq!(rows[0].1, "BLK01");
-        assert_eq!(rows[0].2, "property:due", "source must be property:<key>");
+        assert_eq!(
+            rows[0].date.as_str(),
+            "2025-01-15",
+            "date must match property value"
+        );
+        assert_eq!(rows[0].block_id, "BLK01");
+        assert_eq!(
+            rows[0].source.as_str(),
+            "property:due",
+            "source must be property:<key>"
+        );
     }
 
     #[tokio::test]
@@ -676,19 +706,23 @@ mod tests {
 
         rebuild_agenda_cache(&pool).await.unwrap();
 
-        let rows: Vec<(String, String, String)> =
-            sqlx::query_as("SELECT date, block_id, source FROM agenda_cache")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let rows = sqlx::query!("SELECT date, block_id, source FROM agenda_cache")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
 
         assert_eq!(rows.len(), 1);
         assert_eq!(
-            rows[0].0, "2025-03-20",
+            rows[0].date.as_str(),
+            "2025-03-20",
             "date must be extracted from tag content"
         );
-        assert_eq!(rows[0].1, "BLK01");
-        assert_eq!(rows[0].2, "tag:DTAG1", "source must be tag:<tag_id>");
+        assert_eq!(rows[0].block_id, "BLK01");
+        assert_eq!(
+            rows[0].source.as_str(),
+            "tag:DTAG1",
+            "source must be tag:<tag_id>"
+        );
     }
 
     #[tokio::test]
@@ -906,17 +940,17 @@ mod tests {
             .await
             .unwrap();
 
-        let rows: Vec<(String,)> = sqlx::query_as(
+        let rows = sqlx::query!(
             "SELECT target_id FROM block_links WHERE source_id = ? ORDER BY target_id",
+            "01HZ0000000000000000000SRC",
         )
-        .bind("01HZ0000000000000000000SRC")
         .fetch_all(&pool)
         .await
         .unwrap();
 
         assert_eq!(rows.len(), 2, "both link targets must be indexed");
-        assert_eq!(rows[0].0, "01HZ00000000000000000000AB");
-        assert_eq!(rows[1].0, "01HZ00000000000000000000CD");
+        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
+        assert_eq!(rows[1].target_id, "01HZ00000000000000000000CD");
     }
 
     #[tokio::test]
@@ -941,28 +975,30 @@ mod tests {
         assert_eq!(count_rows(&pool, "block_links").await, 2, "initial: A + B");
 
         // Update content: remove B, add C
-        sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
-            .bind("[[01HZ00000000000000000000AB]] [[01HZ00000000000000000000EF]]")
-            .bind("01HZ0000000000000000000SRC")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "UPDATE blocks SET content = ? WHERE id = ?",
+            "[[01HZ00000000000000000000AB]] [[01HZ00000000000000000000EF]]",
+            "01HZ0000000000000000000SRC",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         reindex_block_links(&pool, "01HZ0000000000000000000SRC")
             .await
             .unwrap();
 
-        let rows: Vec<(String,)> = sqlx::query_as(
+        let rows = sqlx::query!(
             "SELECT target_id FROM block_links WHERE source_id = ? ORDER BY target_id",
+            "01HZ0000000000000000000SRC",
         )
-        .bind("01HZ0000000000000000000SRC")
         .fetch_all(&pool)
         .await
         .unwrap();
 
         assert_eq!(rows.len(), 2, "diff: A kept, B removed, C added");
-        assert_eq!(rows[0].0, "01HZ00000000000000000000AB");
-        assert_eq!(rows[1].0, "01HZ00000000000000000000EF");
+        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
+        assert_eq!(rows[1].target_id, "01HZ00000000000000000000EF");
     }
 
     #[tokio::test]
@@ -1152,17 +1188,17 @@ mod tests {
             .await
             .unwrap();
 
-        let rows: Vec<(String,)> = sqlx::query_as(
+        let rows = sqlx::query!(
             "SELECT target_id FROM block_links WHERE source_id = ? ORDER BY target_id",
+            "01HZ0000000000000000000SRC",
         )
-        .bind("01HZ0000000000000000000SRC")
         .fetch_all(&pool)
         .await
         .unwrap();
 
         assert_eq!(rows.len(), 2, "adjacent links must both be parsed");
-        assert_eq!(rows[0].0, "01HZ00000000000000000000AB");
-        assert_eq!(rows[1].0, "01HZ00000000000000000000CD");
+        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
+        assert_eq!(rows[1].target_id, "01HZ00000000000000000000CD");
     }
 
     #[tokio::test]
@@ -1249,13 +1285,12 @@ mod tests {
 
         rebuild_tags_cache(&pool).await.unwrap();
 
-        let row: (i64,) =
-            sqlx::query_as("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG01'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let row = sqlx::query!("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG01'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(
-            row.0, 1,
+            row.usage_count, 1,
             "usage_count should exclude soft-deleted tagged blocks"
         );
     }

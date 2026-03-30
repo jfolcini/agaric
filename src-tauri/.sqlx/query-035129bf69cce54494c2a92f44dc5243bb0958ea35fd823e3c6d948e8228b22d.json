@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(MAX(seq), 0) + 1 as \"next_seq!: i64\" FROM op_log WHERE device_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "next_seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "035129bf69cce54494c2a92f44dc5243bb0958ea35fd823e3c6d948e8228b22d"
+}

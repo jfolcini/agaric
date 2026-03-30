@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT bt.block_id FROM tags_cache tc JOIN block_tags bt ON bt.tag_id = tc.tag_id JOIN blocks b ON b.id = bt.block_id WHERE tc.name LIKE ?1 ESCAPE '\\' AND b.deleted_at IS NULL AND b.is_conflict = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1efa8956a583619fb7464b71a2db340b6fd69449770b65e45a19c09ab6ff0d38"
+}

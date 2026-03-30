@@ -619,27 +619,28 @@ async fn purge_removes_block_tags_properties_and_attachments() {
     .unwrap();
 
     // Verify related rows exist before purge
-    let count_tags: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ?")
-        .bind(&bid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(count_tags.0, 1, "tag association exists before purge");
-
-    let count_props: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
-            .bind(&bid)
+    let count_tags: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags WHERE block_id = ?", bid)
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(count_props.0, 1, "property exists before purge");
+    assert_eq!(count_tags, 1, "tag association exists before purge");
 
-    let count_atts: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM attachments WHERE block_id = ?")
-        .bind(&bid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(count_atts.0, 1, "attachment exists before purge");
+    let count_props: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ?",
+        bid
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count_props, 1, "property exists before purge");
+
+    let count_atts: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM attachments WHERE block_id = ?", bid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count_atts, 1, "attachment exists before purge");
 
     // Soft-delete (required before purge)
     delete_block_inner(&pool, DEV, &mat, bid.clone())
@@ -654,34 +655,34 @@ async fn purge_removes_block_tags_properties_and_attachments() {
     assert_eq!(purge.purged_count, 1, "one block purged");
 
     // Verify all related data is physically gone
-    let block_gone: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE id = ?")
-        .bind(&bid)
+    let block_gone: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", bid)
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(block_gone.0, 0, "block physically removed");
+    assert_eq!(block_gone, 0, "block physically removed");
 
-    let tags_gone: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ?")
-        .bind(&bid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(tags_gone.0, 0, "tag associations removed");
-
-    let props_gone: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
-            .bind(&bid)
+    let tags_gone: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags WHERE block_id = ?", bid)
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(props_gone.0, 0, "properties removed");
+    assert_eq!(tags_gone, 0, "tag associations removed");
 
-    let atts_gone: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM attachments WHERE block_id = ?")
-        .bind(&bid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(atts_gone.0, 0, "attachments removed");
+    let props_gone: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ?",
+        bid
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(props_gone, 0, "properties removed");
+
+    let atts_gone: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM attachments WHERE block_id = ?", bid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(atts_gone, 0, "attachments removed");
 
     // Op log preserved (append-only log is never purged)
     let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
@@ -713,19 +714,18 @@ async fn purge_after_cascade_removes_entire_subtree() {
         .unwrap();
     assert_eq!(purge.purged_count, 2, "parent + child physically purged");
 
-    let parent_gone: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE id = ?")
-        .bind(&parent.id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(parent_gone.0, 0, "parent physically removed");
+    let parent_gone: i64 =
+        sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", parent.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(parent_gone, 0, "parent physically removed");
 
-    let child_gone: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE id = ?")
-        .bind(&child.id)
+    let child_gone: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", child.id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(child_gone.0, 0, "child physically removed");
+    assert_eq!(child_gone, 0, "child physically removed");
 }
 
 // ======================================================================

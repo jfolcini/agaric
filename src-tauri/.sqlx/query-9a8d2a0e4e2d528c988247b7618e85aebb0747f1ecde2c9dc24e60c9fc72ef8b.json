@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE ancestors(id) AS (\n                 SELECT parent_id FROM blocks WHERE id = ?\n                 UNION ALL\n                 SELECT b.parent_id FROM blocks b\n                 INNER JOIN ancestors a ON b.id = a.id\n                 WHERE a.id IS NOT NULL\n             )\n             SELECT 1 as \"v: i32\" FROM ancestors WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "v: i32",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9a8d2a0e4e2d528c988247b7618e85aebb0747f1ecde2c9dc24e60c9fc72ef8b"
+}

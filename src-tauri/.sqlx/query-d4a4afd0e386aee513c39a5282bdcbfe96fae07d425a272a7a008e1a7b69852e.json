@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT bt.block_id FROM block_tags bt JOIN blocks b ON b.id = bt.block_id WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d4a4afd0e386aee513c39a5282bdcbfe96fae07d425a272a7a008e1a7b69852e"
+}

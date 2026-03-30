@@ -8,7 +8,7 @@ hooks = [
     { id = "end-of-file-fixer", exclude = "\\.(png|ico|icns|svg)$" },
     { id = "check-yaml" },
     { id = "check-toml" },
-    { id = "check-json", exclude = "tsconfig.*\\.json$" },
+    { id = "check-json", exclude = "(tsconfig.*\\.json$|\\.sqlx/)" },
     { id = "check-merge-conflict" },
     { id = "check-added-large-files", args = ["--maxkb=500"] },
     { id = "no-commit-to-branch", args = ["--branch=main"], stages = ["pre-push"] },
@@ -23,7 +23,7 @@ name = "biome check"
 entry = "npx biome check"
 language = "system"
 types_or = ["javascript", "jsx", "ts", "tsx", "json"]
-exclude = "src/lib/bindings\\.ts$"
+exclude = "(src/lib/bindings\\.ts$|\\.sqlx/)"
 pass_filenames = true
 
 # TypeScript type checking

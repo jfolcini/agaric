@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM blocks WHERE parent_id IS ? AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "next_pos",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8484c0c131d5ee1987928705111775259267d1f0fe8d34cdd561d1bed6cae725"
+}

@@ -194,11 +194,12 @@ pub async fn create_block_inner(
     // A concurrent purge_block could physically delete the parent between
     // our check and the INSERT, violating the FK constraint.
     if let Some(ref pid) = parent_id {
-        let exists: Option<(i64,)> =
-            sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
-                .bind(pid)
-                .fetch_optional(&mut *tx)
-                .await?;
+        let exists = sqlx::query!(
+            r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+            pid
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
         if exists.is_none() {
             return Err(AppError::NotFound(format!("parent block '{pid}'")));
         }
@@ -208,14 +209,14 @@ pub async fn create_block_inner(
     let effective_position = match position {
         Some(p) => p,
         None => {
-            let row: Option<(i64,)> = sqlx::query_as(
-                "SELECT COALESCE(MAX(position), 0) + 1 FROM blocks \
+            let row = sqlx::query!(
+                "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM blocks \
                  WHERE parent_id IS ? AND deleted_at IS NULL",
+                parent_id
             )
-            .bind(&parent_id)
             .fetch_optional(&mut *tx)
             .await?;
-            row.map(|(p,)| p).unwrap_or(1)
+            row.map(|r| r.next_pos).unwrap_or(1)
         }
     };
 
@@ -275,12 +276,11 @@ pub async fn edit_block_inner(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
-    let existing: Option<BlockRow> = sqlx::query_as(
-        "SELECT id, block_type, content, parent_id, position, \
-                deleted_at, archived_at, is_conflict \
-         FROM blocks WHERE id = ? AND deleted_at IS NULL",
+    let existing: Option<BlockRow> = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        block_id
     )
-    .bind(&block_id)
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -291,16 +291,17 @@ pub async fn edit_block_inner(
     let position = existing.position;
 
     // 2. Find prev_edit inside transaction (inlined from recovery::find_prev_edit)
-    let prev_edit: Option<(String, i64)> = sqlx::query_as(
+    let prev_edit_row = sqlx::query!(
         "SELECT device_id, seq FROM op_log \
          WHERE json_extract(payload, '$.block_id') = ? \
          AND op_type IN ('edit_block', 'create_block') \
          ORDER BY created_at DESC \
          LIMIT 1",
+        block_id
     )
-    .bind(&block_id)
     .fetch_optional(&mut *tx)
     .await?;
+    let prev_edit = prev_edit_row.map(|r| (r.device_id, r.seq));
 
     // 3. Build OpPayload
     let payload = OpPayload::EditBlock(EditBlockPayload {
@@ -354,13 +355,11 @@ pub async fn delete_block_inner(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // Validate inside transaction (TOCTOU-safe)
-    let row: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
-            .bind(&block_id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let (deleted_at,) = row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}'")))?;
-    if deleted_at.is_some() {
+    let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let row = row.ok_or_else(|| AppError::NotFound(format!("block '{block_id}'")))?;
+    if row.deleted_at.is_some() {
         return Err(AppError::InvalidOperation(format!(
             "block '{block_id}' is already deleted"
         )));
@@ -414,22 +413,21 @@ pub async fn restore_block_inner(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // Validate inside transaction (TOCTOU-safe)
-    let row: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
-            .bind(&block_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
+        .fetch_optional(&mut *tx)
+        .await?;
 
     match row {
         None => {
             return Err(AppError::NotFound(format!("block '{block_id}'")));
         }
-        Some((None,)) => {
+        Some(ref r) if r.deleted_at.is_none() => {
             return Err(AppError::InvalidOperation(format!(
                 "block '{block_id}' is not deleted"
             )));
         }
-        Some((Some(ref actual_deleted_at),)) => {
+        Some(ref r) => {
+            let actual_deleted_at = r.deleted_at.as_ref().unwrap();
             if *actual_deleted_at != deleted_at_ref {
                 return Err(AppError::InvalidOperation(format!(
                     "block '{block_id}' deleted_at mismatch: expected '{}', got '{}'",
@@ -488,22 +486,20 @@ pub async fn purge_block_inner(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // Validate inside transaction (TOCTOU-safe)
-    let row: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
-            .bind(&block_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id)
+        .fetch_optional(&mut *tx)
+        .await?;
 
     match row {
         None => {
             return Err(AppError::NotFound(format!("block \'{block_id}\'")));
         }
-        Some((None,)) => {
+        Some(ref r) if r.deleted_at.is_none() => {
             return Err(AppError::InvalidOperation(format!(
                 "block \'{block_id}\' must be soft-deleted before purging"
             )));
         }
-        Some((Some(_),)) => {} // block is deleted, proceed with purge
+        Some(_) => {} // block is deleted, proceed with purge
     }
 
     let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
@@ -690,11 +686,12 @@ pub async fn move_block_inner(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // Validate block exists and is not deleted (TOCTOU-safe)
-    let existing: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
-            .bind(&block_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let existing = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        block_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     if existing.is_none() {
         return Err(AppError::NotFound(format!(
             "block '{block_id}' (not found or deleted)"
@@ -703,11 +700,12 @@ pub async fn move_block_inner(
 
     // Validate new parent exists and is not deleted (TOCTOU-safe)
     if let Some(ref pid) = new_parent_id {
-        let exists: Option<(i64,)> =
-            sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
-                .bind(pid)
-                .fetch_optional(&mut *tx)
-                .await?;
+        let exists = sqlx::query!(
+            r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+            pid
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
         if exists.is_none() {
             return Err(AppError::NotFound(format!("parent block '{pid}'")));
         }
@@ -716,18 +714,18 @@ pub async fn move_block_inner(
         // recursive CTE. If block_id appears among the ancestors, reparenting
         // would create a cycle (e.g. moving A under its own grandchild C in
         // a chain A→B→C).
-        let cycle: Option<(i64,)> = sqlx::query_as(
-            "WITH RECURSIVE ancestors(id) AS ( \
-                 SELECT parent_id FROM blocks WHERE id = ? \
-                 UNION ALL \
-                 SELECT b.parent_id FROM blocks b \
-                 INNER JOIN ancestors a ON b.id = a.id \
-                 WHERE a.id IS NOT NULL \
-             ) \
-             SELECT 1 FROM ancestors WHERE id = ?",
+        let cycle = sqlx::query!(
+            r#"WITH RECURSIVE ancestors(id) AS (
+                 SELECT parent_id FROM blocks WHERE id = ?
+                 UNION ALL
+                 SELECT b.parent_id FROM blocks b
+                 INNER JOIN ancestors a ON b.id = a.id
+                 WHERE a.id IS NOT NULL
+             )
+             SELECT 1 as "v: i32" FROM ancestors WHERE id = ?"#,
+            pid,
+            block_id
         )
-        .bind(pid)
-        .bind(&block_id)
         .fetch_optional(&mut *tx)
         .await?;
         if cycle.is_some() {
@@ -811,11 +809,12 @@ pub async fn reorder_block_inner(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // 3. Validate block exists and is not deleted (TOCTOU-safe inside tx)
-    let existing: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
-            .bind(&block_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let existing = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        block_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     if existing.is_none() {
         return Err(AppError::NotFound(format!(
             "block '{block_id}' (not found or deleted)"
@@ -824,11 +823,12 @@ pub async fn reorder_block_inner(
 
     // 4. Validate parent exists and is not deleted (if provided)
     if let Some(ref pid) = parent_id {
-        let exists: Option<(i64,)> =
-            sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
-                .bind(pid)
-                .fetch_optional(&mut *tx)
-                .await?;
+        let exists = sqlx::query!(
+            r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+            pid
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
         if exists.is_none() {
             return Err(AppError::NotFound(format!("parent block '{pid}'")));
         }
@@ -839,38 +839,38 @@ pub async fn reorder_block_inner(
         // --- Place after a specified sibling ---
 
         // Validate after_id is a sibling under the target parent
-        let after_row: Option<(Option<i64>,)> = sqlx::query_as(
+        let after_row = sqlx::query!(
             "SELECT position FROM blocks \
              WHERE id = ?1 AND parent_id IS ?2 AND deleted_at IS NULL",
+            after_id_val,
+            parent_id
         )
-        .bind(after_id_val)
-        .bind(&parent_id)
         .fetch_optional(&mut *tx)
         .await?;
 
-        let (after_pos_opt,) = after_row.ok_or_else(|| {
+        let after_row = after_row.ok_or_else(|| {
             AppError::NotFound(format!(
                 "after_id '{after_id_val}' is not a sibling under the given parent"
             ))
         })?;
 
-        let before_pos = after_pos_opt.unwrap_or(0);
+        let before_pos = after_row.position.unwrap_or(0);
 
         // Find the next sibling by position (excluding the block being moved)
-        let next_row: Option<(i64,)> = sqlx::query_as(
+        let next_row = sqlx::query!(
             "SELECT position FROM blocks \
              WHERE parent_id IS ?1 AND position > ?2 AND id != ?3 \
                AND deleted_at IS NULL AND position IS NOT NULL \
              ORDER BY position ASC LIMIT 1",
+            parent_id,
+            before_pos,
+            block_id
         )
-        .bind(&parent_id)
-        .bind(before_pos)
-        .bind(&block_id)
         .fetch_optional(&mut *tx)
         .await?;
 
         match next_row {
-            Some((next_pos,)) if next_pos - before_pos <= 1 => {
+            Some(r) if r.position.unwrap_or(0) - before_pos <= 1 => {
                 // Consecutive (or overlapping) — batch-shift all subsequent siblings
                 sqlx::query(
                     "UPDATE blocks SET position = position + 1 \
@@ -891,18 +891,18 @@ pub async fn reorder_block_inner(
         }
     } else {
         // --- Place at the beginning ---
-        let min_row: Option<(Option<i64>,)> = sqlx::query_as(
-            "SELECT MIN(position) FROM blocks \
+        let min_row = sqlx::query!(
+            "SELECT MIN(position) as min_pos FROM blocks \
              WHERE parent_id IS ?1 AND id != ?2 \
                AND deleted_at IS NULL AND position IS NOT NULL",
+            parent_id,
+            block_id
         )
-        .bind(&parent_id)
-        .bind(&block_id)
         .fetch_optional(&mut *tx)
         .await?;
 
         // `MIN()` returns NULL when there are no rows or all positions are NULL.
-        let min_pos = min_row.and_then(|(v,)| v);
+        let min_pos = min_row.and_then(|r| r.min_pos);
 
         match min_pos {
             Some(min) if min <= 1 => {
@@ -1007,12 +1007,11 @@ pub async fn list_blocks_inner(
 }
 
 pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<BlockRow, AppError> {
-    let row: Option<BlockRow> = sqlx::query_as(
-        "SELECT id, block_type, content, parent_id, position, \
-                deleted_at, archived_at, is_conflict \
-         FROM blocks WHERE id = ?",
+    let row: Option<BlockRow> = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool" FROM blocks WHERE id = ?"#,
+        block_id
     )
-    .bind(&block_id)
     .fetch_optional(pool)
     .await?;
 
@@ -1039,11 +1038,12 @@ pub async fn add_tag_inner(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // Validate block exists and is not deleted (TOCTOU-safe)
-    let exists: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
-            .bind(&block_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let exists = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        block_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!(
             "block '{block_id}' (not found or deleted)"
@@ -1051,32 +1051,35 @@ pub async fn add_tag_inner(
     }
 
     // Validate tag_id refers to a block with block_type = 'tag' and is not deleted (TOCTOU-safe)
-    let tag_row: Option<(String,)> =
-        sqlx::query_as("SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL")
-            .bind(&tag_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let tag_row = sqlx::query!(
+        "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        tag_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     match tag_row {
         None => {
             return Err(AppError::NotFound(format!(
                 "tag block '{tag_id}' (not found or deleted)"
             )));
         }
-        Some((ref bt,)) if bt != "tag" => {
+        Some(ref r) if r.block_type != "tag" => {
             return Err(AppError::InvalidOperation(format!(
-                "block '{tag_id}' has block_type '{bt}', expected 'tag'"
+                "block '{tag_id}' has block_type '{}', expected 'tag'",
+                r.block_type
             )));
         }
         _ => {}
     }
 
     // Check for existing association (TOCTOU-safe)
-    let dup: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
-            .bind(&block_id)
-            .bind(&tag_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let dup = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
+        block_id,
+        tag_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     if dup.is_some() {
         return Err(AppError::InvalidOperation("tag already applied".into()));
     }
@@ -1121,11 +1124,12 @@ pub async fn remove_tag_inner(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // Validate block exists and is not deleted (TOCTOU-safe)
-    let exists: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM blocks WHERE id = ? AND deleted_at IS NULL")
-            .bind(&block_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let exists = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        block_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!(
             "block '{block_id}' (not found or deleted)"
@@ -1133,12 +1137,13 @@ pub async fn remove_tag_inner(
     }
 
     // Check association exists (TOCTOU-safe)
-    let assoc: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
-            .bind(&block_id)
-            .bind(&tag_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let assoc = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
+        block_id,
+        tag_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     if assoc.is_none() {
         return Err(AppError::NotFound("tag association".into()));
     }
@@ -1811,15 +1816,15 @@ mod tests {
         .await
         .unwrap();
 
-        let count: (i64,) = sqlx::query_as(
+        let count: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND op_type = 'create_block'",
+            DEV
         )
-        .bind(DEV)
         .fetch_one(&pool)
         .await
         .unwrap();
 
-        assert_eq!(count.0, 1, "exactly one create_block op should be logged");
+        assert_eq!(count, 1, "exactly one create_block op should be logged");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1944,13 +1949,12 @@ mod tests {
         assert_eq!(edited.content, Some("updated".into()));
 
         // Verify in DB
-        let row: (Option<String>,) = sqlx::query_as("SELECT content FROM blocks WHERE id = ?")
-            .bind(&created.id)
+        let row = sqlx::query!("SELECT content FROM blocks WHERE id = ?", created.id)
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(
-            row.0,
+            row.content,
             Some("updated".into()),
             "DB content should be updated"
         );
@@ -1984,7 +1988,7 @@ mod tests {
             .unwrap();
 
         // Check the last op_log entry has prev_edit set
-        let row: (String,) = sqlx::query_as(
+        let row = sqlx::query!(
             "SELECT payload FROM op_log \
              WHERE op_type = 'edit_block' \
              ORDER BY seq DESC LIMIT 1",
@@ -1993,7 +1997,7 @@ mod tests {
         .await
         .unwrap();
 
-        let payload: serde_json::Value = serde_json::from_str(&row.0).unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&row.payload).unwrap();
         assert!(
             !payload["prev_edit"].is_null(),
             "prev_edit should be set on second edit"
@@ -2187,13 +2191,12 @@ mod tests {
 
         assert_eq!(rest_resp.restored_count, 2, "parent + child restored");
 
-        let row: (Option<String>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
-            .bind("RST_PAR")
+        let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", "RST_PAR")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert!(
-            row.0.is_none(),
+            row.deleted_at.is_none(),
             "parent should no longer be deleted after restore"
         );
     }
@@ -2272,8 +2275,7 @@ mod tests {
 
         assert_eq!(resp.purged_count, 1);
 
-        let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM blocks WHERE id = ?")
-            .bind("PURGE1")
+        let exists = sqlx::query!(r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ?"#, "PURGE1")
             .fetch_optional(&pool)
             .await
             .unwrap();
@@ -2682,28 +2684,29 @@ mod tests {
         assert_eq!(resp.new_position, 5);
 
         // Verify DB state
-        let row: (Option<String>, Option<i64>) =
-            sqlx::query_as("SELECT parent_id, position FROM blocks WHERE id = ?")
-                .bind("MV_CHILD")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(
-            row.0,
-            Some("MV_PAR_B".into()),
-            "parent_id should be updated in DB"
-        );
-        assert_eq!(row.1, Some(5), "position should be updated in DB");
-
-        // Verify op_log entry
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND op_type = 'move_block'",
+        let row = sqlx::query!(
+            "SELECT parent_id, position FROM blocks WHERE id = ?",
+            "MV_CHILD"
         )
-        .bind(DEV)
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(count.0, 1, "exactly one move_block op should be logged");
+        assert_eq!(
+            row.parent_id,
+            Some("MV_PAR_B".into()),
+            "parent_id should be updated in DB"
+        );
+        assert_eq!(row.position, Some(5), "position should be updated in DB");
+
+        // Verify op_log entry
+        let count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND op_type = 'move_block'",
+            DEV
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1, "exactly one move_block op should be logged");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2736,17 +2739,18 @@ mod tests {
         assert_eq!(resp.new_position, 10);
 
         // Verify DB state
-        let row: (Option<String>, Option<i64>) =
-            sqlx::query_as("SELECT parent_id, position FROM blocks WHERE id = ?")
-                .bind("MV_ROOT_CHD")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let row = sqlx::query!(
+            "SELECT parent_id, position FROM blocks WHERE id = ?",
+            "MV_ROOT_CHD"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert!(
-            row.0.is_none(),
+            row.parent_id.is_none(),
             "parent_id should be NULL in DB after move to root"
         );
-        assert_eq!(row.1, Some(10), "position should be updated in DB");
+        assert_eq!(row.position, Some(10), "position should be updated in DB");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2850,17 +2854,17 @@ mod tests {
     /// Helper: returns `(id, position)` pairs for all non-deleted children of
     /// `parent_id`, ordered by `position ASC, id ASC`.
     async fn sibling_positions(pool: &SqlitePool, parent_id: Option<&str>) -> Vec<(String, i64)> {
-        let rows: Vec<(String, Option<i64>)> = sqlx::query_as(
+        let rows = sqlx::query!(
             "SELECT id, position FROM blocks \
              WHERE parent_id IS ?1 AND deleted_at IS NULL \
              ORDER BY IFNULL(position, 9999999) ASC, id ASC",
+            parent_id
         )
-        .bind(parent_id)
         .fetch_all(pool)
         .await
         .unwrap();
         rows.into_iter()
-            .map(|(id, pos)| (id, pos.unwrap_or(0)))
+            .map(|r| (r.id, r.position.unwrap_or(0)))
             .collect()
     }
 
@@ -3203,14 +3207,14 @@ mod tests {
         .unwrap();
 
         // Verify op_log entry
-        let count: (i64,) = sqlx::query_as(
+        let count: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND op_type = 'move_block'",
+            DEV
         )
-        .bind(DEV)
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(count.0, 1, "reorder should log exactly one move_block op");
+        assert_eq!(count, 1, "reorder should log exactly one move_block op");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3301,13 +3305,14 @@ mod tests {
         assert_eq!(resp.tag_id, "AT_TAG");
 
         // Verify block_tags row
-        let row: Option<(i64,)> =
-            sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
-                .bind("AT_BLK")
-                .bind("AT_TAG")
-                .fetch_optional(&pool)
-                .await
-                .unwrap();
+        let row = sqlx::query!(
+            r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
+            "AT_BLK",
+            "AT_TAG"
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
         assert!(row.is_some(), "block_tags row should exist after add_tag");
     }
 
@@ -3411,13 +3416,14 @@ mod tests {
         assert_eq!(resp.tag_id, "RT_TAG");
 
         // Verify block_tags is empty
-        let row: Option<(i64,)> =
-            sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
-                .bind("RT_BLK")
-                .bind("RT_TAG")
-                .fetch_optional(&pool)
-                .await
-                .unwrap();
+        let row = sqlx::query!(
+            r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
+            "RT_BLK",
+            "RT_TAG"
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
         assert!(
             row.is_none(),
             "block_tags row should be gone after remove_tag"
@@ -3929,15 +3935,15 @@ mod tests {
         );
 
         // Verify exactly 2 edit ops in the log
-        let count: (i64,) = sqlx::query_as(
+        let count: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block' \
              AND json_extract(payload, '$.block_id') = ?",
+            block_id
         )
-        .bind(&block_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(count.0, 2, "exactly 2 edit ops should be logged");
+        assert_eq!(count, 2, "exactly 2 edit ops should be logged");
     }
 
     // ======================================================================
@@ -4010,11 +4016,11 @@ mod tests {
         );
 
         // Verify blocks table still exists
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert!(count.0 >= 0, "blocks table should still exist");
+        assert!(count >= 0, "blocks table should still exist");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

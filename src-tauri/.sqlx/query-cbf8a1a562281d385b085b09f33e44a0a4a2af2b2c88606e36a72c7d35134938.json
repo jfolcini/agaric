@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at FROM op_log WHERE device_id = ? AND seq = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "seq",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "parent_seqs",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "hash",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "op_type",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "payload",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 6,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "cbf8a1a562281d385b085b09f33e44a0a4a2af2b2c88606e36a72c7d35134938"
+}

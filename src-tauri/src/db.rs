@@ -143,9 +143,13 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         // Attempt to insert a block with a non-existent parent_id should fail
         // because of the FK constraint on blocks.parent_id -> blocks.id.
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "INSERT INTO blocks (id, block_type, content, parent_id) \
-             VALUES ('CHILD', 'content', 'hi', 'NONEXISTENT_PARENT')",
+             VALUES (?, ?, ?, ?)",
+            "CHILD",
+            "content",
+            "hi",
+            "NONEXISTENT_PARENT",
         )
         .execute(&pool)
         .await;
@@ -158,11 +162,11 @@ mod tests {
     #[tokio::test]
     async fn init_pool_runs_migrations_creating_blocks_table() {
         let (pool, _dir) = test_pool().await;
-        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(row.0, 0, "blocks table should exist and be empty");
+        assert_eq!(count, 0, "blocks table should exist and be empty");
     }
 
     #[tokio::test]
@@ -230,8 +234,11 @@ mod tests {
     #[tokio::test]
     async fn init_pools_write_pool_can_write() {
         let (pools, _dir) = test_pools().await;
-        let result = sqlx::query(
-            "INSERT INTO blocks (id, block_type, content) VALUES ('W1', 'content', 'hello')",
+        let result = sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            "W1",
+            "content",
+            "hello",
         )
         .execute(&pools.write)
         .await;
@@ -242,8 +249,11 @@ mod tests {
     async fn init_pools_read_pool_rejects_writes() {
         let (pools, _dir) = test_pools().await;
         // The read pool has PRAGMA query_only = ON, so writes should fail
-        let result = sqlx::query(
-            "INSERT INTO blocks (id, block_type, content) VALUES ('R1', 'content', 'hello')",
+        let result = sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            "R1",
+            "content",
+            "hello",
         )
         .execute(&pools.read)
         .await;
@@ -257,17 +267,24 @@ mod tests {
     async fn init_pools_read_pool_rejects_update() {
         let (pools, _dir) = test_pools().await;
         // First insert via write pool
-        sqlx::query(
-            "INSERT INTO blocks (id, block_type, content) VALUES ('RU1', 'content', 'hello')",
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            "RU1",
+            "content",
+            "hello",
         )
         .execute(&pools.write)
         .await
         .unwrap();
 
         // Attempt UPDATE via read pool should fail
-        let result = sqlx::query("UPDATE blocks SET content = 'modified' WHERE id = 'RU1'")
-            .execute(&pools.read)
-            .await;
+        let result = sqlx::query!(
+            "UPDATE blocks SET content = ? WHERE id = ?",
+            "modified",
+            "RU1",
+        )
+        .execute(&pools.read)
+        .await;
         assert!(
             result.is_err(),
             "read pool should reject UPDATE due to query_only pragma"
@@ -278,15 +295,18 @@ mod tests {
     async fn init_pools_read_pool_rejects_delete() {
         let (pools, _dir) = test_pools().await;
         // First insert via write pool
-        sqlx::query(
-            "INSERT INTO blocks (id, block_type, content) VALUES ('RD1', 'content', 'hello')",
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            "RD1",
+            "content",
+            "hello",
         )
         .execute(&pools.write)
         .await
         .unwrap();
 
         // Attempt DELETE via read pool should fail
-        let result = sqlx::query("DELETE FROM blocks WHERE id = 'RD1'")
+        let result = sqlx::query!("DELETE FROM blocks WHERE id = ?", "RD1")
             .execute(&pools.read)
             .await;
         assert!(
@@ -299,39 +319,49 @@ mod tests {
     async fn init_pools_read_pool_allows_select() {
         let (pools, _dir) = test_pools().await;
         // Insert via write pool
-        sqlx::query(
-            "INSERT INTO blocks (id, block_type, content) VALUES ('RS1', 'content', 'hello')",
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            "RS1",
+            "content",
+            "hello",
         )
         .execute(&pools.write)
         .await
         .unwrap();
 
         // SELECT via read pool should work
-        let row: (String,) = sqlx::query_as("SELECT content FROM blocks WHERE id = 'RS1'")
+        let row = sqlx::query!("SELECT content FROM blocks WHERE id = ?", "RS1")
             .fetch_one(&pools.read)
             .await
             .unwrap();
-        assert_eq!(row.0, "hello", "read pool should allow SELECT queries");
+        assert_eq!(
+            row.content.as_deref(),
+            Some("hello"),
+            "read pool should allow SELECT queries"
+        );
     }
 
     #[tokio::test]
     async fn init_pools_read_sees_write_pool_data() {
         let (pools, _dir) = test_pools().await;
         // Write through write pool
-        sqlx::query(
-            "INSERT INTO blocks (id, block_type, content) VALUES ('VIS1', 'content', 'visible')",
+        sqlx::query!(
+            "INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)",
+            "VIS1",
+            "content",
+            "visible",
         )
         .execute(&pools.write)
         .await
         .unwrap();
 
         // Read pool should see the committed data (WAL mode)
-        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE id = 'VIS1'")
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", "VIS1")
             .fetch_one(&pools.read)
             .await
             .unwrap();
         assert_eq!(
-            row.0, 1,
+            count, 1,
             "read pool should see data committed by write pool"
         );
     }
@@ -340,12 +370,12 @@ mod tests {
     async fn init_pools_migrations_ran_on_write_pool() {
         let (pools, _dir) = test_pools().await;
         // Verify migrations ran by checking blocks table exists (via read pool)
-        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
             .fetch_one(&pools.read)
             .await
             .unwrap();
         assert_eq!(
-            row.0, 0,
+            count, 0,
             "blocks table should exist (migrations ran on write pool)"
         );
     }

@@ -171,136 +171,206 @@ pub async fn purge_block(pool: &SqlitePool, block_id: &str) -> Result<u64, AppEr
         .execute(&mut *tx)
         .await?;
 
-    // The recursive CTE reused in every batch operation below.
-    // Each query re-evaluates it, but SQLite's engine is efficient for
-    // in-memory trees.  This avoids temp-table management overhead and
-    // keeps each statement self-contained.
-    const DESC_CTE: &str = "WITH RECURSIVE descendants(id) AS ( \
-        SELECT id FROM blocks WHERE id = ? \
-        UNION ALL \
-        SELECT b.id FROM blocks b \
-        INNER JOIN descendants d ON b.parent_id = d.id \
-    )";
-
     // --- Batch-clean dependent tables (one query each) ---
+    // Each query embeds the recursive CTE inline.  SQLite's engine is
+    // efficient for in-memory trees, and this keeps each statement
+    // self-contained for compile-time verification by the sqlx macros.
 
     // block_tags: either column may reference a descendant
-    sqlx::query(&format!(
-        "{DESC_CTE} DELETE FROM block_tags \
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         DELETE FROM block_tags \
          WHERE block_id IN (SELECT id FROM descendants) \
-            OR tag_id IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+            OR tag_id IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .execute(&mut *tx)
     .await?;
 
     // block_properties: owned by descendants
-    sqlx::query(&format!(
-        "{DESC_CTE} DELETE FROM block_properties \
-         WHERE block_id IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         DELETE FROM block_properties \
+         WHERE block_id IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .execute(&mut *tx)
     .await?;
 
     // block_properties: value_ref pointing into the subtree (NULLify, don't
     // delete — the row belongs to a block outside the subtree)
-    sqlx::query(&format!(
-        "{DESC_CTE} UPDATE block_properties SET value_ref = NULL \
-         WHERE value_ref IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         UPDATE block_properties SET value_ref = NULL \
+         WHERE value_ref IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .execute(&mut *tx)
     .await?;
 
     // block_links: either end may be in the subtree
-    sqlx::query(&format!(
-        "{DESC_CTE} DELETE FROM block_links \
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         DELETE FROM block_links \
          WHERE source_id IN (SELECT id FROM descendants) \
-            OR target_id IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+            OR target_id IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .execute(&mut *tx)
     .await?;
 
     // agenda_cache
-    sqlx::query(&format!(
-        "{DESC_CTE} DELETE FROM agenda_cache \
-         WHERE block_id IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         DELETE FROM agenda_cache \
+         WHERE block_id IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .execute(&mut *tx)
     .await?;
 
     // tags_cache
-    sqlx::query(&format!(
-        "{DESC_CTE} DELETE FROM tags_cache \
-         WHERE tag_id IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         DELETE FROM tags_cache \
+         WHERE tag_id IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .execute(&mut *tx)
     .await?;
 
     // pages_cache
-    sqlx::query(&format!(
-        "{DESC_CTE} DELETE FROM pages_cache \
-         WHERE page_id IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         DELETE FROM pages_cache \
+         WHERE page_id IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .execute(&mut *tx)
     .await?;
 
     // attachments — collect fs_path values BEFORE deleting rows so we can
     // remove the physical files after the transaction commits successfully.
-    let attachment_paths: Vec<(String,)> = sqlx::query_as(&format!(
-        "{DESC_CTE} SELECT fs_path FROM attachments \
-         WHERE block_id IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+    let attachment_rows = sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         SELECT fs_path FROM attachments \
+         WHERE block_id IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .fetch_all(&mut *tx)
     .await?;
 
-    sqlx::query(&format!(
-        "{DESC_CTE} DELETE FROM attachments \
-         WHERE block_id IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         DELETE FROM attachments \
+         WHERE block_id IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .execute(&mut *tx)
     .await?;
 
     // block_drafts
-    sqlx::query(&format!(
-        "{DESC_CTE} DELETE FROM block_drafts \
-         WHERE block_id IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         DELETE FROM block_drafts \
+         WHERE block_id IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .execute(&mut *tx)
     .await?;
 
     // Nullify conflict_source refs from blocks outside the subtree.
-    sqlx::query(&format!(
-        "{DESC_CTE} UPDATE blocks SET conflict_source = NULL \
-         WHERE conflict_source IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         UPDATE blocks SET conflict_source = NULL \
+         WHERE conflict_source IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .execute(&mut *tx)
     .await?;
 
     // fts_blocks (FTS5 virtual table — no FK, must be cleaned explicitly)
-    sqlx::query(&format!(
-        "{DESC_CTE} DELETE FROM fts_blocks \
-         WHERE block_id IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         DELETE FROM fts_blocks \
+         WHERE block_id IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .execute(&mut *tx)
     .await?;
 
     // --- Delete blocks (deferred FK allows single-statement batch) ---
-    let result = sqlx::query(&format!(
-        "{DESC_CTE} DELETE FROM blocks \
-         WHERE id IN (SELECT id FROM descendants)"
-    ))
-    .bind(block_id)
+    let result = sqlx::query!(
+        "WITH RECURSIVE descendants(id) AS ( \
+             SELECT id FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+         ) \
+         DELETE FROM blocks \
+         WHERE id IN (SELECT id FROM descendants)",
+        block_id,
+    )
     .execute(&mut *tx)
     .await?;
 
@@ -311,7 +381,8 @@ pub async fn purge_block(pool: &SqlitePool, block_id: &str) -> Result<u64, AppEr
     // This MUST happen after commit — if we deleted files first and the
     // transaction rolled back, we'd lose files still referenced by DB rows.
     // Worst case here: orphan files on disk (better than dangling DB refs).
-    for (path,) in &attachment_paths {
+    for r in &attachment_rows {
+        let path = &r.fs_path;
         if let Err(e) = std::fs::remove_file(path) {
             // Log but don't fail — the DB rows are already gone.
             // NotFound is expected if the file was already cleaned up.
@@ -368,15 +439,15 @@ mod tests {
         parent_id: Option<&str>,
         position: Option<i64>,
     ) {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO blocks (id, block_type, content, parent_id, position) \
              VALUES (?, ?, ?, ?, ?)",
+            id,
+            block_type,
+            content,
+            parent_id,
+            position,
         )
-        .bind(id)
-        .bind(block_type)
-        .bind(content)
-        .bind(parent_id)
-        .bind(position)
         .execute(pool)
         .await
         .unwrap();
@@ -384,22 +455,20 @@ mod tests {
 
     /// Read `deleted_at` for a block. Returns None if block does not exist.
     async fn get_deleted_at(pool: &SqlitePool, id: &str) -> Option<String> {
-        sqlx::query_as::<_, (Option<String>,)>("SELECT deleted_at FROM blocks WHERE id = ?")
-            .bind(id)
+        sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", id)
             .fetch_optional(pool)
             .await
             .unwrap()
-            .and_then(|r| r.0)
+            .and_then(|r| r.deleted_at)
     }
 
     /// Check if a block row exists in the `blocks` table.
     async fn block_exists(pool: &SqlitePool, id: &str) -> bool {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE id = ?")
-            .bind(id)
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks WHERE id = ?", id)
             .fetch_one(pool)
             .await
             .unwrap();
-        count.0 > 0
+        count > 0
     }
 
     // ======================================================================
@@ -696,12 +765,14 @@ mod tests {
         .await;
 
         // Independently delete grandchild with a fixed timestamp.
-        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
-            .bind(FIXED_DELETED_AT)
-            .bind(GRANDCHILD)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "UPDATE blocks SET deleted_at = ? WHERE id = ?",
+            FIXED_DELETED_AT,
+            GRANDCHILD,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         // Cascade-delete parent (child gets t2, grandchild already has FIXED_DELETED_AT).
         let (t2, _) = cascade_soft_delete(&pool, PARENT).await.unwrap();
@@ -772,54 +843,65 @@ mod tests {
         insert_block(&pool, "TARGET", "content", "link target", None, None).await;
 
         // block_tags
-        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-            .bind(BLOCK_A)
-            .bind("TAG001")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)",
+            BLOCK_A,
+            "TAG001",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         // block_properties
-        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
-            .bind(BLOCK_A)
-            .bind("status")
-            .bind("done")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)",
+            BLOCK_A,
+            "status",
+            "done",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         // block_links
-        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
-            .bind(BLOCK_A)
-            .bind("TARGET")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "INSERT INTO block_links (source_id, target_id) VALUES (?, ?)",
+            BLOCK_A,
+            "TARGET",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let count = purge_block(&pool, BLOCK_A).await.unwrap();
         assert_eq!(count, 1);
 
-        let tags: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ?")
-            .bind(BLOCK_A)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(tags.0, 0, "block_tags rows should be purged");
+        let tags: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM block_tags WHERE block_id = ?",
+            BLOCK_A
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tags, 0, "block_tags rows should be purged");
 
-        let props: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
-                .bind(BLOCK_A)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(props.0, 0, "block_properties rows should be purged");
+        let props: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ?",
+            BLOCK_A,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(props, 0, "block_properties rows should be purged");
 
-        let links: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-            .bind(BLOCK_A)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(links.0, 0, "block_links rows should be purged");
+        let links: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM block_links WHERE source_id = ?",
+            BLOCK_A
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(links, 0, "block_links rows should be purged");
 
         assert!(
             block_exists(&pool, "TAG001").await,
@@ -841,21 +923,23 @@ mod tests {
         insert_block(&pool, "CONTENT", "content", "my note", None, None).await;
         insert_block(&pool, "TAG001", "tag", "important", None, None).await;
 
-        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-            .bind("CONTENT")
-            .bind("TAG001")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)",
+            "CONTENT",
+            "TAG001",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         purge_block(&pool, "TAG001").await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE tag_id = ?")
-            .bind("TAG001")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0, "block_tags row should be cleaned via tag_id");
+        let count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags WHERE tag_id = ?", "TAG001")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0, "block_tags row should be cleaned via tag_id");
         assert!(
             block_exists(&pool, "CONTENT").await,
             "content block should survive"
@@ -869,24 +953,30 @@ mod tests {
         insert_block(&pool, "REFTGT", "content", "ref target", None, None).await;
         insert_block(&pool, "OWNER", "content", "owner", None, None).await;
 
-        sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, ?, ?)")
-            .bind("OWNER")
-            .bind("link")
-            .bind("REFTGT")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, ?, ?)",
+            "OWNER",
+            "link",
+            "REFTGT",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         purge_block(&pool, "REFTGT").await.unwrap();
 
-        let value_ref: (Option<String>,) =
-            sqlx::query_as("SELECT value_ref FROM block_properties WHERE block_id = ? AND key = ?")
-                .bind("OWNER")
-                .bind("link")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(value_ref.0, None, "value_ref should be NULLed after purge");
+        let row = sqlx::query!(
+            "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = ?",
+            "OWNER",
+            "link",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row.value_ref, None,
+            "value_ref should be NULLed after purge"
+        );
     }
 
     #[tokio::test]
@@ -897,22 +987,28 @@ mod tests {
         insert_block(&pool, "CONFLICT", "content", "conflict copy", None, None).await;
 
         // ORIGINAL.conflict_source → CONFLICT
-        sqlx::query("UPDATE blocks SET conflict_source = ? WHERE id = ?")
-            .bind("CONFLICT")
-            .bind("ORIGINAL")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "UPDATE blocks SET conflict_source = ? WHERE id = ?",
+            "CONFLICT",
+            "ORIGINAL",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         purge_block(&pool, "CONFLICT").await.unwrap();
 
-        let cs: (Option<String>,) =
-            sqlx::query_as("SELECT conflict_source FROM blocks WHERE id = ?")
-                .bind("ORIGINAL")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(cs.0, None, "conflict_source should be NULLed after purge");
+        let row = sqlx::query!(
+            "SELECT conflict_source FROM blocks WHERE id = ?",
+            "ORIGINAL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row.conflict_source, None,
+            "conflict_source should be NULLed after purge"
+        );
     }
 
     #[tokio::test]
@@ -932,33 +1028,36 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, BLOCK_A, "content", "task with date", None, None).await;
-        sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
-            .bind(BLOCK_A)
-            .bind("due")
-            .bind("2025-06-01")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)",
+            BLOCK_A,
+            "due",
+            "2025-06-01",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         crate::cache::rebuild_agenda_cache(&pool).await.unwrap();
 
-        let before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache WHERE block_id = ?")
-            .bind(BLOCK_A)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert!(
-            before.0 > 0,
-            "agenda_cache should have an entry before purge"
-        );
+        let before: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM agenda_cache WHERE block_id = ?",
+            BLOCK_A,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(before > 0, "agenda_cache should have an entry before purge");
 
         purge_block(&pool, BLOCK_A).await.unwrap();
 
-        let after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agenda_cache WHERE block_id = ?")
-            .bind(BLOCK_A)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(after.0, 0, "agenda_cache rows should be purged");
+        let after: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM agenda_cache WHERE block_id = ?",
+            BLOCK_A,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(after, 0, "agenda_cache rows should be purged");
     }
 
     #[tokio::test]
@@ -968,21 +1067,21 @@ mod tests {
         insert_block(&pool, "PTAG01", "tag", "purge-me-tag", None, None).await;
         crate::cache::rebuild_tags_cache(&pool).await.unwrap();
 
-        let before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags_cache WHERE tag_id = ?")
-            .bind("PTAG01")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert!(before.0 > 0, "tags_cache should have an entry before purge");
+        let before: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM tags_cache WHERE tag_id = ?", "PTAG01",)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(before > 0, "tags_cache should have an entry before purge");
 
         purge_block(&pool, "PTAG01").await.unwrap();
 
-        let after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags_cache WHERE tag_id = ?")
-            .bind("PTAG01")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(after.0, 0, "tags_cache rows should be purged");
+        let after: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM tags_cache WHERE tag_id = ?", "PTAG01",)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(after, 0, "tags_cache rows should be purged");
     }
 
     #[tokio::test]
@@ -992,24 +1091,25 @@ mod tests {
         insert_block(&pool, "PPAGE1", "page", "Purge Page", None, None).await;
         crate::cache::rebuild_pages_cache(&pool).await.unwrap();
 
-        let before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pages_cache WHERE page_id = ?")
-            .bind("PPAGE1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert!(
-            before.0 > 0,
-            "pages_cache should have an entry before purge"
-        );
+        let before: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM pages_cache WHERE page_id = ?",
+            "PPAGE1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(before > 0, "pages_cache should have an entry before purge");
 
         purge_block(&pool, "PPAGE1").await.unwrap();
 
-        let after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pages_cache WHERE page_id = ?")
-            .bind("PPAGE1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(after.0, 0, "pages_cache rows should be purged");
+        let after: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM pages_cache WHERE page_id = ?",
+            "PPAGE1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(after, 0, "pages_cache rows should be purged");
     }
 
     #[tokio::test]
@@ -1017,29 +1117,31 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, BLOCK_A, "content", "has attachment", None, None).await;
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "ATT001",
+            BLOCK_A,
+            "image/png",
+            "photo.png",
+            1024_i64,
+            "/tmp/photo.png",
+            "2025-01-01T00:00:00Z",
         )
-        .bind("ATT001")
-        .bind(BLOCK_A)
-        .bind("image/png")
-        .bind("photo.png")
-        .bind(1024_i64)
-        .bind("/tmp/photo.png")
-        .bind("2025-01-01T00:00:00Z")
         .execute(&pool)
         .await
         .unwrap();
 
         purge_block(&pool, BLOCK_A).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM attachments WHERE block_id = ?")
-            .bind(BLOCK_A)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0, "attachments rows should be purged");
+        let count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM attachments WHERE block_id = ?",
+            BLOCK_A,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 0, "attachments rows should be purged");
     }
 
     #[tokio::test]
@@ -1061,17 +1163,17 @@ mod tests {
             ("ATT_F1", file1.to_str().unwrap()),
             ("ATT_F2", file2.to_str().unwrap()),
         ] {
-            sqlx::query(
+            sqlx::query!(
                 "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
+                att_id,
+                BLOCK_A,
+                "image/png",
+                "photo.png",
+                1024_i64,
+                path,
+                "2025-01-01T00:00:00Z",
             )
-            .bind(att_id)
-            .bind(BLOCK_A)
-            .bind("image/png")
-            .bind("photo.png")
-            .bind(1024_i64)
-            .bind(path)
-            .bind("2025-01-01T00:00:00Z")
             .execute(&pool)
             .await
             .unwrap();
@@ -1117,17 +1219,17 @@ mod tests {
         .await;
 
         // Attachment row points to a non-existent file path.
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "ATT_GONE",
+            BLOCK_A,
+            "application/pdf",
+            "report.pdf",
+            2048_i64,
+            "/tmp/definitely_does_not_exist_12345.pdf",
+            "2025-01-01T00:00:00Z",
         )
-        .bind("ATT_GONE")
-        .bind(BLOCK_A)
-        .bind("application/pdf")
-        .bind("report.pdf")
-        .bind(2048_i64)
-        .bind("/tmp/definitely_does_not_exist_12345.pdf")
-        .bind("2025-01-01T00:00:00Z")
         .execute(&pool)
         .await
         .unwrap();
@@ -1139,14 +1241,15 @@ mod tests {
             "block should be purged even when attachment file is missing"
         );
 
-        let att_count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM attachments WHERE block_id = ?")
-                .bind(BLOCK_A)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let att_count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM attachments WHERE block_id = ?",
+            BLOCK_A,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(
-            att_count.0, 0,
+            att_count, 0,
             "attachment DB rows should be purged regardless"
         );
     }
@@ -1156,22 +1259,26 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         insert_block(&pool, BLOCK_A, "content", "has draft", None, None).await;
-        sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
-            .bind(BLOCK_A)
-            .bind("draft content")
-            .bind("2025-01-01T00:00:00Z")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)",
+            BLOCK_A,
+            "draft content",
+            "2025-01-01T00:00:00Z",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         purge_block(&pool, BLOCK_A).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_drafts WHERE block_id = ?")
-            .bind(BLOCK_A)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 0, "block_drafts rows should be purged");
+        let count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM block_drafts WHERE block_id = ?",
+            BLOCK_A,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 0, "block_drafts rows should be purged");
     }
 
     #[tokio::test]
@@ -1183,21 +1290,25 @@ mod tests {
             .await
             .unwrap();
 
-        let before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?")
-            .bind(BLOCK_A)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert!(before.0 > 0, "fts_blocks should have an entry before purge");
+        let before: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?",
+            BLOCK_A,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(before > 0, "fts_blocks should have an entry before purge");
 
         purge_block(&pool, BLOCK_A).await.unwrap();
 
-        let after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?")
-            .bind(BLOCK_A)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(after.0, 0, "fts_blocks rows should be purged");
+        let after: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?",
+            BLOCK_A,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(after, 0, "fts_blocks rows should be purged");
     }
 
     // ======================================================================

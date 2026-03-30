@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT device_id as \"device_id!: String\", MAX(seq) AS \"seq!: i64\"\n         FROM op_log\n         WHERE op_type = 'edit_block'\n           AND json_extract(payload, '$.block_id') = ?\n         GROUP BY device_id\n         ORDER BY device_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "seq!: i64",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "a96edd92af480f61a52b372ab2ba0faf8d35b757d92748dcfb885b086ad0cc1d"
+}

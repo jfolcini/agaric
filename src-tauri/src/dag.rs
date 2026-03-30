@@ -1021,7 +1021,7 @@ mod tests {
 
         // Verify seq 3 survived
         assert_eq!(edit2.seq, 3);
-        let (remaining,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log")
+        let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
             .fetch_one(&pool)
             .await
             .unwrap();

@@ -93,34 +93,34 @@ fn resolve_expr<'a>(
     Box::pin(async move {
         match expr {
             TagExpr::Tag(tag_id) => {
-                let rows: Vec<(String,)> = sqlx::query_as(
+                let rows = sqlx::query_scalar!(
                     "SELECT bt.block_id FROM block_tags bt \
                      JOIN blocks b ON b.id = bt.block_id \
                      WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+                    tag_id
                 )
-                .bind(tag_id)
                 .fetch_all(pool)
                 .await?;
-                Ok(rows.into_iter().map(|r| r.0).collect())
+                Ok(rows.into_iter().collect())
             }
             TagExpr::Prefix(prefix) => {
                 // Single JOIN query: resolve all matching tags and collect
                 // their block_ids in one round-trip (avoids N+1 per-tag
                 // queries).
                 let escaped = format!("{}%", escape_like(prefix));
-                let rows: Vec<(String,)> = sqlx::query_as(
+                let rows = sqlx::query_scalar!(
                     "SELECT DISTINCT bt.block_id \
                      FROM tags_cache tc \
                      JOIN block_tags bt ON bt.tag_id = tc.tag_id \
                      JOIN blocks b ON b.id = bt.block_id \
                      WHERE tc.name LIKE ?1 ESCAPE '\\' \
                        AND b.deleted_at IS NULL AND b.is_conflict = 0",
+                    escaped
                 )
-                .bind(&escaped)
                 .fetch_all(pool)
                 .await?;
 
-                Ok(rows.into_iter().map(|r| r.0).collect())
+                Ok(rows.into_iter().collect())
             }
             TagExpr::And(exprs) => {
                 if exprs.is_empty() {
@@ -148,15 +148,14 @@ fn resolve_expr<'a>(
                 // PERF: The universal set loads ALL non-deleted, non-conflict
                 // block ids into memory.  For a personal notes app (<100 k
                 // blocks) this is fine; at larger scale, push NOT into SQL.
-                let all: Vec<(String,)> = sqlx::query_as(
-                    "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
+                let all = sqlx::query_scalar!(
+                    "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0"
                 )
                 .fetch_all(pool)
                 .await?;
                 let inner_set: FxHashSet<String> = resolve_expr(pool, inner).await?;
                 Ok(all
                     .into_iter()
-                    .map(|r| r.0)
                     .filter(|id| !inner_set.contains(id))
                     .collect())
             }
@@ -283,12 +282,14 @@ pub async fn list_tags_by_prefix(
     pool: &SqlitePool,
     prefix: &str,
 ) -> Result<Vec<TagCacheRow>, AppError> {
-    let rows = sqlx::query_as::<_, TagCacheRow>(
-        "SELECT tag_id, name, usage_count, updated_at \
-         FROM tags_cache WHERE name LIKE ?1 ESCAPE '\\' ORDER BY name LIMIT ?2",
+    let like_pattern = format!("{}%", escape_like(prefix));
+    let rows = sqlx::query_as!(
+        TagCacheRow,
+        r#"SELECT tag_id, name, usage_count, updated_at
+         FROM tags_cache WHERE name LIKE ?1 ESCAPE '\' ORDER BY name LIMIT ?2"#,
+        like_pattern,
+        MAX_TAGS_PREFIX
     )
-    .bind(format!("{}%", escape_like(prefix)))
-    .bind(MAX_TAGS_PREFIX)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -307,12 +308,13 @@ pub async fn list_tags_for_block(
     pool: &SqlitePool,
     block_id: &str,
 ) -> Result<Vec<String>, AppError> {
-    let rows: Vec<(String,)> =
-        sqlx::query_as("SELECT tag_id FROM block_tags WHERE block_id = ?1 ORDER BY tag_id")
-            .bind(block_id)
-            .fetch_all(pool)
-            .await?;
-    Ok(rows.into_iter().map(|r| r.0).collect())
+    let rows = sqlx::query_scalar!(
+        "SELECT tag_id FROM block_tags WHERE block_id = ?1 ORDER BY tag_id",
+        block_id
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
 }
 
 // ---------------------------------------------------------------------------

@@ -559,14 +559,14 @@ async fn edit_block_sequential_edits_chain_prev_edit() {
         .unwrap();
 
     // Inspect the last edit_block op_log entry
-    let row: (String,) = sqlx::query_as(
-        "SELECT payload FROM op_log WHERE op_type = 'edit_block' ORDER BY seq DESC LIMIT 1",
+    let row = sqlx::query!(
+        "SELECT payload FROM op_log WHERE op_type = 'edit_block' ORDER BY seq DESC LIMIT 1"
     )
     .fetch_one(&pool)
     .await
     .unwrap();
 
-    let payload: serde_json::Value = serde_json::from_str(&row.0).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&row.payload).unwrap();
     assert!(
         !payload["prev_edit"].is_null(),
         "second edit must have prev_edit set in op_log payload"
@@ -993,8 +993,7 @@ async fn purge_block_removes_from_db() {
     assert_eq!(resp.purged_count, 1, "one block must be purged");
     assert_eq!(resp.block_id, "PURGE01", "block_id must match");
 
-    let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM blocks WHERE id = ?")
-        .bind("PURGE01")
+    let exists = sqlx::query_scalar!("SELECT id FROM blocks WHERE id = ?", "PURGE01")
         .fetch_optional(&pool)
         .await
         .unwrap();
@@ -1066,33 +1065,41 @@ async fn purge_block_removes_tags_properties_attachments_links() {
         .unwrap();
 
     // Verify all gone
-    let tags: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ?")
-        .bind("PURGE_REL")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(tags.0, 0, "block_tags must be purged");
+    let tags: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM block_tags WHERE block_id = ?",
+        "PURGE_REL"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tags, 0, "block_tags must be purged");
 
-    let props: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
-        .bind("PURGE_REL")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(props.0, 0, "block_properties must be purged");
+    let props: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ?",
+        "PURGE_REL"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(props, 0, "block_properties must be purged");
 
-    let atts: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM attachments WHERE block_id = ?")
-        .bind("PURGE_REL")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(atts.0, 0, "attachments must be purged");
+    let atts: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM attachments WHERE block_id = ?",
+        "PURGE_REL"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(atts, 0, "attachments must be purged");
 
-    let links: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links WHERE source_id = ?")
-        .bind("PURGE_REL")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(links.0, 0, "block_links must be purged");
+    let links: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM block_links WHERE source_id = ?",
+        "PURGE_REL"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(links, 0, "block_links must be purged");
 }
 
 // ======================================================================
@@ -1845,13 +1852,14 @@ async fn add_tag_associates_block_with_tag() {
     assert_eq!(resp.tag_id, "AT_TAG", "tag_id must match");
 
     // Verify block_tags row
-    let row: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
-            .bind("AT_BLK")
-            .bind("AT_TAG")
-            .fetch_optional(&pool)
-            .await
-            .unwrap();
+    let row = sqlx::query_scalar!(
+        "SELECT block_id FROM block_tags WHERE block_id = ? AND tag_id = ?",
+        "AT_BLK",
+        "AT_TAG"
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
     assert!(row.is_some(), "block_tags row must exist after add_tag");
 }
 
@@ -2004,13 +2012,14 @@ async fn remove_tag_deletes_association() {
     assert_eq!(resp.tag_id, "RT_TAG", "tag_id must match");
 
     // Verify association gone
-    let row: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
-            .bind("RT_BLK")
-            .bind("RT_TAG")
-            .fetch_optional(&pool)
-            .await
-            .unwrap();
+    let row = sqlx::query_scalar!(
+        "SELECT block_id FROM block_tags WHERE block_id = ? AND tag_id = ?",
+        "RT_BLK",
+        "RT_TAG"
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
     assert!(
         row.is_none(),
         "block_tags row must be gone after remove_tag"

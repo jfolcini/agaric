@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE descendants(id) AS ( SELECT id FROM blocks WHERE id = ? UNION ALL SELECT b.id FROM blocks b INNER JOIN descendants d ON b.parent_id = d.id ) DELETE FROM block_drafts WHERE block_id IN (SELECT id FROM descendants)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "b26256c4d8ad653404d487fbdaf32a26d3b712ea9d8edee1b4ee0fcdaa29f5f2"
+}

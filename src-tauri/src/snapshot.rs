@@ -151,30 +151,35 @@ pub fn decode_snapshot(data: &[u8]) -> Result<SnapshotData, AppError> {
 /// Accepts a `&mut SqliteConnection` (typically from a read transaction) so
 /// that all SELECT queries see a consistent point-in-time view of the database.
 async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTables, AppError> {
-    let blocks: Vec<BlockSnapshot> = sqlx::query_as(
-        "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source FROM blocks",
+    let blocks: Vec<BlockSnapshot> = sqlx::query_as!(
+        BlockSnapshot,
+        "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source FROM blocks"
     )
     .fetch_all(&mut *conn)
     .await?;
 
     let block_tags: Vec<BlockTagSnapshot> =
-        sqlx::query_as("SELECT block_id, tag_id FROM block_tags")
+        sqlx::query_as!(BlockTagSnapshot, "SELECT block_id, tag_id FROM block_tags")
             .fetch_all(&mut *conn)
             .await?;
 
-    let block_properties: Vec<BlockPropertySnapshot> = sqlx::query_as(
-        "SELECT block_id, key, value_text, value_num, value_date, value_ref FROM block_properties",
+    let block_properties: Vec<BlockPropertySnapshot> = sqlx::query_as!(
+        BlockPropertySnapshot,
+        "SELECT block_id, key, value_text, value_num, value_date, value_ref FROM block_properties"
     )
     .fetch_all(&mut *conn)
     .await?;
 
-    let block_links: Vec<BlockLinkSnapshot> =
-        sqlx::query_as("SELECT source_id, target_id FROM block_links")
-            .fetch_all(&mut *conn)
-            .await?;
+    let block_links: Vec<BlockLinkSnapshot> = sqlx::query_as!(
+        BlockLinkSnapshot,
+        "SELECT source_id, target_id FROM block_links"
+    )
+    .fetch_all(&mut *conn)
+    .await?;
 
-    let attachments: Vec<AttachmentSnapshot> = sqlx::query_as(
-        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at FROM attachments",
+    let attachments: Vec<AttachmentSnapshot> = sqlx::query_as!(
+        AttachmentSnapshot,
+        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at FROM attachments"
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -195,10 +200,9 @@ async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTables, A
 async fn collect_frontier(
     conn: &mut SqliteConnection,
 ) -> Result<(BTreeMap<String, i64>, String), AppError> {
-    let rows: Vec<(String, i64)> =
-        sqlx::query_as("SELECT device_id, MAX(seq) as max_seq FROM op_log GROUP BY device_id")
-            .fetch_all(&mut *conn)
-            .await?;
+    let rows = sqlx::query!("SELECT device_id, MAX(seq) as max_seq FROM op_log GROUP BY device_id")
+        .fetch_all(&mut *conn)
+        .await?;
 
     if rows.is_empty() {
         return Err(AppError::Snapshot(
@@ -207,19 +211,22 @@ async fn collect_frontier(
     }
 
     let mut frontier = BTreeMap::new();
-    for (device_id, max_seq) in &rows {
-        frontier.insert(device_id.clone(), *max_seq);
+    for row in &rows {
+        // device_id is NOT NULL but sqlx infers Option in GROUP BY context
+        if let Some(ref device_id) = row.device_id {
+            frontier.insert(device_id.clone(), row.max_seq);
+        }
     }
 
     // Get the hash of the overall latest op (by created_at DESC, then device_id, seq)
     // Safe to use fetch_one here: we verified above that at least one row exists.
-    let latest_hash: (String,) = sqlx::query_as(
-        "SELECT hash FROM op_log ORDER BY created_at DESC, device_id DESC, seq DESC LIMIT 1",
+    let latest_hash: String = sqlx::query_scalar!(
+        "SELECT hash FROM op_log ORDER BY created_at DESC, device_id DESC, seq DESC LIMIT 1"
     )
     .fetch_one(&mut *conn)
     .await?;
 
-    Ok((frontier, latest_hash.0))
+    Ok((frontier, latest_hash))
 }
 
 // ---------------------------------------------------------------------------
@@ -423,12 +430,14 @@ pub async fn compact_op_log(
     let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
     // Check if any ops exist before the cutoff
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE created_at < ?")
-        .bind(&cutoff_str)
-        .fetch_one(pool)
-        .await?;
+    let count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
+        cutoff_str
+    )
+    .fetch_one(pool)
+    .await?;
 
-    if count.0 == 0 {
+    if count == 0 {
         return Ok(None);
     }
 
@@ -446,12 +455,12 @@ pub async fn compact_op_log(
 
 /// Fetch the most recent complete snapshot's compressed data.
 pub async fn get_latest_snapshot(pool: &SqlitePool) -> Result<Option<(String, Vec<u8>)>, AppError> {
-    let row: Option<(String, Vec<u8>)> = sqlx::query_as(
-        "SELECT id, data FROM log_snapshots WHERE status = 'complete' ORDER BY id DESC LIMIT 1",
+    let row = sqlx::query!(
+        "SELECT id, data FROM log_snapshots WHERE status = 'complete' ORDER BY id DESC LIMIT 1"
     )
     .fetch_optional(pool)
     .await?;
-    Ok(row)
+    Ok(row.map(|r| (r.id, r.data)))
 }
 
 // ---------------------------------------------------------------------------
@@ -682,13 +691,14 @@ mod tests {
         assert!(!snapshot_id.is_empty());
 
         // Read back from log_snapshots
-        let (id, data): (String, Vec<u8>) = sqlx::query_as(
+        let row = sqlx::query!(
             "SELECT id, data FROM log_snapshots WHERE id = ? AND status = 'complete'",
+            snapshot_id
         )
-        .bind(&snapshot_id)
         .fetch_one(&pool)
         .await
         .unwrap();
+        let (id, data) = (row.id, row.data);
 
         assert_eq!(id, snapshot_id);
 
@@ -716,17 +726,17 @@ mod tests {
         let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
 
         // After create, status should be 'complete'
-        let (status,): (String,) = sqlx::query_as("SELECT status FROM log_snapshots WHERE id = ?")
-            .bind(&snapshot_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let status: String =
+            sqlx::query_scalar!("SELECT status FROM log_snapshots WHERE id = ?", snapshot_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
 
         assert_eq!(status, "complete");
 
         // No pending rows should remain
-        let (pending_count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'")
+        let pending_count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
@@ -751,19 +761,21 @@ mod tests {
         let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
 
         // Read the snapshot data blob
-        let (_, snap_data): (String, Vec<u8>) =
-            sqlx::query_as("SELECT id, data FROM log_snapshots WHERE id = ?")
-                .bind(&snapshot_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let snap_row = sqlx::query!(
+            "SELECT id, data FROM log_snapshots WHERE id = ?",
+            snapshot_id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let snap_data = snap_row.data;
 
         // Insert additional data that should be wiped by apply
         insert_block(&pool, "block-extra", "extra").await;
         insert_op_at(&pool, device_id, "block-extra", "2025-06-01T00:00:00Z").await;
 
         // Verify extra data exists
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -773,20 +785,20 @@ mod tests {
         let restored = apply_snapshot(&pool, &snap_data).await.unwrap();
 
         // Only original block should remain
-        let (count_after,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        let count_after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(count_after, 1, "should have 1 block after apply");
 
-        let (id,): (String,) = sqlx::query_as("SELECT id FROM blocks")
+        let id: String = sqlx::query_scalar!("SELECT id FROM blocks")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(id, "block-orig");
 
         // Op log should be wiped
-        let (op_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log")
+        let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -842,14 +854,14 @@ mod tests {
         assert_eq!(restored.tables.blocks[0].id, "blk-A");
 
         // Verify DB state
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(count, 1);
 
-        let (content,): (Option<String>,) =
-            sqlx::query_as("SELECT content FROM blocks WHERE id = 'blk-A'")
+        let content: Option<String> =
+            sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'blk-A'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
@@ -880,7 +892,7 @@ mod tests {
         assert!(result.is_none(), "should return None when no old ops");
 
         // No snapshots should have been created
-        let (snap_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM log_snapshots")
+        let snap_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -907,15 +919,15 @@ mod tests {
         assert!(result.is_some(), "should return Some(snapshot_id)");
 
         // A complete snapshot should exist
-        let (snap_count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+        let snap_count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
         assert_eq!(snap_count, 1);
 
         // Old ops should be purged
-        let (op_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log")
+        let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -947,14 +959,14 @@ mod tests {
         assert!(result.is_some());
 
         // Only the recent op should remain
-        let (op_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log")
+        let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(op_count, 1, "recent op should be preserved");
 
         // Verify it's the recent one
-        let (created_at,): (String,) = sqlx::query_as("SELECT created_at FROM op_log")
+        let created_at: String = sqlx::query_scalar!("SELECT created_at FROM op_log")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -1175,14 +1187,14 @@ mod tests {
         assert!(result.is_some(), "should compact when old ops exist");
 
         // Only device-B's recent op should remain
-        let (remaining,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log")
+        let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(remaining, 1, "only the recent op should survive compaction");
 
         // Verify it's device-B's recent op
-        let (dev,): (String,) = sqlx::query_as("SELECT device_id FROM op_log")
+        let dev: String = sqlx::query_scalar!("SELECT device_id FROM op_log")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -1333,49 +1345,50 @@ mod tests {
         assert_eq!(restored.tables.attachments.len(), 1);
 
         // Verify DB state for each table
-        let (blk_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks")
+        let blk_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(blk_count, 3);
 
-        let (tag_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_tags")
+        let tag_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(tag_count, 1);
 
-        let (prop_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_properties")
+        let prop_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(prop_count, 1);
 
-        let (link_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM block_links")
+        let link_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_links")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(link_count, 1);
 
-        let (att_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM attachments")
+        let att_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM attachments")
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(att_count, 1);
 
         // Verify specific content
-        let (tag_id,): (String,) =
-            sqlx::query_as("SELECT tag_id FROM block_tags WHERE block_id = 'blk-parent'")
+        let tag_id: String =
+            sqlx::query_scalar!("SELECT tag_id FROM block_tags WHERE block_id = 'blk-parent'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
         assert_eq!(tag_id, "tag-urgent");
 
-        let (due,): (Option<String>,) =
-            sqlx::query_as("SELECT value_date FROM block_properties WHERE block_id = 'blk-child'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let due: Option<String> = sqlx::query_scalar!(
+            "SELECT value_date FROM block_properties WHERE block_id = 'blk-child'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(due.as_deref(), Some("2025-06-01"));
     }
 
@@ -1400,8 +1413,8 @@ mod tests {
             .unwrap();
         assert!(first.is_some(), "first compaction should create a snapshot");
 
-        let (snap_count_1,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+        let snap_count_1: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
@@ -1417,8 +1430,8 @@ mod tests {
         );
 
         // Still only 1 snapshot (second compaction didn't create another)
-        let (snap_count_2,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+        let snap_count_2: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
@@ -1451,7 +1464,7 @@ mod tests {
             "old op with +00:00 suffix should still be detected as old"
         );
 
-        let (remaining,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log")
+        let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -1479,8 +1492,8 @@ mod tests {
         let snap3 = create_snapshot(&pool, device_id).await.unwrap();
 
         // All 3 should exist in the DB
-        let (total,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+        let total: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();

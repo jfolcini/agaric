@@ -180,12 +180,13 @@ async fn recover_single_draft(
     // table, the draft is irrelevant. Just report it as "already flushed" so
     // it gets cleaned up (the caller deletes all draft rows regardless of
     // outcome).
-    let block_exists: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE id = ? AND deleted_at IS NULL")
-            .bind(&draft.block_id)
-            .fetch_one(pool)
-            .await?;
-    if block_exists.0 == 0 {
+    let block_exists: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        draft.block_id
+    )
+    .fetch_one(pool)
+    .await?;
+    if block_exists == 0 {
         eprintln!(
             "[recovery] Skipping draft for missing/deleted block {}",
             draft.block_id
@@ -212,19 +213,19 @@ async fn recover_single_draft(
         "block_id must be alphanumeric (ULID format), got: '{}'",
         draft.block_id,
     );
-    let row: (i64,) = sqlx::query_as(
+    let row: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log \
          WHERE payload LIKE '%\"block_id\":\"' || ? || '\"%' \
          AND json_extract(payload, '$.block_id') = ? \
          AND op_type IN ('edit_block', 'create_block') \
          AND created_at >= ?",
+        draft.block_id,
+        draft.block_id,
+        draft.updated_at
     )
-    .bind(&draft.block_id)
-    .bind(&draft.block_id)
-    .bind(&draft.updated_at)
     .fetch_one(pool)
     .await?;
-    let matching_ops = row.0;
+    let matching_ops = row;
 
     if matching_ops == 0 {
         // Draft was NOT flushed — recover it.
@@ -295,20 +296,20 @@ pub async fn find_prev_edit(
                 .all(|c| c.is_ascii_alphanumeric() || c == '-'),
         "block_id must be alphanumeric (ULID format), got: '{block_id}'",
     );
-    let maybe_row: Option<(String, i64)> = sqlx::query_as(
+    let maybe_row = sqlx::query!(
         "SELECT device_id, seq FROM op_log \
          WHERE payload LIKE '%\"block_id\":\"' || ? || '\"%' \
          AND json_extract(payload, '$.block_id') = ? \
          AND op_type IN ('edit_block', 'create_block') \
          ORDER BY created_at DESC \
          LIMIT 1",
+        block_id,
+        block_id
     )
-    .bind(block_id)
-    .bind(block_id)
     .fetch_optional(pool)
     .await?;
 
-    Ok(maybe_row)
+    Ok(maybe_row.map(|r| (r.device_id, r.seq)))
 }
 
 // ---------------------------------------------------------------------------
@@ -391,18 +392,18 @@ mod tests {
         assert_eq!(report.pending_snapshots_deleted, 1);
 
         // Verify: pending row gone, complete row remains
-        let remaining: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM log_snapshots")
+        let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(remaining.0, 1);
+        assert_eq!(remaining, 1);
 
-        let complete: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+        let complete: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(complete.0, 1);
+        assert_eq!(complete, 1);
     }
 
     #[tokio::test]
@@ -437,12 +438,12 @@ mod tests {
         assert_eq!(report.pending_snapshots_deleted, 2);
 
         // All 3 complete rows should remain
-        let remaining: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+        let remaining: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(remaining.0, 3);
+        assert_eq!(remaining, 3);
     }
 
     // === 2. Single draft recovery ===
@@ -468,16 +469,16 @@ mod tests {
         assert_eq!(report.drafts_already_flushed, 0);
 
         // A synthetic edit_block op should exist in op_log
-        let row: (i64,) = sqlx::query_as(
+        let row: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM op_log \
              WHERE json_extract(payload, '$.block_id') = ? \
              AND op_type = 'edit_block'",
+            block_id
         )
-        .bind(block_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(row.0, 1);
+        assert_eq!(row, 1);
 
         // The draft row should be deleted
         let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
@@ -514,7 +515,7 @@ mod tests {
         append_local_op(&pool, device_id, op).await.unwrap();
 
         // Count ops before recovery
-        let before: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log")
+        let before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -525,11 +526,11 @@ mod tests {
         assert_eq!(report.drafts_already_flushed, 1);
 
         // No new op should have been created
-        let after: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM op_log")
+        let after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(before.0, after.0);
+        assert_eq!(before, after);
 
         // Draft row should be deleted
         let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
@@ -571,12 +572,12 @@ mod tests {
         assert!(report.draft_errors.is_empty());
 
         // No synthetic op should be created
-        let count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block'")
+        let count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(count.0, 0, "no op for nonexistent block");
+        assert_eq!(count, 0, "no op for nonexistent block");
 
         // Draft row should still be cleaned up
         let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
@@ -624,17 +625,17 @@ mod tests {
         assert_eq!(report.drafts_recovered, vec![block_id]);
 
         // The synthetic edit_block should reference the create op as prev_edit
-        let row: (String,) = sqlx::query_as(
+        let row: String = sqlx::query_scalar!(
             "SELECT payload FROM op_log \
              WHERE op_type = 'edit_block' \
              AND json_extract(payload, '$.block_id') = ?",
+            block_id
         )
-        .bind(block_id)
         .fetch_one(&pool)
         .await
         .unwrap();
 
-        let payload: serde_json::Value = serde_json::from_str(&row.0).unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&row).unwrap();
         let prev_edit = payload["prev_edit"].as_array().unwrap();
         assert_eq!(prev_edit[0].as_str().unwrap(), device_id);
         assert_eq!(prev_edit[1].as_i64().unwrap(), create_record.seq);
@@ -681,18 +682,18 @@ mod tests {
         assert_eq!(report.drafts_recovered, vec![block_id]);
 
         // The synthetic op should reference the edit_block (seq 2), not create_block (seq 1)
-        let row: (String,) = sqlx::query_as(
+        let row: String = sqlx::query_scalar!(
             "SELECT payload FROM op_log \
              WHERE op_type = 'edit_block' \
              AND json_extract(payload, '$.block_id') = ? \
              ORDER BY created_at DESC LIMIT 1",
+            block_id
         )
-        .bind(block_id)
         .fetch_one(&pool)
         .await
         .unwrap();
 
-        let payload: serde_json::Value = serde_json::from_str(&row.0).unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&row).unwrap();
         let prev_edit = payload["prev_edit"].as_array().unwrap();
         assert_eq!(prev_edit[0].as_str().unwrap(), device_id);
         assert_eq!(prev_edit[1].as_i64().unwrap(), edit_record.seq);
@@ -721,12 +722,12 @@ mod tests {
         assert!(report.draft_errors.is_empty());
 
         // All 3 synthetic ops should be in the op_log
-        let count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block'")
+        let count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(count.0, 3);
+        assert_eq!(count, 3);
 
         // All drafts should be deleted
         let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
@@ -989,13 +990,13 @@ mod tests {
         assert_eq!(report.drafts_recovered, vec![block_id]);
 
         // F06: Verify blocks.content was updated to the draft's content
-        let row: (String,) = sqlx::query_as("SELECT content FROM blocks WHERE id = ?")
-            .bind(block_id)
+        let row: String = sqlx::query_scalar!("SELECT content FROM blocks WHERE id = ?", block_id)
             .fetch_one(&pool)
             .await
-            .unwrap();
+            .unwrap()
+            .unwrap_or_default();
         assert_eq!(
-            row.0, "recovered content",
+            row, "recovered content",
             "blocks.content must equal the recovered draft content, not the old value"
         );
     }
@@ -1024,13 +1025,13 @@ mod tests {
 
         for i in 1..=3 {
             let bid = format!("block-multi-{i}");
-            let row: (String,) = sqlx::query_as("SELECT content FROM blocks WHERE id = ?")
-                .bind(&bid)
+            let row: String = sqlx::query_scalar!("SELECT content FROM blocks WHERE id = ?", bid)
                 .fetch_one(&pool)
                 .await
-                .unwrap();
+                .unwrap()
+                .unwrap_or_default();
             assert_eq!(
-                row.0,
+                row,
                 format!("new-{i}"),
                 "blocks.content for {bid} must be updated"
             );
@@ -1063,13 +1064,13 @@ mod tests {
         let report = recover_at_boot(&pool, device_id).await.unwrap();
         assert_eq!(report.drafts_already_flushed, 1);
 
-        let row: (String,) = sqlx::query_as("SELECT content FROM blocks WHERE id = ?")
-            .bind(block_id)
+        let row: String = sqlx::query_scalar!("SELECT content FROM blocks WHERE id = ?", block_id)
             .fetch_one(&pool)
             .await
-            .unwrap();
+            .unwrap()
+            .unwrap_or_default();
         assert_eq!(
-            row.0, "current content",
+            row, "current content",
             "already-flushed drafts must not overwrite blocks.content"
         );
     }
@@ -1109,12 +1110,12 @@ mod tests {
             "draft row must be deleted even for soft-deleted blocks"
         );
 
-        let op_count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block'")
+        let op_count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(op_count.0, 0, "no synthetic op for soft-deleted block");
+        assert_eq!(op_count, 0, "no synthetic op for soft-deleted block");
     }
 
     #[tokio::test]
@@ -1143,12 +1144,12 @@ mod tests {
             "draft row must be deleted for nonexistent blocks"
         );
 
-        let op_count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block'")
+        let op_count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(op_count.0, 0, "no synthetic op for nonexistent block");
+        assert_eq!(op_count, 0, "no synthetic op for nonexistent block");
     }
 
     // === 10. #29: debug_assert on ULID format ===
