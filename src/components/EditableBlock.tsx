@@ -66,18 +66,38 @@ export function EditableBlock({
     [rovingEditor, content, setFocused, edit, splitBlock],
   )
 
-  const handleBlur = useCallback(() => {
-    if (!rovingEditor.activeBlockId) return
-    const changed = rovingEditor.unmount()
-    if (changed !== null) {
-      if (changed.includes('\n')) {
-        splitBlock(blockId, changed)
-      } else {
-        edit(blockId, changed)
+  const handleBlur = useCallback(
+    (e: React.FocusEvent) => {
+      if (!rovingEditor.activeBlockId) return
+
+      // Don't unmount if focus moved to a suggestion popup or formatting toolbar —
+      // these are transient UI elements that need the editor to stay mounted.
+      const related = e.relatedTarget as HTMLElement | null
+      if (related) {
+        if (
+          related.closest('.suggestion-popup') ||
+          related.closest('.suggestion-list') ||
+          related.closest('.formatting-toolbar')
+        ) {
+          return
+        }
       }
-    }
-    setFocused(null)
-  }, [rovingEditor, blockId, edit, splitBlock, setFocused])
+
+      // Also check if a suggestion popup is currently open in the DOM
+      if (document.querySelector('.suggestion-popup')) return
+
+      const changed = rovingEditor.unmount()
+      if (changed !== null) {
+        if (changed.includes('\n')) {
+          splitBlock(blockId, changed)
+        } else {
+          edit(blockId, changed)
+        }
+      }
+      setFocused(null)
+    },
+    [rovingEditor, blockId, edit, splitBlock, setFocused],
+  )
 
   if (!isFocused) {
     return (

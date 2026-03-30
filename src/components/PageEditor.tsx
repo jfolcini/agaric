@@ -148,6 +148,19 @@ export function PageEditor({
       {/* Block tree — loads children of pageId */}
       <BlockTree parentId={pageId} onNavigateToPage={onNavigateToPage} />
 
+      {/* Add block button — always directly beneath the last block */}
+      <div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground"
+          onClick={handleAddBlock}
+        >
+          <Plus className="h-4 w-4" />
+          Add block
+        </Button>
+      </div>
+
       {/* Detail panel — tab bar shown when a block has been focused, content shown when tab selected */}
       {effectiveBlockId != null && (
         <div className="detail-panel rounded-lg border" data-testid="detail-panel">
@@ -218,19 +231,6 @@ export function PageEditor({
           )}
         </div>
       )}
-
-      {/* Add block button */}
-      <div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-muted-foreground"
-          onClick={handleAddBlock}
-        >
-          <Plus className="h-4 w-4" />
-          Add block
-        </Button>
-      </div>
     </div>
   )
 }
