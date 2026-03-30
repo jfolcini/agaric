@@ -590,23 +590,34 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const handleDatePick = useCallback(
     async (d: Date) => {
       setDatePickerOpen(false)
-      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const dd = String(d.getDate()).padStart(2, '0')
+      const mm = String(d.getMonth() + 1).padStart(2, '0')
+      const yyyy = d.getFullYear()
+      const dateStr = `${dd}/${mm}/${yyyy}`
+      // Also check for the journal YYYY-MM-DD format to avoid duplicates
+      const isoStr = `${yyyy}-${mm}-${dd}`
 
-      // Find or create the date page
+      // Find existing date page (check both formats) or create
       const resp = await listBlocks({ blockType: 'page', limit: 500 })
-      let datePageId = resp.items.find((b) => b.content === dateStr)?.id
+      let datePageId = resp.items.find((b) => b.content === dateStr || b.content === isoStr)?.id
       if (!datePageId) {
         const newPage = await createBlock({ blockType: 'page', content: dateStr })
         datePageId = newPage.id
+        // Update resolve cache so the link chip shows the date immediately
+        blockInfoCache.current.set(newPage.id, { title: dateStr, deleted: false })
+        pagesListRef.current = [...pagesListRef.current, { id: newPage.id, title: dateStr }]
+        setResolveVersion((v) => v + 1)
       }
 
-      // Restore focus + cursor position, then insert the block link
+      // Restore focus and insert the block link at cursor position
       if (rovingEditor.editor && datePageId) {
         const editor = rovingEditor.editor
         const id = datePageId
-        editor.view.focus()
+        // Re-focus the editor — the blur guard kept it mounted
+        editor.commands.focus()
+        // Insert on next frame to ensure focus is settled
         requestAnimationFrame(() => {
-          editor.chain().focus('end').insertBlockLink(id).run()
+          editor.chain().focus().insertBlockLink(id).run()
         })
       }
     },
@@ -976,7 +987,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
           {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
           <div className="fixed inset-0 z-40" onClick={() => setDatePickerOpen(false)} />
-          <div className="fixed left-1/2 top-1/3 z-50 -translate-x-1/2 rounded-md border bg-popover p-2 shadow-lg">
+          <div className="date-picker-popup fixed left-1/2 top-1/3 z-50 -translate-x-1/2 rounded-md border bg-popover p-2 shadow-lg">
             <Calendar
               mode="single"
               weekStartsOn={1}

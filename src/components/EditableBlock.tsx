@@ -70,21 +70,24 @@ export function EditableBlock({
     (e: React.FocusEvent) => {
       if (!rovingEditor.activeBlockId) return
 
-      // Don't unmount if focus moved to a suggestion popup or formatting toolbar —
-      // these are transient UI elements that need the editor to stay mounted.
+      // Don't unmount if focus moved to a suggestion popup, formatting toolbar,
+      // or date picker — these are transient UI elements that need the editor to stay mounted.
       const related = e.relatedTarget as HTMLElement | null
       if (related) {
         if (
           related.closest('.suggestion-popup') ||
           related.closest('.suggestion-list') ||
-          related.closest('.formatting-toolbar')
+          related.closest('.formatting-toolbar') ||
+          related.closest('[data-radix-popper-content-wrapper]') ||
+          related.closest('.rdp')
         ) {
           return
         }
       }
 
-      // Also check if a suggestion popup is currently open in the DOM
+      // Also check if a suggestion popup or date picker is currently open in the DOM
       if (document.querySelector('.suggestion-popup')) return
+      if (document.querySelector('.date-picker-popup')) return
 
       const changed = rovingEditor.unmount()
       if (changed !== null) {
