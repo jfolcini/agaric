@@ -312,28 +312,39 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
       setOverId(null)
       setOffsetLeft(0)
 
-      if (!over || active.id === over.id) return
+      if (!over) return
 
       const blockId = active.id as string
+      const activeBlock = blocks.find((b) => b.id === blockId)
 
-      if (projected) {
-        // Tree-aware move: use projection to determine new parent + position
-        const newPosition = computePosition(
-          visibleItems,
-          projected.parentId,
-          visibleItems.findIndex((b) => b.id === over.id),
-          blockId,
-        )
-        moveToParent(blockId, projected.parentId, newPosition)
-      } else {
-        // Fallback: simple reorder at same level
+      if (projected && activeBlock) {
+        // Check if the projection indicates a depth/parent change
+        const currentParentId = activeBlock.parent_id ?? rootParentId
+        const depthChanged = projected.depth !== activeBlock.depth
+        const parentChanged = projected.parentId !== currentParentId
+
+        if (depthChanged || parentChanged || active.id !== over.id) {
+          // Tree-aware move: use projection to determine new parent + position
+          const newPosition = computePosition(
+            visibleItems,
+            projected.parentId,
+            visibleItems.findIndex((b) => b.id === over.id),
+            blockId,
+          )
+          moveToParent(blockId, projected.parentId, newPosition)
+          return
+        }
+      }
+
+      // Same-level reorder (no depth/parent change)
+      if (active.id !== over.id) {
         const overIndex = blocks.findIndex((b) => b.id === over.id)
         if (overIndex >= 0) {
           reorder(blockId, overIndex)
         }
       }
     },
-    [blocks, projected, visibleItems, moveToParent, reorder],
+    [blocks, rootParentId, projected, visibleItems, moveToParent, reorder],
   )
 
   const handleDragCancel = useCallback(() => {
