@@ -189,7 +189,7 @@ export function PageEditor({
 
           {/* Panel content */}
           {activeTab != null && !panelCollapsed && (
-            <div className="detail-panel-content p-3">
+            <div className="detail-panel-content max-h-60 overflow-y-auto p-3">
               {activeTab === 'backlinks' && <BacklinksPanel blockId={effectiveBlockId} />}
               {activeTab === 'history' && <HistoryPanel blockId={effectiveBlockId} />}
               {activeTab === 'tags' && <TagPanel blockId={effectiveBlockId} />}

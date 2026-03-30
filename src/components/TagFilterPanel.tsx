@@ -27,6 +27,19 @@ interface MatchingTag {
   usage_count: number
 }
 
+function HighlightPrefix({ text, prefix }: { text: string; prefix: string }): React.ReactElement {
+  const trimmed = prefix.trim().toLowerCase()
+  if (!trimmed || !text.toLowerCase().startsWith(trimmed)) {
+    return <>{text}</>
+  }
+  return (
+    <>
+      <strong>{text.slice(0, trimmed.length)}</strong>
+      {text.slice(trimmed.length)}
+    </>
+  )
+}
+
 export function TagFilterPanel(): React.ReactElement {
   const [prefix, setPrefix] = useState('')
   const [matchingTags, setMatchingTags] = useState<MatchingTag[]>([])
@@ -240,7 +253,7 @@ export function TagFilterPanel(): React.ReactElement {
                 className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent/50"
               >
                 <span>
-                  {tag.name} ({tag.usage_count})
+                  <HighlightPrefix text={tag.name} prefix={prefix} /> ({tag.usage_count})
                 </span>
                 <Button
                   variant="ghost"

@@ -45,6 +45,16 @@ const makeBlock = (overrides?: Partial<Record<string, unknown>>) => ({
 const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 /**
+ * Find a matching-tag <span> in the tag list by its full textContent.
+ * Needed because HighlightPrefix splits text across <strong> + text nodes,
+ * which breaks getByText's direct-text-node matching.
+ */
+function findTagSpan(regex: RegExp): HTMLElement | null {
+  const spans = document.querySelectorAll('.tag-filter-panel .space-y-1 span')
+  return (Array.from(spans).find((el) => regex.test(el.textContent ?? '')) as HTMLElement) ?? null
+}
+
+/**
  * Helper: type a prefix and wait for the debounced search to fire + resolve.
  * Uses fake timers internally, restores real timers before returning.
  */
@@ -109,7 +119,24 @@ describe('TagFilterPanel', () => {
       prefix: 'work',
     })
 
-    expect(screen.getByText(/work\/meeting/)).toBeInTheDocument()
+    expect(findTagSpan(/work\/meeting/)).toBeInTheDocument()
+  })
+
+  it('highlights matching prefix in tag names', async () => {
+    mockedInvoke.mockResolvedValue([
+      makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 }),
+      makeTag({ tag_id: 'T2', name: 'work/meeting', usage_count: 3 }),
+    ])
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    // The matching portion should be bolded
+    const strongElements = document.querySelectorAll('.tag-filter-panel strong')
+    expect(strongElements.length).toBeGreaterThanOrEqual(2)
+    expect(strongElements[0].textContent).toBe('work')
   })
 
   it('clears matching tags when prefix cleared', async () => {
@@ -120,12 +147,12 @@ describe('TagFilterPanel', () => {
     const input = screen.getByPlaceholderText('Search tags by prefix...')
     await typeAndWaitForTags(input, 'work')
 
-    expect(screen.getByText(/work \(5\)/)).toBeInTheDocument()
+    expect(findTagSpan(/work \(5\)/)).toBeInTheDocument()
 
     // Clear the input
     fireEvent.change(input, { target: { value: '' } })
 
-    expect(screen.queryByText(/work \(5\)/)).not.toBeInTheDocument()
+    expect(findTagSpan(/work \(5\)/)).toBeNull()
   })
 
   it('adds a tag to selection when Add is clicked', async () => {
@@ -419,8 +446,8 @@ describe('TagFilterPanel', () => {
     await typeAndWaitForTags(input, 'work')
 
     // Both tags visible
-    expect(screen.getByText(/work \(5\)/)).toBeInTheDocument()
-    expect(screen.getByText(/work\/meeting \(3\)/)).toBeInTheDocument()
+    expect(findTagSpan(/work \(5\)/)).toBeInTheDocument()
+    expect(findTagSpan(/work\/meeting \(3\)/)).toBeInTheDocument()
 
     // Add the first tag
     const addBtns = screen.getAllByRole('button', { name: /Add/i })
@@ -434,9 +461,9 @@ describe('TagFilterPanel', () => {
     })
 
     // First tag should be removed from matching list (it's now in selected)
-    expect(screen.queryByText(/work \(5\)/)).not.toBeInTheDocument()
+    expect(findTagSpan(/work \(5\)/)).toBeNull()
     // Second tag should still be in matching list
-    expect(screen.getByText(/work\/meeting \(3\)/)).toBeInTheDocument()
+    expect(findTagSpan(/work\/meeting \(3\)/)).toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {

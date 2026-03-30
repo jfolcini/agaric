@@ -463,6 +463,21 @@ describe('PageEditor detail panel', () => {
     expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
   })
 
+  it('detail panel content has bounded height to prevent layout push', async () => {
+    const user = userEvent.setup()
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Open tab to reveal content area
+    await user.click(screen.getByRole('button', { name: /backlinks/i }))
+
+    // The content container should have max-height + overflow classes
+    const contentEl = screen.getByTestId('backlinks-panel').parentElement
+    expect(contentEl).toHaveClass('max-h-60')
+    expect(contentEl).toHaveClass('overflow-y-auto')
+  })
+
   it('clicking a tab while collapsed expands the panel', async () => {
     const user = userEvent.setup()
     useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
