@@ -69,6 +69,11 @@ pub enum MaterializeTask {
     RebuildFtsIndex,
     /// Background: run FTS5 segment merge optimization
     FtsOptimize,
+    /// Barrier: used by `flush_foreground()`/`flush_background()` to wait for
+    /// queue drain. The consumer signals the `Notify` when it processes this
+    /// task.  `Arc<Notify>` is `Clone`, so `MaterializeTask` keeps its
+    /// `derive(Clone)`.
+    Barrier(Arc<tokio::sync::Notify>),
 }
 
 // ---------------------------------------------------------------------------
@@ -493,6 +498,39 @@ impl Materializer {
         let _ = self.bg_tx.lock().unwrap_or_else(|e| e.into_inner()).take();
     }
 
+    /// Wait for all currently-queued **foreground** tasks to be processed.
+    ///
+    /// Enqueues a [`MaterializeTask::Barrier`] and waits for the consumer to
+    /// reach it.  Useful in tests to avoid sleep-based settling.
+    pub async fn flush_foreground(&self) -> Result<(), AppError> {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        self.enqueue_foreground(MaterializeTask::Barrier(Arc::clone(&notify)))
+            .await?;
+        notify.notified().await;
+        Ok(())
+    }
+
+    /// Wait for all currently-queued **background** tasks to be processed.
+    ///
+    /// Enqueues a [`MaterializeTask::Barrier`] and waits for the consumer to
+    /// reach it.  Useful in tests to avoid sleep-based settling.
+    pub async fn flush_background(&self) -> Result<(), AppError> {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        self.enqueue_background(MaterializeTask::Barrier(Arc::clone(&notify)))
+            .await?;
+        notify.notified().await;
+        Ok(())
+    }
+
+    /// Flush both foreground and background queues sequentially.
+    ///
+    /// Flushes foreground first (it may enqueue background tasks), then
+    /// background.
+    pub async fn flush(&self) -> Result<(), AppError> {
+        self.flush_foreground().await?;
+        self.flush_background().await
+    }
+
     /// Access the observable queue metrics (atomic counters).
     pub fn metrics(&self) -> &QueueMetrics {
         &self.metrics
@@ -767,6 +805,10 @@ fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
                 // Never drop ApplyOp, even if unexpected on bg queue.
                 result.push(task);
             }
+            MaterializeTask::Barrier(_) => {
+                // Never drop Barrier — each one signals a unique flush waiter.
+                result.push(task);
+            }
             _ => {
                 if seen_discriminants.insert(mem::discriminant(&task)) {
                     result.push(task);
@@ -790,6 +832,10 @@ async fn handle_foreground_task(
         MaterializeTask::ApplyOp(record) => {
             // Stub: will implement actual op application in next batch
             tracing::debug!(op_type = %record.op_type, seq = record.seq, "processing foreground op");
+            Ok(())
+        }
+        MaterializeTask::Barrier(ref notify) => {
+            notify.notify_one();
             Ok(())
         }
         _ => {
@@ -820,6 +866,10 @@ async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
             tracing::warn!(seq = record.seq, "unexpected ApplyOp in background queue");
             Ok(())
         }
+        MaterializeTask::Barrier(ref notify) => {
+            notify.notify_one();
+            Ok(())
+        }
     }
 }
 
@@ -830,9 +880,9 @@ async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
 #[cfg(test)]
 mod tests {
     //! Tests for materializer queue coordination, dispatch routing, dedup
-    //! logic, shutdown, and metrics. Pure-logic tests (dedup) use `#[test]`;
-    //! async tests use `#[tokio::test]` with sleeps only where we need to
-    //! observe consumer-side effects (metrics, shutdown).
+    //! logic, shutdown, flush barriers, and metrics. Pure-logic tests (dedup)
+    //! use `#[test]`; async tests use `#[tokio::test]` with barrier-flush
+    //! for deterministic settling and sleeps only for shutdown timing.
 
     use super::*;
     use crate::db::init_pool;
@@ -943,9 +993,7 @@ mod tests {
             mat.dispatch_op(&record).await.is_ok(),
             "dispatch_op for create_block(page) should succeed"
         );
-        // Allow 50ms for the materializer background consumer to process the queued task.
-        // This is sufficient because the consumer polls every ~10ms with no I/O latency in tests.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        mat.flush().await.unwrap();
     }
 
     #[tokio::test]
@@ -969,9 +1017,7 @@ mod tests {
             mat.dispatch_op(&record).await.is_ok(),
             "dispatch_op for create_block(tag) should succeed"
         );
-        // Allow 50ms for the background consumer to drain the queued RebuildTagsCache task.
-        // The consumer polls every ~10ms; 50ms gives ~5 poll cycles which is sufficient.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        mat.flush().await.unwrap();
     }
 
     #[tokio::test]
@@ -1388,9 +1434,7 @@ mod tests {
             .enqueue_background(MaterializeTask::RebuildTagsCache)
             .await
             .is_ok());
-        // Allow 50ms for the background consumer to process the enqueued task.
-        // The consumer polls every ~10ms; 50ms gives ~5 cycles to drain the queue.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        mat.flush_background().await.unwrap();
 
         mat.shutdown();
         // Allow 100ms for consumer tasks to notice the shutdown flag and exit.
@@ -1468,10 +1512,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Allow 200ms for the background consumer to process 3 distinct cache-rebuild
-        // tasks. Each task involves an SQLite transaction; 200ms provides margin for
-        // sequential processing (~10ms poll + ~20ms per cache rebuild × 3 tasks).
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        mat.flush_background().await.unwrap();
 
         let m = mat.metrics();
         let processed = m.bg_processed.load(AtomicOrdering::Relaxed);
@@ -1502,10 +1543,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Allow 100ms for the foreground consumer to process the ApplyOp task.
-        // The foreground consumer processes tasks synchronously; 100ms provides
-        // margin for the single op application + any SQLite write latency.
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        mat.flush_foreground().await.unwrap();
 
         let m = mat.metrics();
         let fg = m.fg_processed.load(AtomicOrdering::Relaxed);
@@ -1534,10 +1572,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Allow 200ms for the background consumer to process all 4 enqueued tasks.
-        // Each task involves an SQLite transaction; 200ms provides margin for
-        // sequential processing at ~10ms poll interval + ~20ms per task.
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        mat.flush_background().await.unwrap();
 
         // Queue should still be functional — consumer loop survived.
         let result = mat
@@ -1547,6 +1582,115 @@ mod tests {
             result.is_ok(),
             "queue should still accept tasks after processing multiple tasks"
         );
+    }
+
+    // ======================================================================
+    // Flush barrier (#26)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn flush_foreground_completes_after_queued_tasks() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "blk-flush-fg".into(),
+                block_type: "content".into(),
+                parent_id: None,
+                position: None,
+                content: "flush fg test".into(),
+            }),
+        )
+        .await;
+
+        mat.enqueue_foreground(MaterializeTask::ApplyOp(record))
+            .await
+            .unwrap();
+        mat.flush_foreground().await.unwrap();
+
+        assert!(
+            mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1,
+            "at least 1 fg task should be processed after flush"
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_background_completes_after_queued_tasks() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool);
+
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert!(
+            mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1,
+            "at least 1 bg task should be processed after flush"
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_drains_both_queues() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "blk-flush-both".into(),
+                block_type: "content".into(),
+                parent_id: None,
+                position: None,
+                content: "flush both test".into(),
+            }),
+        )
+        .await;
+
+        mat.enqueue_foreground(MaterializeTask::ApplyOp(record))
+            .await
+            .unwrap();
+        mat.enqueue_background(MaterializeTask::RebuildPagesCache)
+            .await
+            .unwrap();
+
+        mat.flush().await.unwrap();
+
+        assert!(
+            mat.metrics().fg_processed.load(AtomicOrdering::Relaxed) >= 1,
+            "fg tasks should be processed after flush()"
+        );
+        assert!(
+            mat.metrics().bg_processed.load(AtomicOrdering::Relaxed) >= 1,
+            "bg tasks should be processed after flush()"
+        );
+    }
+
+    #[test]
+    fn dedup_never_drops_barrier() {
+        let notify1 = Arc::new(tokio::sync::Notify::new());
+        let notify2 = Arc::new(tokio::sync::Notify::new());
+
+        let tasks = vec![
+            MaterializeTask::RebuildTagsCache,
+            MaterializeTask::Barrier(notify1),
+            MaterializeTask::RebuildTagsCache, // dup — coalesced
+            MaterializeTask::Barrier(notify2),
+        ];
+
+        let deduped = dedup_tasks(tasks);
+        assert_eq!(
+            deduped.len(),
+            3,
+            "RebuildTagsCache + 2 Barriers = 3 (Barrier never deduped)"
+        );
+        let barrier_count = deduped
+            .iter()
+            .filter(|t| matches!(t, MaterializeTask::Barrier(_)))
+            .count();
+        assert_eq!(barrier_count, 2, "both Barrier tasks must survive dedup");
     }
 
     // ======================================================================

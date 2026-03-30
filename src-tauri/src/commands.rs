@@ -101,16 +101,6 @@ fn validate_date_format(date: &str) -> Result<(), AppError> {
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
-pub struct BlockResponse {
-    pub id: String,
-    pub block_type: String,
-    pub content: Option<String>,
-    pub parent_id: Option<String>,
-    pub position: Option<i64>,
-    pub deleted_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Type)]
 pub struct DeleteResponse {
     pub block_id: String,
     pub deleted_at: String,
@@ -180,7 +170,7 @@ pub async fn create_block_inner(
     content: String,
     parent_id: Option<String>,
     position: Option<i64>,
-) -> Result<BlockResponse, AppError> {
+) -> Result<BlockRow, AppError> {
     // 1. Validate block_type
     match block_type.as_str() {
         "content" | "tag" | "page" => {}
@@ -270,13 +260,15 @@ pub async fn create_block_inner(
     let _ = materializer.dispatch_background(&op_record);
 
     // 7. Return response
-    Ok(BlockResponse {
+    Ok(BlockRow {
         id: block_id.into_string(),
         block_type,
         content: Some(content),
         parent_id,
         position: Some(effective_position),
         deleted_at: None,
+        archived_at: None,
+        is_conflict: false,
     })
 }
 
@@ -295,7 +287,7 @@ pub async fn edit_block_inner(
     materializer: &Materializer,
     block_id: String,
     to_text: String,
-) -> Result<BlockResponse, AppError> {
+) -> Result<BlockRow, AppError> {
     // F02: Begin IMMEDIATE transaction for atomic validation + op_log + blocks write.
     // All reads (block existence, prev_edit lookup) happen inside the tx
     // to prevent TOCTOU races (a concurrent delete_block could soft-delete
@@ -358,13 +350,15 @@ pub async fn edit_block_inner(
     let _ = materializer.dispatch_edit_background(&op_record, &block_type);
 
     // 6. Return response
-    Ok(BlockResponse {
+    Ok(BlockRow {
         id: block_id,
         block_type,
         content: Some(to_text),
         parent_id,
         position,
         deleted_at: None,
+        archived_at: None,
+        is_conflict: false,
     })
 }
 
@@ -1415,7 +1409,7 @@ pub async fn set_property_inner(
     value_num: Option<f64>,
     value_date: Option<String>,
     value_ref: Option<String>,
-) -> Result<BlockResponse, AppError> {
+) -> Result<BlockRow, AppError> {
     // 1. Build and validate the payload before touching the DB
     let prop_payload = SetPropertyPayload {
         block_id: block_id.clone(),
@@ -1467,13 +1461,15 @@ pub async fn set_property_inner(
     let _ = materializer.dispatch_background(&op_record);
 
     // 7. Return the block
-    Ok(BlockResponse {
+    Ok(BlockRow {
         id: existing.id,
         block_type: existing.block_type,
         content: existing.content,
         parent_id: existing.parent_id,
         position: existing.position,
         deleted_at: existing.deleted_at,
+        archived_at: existing.archived_at,
+        is_conflict: existing.is_conflict,
     })
 }
 
@@ -1578,7 +1574,7 @@ pub async fn create_block(
     content: String,
     parent_id: Option<String>,
     position: Option<i64>,
-) -> Result<BlockResponse, AppError> {
+) -> Result<BlockRow, AppError> {
     create_block_inner(
         &pool.0,
         &device_id.0,
@@ -1602,7 +1598,7 @@ pub async fn edit_block(
     materializer: State<'_, Materializer>,
     block_id: String,
     to_text: String,
-) -> Result<BlockResponse, AppError> {
+) -> Result<BlockRow, AppError> {
     edit_block_inner(&pool.0, &device_id.0, &materializer, block_id, to_text)
         .await
         .map_err(sanitize_internal_error)
@@ -1880,7 +1876,7 @@ pub async fn set_property(
     value_num: Option<f64>,
     value_date: Option<String>,
     value_ref: Option<String>,
-) -> Result<BlockResponse, AppError> {
+) -> Result<BlockRow, AppError> {
     set_property_inner(
         &pool.0,
         &device_id.0,
@@ -2126,19 +2122,13 @@ mod tests {
         .await
         .unwrap();
 
-        // Allow 50ms for the materializer background consumer to process queued
-        // cache-rebuild tasks from create_block. The consumer polls every ~10ms;
-        // 50ms gives ~5 poll cycles which is sufficient with no real I/O in tests.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mat.flush_background().await.unwrap();
 
         delete_block_inner(&pool, DEV, &mat, parent.id.clone())
             .await
             .unwrap();
 
-        // Allow 50ms for the materializer background consumer to process cache
-        // tasks triggered by delete_block (tags/pages/agenda rebuild). Same
-        // rationale as above: ~5 poll cycles at ~10ms interval.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mat.flush_background().await.unwrap();
 
         let result = create_block_inner(
             &pool,
@@ -3913,7 +3903,7 @@ mod tests {
     // insta snapshot tests — command responses
     // ======================================================================
 
-    /// Snapshot a BlockResponse from create_block_inner.
+    /// Snapshot a BlockRow from create_block_inner.
     /// Redacts `id` (ULID is non-deterministic).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn snapshot_create_block_response() {
@@ -4601,9 +4591,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Allow 50ms for materializer bg tasks from create_block to settle.
-        // Prevents write-lock contention with the next set_property operation.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mat.flush_background().await.unwrap();
 
         // Set a text property
         set_property_inner(
@@ -4620,9 +4608,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Allow 50ms for materializer bg tasks from set_property to settle
-        // before reading properties. Ensures cache writes are complete.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mat.flush_background().await.unwrap();
 
         // Verify via get_properties
         let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
@@ -4651,9 +4637,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Allow 50ms for materializer bg tasks from create_block to settle.
-        // Prevents write-lock contention with the next set_property call.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mat.flush_background().await.unwrap();
 
         // Empty key should fail validation
         let result = set_property_inner(
@@ -4692,17 +4676,13 @@ mod tests {
         .await
         .unwrap();
 
-        // Allow 50ms for materializer bg tasks from create_block to settle
-        // before issuing delete_block (avoids write-lock contention).
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mat.flush_background().await.unwrap();
 
         delete_block_inner(&pool, DEV, &mat, block.id.clone())
             .await
             .unwrap();
 
-        // Allow 50ms for materializer bg tasks from delete_block to settle
-        // before attempting set_property (which should fail).
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mat.flush_background().await.unwrap();
 
         let result = set_property_inner(
             &pool,
@@ -4740,8 +4720,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Allow 50ms for materializer bg tasks from create_block to settle.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mat.flush_background().await.unwrap();
 
         // Set a property
         set_property_inner(
@@ -4758,18 +4737,14 @@ mod tests {
         .await
         .unwrap();
 
-        // Allow 50ms for materializer bg tasks from set_property to settle
-        // before delete_property (avoids write-lock contention).
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mat.flush_background().await.unwrap();
 
         // Delete the property
         delete_property_inner(&pool, DEV, &mat, block.id.clone(), "status".into())
             .await
             .unwrap();
 
-        // Allow 50ms for materializer bg tasks from delete_property to settle
-        // before reading properties (ensures cache writes are complete).
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        mat.flush_background().await.unwrap();
 
         // Verify it's gone
         let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();

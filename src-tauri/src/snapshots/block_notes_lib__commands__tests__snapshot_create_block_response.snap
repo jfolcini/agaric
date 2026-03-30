@@ -8,3 +8,5 @@ content: snapshot test content
 parent_id: ~
 position: 1
 deleted_at: ~
+archived_at: ~
+is_conflict: false

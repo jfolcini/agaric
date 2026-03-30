@@ -9,7 +9,7 @@ export const commands = {
 /**
  * Tauri command: create a new block. Delegates to [`create_block_inner`].
  */
-async createBlock(blockType: string, content: string, parentId: string | null, position: number | null) : Promise<Result<BlockResponse, { kind: string; message: string }>> {
+async createBlock(blockType: string, content: string, parentId: string | null, position: number | null) : Promise<Result<BlockRow, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("create_block", { blockType, content, parentId, position }) };
 } catch (e) {
@@ -20,7 +20,7 @@ async createBlock(blockType: string, content: string, parentId: string | null, p
 /**
  * Tauri command: edit a block's content. Delegates to [`edit_block_inner`].
  */
-async editBlock(blockId: string, toText: string) : Promise<Result<BlockResponse, { kind: string; message: string }>> {
+async editBlock(blockId: string, toText: string) : Promise<Result<BlockRow, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("edit_block", { blockId, toText }) };
 } catch (e) {
@@ -207,7 +207,7 @@ async listTagsForBlock(blockId: string) : Promise<Result<string[], { kind: strin
 /**
  * Tauri command: set (upsert) a property on a block. Delegates to [`set_property_inner`].
  */
-async setProperty(blockId: string, key: string, valueText: string | null, valueNum: number | null, valueDate: string | null, valueRef: string | null) : Promise<Result<BlockResponse, { kind: string; message: string }>> {
+async setProperty(blockId: string, key: string, valueText: string | null, valueNum: number | null, valueDate: string | null, valueRef: string | null) : Promise<Result<BlockRow, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_property", { blockId, key, valueText, valueNum, valueDate, valueRef }) };
 } catch (e) {
@@ -249,7 +249,6 @@ async getProperties(blockId: string) : Promise<Result<PropertyRow[], { kind: str
 
 /** user-defined types **/
 
-export type BlockResponse = { id: string; block_type: string; content: string | null; parent_id: string | null; position: number | null; deleted_at: string | null }
 /**
  * Row returned by paginated block queries.
  */

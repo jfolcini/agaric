@@ -64,12 +64,10 @@ async fn insert_block(
 
 /// Allow materializer background tasks to settle before the next write.
 ///
-/// 50ms is sufficient because the materializer background consumer polls
-/// every ~10ms with no I/O latency in tests (in-memory temp SQLite DB).
-/// This gives ~5 poll cycles for any queued cache-rebuild or reindex task
-/// to complete, preventing write-lock contention with the next operation.
-async fn settle() {
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+/// Uses the deterministic barrier-flush mechanism so tests are not
+/// race-condition-prone on slow CI.
+async fn settle(mat: &Materializer) {
+    mat.flush_background().await.unwrap();
 }
 
 // ======================================================================
@@ -162,7 +160,7 @@ async fn create_block_with_parent_sets_parent_id() {
     .await
     .unwrap();
 
-    settle().await;
+    settle(&mat).await;
 
     let child = create_block_inner(
         &pool,
@@ -339,12 +337,12 @@ async fn create_block_deleted_parent_returns_not_found() {
     )
     .await
     .unwrap();
-    settle().await;
+    settle(&mat).await;
 
     delete_block_inner(&pool, DEV, &mat, parent.id.clone())
         .await
         .unwrap();
-    settle().await;
+    settle(&mat).await;
 
     let result = create_block_inner(
         &pool,
@@ -556,7 +554,7 @@ async fn edit_block_sequential_edits_chain_prev_edit() {
     edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v2".into())
         .await
         .unwrap();
-    settle().await;
+    settle(&mat).await;
 
     // Second edit — should chain prev_edit
     edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v3".into())
@@ -615,7 +613,7 @@ async fn edit_deleted_block_returns_not_found() {
     delete_block_inner(&pool, DEV, &mat, created.id.clone())
         .await
         .unwrap();
-    settle().await;
+    settle(&mat).await;
 
     let result = edit_block_inner(&pool, DEV, &mat, created.id, "should fail".into()).await;
 
@@ -679,7 +677,7 @@ async fn delete_block_cascades_to_children() {
     )
     .await
     .unwrap();
-    settle().await;
+    settle(&mat).await;
 
     let child = create_block_inner(
         &pool,
@@ -1455,7 +1453,7 @@ async fn full_lifecycle_create_edit_delete_restore_edit() {
     let edited = edit_block_inner(&pool, DEV, &mat, bid.clone(), "version 2".into())
         .await
         .unwrap();
-    settle().await;
+    settle(&mat).await;
 
     assert_eq!(
         edited.content,
@@ -1468,7 +1466,7 @@ async fn full_lifecycle_create_edit_delete_restore_edit() {
         .await
         .unwrap();
     let deleted_ts = deleted.deleted_at.clone();
-    settle().await;
+    settle(&mat).await;
 
     let row = get_block_inner(&pool, bid.clone()).await.unwrap();
     assert!(row.deleted_at.is_some(), "block must be deleted");
@@ -2230,7 +2228,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
     )
     .await
     .unwrap();
-    settle().await;
+    settle(&mat).await;
 
     let block = create_block_inner(
         &pool,
@@ -2255,7 +2253,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
     )
     .await
     .unwrap();
-    settle().await;
+    settle(&mat).await;
 
     // 2. Add tag
     add_tag_inner(&pool, DEV, &mat, block.id.clone(), tag.id.clone())
@@ -2648,7 +2646,7 @@ async fn create_block_with_none_position_appends_after_siblings() {
         .await
         .unwrap();
 
-    settle().await;
+    settle(&mat).await;
 
     // Create three children with position: None — each should auto-append
     let child0 = create_block_inner(
@@ -2663,7 +2661,7 @@ async fn create_block_with_none_position_appends_after_siblings() {
     .await
     .unwrap();
 
-    settle().await;
+    settle(&mat).await;
 
     let child1 = create_block_inner(
         &pool,
@@ -2677,7 +2675,7 @@ async fn create_block_with_none_position_appends_after_siblings() {
     .await
     .unwrap();
 
-    settle().await;
+    settle(&mat).await;
 
     let child2 = create_block_inner(
         &pool,

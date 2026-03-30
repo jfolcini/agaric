@@ -26,6 +26,7 @@ use crate::hash;
 use crate::materializer::Materializer;
 use crate::op::{EditBlockPayload, OpPayload};
 use crate::op_log;
+use crate::pagination::BlockRow;
 use crate::recovery;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
@@ -69,7 +70,7 @@ async fn create_content(
     content: &str,
     parent_id: Option<String>,
     position: Option<i64>,
-) -> BlockResponse {
+) -> BlockRow {
     create_block_inner(
         pool,
         DEV,
@@ -89,11 +90,10 @@ async fn create_content(
 /// edit, delete, restore, purge, or create with type "page"/"tag".
 /// NOT needed after creating "content" blocks (no bg tasks dispatched).
 ///
-/// The 50 ms window is sufficient for the background consumer to process
-/// its queue. Without this, the next `BEGIN IMMEDIATE` write may contend
-/// with the materializer's cache-rebuild transaction under WAL mode.
-async fn settle_bg_tasks() {
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+/// Uses the deterministic barrier-flush mechanism so tests are not
+/// race-condition-prone.
+async fn settle_bg_tasks(mat: &Materializer) {
+    mat.flush_background().await.unwrap();
 }
 
 // ======================================================================
@@ -114,13 +114,13 @@ async fn create_edit_delete_restore_produces_sequential_ops_with_valid_hashes() 
     edit_block_inner(&pool, DEV, &mat, block_id.clone(), "updated text".into())
         .await
         .unwrap();
-    settle_bg_tasks().await;
+    settle_bg_tasks(&mat).await;
 
     let deleted = delete_block_inner(&pool, DEV, &mat, block_id.clone())
         .await
         .unwrap();
     let deleted_at = deleted.deleted_at.clone();
-    settle_bg_tasks().await;
+    settle_bg_tasks(&mat).await;
 
     restore_block_inner(&pool, DEV, &mat, block_id.clone(), deleted_at)
         .await
@@ -262,7 +262,7 @@ async fn mixed_operations_produce_consistent_op_log_and_block_state() {
     edit_block_inner(&pool, DEV, &mat, b0.id.clone(), "edited 0".into())
         .await
         .unwrap();
-    settle_bg_tasks().await;
+    settle_bg_tasks(&mat).await;
 
     delete_block_inner(&pool, DEV, &mat, b2.id.clone())
         .await
@@ -436,7 +436,7 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
     edit_block_inner(&pool, DEV, &mat, block.id.clone(), "version 2".into())
         .await
         .unwrap();
-    settle_bg_tasks().await;
+    settle_bg_tasks(&mat).await;
 
     // Simulate crash: insert draft with newer content
     sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
@@ -523,14 +523,14 @@ async fn restore_after_cascade_preserves_independently_deleted_child() {
         .await
         .unwrap();
     let child1_ts = child1_del.deleted_at.clone();
-    settle_bg_tasks().await;
+    settle_bg_tasks(&mat).await;
 
     // Delete parent (cascades to child2 only; child1 already deleted)
     let parent_del = delete_block_inner(&pool, DEV, &mat, parent.id.clone())
         .await
         .unwrap();
     let cascade_ts = parent_del.deleted_at.clone();
-    settle_bg_tasks().await;
+    settle_bg_tasks(&mat).await;
 
     // child1 keeps its own timestamp
     let c1 = get_block_inner(&pool, child1.id.clone()).await.unwrap();
@@ -583,7 +583,7 @@ async fn purge_removes_block_tags_properties_and_attachments() {
     )
     .await
     .unwrap();
-    settle_bg_tasks().await;
+    settle_bg_tasks(&mat).await;
 
     // Add tag association, property, and attachment
     sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
@@ -644,7 +644,7 @@ async fn purge_removes_block_tags_properties_and_attachments() {
     delete_block_inner(&pool, DEV, &mat, bid.clone())
         .await
         .unwrap();
-    settle_bg_tasks().await;
+    settle_bg_tasks(&mat).await;
 
     // Purge
     let purge = purge_block_inner(&pool, DEV, &mat, bid.clone())
@@ -704,7 +704,7 @@ async fn purge_after_cascade_removes_entire_subtree() {
     delete_block_inner(&pool, DEV, &mat, parent.id.clone())
         .await
         .unwrap();
-    settle_bg_tasks().await;
+    settle_bg_tasks(&mat).await;
 
     // Purge parent (recursive CTE removes child too)
     let purge = purge_block_inner(&pool, DEV, &mat, parent.id.clone())
@@ -775,7 +775,7 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
     delete_block_inner(&pool, DEV, &mat, ids[0].clone())
         .await
         .unwrap();
-    settle_bg_tasks().await;
+    settle_bg_tasks(&mat).await;
     delete_block_inner(&pool, DEV, &mat, ids[1].clone())
         .await
         .unwrap();
@@ -901,7 +901,7 @@ async fn list_by_type_filters_to_matching_block_type() {
         )
         .await
         .unwrap();
-        settle_bg_tasks().await;
+        settle_bg_tasks(&mat).await;
     }
     create_block_inner(
         &pool,
@@ -914,7 +914,7 @@ async fn list_by_type_filters_to_matching_block_type() {
     )
     .await
     .unwrap();
-    settle_bg_tasks().await;
+    settle_bg_tasks(&mat).await;
 
     let content_resp = list_blocks_inner(
         &pool,
@@ -1042,10 +1042,7 @@ async fn materializer_processes_background_tasks_after_page_create() {
     .await
     .unwrap();
 
-    // Allow 200ms for the background consumer to fully process the cache-rebuild
-    // task (RebuildPagesCache). 200ms provides margin because the consumer's poll
-    // interval is ~10ms, but the SQLite write + cache rebuild adds I/O latency.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    mat.flush_background().await.unwrap();
 
     let bg = mat.metrics().bg_processed.load(Ordering::Relaxed);
     assert!(
@@ -1063,21 +1060,14 @@ async fn materializer_processes_background_tasks_after_edit() {
 
     let block = create_content(&pool, &mat, "original", None, Some(1)).await;
 
-    // Allow 100ms for create-related background tasks to settle. The consumer
-    // polls every ~10ms; 100ms gives ~10 poll cycles which is sufficient for
-    // the create_block cache tasks (tags/pages/links) to complete.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    mat.flush_background().await.unwrap();
     let bg_before = mat.metrics().bg_processed.load(Ordering::Relaxed);
 
     edit_block_inner(&pool, DEV, &mat, block.id, "edited".into())
         .await
         .unwrap();
 
-    // Allow 200ms for the background consumer to fully process the edit tasks
-    // (ReindexBlockLinks + potential RebuildPagesCache). 200ms provides margin
-    // because the consumer processes tasks sequentially with ~10ms poll interval,
-    // and each cache write involves an SQLite transaction.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    mat.flush_background().await.unwrap();
 
     let bg_after = mat.metrics().bg_processed.load(Ordering::Relaxed);
     let bg_delta = bg_after - bg_before;
@@ -1103,7 +1093,7 @@ async fn edit_then_delete_preserves_edited_content_in_trash() {
     edit_block_inner(&pool, DEV, &mat, block.id.clone(), "version 2".into())
         .await
         .unwrap();
-    settle_bg_tasks().await;
+    settle_bg_tasks(&mat).await;
 
     delete_block_inner(&pool, DEV, &mat, block.id.clone())
         .await

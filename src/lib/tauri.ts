@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
 export type {
-  BlockResponse,
   BlockRow,
   DeleteResponse,
   HistoryEntry,
@@ -15,7 +14,6 @@ export type {
 } from './bindings'
 
 import type {
-  BlockResponse,
   BlockRow,
   DeleteResponse,
   HistoryEntry,
@@ -38,7 +36,7 @@ export async function createBlock(params: {
   content: string
   parentId?: string
   position?: number
-}): Promise<BlockResponse> {
+}): Promise<BlockRow> {
   return invoke('create_block', {
     blockType: params.blockType,
     content: params.content,
@@ -48,7 +46,7 @@ export async function createBlock(params: {
 }
 
 /** Edit a block's text content. */
-export async function editBlock(blockId: string, toText: string): Promise<BlockResponse> {
+export async function editBlock(blockId: string, toText: string): Promise<BlockRow> {
   return invoke('edit_block', { blockId, toText })
 }
 
