@@ -36,24 +36,17 @@ function escapeText(s: string): string {
       out += `\\${ch}`
       continue
     }
-    // #[ could be confused with tag_ref — escape the # as \#[
+    // # before [ could be confused with tag_ref #[ULID] — escape the #
     if (ch === '#' && i + 1 < s.length && s[i + 1] === '[') {
-      out += '\\#['
-      i++ // skip [
+      out += '\\#'
       continue
     }
-    // [[ could be confused with block_link — escape as \[[
-    if (ch === '[' && i + 1 < s.length && s[i + 1] === '[') {
-      out += '\\[['
-      i++ // skip second [
-      continue
-    }
-    // Single [ could start an external link — escape as \[
+    // [ could start a link or block_link — escape as \[
     if (ch === '[') {
       out += '\\['
       continue
     }
-    // ] could form ]( closing a link display text — escape as \]
+    // ] could close a link label — escape as \]
     if (ch === ']') {
       out += '\\]'
       continue

@@ -99,14 +99,15 @@ const arbMarkdownString: fc.Arbitrary<string> = fc
         '\\*',
         '\\`',
         '\\\\',
-        '\\#[',
-        '\\[[',
+        '\\#',
         '\\[',
         '\\]',
         '#[',
         '[[',
         ']]',
         ']',
+        '(',
+        ')',
       ),
       fc
         .array(fc.constantFrom(...'abcXY 012'.split('')), { minLength: 1, maxLength: 6 })

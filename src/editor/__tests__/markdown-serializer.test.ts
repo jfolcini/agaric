@@ -173,11 +173,11 @@ describe('serialize', () => {
     })
 
     it('escapes literal #[', () => {
-      expect(serialize(doc(paragraph(text('use #[not a tag'))))).toBe('use \\#[not a tag')
+      expect(serialize(doc(paragraph(text('use #[not a tag'))))).toBe('use \\#\\[not a tag')
     })
 
     it('escapes literal [[', () => {
-      expect(serialize(doc(paragraph(text('use [[not a link'))))).toBe('use \\[[not a link')
+      expect(serialize(doc(paragraph(text('use [[not a link'))))).toBe('use \\[\\[not a link')
     })
 
     it('escapes literal backslash', () => {
@@ -185,7 +185,7 @@ describe('serialize', () => {
     })
 
     it('multiple escapes in one string', () => {
-      expect(serialize(doc(paragraph(text('*`#['))))).toBe('\\*\\`\\#[')
+      expect(serialize(doc(paragraph(text('*`#['))))).toBe('\\*\\`\\#\\[')
     })
 
     it('lone # without [ is not escaped', () => {
@@ -465,8 +465,8 @@ describe('round-trip: serialize(parse(s)) === s', () => {
     ['escaped asterisk', 'a \\* b'],
     ['escaped backtick', 'a \\` b'],
     ['escaped backslash', 'a \\\\ b'],
-    ['escaped #[', 'use \\#[not a tag'],
-    ['escaped [[', 'use \\[[not a link'],
+    ['escaped #[', 'use \\#\\[not a tag'],
+    ['escaped [[', 'use \\[\\[not a link'],
     ['mixed marks and text', 'hello **bold** and *italic* and `code` end'],
     ['token with text', 'see #[01ARZ3NDEKTSV4RRFFQ69G5FAV] here'],
     ['two lines', 'first\nsecond'],
