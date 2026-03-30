@@ -17,13 +17,7 @@ import { mergeAttributes, Node } from '@tiptap/core'
 export interface BlockLinkOptions {
   /** Resolve a block/page ULID to its display title. Falls back to truncated ULID. */
   resolveTitle: (id: string) => string
-  /**
-   * Called when the user clicks a block link chip.
-   *
-   * TODO: Phase 2 — implement block navigation. Currently a no-op
-   * placeholder; the click handler invokes this callback but no consumer
-   * provides an implementation yet.
-   */
+  /** Called when the user clicks a block link chip. Navigates to the target page/block. */
   onNavigate?: (id: string) => void
   /** Check whether a linked block is active or deleted (broken link). */
   resolveStatus?: (id: string) => 'active' | 'deleted'
