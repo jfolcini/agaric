@@ -30,7 +30,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
   })
 
   return (
-    <div className="formatting-toolbar flex items-center gap-1 rounded-md border bg-muted/50 p-0.5 mb-1">
+    <div className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px">
       <Button
         variant="ghost"
         size="icon-xs"
@@ -71,7 +71,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
         <Code size={14} />
       </Button>
 
-      <Separator orientation="vertical" className="border-l border-border mx-1 h-5" />
+      <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
       <Button
         variant="ghost"

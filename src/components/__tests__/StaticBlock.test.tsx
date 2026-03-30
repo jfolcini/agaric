@@ -46,7 +46,7 @@ describe('StaticBlock', () => {
     const { container } = render(<StaticBlock blockId="B1" content="" onFocus={vi.fn()} />)
     const button = container.querySelector('.block-static')
     expect(button).not.toBeNull()
-    expect(button?.classList.contains('min-h-[2.5rem]')).toBe(true)
+    expect(button?.classList.contains('min-h-[1.75rem]')).toBe(true)
   })
 
   it('calls onFocus when the block button is clicked', async () => {

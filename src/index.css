@@ -137,6 +137,26 @@
   }
 }
 
+/* ── TipTap / ProseMirror editor ───────────────────────────────────── */
+
+/* Match static block padding so text doesn't jump on focus/blur. */
+.ProseMirror {
+  @apply px-3 py-1.5 text-sm outline-none;
+  min-height: 1.75rem;
+  line-height: 1.5;
+}
+
+/* Remove default paragraph margins inside the editor */
+.ProseMirror p {
+  margin: 0;
+}
+
+/* Placeholder text (via TipTap Placeholder extension) */
+.ProseMirror p.is-editor-empty:first-child::before {
+  @apply text-muted-foreground/60 pointer-events-none float-left h-0;
+  content: attr(data-placeholder);
+}
+
 /* ── Inline token chip styles ──────────────────────────────────────── */
 
 /* Broken / deleted block link: visual affordance for [[ULID]] pointing
@@ -153,21 +173,26 @@
   text-decoration: line-through;
 }
 
-/* Inline token chips — block links and tag references rendered in StaticBlock */
+/* Block link chips — [[ULID]] rendered as clickable page title chips */
 .block-link-chip {
-  @apply inline-flex items-center rounded-md bg-accent px-1.5 py-0.5 text-sm font-medium text-accent-foreground;
+  @apply inline-flex items-center rounded-md bg-primary/10 text-primary px-1.5 py-0.5 text-xs font-medium;
 }
 .block-link-chip:hover {
-  @apply bg-accent/80;
+  @apply bg-primary/20;
 }
+
+/* Tag reference chips — #[ULID] rendered as tag name pills */
 .tag-ref-chip {
-  @apply inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-sm font-medium;
+  @apply inline-flex items-center rounded-md bg-accent px-1.5 py-0.5 text-xs font-medium text-accent-foreground;
+}
+.tag-ref-chip:hover {
+  @apply bg-accent/80;
 }
 
 /* External URL links — both in TipTap editor (a.external-link) and StaticBlock */
 .external-link {
-  @apply text-primary underline decoration-primary/40 underline-offset-2 transition-colors;
+  @apply text-primary underline decoration-primary/50 underline-offset-1 transition-colors;
 }
 .external-link:hover {
-  @apply decoration-primary/80;
+  @apply decoration-primary text-primary/80;
 }

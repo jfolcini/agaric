@@ -120,7 +120,7 @@ export function PageEditor({
   }, [blocks, createBelow, setFocused, pageId])
 
   return (
-    <div className="page-editor flex flex-col gap-4">
+    <div className="page-editor flex flex-col gap-3">
       {/* Header: back button + editable title */}
       <div className="flex items-center gap-2">
         {onBack && (
@@ -165,7 +165,7 @@ export function PageEditor({
       {effectiveBlockId != null && (
         <div className="detail-panel rounded-lg border" data-testid="detail-panel">
           {/* Tab bar + collapse toggle */}
-          <div className="detail-panel-header flex items-center gap-1 border-b px-2 py-1">
+          <div className="detail-panel-header flex items-center gap-1 border-b px-3 py-1.5">
             <Button
               variant={activeTab === 'backlinks' ? 'default' : 'ghost'}
               size="sm"

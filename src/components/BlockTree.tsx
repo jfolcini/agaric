@@ -903,7 +903,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           items={visibleItems.map((b) => b.id)}
           strategy={verticalListSortingStrategy}
         >
-          <div className="block-tree space-y-1">
+          <div className="block-tree space-y-px">
             {visibleItems.map((block) => {
               const isFocused = focusedBlockId === block.id
               // Show projected depth during drag for the active item's over target

@@ -90,7 +90,7 @@ export function SortableBlock({
           />
         </button>
       ) : (
-        <span className="collapse-spacer flex-shrink-0 w-[15px]" />
+        <span className="collapse-spacer flex-shrink-0 w-[19px]" />
       )}
       <button
         type="button"

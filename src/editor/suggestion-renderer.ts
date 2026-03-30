@@ -17,10 +17,28 @@ function updatePosition(
   if (!el || !clientRect) return
   const rect = clientRect()
   if (!rect) return
+
+  const popupHeight = el.offsetHeight || 200
+  const viewportHeight = window.innerHeight
+  const viewportWidth = window.innerWidth
+
+  // Place below by default; flip above if near viewport bottom
+  let top = rect.bottom + 4
+  if (top + popupHeight > viewportHeight - 8) {
+    top = rect.top - popupHeight - 4
+  }
+
+  // Clamp horizontal position so popup doesn't overflow right edge
+  let left = rect.left
+  const popupWidth = el.offsetWidth || 240
+  if (left + popupWidth > viewportWidth - 8) {
+    left = viewportWidth - popupWidth - 8
+  }
+
   el.style.position = 'fixed'
-  el.style.left = `${rect.left}px`
-  el.style.top = `${rect.bottom + 4}px`
-  el.style.zIndex = '50'
+  el.style.left = `${Math.max(8, left)}px`
+  el.style.top = `${Math.max(8, top)}px`
+  el.style.zIndex = '100'
 }
 
 export function createSuggestionRenderer() {
