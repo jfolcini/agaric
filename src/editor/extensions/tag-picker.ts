@@ -36,6 +36,7 @@ export const TagPicker = Extension.create<TagPickerOptions>({
         editor: this.editor,
         pluginKey: tagPickerPluginKey,
         char: '#',
+        allowedPrefixes: null,
         items: ({ query }) => this.options.items(query),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem

@@ -42,6 +42,8 @@ export const SEED_IDS = {
   BLOCK_GS_5: '0000000000000000000BLOCK05',
   BLOCK_DAILY_1: '0000000000000000000BLOCK06',
   BLOCK_DAILY_2: '0000000000000000000BLOCK07',
+  BLOCK_QN_1: '0000000000000000000BLOCK08',
+  BLOCK_QN_2: '0000000000000000000BLOCK09',
   TAG_WORK: '000000000000000000000TAG01',
   TAG_PERSONAL: '000000000000000000000TAG02',
   TAG_IDEA: '000000000000000000000TAG03',
@@ -162,6 +164,28 @@ function seedBlocks(): void {
   blocks.set(SEED_IDS.TAG_WORK, makeBlock(SEED_IDS.TAG_WORK, 'tag', 'work', null, 0))
   blocks.set(SEED_IDS.TAG_PERSONAL, makeBlock(SEED_IDS.TAG_PERSONAL, 'tag', 'personal', null, 1))
   blocks.set(SEED_IDS.TAG_IDEA, makeBlock(SEED_IDS.TAG_IDEA, 'tag', 'idea', null, 2))
+
+  // Content blocks — children of "Quick Notes" (with backlink to Getting Started)
+  blocks.set(
+    SEED_IDS.BLOCK_QN_1,
+    makeBlock(
+      SEED_IDS.BLOCK_QN_1,
+      'content',
+      `These notes complement the [[${SEED_IDS.PAGE_GETTING_STARTED}]] guide.`,
+      SEED_IDS.PAGE_QUICK_NOTES,
+      0,
+    ),
+  )
+  blocks.set(
+    SEED_IDS.BLOCK_QN_2,
+    makeBlock(
+      SEED_IDS.BLOCK_QN_2,
+      'content',
+      'Jot down quick thoughts and *ideas* here.',
+      SEED_IDS.PAGE_QUICK_NOTES,
+      1,
+    ),
+  )
 }
 
 /** Reset mock state — clears and re-seeds the in-memory store. Useful for tests. */

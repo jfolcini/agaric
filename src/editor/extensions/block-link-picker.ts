@@ -40,6 +40,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
         editor: this.editor,
         pluginKey: blockLinkPickerPluginKey,
         char: '[[',
+        allowedPrefixes: null,
         items: ({ query }) => this.options.items(query),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem

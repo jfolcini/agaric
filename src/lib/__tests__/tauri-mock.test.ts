@@ -171,11 +171,14 @@ describe('list_blocks with parentId', () => {
     }
   })
 
-  it('returns empty for parent with no children', () => {
+  it('returns children of Quick Notes page', () => {
     const result = invoke('list_blocks', { parentId: SEED_IDS.PAGE_QUICK_NOTES }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items).toHaveLength(0)
+    expect(result.items).toHaveLength(2)
+    for (const item of result.items) {
+      expect(item.parent_id).toBe(SEED_IDS.PAGE_QUICK_NOTES)
+    }
   })
 
   it('returns items sorted by position', () => {
@@ -191,13 +194,14 @@ describe('list_blocks with parentId', () => {
       blockType: 'content',
       content: 'new child',
       parentId: SEED_IDS.PAGE_QUICK_NOTES,
-      position: 0,
+      position: 10,
     })
     const result = invoke('list_blocks', { parentId: SEED_IDS.PAGE_QUICK_NOTES }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items).toHaveLength(1)
-    expect(result.items[0].content).toBe('new child')
+    // 2 seed children + 1 dynamically created
+    expect(result.items).toHaveLength(3)
+    expect(result.items.some((b) => b.content === 'new child')).toBe(true)
   })
 
   it('combines parentId and blockType filters', () => {
