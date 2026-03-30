@@ -94,6 +94,19 @@ export async function getBlock(blockId: string): Promise<BlockRow> {
   return invoke('get_block', { blockId })
 }
 
+/** Resolved metadata for a block — lightweight alternative to full BlockRow. */
+export interface ResolvedBlock {
+  id: string
+  title: string | null
+  block_type: string
+  deleted: boolean
+}
+
+/** Batch-resolve block metadata for multiple IDs in a single call. */
+export async function batchResolve(ids: string[]): Promise<ResolvedBlock[]> {
+  return invoke('batch_resolve', { ids })
+}
+
 /** Move a block to a new parent and/or position. */
 export async function moveBlock(
   blockId: string,

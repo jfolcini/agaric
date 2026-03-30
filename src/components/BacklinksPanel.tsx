@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
-import { getBacklinks, getBlock } from '../lib/tauri'
+import { batchResolve, getBacklinks } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
 import { renderRichContent } from './StaticBlock'
 
@@ -85,28 +85,30 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
 
     let cancelled = false
 
-    Promise.all(
-      [...idsToResolve].map(async (id) => {
+    // Single batch IPC call instead of N individual getBlock calls
+    batchResolve([...idsToResolve])
+      .then((resolved) => {
         if (cancelled) return
-        try {
-          const b = await getBlock(id)
-          if (!cancelled) {
-            resolveCache.current.set(id, {
-              title:
-                b.content?.slice(0, 60) ||
-                (b.block_type === 'tag' ? `#${id.slice(0, 8)}...` : `[[${id.slice(0, 8)}...]]`),
-              deleted: b.deleted_at !== null,
-            })
-          }
-        } catch {
-          if (!cancelled) {
+        for (const r of resolved) {
+          resolveCache.current.set(r.id, {
+            title:
+              r.title?.slice(0, 60) ||
+              (r.block_type === 'tag' ? `#${r.id.slice(0, 8)}...` : `[[${r.id.slice(0, 8)}...]]`),
+            deleted: r.deleted,
+          })
+        }
+        // Mark unresolved IDs as deleted (not found in DB)
+        for (const id of idsToResolve) {
+          if (!resolveCache.current.has(id)) {
             resolveCache.current.set(id, { title: `[[${id.slice(0, 8)}...]]`, deleted: true })
           }
         }
-      }),
-    ).then(() => {
-      if (!cancelled) setResolveVersion((v) => v + 1)
-    })
+        setResolveVersion((v) => v + 1)
+      })
+      .catch(() => {
+        // Batch resolve failed — leave fallbacks
+        if (!cancelled) setResolveVersion((v) => v + 1)
+      })
 
     return () => {
       cancelled = true

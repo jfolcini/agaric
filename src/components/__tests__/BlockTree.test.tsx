@@ -206,7 +206,7 @@ describe('BlockTree picker wiring', () => {
     expect(results).toEqual([])
   })
 
-  it('searchPages calls list_blocks with blockType=page and filters results', async () => {
+  it('searchPages uses FTS5 for longer queries and filters to pages', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
     render(<BlockTree />)
@@ -215,7 +215,8 @@ describe('BlockTree picker wiring', () => {
       expect(capturedSearchPages).toBeDefined()
     })
 
-    const pagesResp = {
+    // For queries > 2 chars, searchPages uses search_blocks (FTS5)
+    const searchResp = {
       items: [
         {
           id: 'P1',
@@ -228,21 +229,11 @@ describe('BlockTree picker wiring', () => {
           is_conflict: false,
         },
         {
-          id: 'P2',
-          block_type: 'page',
-          content: 'Project Plan',
-          parent_id: null,
-          position: 1,
-          deleted_at: null,
-          archived_at: null,
-          is_conflict: false,
-        },
-        {
-          id: 'P3',
-          block_type: 'page',
-          content: 'Daily Log',
-          parent_id: null,
-          position: 2,
+          id: 'C1',
+          block_type: 'content',
+          content: 'Meeting agenda item',
+          parent_id: 'P1',
+          position: 0,
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
@@ -251,19 +242,16 @@ describe('BlockTree picker wiring', () => {
       next_cursor: null,
       has_more: false,
     }
-    mockedInvoke.mockResolvedValueOnce(pagesResp)
+    mockedInvoke.mockResolvedValueOnce(searchResp)
 
     const results = await capturedSearchPages?.('meet')
 
-    expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', {
-      parentId: null,
-      blockType: 'page',
-      tagId: null,
-      showDeleted: null,
-      agendaDate: null,
-      cursor: null,
-      limit: 500,
-    })
+    // Should call search_blocks for FTS5
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'search_blocks',
+      expect.objectContaining({ query: 'meet' }),
+    )
+    // Should filter to pages only (exclude content blocks)
     expect(results).toEqual([
       { id: 'P1', label: 'Meeting Notes' },
       { id: '__create__', label: 'meet', isCreate: true },
@@ -358,23 +346,8 @@ describe('BlockTree picker wiring', () => {
       expect(capturedSearchPages).toBeDefined()
     })
 
-    const pagesResp = {
-      items: [
-        {
-          id: 'P1',
-          block_type: 'page',
-          content: 'Some page',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          archived_at: null,
-          is_conflict: false,
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-    }
-    mockedInvoke.mockResolvedValueOnce(pagesResp)
+    // FTS5 returns no results for this query
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     const results = await capturedSearchPages?.('zzz_no_match')
 
@@ -1329,17 +1302,17 @@ describe('BlockTree resolve cache preload', () => {
       if (cmd === 'list_tags_by_prefix') {
         return [] // no tags
       }
-      if (cmd === 'get_block' && args?.blockId === CONTENT_ULID) {
-        return {
-          id: CONTENT_ULID,
-          block_type: 'content',
-          content: 'Referenced block',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-          archived_at: null,
-          is_conflict: false,
-        }
+      if (cmd === 'batch_resolve') {
+        // biome-ignore lint/suspicious/noExplicitAny: test mock
+        const ids = ((args as any)?.ids as string[]) ?? []
+        return ids
+          .filter((id: string) => id === CONTENT_ULID)
+          .map((id: string) => ({
+            id,
+            title: 'Referenced block',
+            block_type: 'content',
+            deleted: false,
+          }))
       }
       if (cmd === 'get_properties') return []
       return emptyPage
@@ -1349,8 +1322,8 @@ describe('BlockTree resolve cache preload', () => {
 
     await waitFor(
       () => {
-        // Preload should call get_block for the uncached ULID
-        expect(mockedInvoke).toHaveBeenCalledWith('get_block', { blockId: CONTENT_ULID })
+        // Preload should call batch_resolve for the uncached ULID
+        expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', { ids: [CONTENT_ULID] })
       },
       { timeout: 3000 },
     )
@@ -1444,6 +1417,7 @@ describe('BlockTree handleNavigate', () => {
         }
       }
       if (cmd === 'get_properties') return []
+      if (cmd === 'batch_resolve') return []
       return emptyPage
     })
 
@@ -1460,7 +1434,8 @@ describe('BlockTree handleNavigate', () => {
 
     await waitFor(() => {
       // Should navigate to parent page with its title, NOT the content block's text
-      expect(onNav).toHaveBeenCalledWith(PARENT_ID, 'Parent Page Title')
+      // Also passes targetId for scroll-to-block
+      expect(onNav).toHaveBeenCalledWith(PARENT_ID, 'Parent Page Title', CONTENT_ID)
     })
   })
 
@@ -1495,7 +1470,7 @@ describe('BlockTree handleNavigate', () => {
 // =========================================================================
 
 describe('BlockTree searchPages caching', () => {
-  it('searchPages fallback caches results for subsequent calls', async () => {
+  it('searchPages short-query fallback caches results for subsequent calls', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
     render(<BlockTree />)
@@ -1504,7 +1479,7 @@ describe('BlockTree searchPages caching', () => {
       expect(capturedSearchPages).toBeDefined()
     })
 
-    // First call — cache empty, triggers API call
+    // Short query (≤2 chars) uses cache path with listBlocks fallback
     const pagesResp = {
       items: [
         {
@@ -1522,23 +1497,23 @@ describe('BlockTree searchPages caching', () => {
       has_more: false,
     }
     mockedInvoke.mockResolvedValueOnce(pagesResp)
-    const result1 = await capturedSearchPages?.('alpha')
+    // Use short query (≤2 chars) to hit the cache path
+    const result1 = await capturedSearchPages?.('al')
 
     expect(result1).toEqual([
       { id: 'P1', label: 'Alpha Page' },
-      { id: '__create__', label: 'alpha', isCreate: true },
+      { id: '__create__', label: 'al', isCreate: true },
     ])
 
-    // Second call — should NOT trigger another API call (cached)
+    // Second call — should NOT trigger another API call (cached in pagesListRef)
     const callsBefore = mockedInvoke.mock.calls.length
-    const result2 = await capturedSearchPages?.('alpha')
+    const result2 = await capturedSearchPages?.('al')
     const callsAfter = mockedInvoke.mock.calls.length
 
-    // No new invoke calls should have been made
     expect(callsAfter).toBe(callsBefore)
     expect(result2).toEqual([
       { id: 'P1', label: 'Alpha Page' },
-      { id: '__create__', label: 'alpha', isCreate: true },
+      { id: '__create__', label: 'al', isCreate: true },
     ])
   })
 

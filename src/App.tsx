@@ -81,8 +81,8 @@ function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   const handlePageSelect = useCallback(
-    (pageId: string, title?: string) => {
-      navigateToPage(pageId, title ?? 'Untitled')
+    (pageId: string, title?: string, blockId?: string) => {
+      navigateToPage(pageId, title ?? 'Untitled', blockId)
     },
     [navigateToPage],
   )

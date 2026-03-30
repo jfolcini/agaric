@@ -95,6 +95,17 @@ async getBlock(blockId: string) : Promise<Result<BlockRow, { kind: string; messa
 }
 },
 /**
+ * Tauri command: batch-resolve block metadata. Delegates to [`batch_resolve_inner`].
+ */
+async batchResolve(ids: string[]) : Promise<Result<ResolvedBlock[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("batch_resolve", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: add a tag to a block. Delegates to [`add_tag_inner`].
  */
 async addTag(blockId: string, tagId: string) : Promise<Result<TagResponse, { kind: string; message: string }>> {
@@ -267,6 +278,14 @@ export type MoveResponse = { block_id: string; new_parent_id: string | null; new
 export type PageResponse<T> = { items: T[]; next_cursor: string | null; has_more: boolean }
 export type PropertyRow = { key: string; value_text: string | null; value_num: number | null; value_date: string | null; value_ref: string | null }
 export type PurgeResponse = { block_id: string; purged_count: number }
+/**
+ * Lightweight metadata returned by [`batch_resolve_inner`].
+ */
+export type ResolvedBlock = { id: string;
+/**
+ * `content` column — page title, tag name, or content text (truncated).
+ */
+title: string | null; block_type: string; deleted: boolean }
 export type RestoreResponse = { block_id: string; restored_count: number }
 /**
  * Serializable status snapshot of the materializer queues.

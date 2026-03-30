@@ -258,6 +258,20 @@ export function setupMock(): void {
         return b
       }
 
+      case 'batch_resolve': {
+        const a = args as Record<string, unknown>
+        const ids = a.ids as string[]
+        return ids
+          .map((id) => blocks.get(id))
+          .filter(Boolean)
+          .map((b) => ({
+            id: b!.id as string,
+            title: (b!.content as string | null) ?? null,
+            block_type: b!.block_type as string,
+            deleted: b!.deleted_at !== null,
+          }))
+      }
+
       case 'move_block': {
         const a = args as Record<string, unknown>
         const b = blocks.get(a.blockId as string)

@@ -211,10 +211,16 @@ describe('BacklinksPanel', () => {
             has_more: false,
           }
         }
-        if (cmd === 'get_block') {
-          if ((args as { blockId: string })?.blockId === PAGE_ULID) {
-            return makeBlock(PAGE_ULID, 'My Resolved Page', 'page')
-          }
+        if (cmd === 'batch_resolve') {
+          const ids = (args as { ids: string[] })?.ids ?? []
+          return ids
+            .filter((id: string) => id === PAGE_ULID)
+            .map((id: string) => ({
+              id,
+              title: 'My Resolved Page',
+              block_type: 'page',
+              deleted: false,
+            }))
         }
         return emptyPage
       })
@@ -263,10 +269,11 @@ describe('BacklinksPanel', () => {
             has_more: false,
           }
         }
-        if (cmd === 'get_block') {
-          if ((args as { blockId: string })?.blockId === TAG_ULID) {
-            return makeBlock(TAG_ULID, 'Important', 'tag')
-          }
+        if (cmd === 'batch_resolve') {
+          const ids = (args as { ids: string[] })?.ids ?? []
+          return ids
+            .filter((id: string) => id === TAG_ULID)
+            .map((id: string) => ({ id, title: 'Important', block_type: 'tag', deleted: false }))
         }
         return emptyPage
       })
@@ -280,7 +287,7 @@ describe('BacklinksPanel', () => {
       })
     })
 
-    it('calls get_block for ULIDs found in backlink content', async () => {
+    it('calls batch_resolve for ULIDs found in backlink content', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'get_backlinks') {
           return {
@@ -289,8 +296,8 @@ describe('BacklinksPanel', () => {
             has_more: false,
           }
         }
-        if (cmd === 'get_block') {
-          return makeBlock(PAGE_ULID, 'Resolved Title', 'page')
+        if (cmd === 'batch_resolve') {
+          return [{ id: PAGE_ULID, title: 'Resolved Title', block_type: 'page', deleted: false }]
         }
         return emptyPage
       })
@@ -298,11 +305,11 @@ describe('BacklinksPanel', () => {
       render(<BacklinksPanel blockId="TARGET01" />)
 
       await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('get_block', { blockId: PAGE_ULID })
+        expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', { ids: [PAGE_ULID] })
       })
     })
 
-    it('shows truncated ULID fallback when getBlock fails', async () => {
+    it('shows truncated ULID fallback when batch_resolve fails', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'get_backlinks') {
           return {
@@ -311,7 +318,7 @@ describe('BacklinksPanel', () => {
             has_more: false,
           }
         }
-        if (cmd === 'get_block') {
+        if (cmd === 'batch_resolve') {
           throw new Error('not found')
         }
         return emptyPage
@@ -376,9 +383,22 @@ describe('BacklinksPanel', () => {
             has_more: false,
           }
         }
-        if (cmd === 'get_block') {
-          if (args?.blockId === ULID_P1) return makeBlock(ULID_P1, 'Page One', 'page')
-          if (args?.blockId === ULID_P2) return makeBlock(ULID_P2, 'Page Two', 'page')
+        if (cmd === 'batch_resolve') {
+          // biome-ignore lint/suspicious/noExplicitAny: test mock
+          const ids = ((args as any)?.ids as string[]) ?? []
+          const results: Array<{
+            id: string
+            title: string
+            block_type: string
+            deleted: boolean
+          }> = []
+          for (const id of ids) {
+            if (id === ULID_P1)
+              results.push({ id, title: 'Page One', block_type: 'page', deleted: false })
+            if (id === ULID_P2)
+              results.push({ id, title: 'Page Two', block_type: 'page', deleted: false })
+          }
+          return results
         }
         return emptyPage
       })
@@ -402,7 +422,7 @@ describe('BacklinksPanel', () => {
       })
     })
 
-    it('handles getBlock network error without crashing', async () => {
+    it('handles batch_resolve network error without crashing', async () => {
       const BAD_ULID = '01ZZZ3NDEKTSV4RRFFQ69G5FAV'
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'get_backlinks') {
@@ -412,7 +432,7 @@ describe('BacklinksPanel', () => {
             has_more: false,
           }
         }
-        if (cmd === 'get_block') {
+        if (cmd === 'batch_resolve') {
           throw new Error('Network error')
         }
         return emptyPage
@@ -428,7 +448,7 @@ describe('BacklinksPanel', () => {
       })
     })
 
-    it('renders plain text backlinks without unnecessary getBlock calls', async () => {
+    it('renders plain text backlinks without unnecessary batch_resolve calls', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'get_backlinks') {
           return {
@@ -437,7 +457,7 @@ describe('BacklinksPanel', () => {
             has_more: false,
           }
         }
-        if (cmd === 'get_block') {
+        if (cmd === 'batch_resolve') {
           throw new Error('Should not be called')
         }
         return emptyPage
@@ -448,8 +468,8 @@ describe('BacklinksPanel', () => {
       await waitFor(() => {
         expect(screen.getByText('Just plain text, no links')).toBeInTheDocument()
       })
-      // get_block should NOT have been called since there are no ULID tokens
-      expect(mockedInvoke).not.toHaveBeenCalledWith('get_block', expect.anything())
+      // batch_resolve should NOT have been called since there are no ULID tokens
+      expect(mockedInvoke).not.toHaveBeenCalledWith('batch_resolve', expect.anything())
     })
 
     it('has no a11y violations with rich content', async () => {
@@ -463,8 +483,8 @@ describe('BacklinksPanel', () => {
             has_more: false,
           }
         }
-        if (cmd === 'get_block') {
-          return makeBlock(PAGE_ULID, 'Accessible Page', 'page')
+        if (cmd === 'batch_resolve') {
+          return [{ id: PAGE_ULID, title: 'Accessible Page', block_type: 'page', deleted: false }]
         }
         return emptyPage
       })

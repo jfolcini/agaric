@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { editBlock } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
+import { useNavigationStore } from '../stores/navigation'
 import { BacklinksPanel } from './BacklinksPanel'
 import { BlockTree } from './BlockTree'
 import { HistoryPanel } from './HistoryPanel'
@@ -20,7 +21,7 @@ export interface PageEditorProps {
   pageId: string
   title: string
   onBack?: () => void
-  onNavigateToPage?: (pageId: string, title: string) => void
+  onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
 }
 
 type DetailTab = 'backlinks' | 'history' | 'tags'
@@ -34,6 +35,26 @@ export function PageEditor({
   const [editableTitle, setEditableTitle] = useState(title)
   const titleRef = useRef<HTMLDivElement>(null)
   const { blocks, createBelow, setFocused } = useBlockStore()
+
+  // Scroll to and focus a specific block when navigating via a link
+  const selectedBlockId = useNavigationStore((s) => s.selectedBlockId)
+  const clearSelection = useNavigationStore((s) => s.clearSelection)
+
+  useEffect(() => {
+    if (!selectedBlockId || blocks.length === 0) return
+    // Focus the target block if it exists in this page's block tree
+    const target = blocks.find((b) => b.id === selectedBlockId)
+    if (target) {
+      setFocused(selectedBlockId)
+      // Scroll into view after a tick to allow DOM to update
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-block-id="${selectedBlockId}"]`)
+          ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
+      clearSelection()
+    }
+  }, [selectedBlockId, blocks, setFocused, clearSelection])
 
   // Detail panel state
   const focusedBlockId = useBlockStore((s) => s.focusedBlockId)

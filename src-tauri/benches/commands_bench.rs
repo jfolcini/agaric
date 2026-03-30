@@ -5,7 +5,9 @@
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use block_notes_lib::commands::{create_block_inner, edit_block_inner, list_blocks_inner};
+use block_notes_lib::commands::{
+    batch_resolve_inner, create_block_inner, edit_block_inner, list_blocks_inner,
+};
 use block_notes_lib::db::init_pool;
 use block_notes_lib::materializer::Materializer;
 
@@ -391,6 +393,64 @@ fn bench_list_blocks_with_type_filter(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// batch_resolve benchmarks
+// ===========================================================================
+
+fn bench_batch_resolve_10(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "batch_resolve_10"));
+    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+    let ids = rt.block_on(seed_blocks(&pool, &materializer, 10));
+
+    c.bench_function("batch_resolve_10_blocks", |b| {
+        b.to_async(&rt).iter(|| {
+            let pool = pool.clone();
+            let ids = ids.clone();
+            async move { batch_resolve_inner(&pool, ids).await.unwrap() }
+        })
+    });
+
+    rt.block_on(async { materializer.shutdown() });
+}
+
+fn bench_batch_resolve_100(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "batch_resolve_100"));
+    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+    let ids = rt.block_on(seed_blocks(&pool, &materializer, 100));
+
+    c.bench_function("batch_resolve_100_blocks", |b| {
+        b.to_async(&rt).iter(|| {
+            let pool = pool.clone();
+            let ids = ids.clone();
+            async move { batch_resolve_inner(&pool, ids).await.unwrap() }
+        })
+    });
+
+    rt.block_on(async { materializer.shutdown() });
+}
+
+fn bench_batch_resolve_500(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "batch_resolve_500"));
+    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+    let ids = rt.block_on(seed_blocks(&pool, &materializer, 500));
+
+    c.bench_function("batch_resolve_500_blocks", |b| {
+        b.to_async(&rt).iter(|| {
+            let pool = pool.clone();
+            let ids = ids.clone();
+            async move { batch_resolve_inner(&pool, ids).await.unwrap() }
+        })
+    });
+
+    rt.block_on(async { materializer.shutdown() });
+}
+
+// ===========================================================================
 // Harness
 // ===========================================================================
 
@@ -417,4 +477,11 @@ criterion_group!(
     bench_list_blocks_with_type_filter,
 );
 
-criterion_main!(create_benches, edit_benches, list_benches);
+criterion_group!(
+    resolve_benches,
+    bench_batch_resolve_10,
+    bench_batch_resolve_100,
+    bench_batch_resolve_500,
+);
+
+criterion_main!(create_benches, edit_benches, list_benches, resolve_benches);

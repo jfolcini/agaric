@@ -39,12 +39,14 @@ import { useRovingEditor } from '../editor/use-roving-editor'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import type { PropertyRow } from '../lib/tauri'
 import {
+  batchResolve,
   createBlock,
   deleteProperty,
   getBlock,
   getProperties,
   listBlocks,
   listTagsByPrefix,
+  searchBlocks,
   setProperty,
 } from '../lib/tauri'
 import {
@@ -88,8 +90,9 @@ export function processCheckboxSyntax(content: string): {
 interface BlockTreeProps {
   /** Optional parent block ID — when set, loads children of this block. */
   parentId?: string
-  /** Navigate to a page in the page editor (cross-page navigation). */
-  onNavigateToPage?: (pageId: string, title: string) => void
+  /** Navigate to a page in the page editor (cross-page navigation).
+   *  Optional blockId scrolls to a specific block within the target page. */
+  onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
 }
 
 export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): React.ReactElement {
@@ -246,25 +249,48 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   }, [])
 
   const searchPages = useCallback(async (query: string): Promise<PickerItem[]> => {
-    const q = query.toLowerCase()
+    const q = query.toLowerCase().trim()
 
-    // Use the preloaded pages list for instant, complete results.
-    // Falls back to API call if cache hasn't loaded yet, and caches the result.
-    let source = pagesListRef.current
-    if (source.length === 0) {
-      const resp = await listBlocks({ blockType: 'page', limit: 500 })
-      source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
-      pagesListRef.current = source
+    // For short/empty queries, use the preloaded pages cache for instant results.
+    // For longer queries, use FTS5 server-side search for relevance-ranked results.
+    let matches: PickerItem[]
+
+    if (q.length <= 2) {
+      // Short query — use cache (substring match)
+      let source = pagesListRef.current
+      if (source.length === 0) {
+        const resp = await listBlocks({ blockType: 'page', limit: 500 })
+        source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
+        pagesListRef.current = source
+      }
+      matches = source
+        .filter((p) => !q || p.title.toLowerCase().includes(q))
+        .slice(0, 20)
+        .map((p) => ({ id: p.id, label: p.title }))
+    } else {
+      // Longer query — use FTS5 search, filter to pages
+      const resp = await searchBlocks({ query: q, limit: 20 })
+      matches = resp.items
+        .filter((b) => b.block_type === 'page')
+        .map((b) => ({ id: b.id, label: b.content ?? 'Untitled' }))
+
+      // If FTS returns few results, supplement from cache
+      if (matches.length < 5 && pagesListRef.current.length > 0) {
+        const ftsIds = new Set(matches.map((m) => m.id))
+        const cacheMatches = pagesListRef.current
+          .filter((p) => p.title.toLowerCase().includes(q) && !ftsIds.has(p.id))
+          .slice(0, 10)
+          .map((p) => ({ id: p.id, label: p.title }))
+        matches = [...matches, ...cacheMatches].slice(0, 20)
+      }
     }
 
-    const matches: PickerItem[] = source
-      .filter((p) => p.title.toLowerCase().includes(q))
-      .slice(0, 20)
-      .map((p) => ({ id: p.id, label: p.title }))
-
     // Append a "Create new" option when the query doesn't exactly match an existing page
-    if (q.trim().length > 0) {
-      const exactMatch = source.some((p) => p.title.toLowerCase() === q)
+    if (q.length > 0) {
+      const allSource = pagesListRef.current.length > 0 ? pagesListRef.current : matches
+      const exactMatch = allSource.some(
+        (p) => ('title' in p ? p.title : p.label).toLowerCase() === q,
+      )
       if (!exactMatch) {
         matches.push({ id: '__create__', label: query.trim(), isCreate: true })
       }
@@ -373,29 +399,21 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           }
         }
 
-        // Batch-fetch any uncached block references
+        // Batch-fetch any uncached block references via single IPC call
         if (uncached.size > 0) {
-          await Promise.all(
-            [...uncached].map(async (id) => {
-              if (cancelled) return
-              try {
-                const blk = await getBlock(id)
-                if (!cancelled) {
-                  blockInfoCache.current.set(id, {
-                    title: blk.content?.slice(0, 60) || `[[${id.slice(0, 8)}...]]`,
-                    deleted: blk.deleted_at !== null,
-                  })
-                }
-              } catch {
-                if (!cancelled) {
-                  blockInfoCache.current.set(id, {
-                    title: `[[${id.slice(0, 8)}...]]`,
-                    deleted: true,
-                  })
-                }
+          try {
+            const resolved = await batchResolve([...uncached])
+            if (!cancelled) {
+              for (const r of resolved) {
+                blockInfoCache.current.set(r.id, {
+                  title: r.title?.slice(0, 60) || `[[${r.id.slice(0, 8)}...]]`,
+                  deleted: r.deleted,
+                })
               }
-            }),
-          )
+            }
+          } catch {
+            // Batch resolve failed — fallback entries stay as truncated ULIDs
+          }
         }
 
         if (!cancelled) setResolveVersion((v) => v + 1)
@@ -512,9 +530,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           // Fetch the parent to get the actual page title (not the target block's content)
           try {
             const parentBlock = await getBlock(targetBlock.parent_id)
-            onNavigateToPage?.(targetBlock.parent_id, parentBlock.content ?? 'Untitled')
+            onNavigateToPage?.(targetBlock.parent_id, parentBlock.content ?? 'Untitled', targetId)
           } catch {
-            onNavigateToPage?.(targetBlock.parent_id, 'Untitled')
+            onNavigateToPage?.(targetBlock.parent_id, 'Untitled', targetId)
           }
           return
         }
