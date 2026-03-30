@@ -19,6 +19,8 @@ const blockLinkPickerPluginKey = new PluginKey('blockLinkPicker')
 export interface BlockLinkPickerOptions {
   /** Return pages/blocks matching the query. Called on every keystroke after [[. */
   items: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  /** Create a new page with the given title. Returns the new block's ULID. */
+  onCreate?: (label: string) => Promise<string>
 }
 
 export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
@@ -27,10 +29,12 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
   addOptions() {
     return {
       items: () => [],
+      onCreate: undefined,
     }
   },
 
   addProseMirrorPlugins() {
+    const extensionOptions = this.options
     return [
       Suggestion({
         editor: this.editor,
@@ -39,7 +43,13 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
         items: ({ query }) => this.options.items(query),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
-          editor.chain().focus().deleteRange(range).insertBlockLink(item.id).run()
+          if (item.isCreate && extensionOptions.onCreate) {
+            extensionOptions.onCreate(item.label).then((newId) => {
+              editor.chain().focus().deleteRange(range).insertBlockLink(newId).run()
+            })
+          } else {
+            editor.chain().focus().deleteRange(range).insertBlockLink(item.id).run()
+          }
         },
         render: createSuggestionRenderer,
       }),

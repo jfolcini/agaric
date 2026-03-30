@@ -10,6 +10,7 @@ export type {
   PurgeResponse,
   RestoreResponse,
   StatusInfo,
+  TagCacheRow,
   TagResponse,
 } from './bindings'
 
@@ -23,6 +24,7 @@ import type {
   PurgeResponse,
   RestoreResponse,
   StatusInfo,
+  TagCacheRow,
   TagResponse,
 } from './bindings'
 
@@ -186,9 +188,7 @@ export async function queryByTags(params: {
 }
 
 /** List tags whose name starts with the given prefix (autocomplete). */
-export async function listTagsByPrefix(params: {
-  prefix: string
-}): Promise<Array<{ tag_id: string; name: string; usage_count: number; updated_at: string }>> {
+export async function listTagsByPrefix(params: { prefix: string }): Promise<TagCacheRow[]> {
   return invoke('list_tags_by_prefix', {
     prefix: params.prefix,
   })

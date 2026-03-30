@@ -19,14 +19,17 @@ import { useBlockStore } from '../../stores/blocks'
 // Capture the options passed to useRovingEditor so we can call searchTags/searchPages directly.
 let capturedSearchTags: ((query: string) => PickerItem[] | Promise<PickerItem[]>) | undefined
 let capturedSearchPages: ((query: string) => PickerItem[] | Promise<PickerItem[]>) | undefined
+let capturedOnCreatePage: ((label: string) => Promise<string>) | undefined
 
 vi.mock('../../editor/use-roving-editor', () => ({
   useRovingEditor: (opts: {
     searchTags?: (query: string) => PickerItem[] | Promise<PickerItem[]>
     searchPages?: (query: string) => PickerItem[] | Promise<PickerItem[]>
+    onCreatePage?: (label: string) => Promise<string>
   }) => {
     capturedSearchTags = opts.searchTags
     capturedSearchPages = opts.searchPages
+    capturedOnCreatePage = opts.onCreatePage
     return {
       editor: null,
       mount: vi.fn(),
@@ -80,6 +83,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   capturedSearchTags = undefined
   capturedSearchPages = undefined
+  capturedOnCreatePage = undefined
   useBlockStore.setState({
     blocks: [],
     focusedBlockId: null,
@@ -210,7 +214,10 @@ describe('BlockTree picker wiring', () => {
       cursor: null,
       limit: 20,
     })
-    expect(results).toEqual([{ id: 'P1', label: 'Meeting Notes' }])
+    expect(results).toEqual([
+      { id: 'P1', label: 'Meeting Notes' },
+      { id: '__create__', label: 'meet', isCreate: true },
+    ])
   })
 
   it('searchPages filters case-insensitively', async () => {
@@ -255,6 +262,7 @@ describe('BlockTree picker wiring', () => {
     expect(results).toEqual([
       { id: 'P1', label: 'UPPERCASE PAGE' },
       { id: 'P2', label: 'lowercase page' },
+      { id: '__create__', label: 'PAGE', isCreate: true },
     ])
   })
 
@@ -291,7 +299,7 @@ describe('BlockTree picker wiring', () => {
     expect(results).toEqual([{ id: 'P1', label: 'Untitled' }])
   })
 
-  it('searchPages returns empty array when no pages match query', async () => {
+  it('searchPages returns create-new item when no pages match query', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
     render(<BlockTree />)
@@ -320,7 +328,161 @@ describe('BlockTree picker wiring', () => {
 
     const results = await capturedSearchPages?.('zzz_no_match')
 
+    expect(results).toEqual([{ id: '__create__', label: 'zzz_no_match', isCreate: true }])
+  })
+
+  it('searchPages appends create-new item when query partially matches but no exact match', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchPages).toBeDefined()
+    })
+
+    const pagesResp = {
+      items: [
+        {
+          id: 'P1',
+          block_type: 'page',
+          content: 'Meeting Notes',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(pagesResp)
+
+    const results = await capturedSearchPages?.('Meet')
+
+    expect(results).toEqual([
+      { id: 'P1', label: 'Meeting Notes' },
+      { id: '__create__', label: 'Meet', isCreate: true },
+    ])
+  })
+
+  it('searchPages does NOT append create-new when exact match exists (case-insensitive)', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchPages).toBeDefined()
+    })
+
+    const pagesResp = {
+      items: [
+        {
+          id: 'P1',
+          block_type: 'page',
+          content: 'Meeting Notes',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(pagesResp)
+
+    const results = await capturedSearchPages?.('meeting notes')
+
+    expect(results).toEqual([{ id: 'P1', label: 'Meeting Notes' }])
+  })
+
+  it('searchPages does NOT append create-new for empty query', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchPages).toBeDefined()
+    })
+
+    const pagesResp = {
+      items: [
+        {
+          id: 'P1',
+          block_type: 'page',
+          content: 'Some page',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(pagesResp)
+
+    const results = await capturedSearchPages?.('')
+
+    expect(results).toEqual([{ id: 'P1', label: 'Some page' }])
+  })
+
+  it('searchPages does NOT append create-new for whitespace-only query', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchPages).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    const results = await capturedSearchPages?.('   ')
+
     expect(results).toEqual([])
+  })
+
+  it('passes onCreatePage to useRovingEditor', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnCreatePage).toBeDefined()
+    })
+    expect(typeof capturedOnCreatePage).toBe('function')
+  })
+
+  it('onCreatePage calls create_block with blockType page and returns the ID', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnCreatePage).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'NEW_PAGE_ID_00000000000000',
+      block_type: 'page',
+      content: 'My New Page',
+      parent_id: null,
+      position: 0,
+    })
+
+    const resultId = await capturedOnCreatePage?.('My New Page')
+
+    expect(resultId).toBe('NEW_PAGE_ID_00000000000000')
+    expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+      blockType: 'page',
+      content: 'My New Page',
+      parentId: null,
+      position: null,
+    })
   })
 
   it('renders loading state', () => {

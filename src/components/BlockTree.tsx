@@ -28,7 +28,7 @@ import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
 import { useViewportObserver } from '../hooks/useViewportObserver'
-import { getBlock, listBlocks, listTagsByPrefix } from '../lib/tauri'
+import { createBlock, getBlock, listBlocks, listTagsByPrefix } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { SortableBlock } from './SortableBlock'
 
@@ -100,12 +100,27 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
   const searchPages = useCallback(async (query: string): Promise<PickerItem[]> => {
     const resp = await listBlocks({ blockType: 'page', limit: 20 })
     const q = query.toLowerCase()
-    return resp.items
+    const matches: PickerItem[] = resp.items
       .filter((p) => (p.content ?? '').toLowerCase().includes(q))
       .map((p) => ({
         id: p.id,
         label: p.content ?? 'Untitled',
       }))
+    // Append a "Create new" option when the query doesn't exactly match an existing page
+    if (q.trim().length > 0) {
+      const exactMatch = resp.items.some((p) => (p.content ?? '').toLowerCase() === q)
+      if (!exactMatch) {
+        matches.push({ id: '__create__', label: query.trim(), isCreate: true })
+      }
+    }
+    return matches
+  }, [])
+
+  const onCreatePage = useCallback(async (label: string): Promise<string> => {
+    const block = await createBlock({ blockType: 'page', content: label })
+    // Populate resolve cache so the link chip shows the title immediately
+    blockInfoCache.current.set(block.id, { title: label, deleted: false })
+    return block.id
   }, [])
 
   // ── Roving editor ──────────────────────────────────────────────────
@@ -121,6 +136,7 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     resolveTagStatus,
     searchTags,
     searchPages,
+    onCreatePage,
   })
 
   const viewport = useViewportObserver()

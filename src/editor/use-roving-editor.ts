@@ -36,6 +36,8 @@ export interface RovingEditorOptions {
   searchTags?: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Return pages matching query (for [[ picker). */
   searchPages?: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  /** Create a new page with the given title. Returns the new block's ULID. */
+  onCreatePage?: (label: string) => Promise<string>
   /** Called when user clicks a [[block link]] chip to navigate. */
   onNavigate?: (id: string) => void
   /** Check whether a linked block is active or deleted (broken link). */
@@ -81,6 +83,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     placeholder = 'Type something...',
     searchTags = () => [],
     searchPages = () => [],
+    onCreatePage,
     onNavigate,
     resolveBlockStatus,
     resolveTagStatus,
@@ -102,6 +105,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   resolveBlockStatusRef.current = resolveBlockStatus
   const resolveTagStatusRef = useRef(resolveTagStatus)
   resolveTagStatusRef.current = resolveTagStatus
+  const onCreatePageRef = useRef(onCreatePage)
+  onCreatePageRef.current = onCreatePage
 
   const editor = useEditor({
     extensions: [
@@ -124,7 +129,14 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         resolveStatus: (id: string) => resolveBlockStatusRef.current?.(id) ?? 'active',
       }),
       TagPicker.configure({ items: searchTags }),
-      BlockLinkPicker.configure({ items: searchPages }),
+      BlockLinkPicker.configure({
+        items: searchPages,
+        onCreate: (label: string) => {
+          const fn = onCreatePageRef.current
+          if (!fn) return Promise.reject(new Error('onCreatePage not provided'))
+          return fn(label)
+        },
+      }),
     ],
     editable: true,
     content: { type: 'doc', content: [{ type: 'paragraph' }] },

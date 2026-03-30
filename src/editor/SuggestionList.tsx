@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils'
 export interface PickerItem {
   id: string
   label: string
+  /** When true, selecting this item creates a new page instead of linking to an existing one. */
+  isCreate?: boolean
 }
 
 export interface SuggestionListProps {
@@ -74,6 +76,7 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
             className={cn(
               'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors',
               index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+              item.isCreate && 'border-t border-border',
             )}
             onClick={() => selectItem(index)}
             onMouseEnter={() => setSelectedIndex(index)}
@@ -81,7 +84,14 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
             role="option"
             aria-selected={index === selectedIndex}
           >
-            {item.label}
+            {item.isCreate ? (
+              <span>
+                <span className="mr-1 text-muted-foreground">+</span>
+                Create <strong>{item.label}</strong>
+              </span>
+            ) : (
+              item.label
+            )}
           </button>
         ))}
       </div>
