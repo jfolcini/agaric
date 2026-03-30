@@ -11,6 +11,7 @@ import type React from 'react'
 import { useCallback } from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { useBlockStore } from '../stores/blocks'
+import { FormattingToolbar } from './FormattingToolbar'
 import { StaticBlock } from './StaticBlock'
 
 interface EditableBlockProps {
@@ -96,6 +97,7 @@ export function EditableBlock({
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: wrapper div catches blur from TipTap contenteditable
     <div className="block-editor min-h-[2rem]" data-block-id={blockId} onBlur={handleBlur}>
+      {rovingEditor.editor && <FormattingToolbar editor={rovingEditor.editor} />}
       <EditorContent editor={rovingEditor.editor} />
     </div>
   )

@@ -26,6 +26,11 @@ vi.mock('@tiptap/react', () => ({
     editor != null ? <div data-testid="editor-content">TipTap Editor</div> : null,
 }))
 
+// Mock FormattingToolbar — tested separately in FormattingToolbar.test.tsx
+vi.mock('../FormattingToolbar', () => ({
+  FormattingToolbar: () => <div data-testid="formatting-toolbar" />,
+}))
+
 // Mock StaticBlock to keep tests focused on EditableBlock logic
 vi.mock('../StaticBlock', () => ({
   StaticBlock: ({
