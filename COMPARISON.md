@@ -418,7 +418,7 @@ Not everything is a gap. Block Notes has architectural advantages:
 | **Structured properties** | Typed properties (text, num, date, ref) with validation | Properties are untyped strings in file graph |
 | **ID system** | ULIDs are sortable, case-normalized, deterministic ordering | UUID v4 is random, not sortable |
 | **Soft delete** | Cascade soft-delete with restore + purge, timestamp verification | Delete is file deletion or block removal |
-| **Test coverage** | 1,248 tests across 3 layers (Rust, Vitest, Playwright) | Community-reported quality issues |
+| **Test coverage** | 1,549 tests across 3 layers (Rust, Vitest, Playwright) | Community-reported quality issues |
 | **Desktop performance** | Tauri 2 (Rust + WebView) -- small binary, low memory | Electron -- large binary, high memory |
 
 ---
@@ -454,4 +454,3 @@ Not everything is a gap. Block Notes has architectural advantages:
 - Logseq Blog: https://blog.logseq.com/
 - Logseq Docs Repo: https://github.com/logseq/docs
 - Awesome Logseq: https://github.com/logseq/awesome-logseq
-- Detailed research files in `comparison/01-logseq-features.md`, `02-logseq-workflows.md`, `03-logseq-workflows.md`
