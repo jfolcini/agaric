@@ -5,14 +5,23 @@
  * Enter creates a new block below. Backspace on empty deletes.
  * Off-screen blocks are replaced by height-preserving placeholders
  * via IntersectionObserver (p15-t13).
- * Drag-and-drop reordering via @dnd-kit (p2-t9).
+ *
+ * Tree-aware drag-and-drop: blocks render with depth-based indentation.
+ * Horizontal drag offset during DnD determines the projected indent level,
+ * enabling drag-to-reparent. A drop indicator shows the target position
+ * and depth.
  */
 
 import {
   closestCenter,
   DndContext,
   type DragEndEvent,
+  type DragMoveEvent,
+  type DragOverEvent,
+  DragOverlay,
+  type DragStartEvent,
   KeyboardSensor,
+  MeasuringStrategy,
   PointerSensor,
   useSensor,
   useSensors,
@@ -23,14 +32,15 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import type React from 'react'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import { createBlock, getBlock, listBlocks, listTagsByPrefix } from '../lib/tauri'
+import { computePosition, getDragDescendants, getProjection } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
-import { SortableBlock } from './SortableBlock'
+import { INDENT_WIDTH, SortableBlock } from './SortableBlock'
 
 /** Cached info about a block/tag for resolve callbacks. */
 interface BlockInfo {
@@ -46,6 +56,7 @@ interface BlockTreeProps {
 export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement {
   const {
     blocks,
+    rootParentId,
     focusedBlockId,
     loading,
     load,
@@ -56,7 +67,30 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     indent,
     dedent,
     reorder,
+    moveToParent,
   } = useBlockStore()
+
+  // ── DnD state ──────────────────────────────────────────────────────
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [overId, setOverId] = useState<string | null>(null)
+  const [offsetLeft, setOffsetLeft] = useState(0)
+
+  // Items visible during drag: exclude descendants of the active item
+  const activeDescendants = useMemo(
+    () => (activeId ? getDragDescendants(blocks, activeId) : new Set<string>()),
+    [activeId, blocks],
+  )
+
+  const visibleItems = useMemo(
+    () => (activeId ? blocks.filter((b) => !activeDescendants.has(b.id)) : blocks),
+    [blocks, activeId, activeDescendants],
+  )
+
+  // Projection of where the dragged item would land
+  const projected = useMemo(() => {
+    if (!activeId || !overId) return null
+    return getProjection(visibleItems, activeId, overId, offsetLeft, INDENT_WIDTH, rootParentId)
+  }, [activeId, overId, offsetLeft, visibleItems, rootParentId])
 
   // ── Resolve cache ──────────────────────────────────────────────────
   // Simple in-memory cache of block/tag info for resolve callbacks.
@@ -244,26 +278,69 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     dedent(focusedBlockId)
   }, [focusedBlockId, handleFlush, dedent])
 
-  // ── DnD drag end ─────────────────────────────────────────────────
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const { active, over } = event
-      if (!over || active.id === over.id) return
+  // ── DnD handlers ───────────────────────────────────────────────────
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const id = event.active.id as string
+      setActiveId(id)
+      setOverId(id)
+      setOffsetLeft(0)
 
-      // Unfocus/unmount editor during drag completion
-      // handleFlush() already calls unmount() internally, so no second unmount needed.
+      // Flush editor if active
       if (rovingEditor.activeBlockId) {
         handleFlush()
         setFocused(null)
       }
+    },
+    [rovingEditor, handleFlush, setFocused],
+  )
 
-      const overIndex = blocks.findIndex((b) => b.id === over.id)
-      if (overIndex >= 0) {
-        reorder(active.id as string, overIndex)
+  const handleDragMove = useCallback((event: DragMoveEvent) => {
+    setOffsetLeft(event.delta.x)
+  }, [])
+
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    setOverId((event.over?.id as string) ?? null)
+  }, [])
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event
+
+      // Reset DnD state
+      setActiveId(null)
+      setOverId(null)
+      setOffsetLeft(0)
+
+      if (!over || active.id === over.id) return
+
+      const blockId = active.id as string
+
+      if (projected) {
+        // Tree-aware move: use projection to determine new parent + position
+        const newPosition = computePosition(
+          visibleItems,
+          projected.parentId,
+          visibleItems.findIndex((b) => b.id === over.id),
+          blockId,
+        )
+        moveToParent(blockId, projected.parentId, newPosition)
+      } else {
+        // Fallback: simple reorder at same level
+        const overIndex = blocks.findIndex((b) => b.id === over.id)
+        if (overIndex >= 0) {
+          reorder(blockId, overIndex)
+        }
       }
     },
-    [blocks, rovingEditor, handleFlush, setFocused, reorder],
+    [blocks, projected, visibleItems, moveToParent, reorder],
   )
+
+  const handleDragCancel = useCallback(() => {
+    setActiveId(null)
+    setOverId(null)
+    setOffsetLeft(0)
+  }, [])
 
   // ── Merge with previous block (p2-t11) ────────────────────────────
   const handleMergeWithPrev = useCallback(() => {
@@ -311,6 +388,9 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     onMergeWithPrev: handleMergeWithPrev,
   })
 
+  // ── Active item for DragOverlay ────────────────────────────────────
+  const activeBlock = activeId ? blocks.find((b) => b.id === activeId) : null
+
   if (loading) {
     return (
       <div className="block-tree-loading flex items-center justify-center p-8 text-sm text-muted-foreground">
@@ -319,12 +399,30 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
     )
   }
 
+  // DnD measuring config: always measure during drag for correct collision detection
+  const measuring = {
+    droppable: { strategy: MeasuringStrategy.Always },
+  }
+
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <SortableContext items={blocks.map((b) => b.id)} strategy={verticalListSortingStrategy}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      measuring={measuring}
+      onDragStart={handleDragStart}
+      onDragMove={handleDragMove}
+      onDragOver={handleDragOver}
+      onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
+    >
+      <SortableContext items={visibleItems.map((b) => b.id)} strategy={verticalListSortingStrategy}>
         <div className="block-tree space-y-0.5">
-          {blocks.map((block) => {
+          {visibleItems.map((block) => {
             const isFocused = focusedBlockId === block.id
+            // Show projected depth during drag for the active item's over target
+            const projectedDepth =
+              projected && activeId && overId === block.id ? projected.depth : block.depth
+
             // Focused block is never virtualized — always render fully
             if (!isFocused && viewport.isOffscreen(block.id)) {
               return (
@@ -339,10 +437,18 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
             }
             return (
               <div key={block.id} ref={viewport.observeRef} data-block-id={block.id}>
+                {/* Drop indicator: shows where the dragged block will land */}
+                {projected && overId === block.id && activeId !== block.id && (
+                  <div
+                    className="drop-indicator h-0.5 bg-primary rounded-full"
+                    style={{ marginLeft: projected.depth * INDENT_WIDTH }}
+                  />
+                )}
                 <SortableBlock
                   blockId={block.id}
                   content={block.content ?? ''}
                   isFocused={isFocused}
+                  depth={block.id === activeId ? projectedDepth : block.depth}
                   rovingEditor={rovingEditor}
                   onNavigate={handleNavigate}
                   onDelete={(id) => remove(id)}
@@ -361,6 +467,17 @@ export function BlockTree({ parentId }: BlockTreeProps = {}): React.ReactElement
           )}
         </div>
       </SortableContext>
+      {/* Drag overlay: floating preview of the dragged block */}
+      <DragOverlay dropAnimation={null}>
+        {activeBlock ? (
+          <div
+            className="sortable-block-overlay rounded border bg-background/90 px-3 py-1.5 shadow-lg text-sm opacity-80"
+            style={{ maxWidth: 320 }}
+          >
+            {(activeBlock.content ?? '').slice(0, 80) || 'Empty block'}
+          </div>
+        ) : null}
+      </DragOverlay>
     </DndContext>
   )
 }

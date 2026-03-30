@@ -12,10 +12,15 @@ import type React from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { EditableBlock } from './EditableBlock'
 
+/** Pixels of left padding per depth level. */
+export const INDENT_WIDTH = 24
+
 interface SortableBlockProps {
   blockId: string
   content: string
   isFocused: boolean
+  /** Depth in the block tree (0 = root level). */
+  depth?: number
   rovingEditor: RovingEditorHandle
   onNavigate?: (id: string) => void
   onDelete?: (blockId: string) => void
@@ -29,6 +34,7 @@ export function SortableBlock({
   blockId,
   content,
   isFocused,
+  depth = 0,
   rovingEditor,
   onNavigate,
   onDelete,
@@ -45,6 +51,7 @@ export function SortableBlock({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
+    paddingLeft: depth > 0 ? depth * INDENT_WIDTH : undefined,
   }
 
   return (

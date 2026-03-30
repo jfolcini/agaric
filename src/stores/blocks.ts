@@ -3,21 +3,30 @@
  *
  * Manages the in-memory block list, focused block, and CRUD operations.
  * All mutations go through Tauri commands and update local state on success.
+ *
+ * The store maintains a flattened tree: blocks are ordered depth-first with
+ * a `depth` field for visual indentation. This enables tree-aware DnD,
+ * keyboard indent/dedent, and proper hierarchy rendering.
  */
 
 import { create } from 'zustand'
 import type { BlockRow, PageResponse } from '../lib/tauri'
 import { createBlock, deleteBlock, editBlock, listBlocks, moveBlock } from '../lib/tauri'
+import { buildFlatTree, type FlatBlock, getDragDescendants } from '../lib/tree-utils'
+
+export type { FlatBlock }
 
 interface BlockStore {
-  /** Ordered list of blocks for the current view. */
-  blocks: BlockRow[]
+  /** Ordered flat-tree of blocks for the current view (depth-annotated). */
+  blocks: FlatBlock[]
+  /** The root parent ID for the current tree view. */
+  rootParentId: string | null
   /** ID of the currently focused/editing block, or null. */
   focusedBlockId: string | null
   /** Loading state. */
   loading: boolean
 
-  /** Load blocks from the backend. */
+  /** Load the full block subtree from the backend. */
   load: (parentId?: string) => Promise<void>
   /** Set which block is focused. */
   setFocused: (blockId: string | null) => void
@@ -26,7 +35,7 @@ interface BlockStore {
   createBelow: (afterBlockId: string, content?: string) => Promise<string | null>
   /** Edit a block's content. */
   edit: (blockId: string, content: string) => Promise<void>
-  /** Delete a block. */
+  /** Delete a block (and its descendants from the flat tree). */
   remove: (blockId: string) => Promise<void>
 
   /**
@@ -39,22 +48,48 @@ interface BlockStore {
   /** Reorder: move block to a new index within its sibling list. */
   reorder: (blockId: string, newIndex: number) => Promise<void>
 
-  /** Indent: make block a child of its previous sibling. */
+  /** Move block to a new parent + position (used by tree DnD). */
+  moveToParent: (blockId: string, newParentId: string | null, newPosition: number) => Promise<void>
+
+  /** Indent: make block a child of its previous sibling (same depth). */
   indent: (blockId: string) => Promise<void>
   /** Dedent: move block up one level to grandparent. */
   dedent: (blockId: string) => Promise<void>
 }
 
+// ── Recursive subtree loader ─────────────────────────────────────────────
+
+async function loadSubtree(
+  parentId: string | undefined,
+  maxDepth = 10,
+  currentDepth = 0,
+): Promise<BlockRow[]> {
+  if (currentDepth >= maxDepth) return []
+  const resp: PageResponse<BlockRow> = await listBlocks({ parentId, limit: 500 })
+  const blocks = resp.items
+  if (blocks.length === 0) return blocks
+
+  const childArrays = await Promise.all(
+    blocks.map((b) => loadSubtree(b.id, maxDepth, currentDepth + 1)),
+  )
+
+  return [...blocks, ...childArrays.flat()]
+}
+
+// ── Store ────────────────────────────────────────────────────────────────
+
 export const useBlockStore = create<BlockStore>((set, get) => ({
   blocks: [],
+  rootParentId: null,
   focusedBlockId: null,
   loading: false,
 
   load: async (parentId?: string) => {
-    set({ loading: true })
+    set({ loading: true, rootParentId: parentId ?? null })
     try {
-      const response: PageResponse<BlockRow> = await listBlocks({ parentId })
-      set({ blocks: response.items, loading: false })
+      const allBlocks = await loadSubtree(parentId)
+      const flatTree = buildFlatTree(allBlocks, parentId ?? null)
+      set({ blocks: flatTree, loading: false })
     } catch {
       set({ loading: false })
     }
@@ -78,8 +113,16 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
         position: (afterBlock.position ?? 0) + 1,
       })
 
-      // Insert the new block into the local array
-      const newBlock: BlockRow = {
+      // Insert the new block into the local array at the right position.
+      // In a flat tree, the new sibling goes right after the afterBlock
+      // and all its descendants.
+      const descendants = getDragDescendants(blocks, afterBlockId)
+      let insertIdx = idx + 1
+      while (insertIdx < blocks.length && descendants.has(blocks[insertIdx].id)) {
+        insertIdx++
+      }
+
+      const newBlock: FlatBlock = {
         id: result.id,
         block_type: result.block_type,
         content: result.content,
@@ -88,9 +131,10 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        depth: afterBlock.depth,
       }
       const newBlocks = [...blocks]
-      newBlocks.splice(idx + 1, 0, newBlock)
+      newBlocks.splice(insertIdx, 0, newBlock)
       set({ blocks: newBlocks })
       return result.id
     } catch {
@@ -110,10 +154,13 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   },
 
   remove: async (blockId: string) => {
+    const { blocks } = get()
     try {
       await deleteBlock(blockId)
+      // Remove block AND its descendants from the flat tree
+      const descendants = getDragDescendants(blocks, blockId)
       set((state) => ({
-        blocks: state.blocks.filter((b) => b.id !== blockId),
+        blocks: state.blocks.filter((b) => b.id !== blockId && !descendants.has(b.id)),
         focusedBlockId: state.focusedBlockId === blockId ? null : state.focusedBlockId,
       }))
     } catch {
@@ -147,37 +194,25 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
 
     // Calculate new position based on where the block will end up after
     // arrayMove semantics (splice-remove at oldIndex, splice-insert at newIndex).
-    //
-    // Forward move (newIndex > oldIndex): block ends up AFTER blocks[newIndex]
-    //   in the original array, because removing it from before shifts everything left.
-    // Backward move (newIndex < oldIndex): block ends up BEFORE blocks[newIndex].
     let newPosition: number
     if (newIndex > oldIndex) {
-      // Forward move: block lands after blocks[newIndex]
       if (newIndex >= blocks.length - 1) {
-        // After the last block
         newPosition = (blocks[blocks.length - 1].position ?? 0) + 1
       } else {
-        // Between blocks[newIndex] and blocks[newIndex + 1]
         const beforePos = blocks[newIndex].position ?? 0
         const afterPos = blocks[newIndex + 1].position ?? 0
         newPosition = Math.floor((beforePos + afterPos) / 2)
-        // If floor lands on beforePos (consecutive integers), nudge up
         if (newPosition <= beforePos) {
           newPosition = beforePos + 1
         }
       }
     } else {
-      // Backward move: block lands before blocks[newIndex]
       if (newIndex === 0) {
-        // Before the first block
         newPosition = (blocks[0].position ?? 0) - 1
       } else {
-        // Between blocks[newIndex - 1] and blocks[newIndex]
         const beforePos = blocks[newIndex - 1].position ?? 0
         const afterPos = blocks[newIndex].position ?? 0
         newPosition = Math.floor((beforePos + afterPos) / 2)
-        // If floor lands on beforePos (consecutive integers), nudge up
         if (newPosition <= beforePos) {
           newPosition = beforePos + 1
         }
@@ -186,8 +221,6 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
 
     try {
       await moveBlock(blockId, parentId, newPosition)
-      // Reorder the local array using arrayMove semantics:
-      // splice-remove at oldIndex, splice-insert at newIndex.
       const newBlocks = [...blocks]
       const [moved] = newBlocks.splice(oldIndex, 1)
       newBlocks.splice(newIndex, 0, {
@@ -200,25 +233,69 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     }
   },
 
+  moveToParent: async (blockId: string, newParentId: string | null, newPosition: number) => {
+    try {
+      await moveBlock(blockId, newParentId, newPosition)
+      // Reload the full tree to get the correct flattened order.
+      // This is simpler and more reliable than trying to locally reorder
+      // a flattened tree with depth changes.
+      const { rootParentId } = get()
+      await get().load(rootParentId ?? undefined)
+    } catch {
+      // Silently fail
+    }
+  },
+
   indent: async (blockId: string) => {
     const { blocks } = get()
     const idx = blocks.findIndex((b) => b.id === blockId)
     if (idx <= 0) return // First block or not found — can't indent
 
     const block = blocks[idx]
-    const prevSibling = blocks[idx - 1]
 
-    // Only indent if previous block is a sibling (same parent)
-    if (block.parent_id !== prevSibling.parent_id) return
+    // Find the previous sibling (same parent AND same depth)
+    let prevSibling: FlatBlock | undefined
+    for (let i = idx - 1; i >= 0; i--) {
+      if (
+        blocks[i].depth === block.depth &&
+        (blocks[i].parent_id ?? null) === (block.parent_id ?? null)
+      ) {
+        prevSibling = blocks[i]
+        break
+      }
+      // If we hit a shallower block, there's no previous sibling
+      if (blocks[i].depth < block.depth) break
+    }
+
+    if (!prevSibling) return
 
     // Move block to be a child of previous sibling, position 0
     try {
       await moveBlock(blockId, prevSibling.id, 0)
-      set((state) => ({
-        blocks: state.blocks.map((b) =>
-          b.id === blockId ? { ...b, parent_id: prevSibling.id, position: 0 } : b,
-        ),
-      }))
+
+      // Local state update: reparent block + descendants under prevSibling
+      const descendantIds = getDragDescendants(blocks, blockId)
+      const movedSet = new Set([blockId, ...descendantIds])
+
+      // Extract moved items with updated depth/parent
+      const movedItems: FlatBlock[] = blocks
+        .filter((b) => movedSet.has(b.id))
+        .map((b) => ({
+          ...b,
+          depth: b.depth + 1,
+          ...(b.id === blockId ? { parent_id: prevSibling?.id, position: 0 } : {}),
+        }))
+
+      // Remove moved items and find insertion point after prevSibling's subtree
+      const remaining = blocks.filter((b) => !movedSet.has(b.id))
+      const prevSibDescendants = getDragDescendants(remaining, prevSibling.id)
+      let insertAt = remaining.findIndex((b) => b.id === prevSibling?.id) + 1
+      while (insertAt < remaining.length && prevSibDescendants.has(remaining[insertAt].id)) {
+        insertAt++
+      }
+
+      remaining.splice(insertAt, 0, ...movedItems)
+      set({ blocks: remaining })
     } catch {
       // Silently fail
     }
@@ -229,7 +306,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     const block = blocks.find((b) => b.id === blockId)
     if (!block?.parent_id) return // Already at root — can't dedent
 
-    // Find the parent block to get grandparent info
+    // Find the parent block in the flat tree
     const parent = blocks.find((b) => b.id === block.parent_id)
     if (!parent) return
 
@@ -238,11 +315,29 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     const newPosition = (parent.position ?? 0) + 1
     try {
       await moveBlock(blockId, newParentId, newPosition)
-      set((state) => ({
-        blocks: state.blocks.map((b) =>
-          b.id === blockId ? { ...b, parent_id: newParentId, position: newPosition } : b,
-        ),
-      }))
+
+      // Local state update: move block + descendants after parent's subtree, depth -1
+      const descendantIds = getDragDescendants(blocks, blockId)
+      const movedSet = new Set([blockId, ...descendantIds])
+
+      const movedItems: FlatBlock[] = blocks
+        .filter((b) => movedSet.has(b.id))
+        .map((b) => ({
+          ...b,
+          depth: b.depth - 1,
+          ...(b.id === blockId ? { parent_id: newParentId, position: newPosition } : {}),
+        }))
+
+      // Remove moved items and find insertion point after parent's subtree
+      const remaining = blocks.filter((b) => !movedSet.has(b.id))
+      const parentDescendants = getDragDescendants(remaining, parent.id)
+      let insertAt = remaining.findIndex((b) => b.id === parent.id) + 1
+      while (insertAt < remaining.length && parentDescendants.has(remaining[insertAt].id)) {
+        insertAt++
+      }
+
+      remaining.splice(insertAt, 0, ...movedItems)
+      set({ blocks: remaining })
     } catch {
       // Silently fail
     }

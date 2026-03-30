@@ -56,16 +56,19 @@ vi.mock('../SortableBlock', () => ({
   SortableBlock: (props: { blockId: string }) => (
     <div data-testid={`sortable-block-${props.blockId}`}>SortableBlock</div>
   ),
+  INDENT_WIDTH: 24,
 }))
 
 // Minimal mock for @dnd-kit
 vi.mock('@dnd-kit/core', () => ({
   DndContext: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DragOverlay: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   closestCenter: vi.fn(),
   KeyboardSensor: vi.fn(),
   PointerSensor: vi.fn(),
   useSensor: vi.fn(),
   useSensors: vi.fn(() => []),
+  MeasuringStrategy: { Always: 'always' },
 }))
 vi.mock('@dnd-kit/sortable', () => ({
   SortableContext: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -534,6 +537,7 @@ describe('BlockTree rendering edge cases', () => {
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        depth: 0,
       },
       {
         id: 'L1',
@@ -544,6 +548,7 @@ describe('BlockTree rendering edge cases', () => {
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        depth: 1,
       },
       {
         id: 'L2',
@@ -554,6 +559,7 @@ describe('BlockTree rendering edge cases', () => {
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        depth: 2,
       },
       {
         id: 'L3',
@@ -564,6 +570,7 @@ describe('BlockTree rendering edge cases', () => {
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        depth: 3,
       },
     ]
 
@@ -616,6 +623,7 @@ describe('BlockTree rendering edge cases', () => {
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        depth: 0,
       },
     ]
 

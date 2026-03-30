@@ -4,7 +4,7 @@ import { useBlockStore } from '../blocks'
 
 const mockedInvoke = vi.mocked(invoke)
 
-/** Helper — build a BlockRow with defaults. */
+/** Helper — build a FlatBlock with defaults. */
 function makeBlock(
   overrides: Partial<{
     id: string
@@ -15,6 +15,7 @@ function makeBlock(
     deleted_at: string | null
     archived_at: string | null
     is_conflict: boolean
+    depth: number
   }> = {},
 ) {
   return {
@@ -26,6 +27,7 @@ function makeBlock(
     deleted_at: overrides.deleted_at ?? null,
     archived_at: overrides.archived_at ?? null,
     is_conflict: overrides.is_conflict ?? false,
+    depth: overrides.depth ?? 0,
   }
 }
 
@@ -43,17 +45,26 @@ describe('useBlockStore', () => {
   // load
   // ---------------------------------------------------------------------------
   describe('load', () => {
-    it('fetches blocks from the backend and stores them', async () => {
+    it('fetches blocks from the backend and stores them with depth', async () => {
       const blocks = [makeBlock({ id: 'A' }), makeBlock({ id: 'B' })]
+      // Root level returns A and B
       mockedInvoke.mockResolvedValueOnce({
         items: blocks,
         next_cursor: null,
         has_more: false,
       })
+      // Children of A — empty
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+      // Children of B — empty
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
 
       await useBlockStore.getState().load()
 
-      expect(useBlockStore.getState().blocks).toEqual(blocks)
+      const result = useBlockStore.getState().blocks
+      expect(result).toHaveLength(2)
+      expect(result[0].id).toBe('A')
+      expect(result[0].depth).toBe(0)
+      expect(result[1].id).toBe('B')
       expect(useBlockStore.getState().loading).toBe(false)
     })
 
@@ -83,7 +94,7 @@ describe('useBlockStore', () => {
     })
 
     it('passes parentId through to list_blocks', async () => {
-      mockedInvoke.mockResolvedValueOnce({
+      mockedInvoke.mockResolvedValue({
         items: [],
         next_cursor: null,
         has_more: false,
@@ -452,8 +463,8 @@ describe('useBlockStore', () => {
   // ---------------------------------------------------------------------------
   describe('indent', () => {
     it('makes a block a child of its previous sibling', async () => {
-      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null })
-      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null })
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       useBlockStore.setState({ blocks: [blockA, blockB] })
 
       mockedInvoke.mockResolvedValueOnce({
@@ -467,6 +478,7 @@ describe('useBlockStore', () => {
       const moved = useBlockStore.getState().blocks.find((b) => b.id === 'B')
       expect(moved?.parent_id).toBe('A')
       expect(moved?.position).toBe(0)
+      expect(moved?.depth).toBe(1)
       expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
         blockId: 'B',
         newParentId: 'A',
@@ -491,8 +503,8 @@ describe('useBlockStore', () => {
     })
 
     it('does nothing when previous block has a different parent', async () => {
-      const blockA = makeBlock({ id: 'A', parent_id: 'P1' })
-      const blockB = makeBlock({ id: 'B', parent_id: 'P2' })
+      const blockA = makeBlock({ id: 'A', parent_id: 'P1', depth: 0 })
+      const blockB = makeBlock({ id: 'B', parent_id: 'P2', depth: 0 })
       useBlockStore.setState({ blocks: [blockA, blockB] })
 
       await useBlockStore.getState().indent('B')
@@ -501,8 +513,8 @@ describe('useBlockStore', () => {
     })
 
     it('does not update state on backend error', async () => {
-      const blockA = makeBlock({ id: 'A', parent_id: null })
-      const blockB = makeBlock({ id: 'B', parent_id: null })
+      const blockA = makeBlock({ id: 'A', parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', parent_id: null, depth: 0 })
       useBlockStore.setState({ blocks: [blockA, blockB] })
 
       mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
@@ -518,8 +530,8 @@ describe('useBlockStore', () => {
   // ---------------------------------------------------------------------------
   describe('dedent', () => {
     it('moves a block up to its grandparent', async () => {
-      const parent = makeBlock({ id: 'P', parent_id: null, position: 0 })
-      const child = makeBlock({ id: 'C', parent_id: 'P', position: 0 })
+      const parent = makeBlock({ id: 'P', parent_id: null, position: 0, depth: 0 })
+      const child = makeBlock({ id: 'C', parent_id: 'P', position: 0, depth: 1 })
       useBlockStore.setState({ blocks: [parent, child] })
 
       mockedInvoke.mockResolvedValueOnce({
@@ -533,6 +545,7 @@ describe('useBlockStore', () => {
       const moved = useBlockStore.getState().blocks.find((b) => b.id === 'C')
       expect(moved?.parent_id).toBeNull()
       expect(moved?.position).toBe(1)
+      expect(moved?.depth).toBe(0)
       expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
         blockId: 'C',
         newParentId: null,
@@ -568,8 +581,8 @@ describe('useBlockStore', () => {
     })
 
     it('does not update state on backend error', async () => {
-      const parent = makeBlock({ id: 'P', parent_id: null })
-      const child = makeBlock({ id: 'C', parent_id: 'P' })
+      const parent = makeBlock({ id: 'P', parent_id: null, depth: 0 })
+      const child = makeBlock({ id: 'C', parent_id: 'P', depth: 1 })
       useBlockStore.setState({ blocks: [parent, child] })
 
       mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
@@ -580,8 +593,8 @@ describe('useBlockStore', () => {
     })
 
     it('positions after parent when moving to grandparent', async () => {
-      const parent = makeBlock({ id: 'P', parent_id: 'GP', position: 5 })
-      const child = makeBlock({ id: 'C', parent_id: 'P', position: 0 })
+      const parent = makeBlock({ id: 'P', parent_id: 'GP', position: 5, depth: 1 })
+      const child = makeBlock({ id: 'C', parent_id: 'P', position: 0, depth: 2 })
       useBlockStore.setState({ blocks: [parent, child] })
 
       mockedInvoke.mockResolvedValueOnce({
