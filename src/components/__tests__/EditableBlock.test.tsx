@@ -401,4 +401,62 @@ describe('EditableBlock', () => {
       expect(await axe(container)).toHaveNoViolations()
     })
   })
+
+  // ── Blur guard for popovers ───────────────────────────────────────
+
+  describe('blur guard', () => {
+    it('does not unmount when a Radix popover is open in the DOM', () => {
+      const mockUnmount = vi.fn(() => 'changed')
+      const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="Hello"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      // Simulate a Radix popover being open in the DOM
+      const portal = document.createElement('div')
+      portal.setAttribute('data-radix-popper-content-wrapper', '')
+      document.body.appendChild(portal)
+
+      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      fireEvent.blur(editorWrapper, { relatedTarget: null })
+
+      expect(mockUnmount).not.toHaveBeenCalled()
+
+      document.body.removeChild(portal)
+    })
+
+    it('does not unmount when relatedTarget is inside a Radix popover', () => {
+      const mockUnmount = vi.fn(() => 'changed')
+      const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="Hello"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      // Simulate relatedTarget being inside a Radix popover
+      const portal = document.createElement('div')
+      portal.setAttribute('data-radix-popper-content-wrapper', '')
+      const input = document.createElement('input')
+      portal.appendChild(input)
+      document.body.appendChild(portal)
+
+      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      fireEvent.blur(editorWrapper, { relatedTarget: input })
+
+      expect(mockUnmount).not.toHaveBeenCalled()
+
+      document.body.removeChild(portal)
+    })
+  })
 })

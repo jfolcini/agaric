@@ -85,9 +85,10 @@ export function EditableBlock({
         }
       }
 
-      // Also check if a suggestion popup or date picker is currently open in the DOM
+      // Also check if a suggestion popup, date picker, or popover is currently open in the DOM
       if (document.querySelector('.suggestion-popup')) return
       if (document.querySelector('.date-picker-popup')) return
+      if (document.querySelector('[data-radix-popper-content-wrapper]')) return
 
       const changed = rovingEditor.unmount()
       if (changed !== null) {

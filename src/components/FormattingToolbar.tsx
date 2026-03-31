@@ -19,6 +19,7 @@ import {
   CalendarDays,
   Code,
   FileCode2,
+  FileSymlink,
   Italic,
   Link2,
   Redo2,
@@ -137,6 +138,19 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
           />
         </PopoverContent>
       </Popover>
+
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Internal link"
+        title="Insert page link ([[)"
+        onMouseDown={(e) => {
+          e.preventDefault()
+          editor.chain().focus().insertContent('[[').run()
+        }}
+      >
+        <FileSymlink size={14} />
+      </Button>
 
       <Button
         variant="ghost"

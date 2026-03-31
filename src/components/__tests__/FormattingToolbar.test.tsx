@@ -102,6 +102,7 @@ const mockToggleCode = vi.fn(() => ({ run: mockRun }))
 const mockToggleCodeBlock = vi.fn(() => ({ run: mockRun }))
 const mockSetLink = vi.fn(() => ({ run: mockRun }))
 const mockUnsetLink = vi.fn(() => ({ run: mockRun }))
+const mockInsertContent = vi.fn(() => ({ run: mockRun }))
 const mockUndo = vi.fn(() => ({ run: mockRun }))
 const mockRedo = vi.fn(() => ({ run: mockRun }))
 const mockFocus = vi.fn(() => ({
@@ -111,6 +112,7 @@ const mockFocus = vi.fn(() => ({
   toggleCodeBlock: mockToggleCodeBlock,
   setLink: mockSetLink,
   unsetLink: mockUnsetLink,
+  insertContent: mockInsertContent,
   undo: mockUndo,
   redo: mockRedo,
 }))
@@ -158,6 +160,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Italic' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Code' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'External link' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 1 (high)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 2 (medium)' })).toBeInTheDocument()
@@ -453,6 +456,24 @@ describe('FormattingToolbar', () => {
     it('date button prevents default to preserve editor focus', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const btn = screen.getByRole('button', { name: 'Insert date' })
+      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      const prevented = !btn.dispatchEvent(event)
+      expect(prevented).toBe(true)
+    })
+  })
+
+  // ── Internal link button ───────────────────────────────────────────
+
+  describe('internal link button', () => {
+    it('inserts [[ into the editor to trigger the block link picker', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.mouseDown(screen.getByRole('button', { name: 'Internal link' }))
+      expect(mockInsertContent).toHaveBeenCalledWith('[[')
+    })
+
+    it('prevents default on mousedown to preserve editor focus', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Internal link' })
       const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
       const prevented = !btn.dispatchEvent(event)
       expect(prevented).toBe(true)
