@@ -55,7 +55,7 @@ Anytype, faster than Logseq.
 |-------|---------|
 | sqlx 0.8 + sqlx-cli | Async SQLite, compile-time query validation, migrations |
 | blake3 | Op log hash chaining (content-addressable, deterministic) |
-| diffy | Word-level three-way text merge for conflict resolution |
+| diffy | Line-level three-way text merge for conflict resolution |
 | zstd | Snapshot compression (level 3) |
 | ciborium | CBOR serialisation for `log_snapshots.data` |
 | thiserror + tracing | Error handling and structured logging |
@@ -374,22 +374,24 @@ token extensions. The format is plain text — diffed directly by `diffy`, store
 human-readable in any text tool.
 
 ```
-block_content  := span*
+block_content  := (block_element | span)*
+block_element  := heading | code_block
+heading        := '#'{1,6} ' ' span+              -- # H1 through ###### H6
+code_block     := '```' language? '\n' text '\n' '```'
 span           := plain_text | bold | italic | code_span | tag_ref | block_link | ext_link
 bold           := '**' span+ '**'
 italic         := '*' span+ '*'
-code_span      := '`' plain_text '`'        -- no nesting inside code
+code_span      := '`' plain_text '`'               -- no nesting inside code
 tag_ref        := '#[' ULID ']'
 block_link     := '[[' ULID ']]'
 ext_link       := '[' text '](' url ')'
-ULID           := [0-9A-Z]{26}              -- Crockford base32, exactly 26 chars
+ULID           := [0-9A-Z]{26}                     -- Crockford base32, exactly 26 chars
 ```
 
 **Constraints:**
-- No block-level Markdown in content (headings, lists, blockquotes are block structure, not
-  inline syntax). Exception: headings (`# H1` through `###### H6`) and fenced code blocks are
-  parsed and rendered.
-- No `\n\n` paragraph breaks. Every `\n` is a block split boundary.
+- Every `\n` is a block split boundary (auto-split on blur), except inside fenced code blocks
+  and headings, which remain single blocks.
+- No `\n\n` paragraph breaks. The block tree is the structural separator.
 - `code_span` content is plain text — marks and tokens inside backticks are not parsed.
 
 **The inline mark set is locked.** Adding any mark (strikethrough, highlight, underline) requires
@@ -408,8 +410,11 @@ dependencies. Converts between ProseMirror document nodes and the storage format
 | `bold` mark | `**...**` |
 | `italic` mark | `*...*` |
 | `code` mark | `` `...` `` |
+| `heading` node | `# ` through `###### ` prefix (levels 1–6) |
+| `codeBlock` node | ` ``` language\n...\n``` ` |
 | `tag_ref` node | `#[{id}]` |
 | `block_link` node | `[[{id}]]` |
+| `link` mark | `[text](url)` |
 | `hardBreak` | `\n` (triggers auto-split) |
 | unknown node | stripped with warning |
 
@@ -434,9 +439,17 @@ Original Markdown preserved in `blocks.content`.
 
 ### Integration with diffy
 
-`blocks.content` is passed to `diffy::merge()` as-is. Markdown marks are ASCII word-boundary
-characters handled at word granularity. ULID tokens are space-free 28-character strings treated as
-single words. A merged result is always a valid storage-format string.
+`blocks.content` is passed to `diffy::merge()` as-is. Markdown marks are ASCII characters; diffy
+handles them at line granularity. ULID tokens (`#[ULID]` at 29 characters, `[[ULID]]` at 30) are
+space-free strings treated as atomic units within a line. A merged result is always a valid
+storage-format string.
+
+### Org-mode parser/emitter (backend only)
+
+The Rust backend includes separate `org_parser.rs` and `org_emitter.rs` modules that handle
+Org-mode syntax (`*bold*`, `/italic/`, `~code~`). These are **not** used in the main editor flow
+— the frontend serializer uses Markdown syntax exclusively. The Org-mode modules exist for future
+import/export support and have their own test suite.
 
 ---
 
@@ -614,17 +627,24 @@ See ADR.md for the Phase 5 Tantivy + lindera roadmap.
 
 ### Strategy
 
-Three-way merge via `diffy` at word-level granularity. Not a CRDT library.
+Three-way merge via `diffy` at **line-level** granularity. Not a CRDT library.
+
+`diffy::merge` splits on `\n` boundaries. Because auto-split on blur turns each paragraph into
+its own block, most blocks are single-line. Consequence: any concurrent edit to a single-line
+block produces a conflict, even if the edits affect different words. This is an accepted trade-off
+— the alternative (a CRDT) adds significant complexity for marginal benefit at local WiFi sync
+frequency.
 
 **Rejected:** `yrs` (Yjs port), `automerge-rs` — significant complexity not needed for local WiFi
 sync. `similar` — no first-class three-way merge API. LWW for text — correctness debt.
 
 ### Text conflicts
 
-1. Non-overlapping edits: `diffy::merge(ancestor, ours, theirs)` → `Ok(String)`. Written as new
-   `edit_block` op. Invisible to user.
-2. Overlapping edits: `Err(MergeConflict)`. Original block retains ancestor content. Conflict copy
-   created (`is_conflict = 1`). Both visible. User resolves by choosing.
+1. Non-overlapping edits (multi-line blocks): `diffy::merge(ancestor, ours, theirs)` →
+   `Ok(String)`. Written as new `edit_block` op. Invisible to user.
+2. Overlapping edits (or any concurrent edit to a single-line block): `Err(MergeConflict)`.
+   Original block retains ancestor content. Conflict copy created (`is_conflict = 1`). Both
+   visible. User resolves by choosing.
 
 ### Property conflicts
 
