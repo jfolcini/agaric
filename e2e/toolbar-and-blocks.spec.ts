@@ -38,6 +38,16 @@ async function focusBlock(page: import('@playwright/test').Page, index = 0) {
   const editor = page.locator('.block-editor [contenteditable="true"]')
   await expect(editor).toBeVisible({ timeout: 3000 })
   await editor.focus()
+  return editor
+}
+
+/** Save the current block by pressing Escape (blur → flush → static render). */
+async function saveBlock(page: import('@playwright/test').Page) {
+  await page.keyboard.press('Escape')
+  // Wait for the editor to disappear and static block to re-render
+  await expect(page.locator('.block-editor [contenteditable="true"]')).not.toBeVisible({
+    timeout: 3000,
+  })
 }
 
 // ===========================================================================
@@ -73,80 +83,141 @@ test.describe('Toolbar visibility', () => {
 // 2. Formatting buttons
 // ===========================================================================
 
-test.describe('Formatting buttons', () => {
+test.describe('Formatting buttons — full cycle: edit → style → save → verify', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
 
-  test('Bold button toggles bold on selected text', async ({ page }) => {
+  test('Bold: type text, bold it, save, verify <strong> in static render', async ({ page }) => {
     await openPage(page, 'Getting Started')
-    await focusBlock(page)
+    const editor = await focusBlock(page)
 
-    // Select all text in the editor
+    // Clear and type fresh content
     await page.keyboard.press('Control+a')
+    await editor.type('bold test')
 
-    // Click the Bold button
-    const boldBtn = page.getByRole('button', { name: 'Bold' })
-    await boldBtn.click()
+    // Select "bold" (4 chars from the start)
+    await page.keyboard.press('Home')
+    for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowRight')
 
-    // Verify the button is now pressed (aria-pressed="true")
-    await expect(boldBtn).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 })
+    // Apply bold via toolbar
+    await page.getByRole('button', { name: 'Bold' }).click()
+
+    // Verify mark is active in editor
+    const boldEl = editor.locator('strong')
+    await expect(boldEl).toBeVisible({ timeout: 3000 })
+    await expect(boldEl).toHaveText('bold')
+
+    // Save and verify static render
+    await saveBlock(page)
+    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    await expect(staticBlock.locator('strong')).toHaveText('bold')
   })
 
-  test('Italic button toggles italic on selected text', async ({ page }) => {
+  test('Italic: type text, italicize it, save, verify <em> in static render', async ({ page }) => {
     await openPage(page, 'Getting Started')
-    await focusBlock(page)
+    const editor = await focusBlock(page)
 
     await page.keyboard.press('Control+a')
+    await editor.type('italic test')
 
-    const italicBtn = page.getByRole('button', { name: 'Italic' })
-    await italicBtn.click()
+    // Select "italic" (6 chars)
+    await page.keyboard.press('Home')
+    for (let i = 0; i < 6; i++) await page.keyboard.press('Shift+ArrowRight')
 
-    await expect(italicBtn).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 })
+    await page.getByRole('button', { name: 'Italic' }).click()
+
+    const italicEl = editor.locator('em')
+    await expect(italicEl).toBeVisible({ timeout: 3000 })
+    await expect(italicEl).toHaveText('italic')
+
+    await saveBlock(page)
+    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    await expect(staticBlock.locator('em')).toHaveText('italic')
   })
 
-  test('Code button toggles inline code on selected text', async ({ page }) => {
+  test('Inline code: type text, apply code, verify background in editor, save, verify <code> pill in static render', async ({
+    page,
+  }) => {
     await openPage(page, 'Getting Started')
-    await focusBlock(page)
+    const editor = await focusBlock(page)
 
     await page.keyboard.press('Control+a')
+    await editor.type('some code here')
 
-    const codeBtn = page.getByRole('button', { name: 'Code', exact: true })
-    await codeBtn.click()
-
-    await expect(codeBtn).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 })
-  })
-
-  test('Code block button toggles code block', async ({ page }) => {
-    await openPage(page, 'Getting Started')
-    await focusBlock(page)
-
-    const codeBlockBtn = page.getByRole('button', { name: 'Code block' })
-    await codeBlockBtn.click()
-
-    await expect(codeBlockBtn).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 })
-  })
-
-  test('Code button applies visible background to inline code', async ({ page }) => {
-    await openPage(page, 'Getting Started')
-    await focusBlock(page)
-
-    // Type some text first
-    const editor = page.locator('.block-editor [contenteditable="true"]')
-    await editor.press('End')
-    await editor.type(' test-code')
-
-    // Select "test-code"
-    for (let i = 0; i < 9; i++) await page.keyboard.press('Shift+ArrowLeft')
+    // Select "code" (4 chars, starting at position 5)
+    await page.keyboard.press('Home')
+    for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight')
+    for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowRight')
 
     // Apply inline code
-    const codeBtn = page.getByRole('button', { name: 'Code', exact: true })
-    await codeBtn.click()
+    await page.getByRole('button', { name: 'Code', exact: true }).click()
 
-    // The code element should have bg-muted background styling
+    // Verify code element appears in editor with background styling
     const codeEl = editor.locator('code')
     await expect(codeEl).toBeVisible({ timeout: 3000 })
+    await expect(codeEl).toHaveText('code')
+    // The CSS rule .ProseMirror code adds bg-muted rounded — verify border-radius
     await expect(codeEl).toHaveCSS('border-radius', /\dpx/)
+
+    // Save and verify static render has styled <code> pill
+    await saveBlock(page)
+    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticCode = staticBlock.locator('code')
+    await expect(staticCode).toHaveText('code')
+    // StaticBlock <code> also has bg-muted rounded
+    await expect(staticCode).toHaveCSS('border-radius', /\dpx/)
+  })
+
+  test('Code block: toggle code block, type code, save, verify <pre> in static render', async ({
+    page,
+  }) => {
+    await openPage(page, 'Getting Started')
+    const editor = await focusBlock(page)
+
+    // Toggle code block
+    await page.getByRole('button', { name: 'Code block' }).click()
+    await expect(page.getByRole('button', { name: 'Code block' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+      { timeout: 3000 },
+    )
+
+    // Type code content
+    await page.keyboard.press('Control+a')
+    await editor.type('const x = 42')
+
+    // Save and verify static render has <pre>
+    await saveBlock(page)
+    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    await expect(staticBlock.locator('pre')).toBeVisible({ timeout: 3000 })
+    await expect(staticBlock.locator('pre')).toContainText('const x = 42')
+  })
+
+  test('Bold + Italic combined: apply both, save, verify nested marks', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    const editor = await focusBlock(page)
+
+    await page.keyboard.press('Control+a')
+    await editor.type('emphasis')
+
+    // Select all and apply both marks
+    await page.keyboard.press('Control+a')
+    await page.getByRole('button', { name: 'Bold' }).click()
+    await page.getByRole('button', { name: 'Italic' }).click()
+
+    // Both should be active
+    await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByRole('button', { name: 'Italic' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+
+    // Save and verify static render has both <strong> and <em>
+    await saveBlock(page)
+    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    await expect(staticBlock.locator('strong')).toBeVisible({ timeout: 3000 })
+    await expect(staticBlock.locator('em')).toBeVisible({ timeout: 3000 })
   })
 })
 
@@ -171,7 +242,9 @@ test.describe('Link buttons', () => {
     await expect(page.getByPlaceholder('https://...')).toBeVisible()
   })
 
-  test('External link popover: enter URL and apply', async ({ page }) => {
+  test('External link: apply URL, save, verify .external-link in static render', async ({
+    page,
+  }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
@@ -184,12 +257,17 @@ test.describe('Link buttons', () => {
     const urlInput = page.getByPlaceholder('https://...')
     await expect(urlInput).toBeVisible({ timeout: 3000 })
 
-    // Type a URL and press Enter to apply (Enter triggers handleApply in the popover)
+    // Type a URL and press Enter to apply
     await urlInput.fill('https://example.com')
     await urlInput.press('Enter')
 
-    // The popover should close and the editor should contain an external link
+    // Verify link appears in editor
     await expect(page.locator('.block-editor .external-link')).toBeVisible({ timeout: 3000 })
+
+    // Save and verify static render has the external link
+    await saveBlock(page)
+    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    await expect(staticBlock.locator('.external-link')).toBeVisible({ timeout: 3000 })
   })
 
   test('Internal link button triggers [[ picker', async ({ page }) => {
@@ -212,6 +290,56 @@ test.describe('Link buttons', () => {
 
     // The suggestion popup should appear
     await expect(page.locator('.suggestion-list')).toBeVisible({ timeout: 5000 })
+  })
+
+  test('Internal link: select page from picker, save, verify chip in static render', async ({
+    page,
+  }) => {
+    await openPage(page, 'Getting Started')
+    const editor = await focusBlock(page)
+
+    // Clear and type fresh content, then trigger [[ picker
+    await page.keyboard.press('Control+a')
+    await editor.type('link: ')
+    await page.getByRole('button', { name: 'Internal link' }).click()
+
+    // Wait for suggestion list and click the first suggestion
+    const suggestionList = page.locator('.suggestion-list')
+    await expect(suggestionList).toBeVisible({ timeout: 5000 })
+    const firstItem = suggestionList.locator('.suggestion-item').first()
+    await firstItem.click()
+
+    // Verify block-link chip appears in editor
+    await expect(editor.locator('.block-link-chip')).toBeVisible({ timeout: 3000 })
+
+    // Save and verify static render has the block-link chip
+    await saveBlock(page)
+    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    await expect(staticBlock.locator('.block-link-chip')).toBeVisible({ timeout: 3000 })
+  })
+
+  test('Tag: select tag from picker, save, verify chip in static render', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    const editor = await focusBlock(page)
+
+    // Clear and type fresh content, then trigger @ picker
+    await page.keyboard.press('Control+a')
+    await editor.type('tagged: ')
+    await page.getByRole('button', { name: 'Insert tag' }).click()
+
+    // Wait for suggestion list and click the first tag
+    const suggestionList = page.locator('.suggestion-list')
+    await expect(suggestionList).toBeVisible({ timeout: 5000 })
+    const firstItem = suggestionList.locator('.suggestion-item').first()
+    await firstItem.click()
+
+    // Verify tag-ref chip appears in editor
+    await expect(editor.locator('.tag-ref-chip')).toBeVisible({ timeout: 3000 })
+
+    // Save and verify static render has the tag-ref chip
+    await saveBlock(page)
+    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    await expect(staticBlock.locator('.tag-ref-chip')).toBeVisible({ timeout: 3000 })
   })
 })
 
