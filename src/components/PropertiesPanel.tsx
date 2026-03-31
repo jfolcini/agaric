@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { PropertyRow } from '../lib/tauri'
 import { deleteProperty, getProperties, setProperty } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
@@ -64,7 +65,12 @@ export function PropertiesPanel({ blockId }: PropertiesPanelProps): React.ReactE
 
   return (
     <div className="properties-panel space-y-2">
-      {loading && <div className="text-xs text-muted-foreground">Loading...</div>}
+      {loading && (
+        <div className="properties-panel-loading space-y-2">
+          <Skeleton className="h-6 w-full rounded" />
+          <Skeleton className="h-6 w-full rounded" />
+        </div>
+      )}
 
       {!loading && properties.length === 0 && (
         <div className="text-xs text-muted-foreground">No properties set</div>

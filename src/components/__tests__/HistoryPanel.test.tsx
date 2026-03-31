@@ -310,4 +310,25 @@ describe('HistoryPanel', () => {
       })
     })
   })
+
+  // UX #175: Restore button disabled during operation
+  it('disables Restore button during restore operation', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // get_block_history
+      .mockReturnValueOnce(new Promise(() => {})) // edit_block — never resolves
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    await user.click(restoreBtn)
+
+    // Button should be disabled while restoring
+    expect(restoreBtn).toBeDisabled()
+  })
 })

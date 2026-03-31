@@ -93,7 +93,7 @@ describe('PropertiesPanel', () => {
 
   // -- Loading ----------------------------------------------------------------
 
-  it('shows loading state while fetching', async () => {
+  it('shows Skeleton elements while fetching', async () => {
     // Create a deferred promise so we can control when get_properties resolves
     let resolveGetProperties!: (value: PropertyRow[]) => void
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
@@ -106,16 +106,19 @@ describe('PropertiesPanel', () => {
       return null
     })
 
-    render(<PropertiesPanel blockId="BLOCK001" />)
+    const { container } = render(<PropertiesPanel blockId="BLOCK001" />)
 
-    // While the promise is pending, "Loading..." should be visible
-    expect(await screen.findByText('Loading...')).toBeInTheDocument()
+    // While the promise is pending, Skeleton elements should be visible
+    const loadingDiv = container.querySelector('.properties-panel-loading')
+    expect(loadingDiv).toBeInTheDocument()
+    const skeletons = loadingDiv?.querySelectorAll('[data-slot="skeleton"]') ?? []
+    expect(skeletons.length).toBe(2)
 
     // Resolve the promise and loading should disappear
     resolveGetProperties([])
 
     await waitFor(() => {
-      expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
+      expect(container.querySelector('.properties-panel-loading')).not.toBeInTheDocument()
     })
   })
 
@@ -226,11 +229,11 @@ describe('PropertiesPanel', () => {
     const user = userEvent.setup()
     mockInvokeWith([])
 
-    render(<PropertiesPanel blockId="BLOCK001" />)
+    const { container } = render(<PropertiesPanel blockId="BLOCK001" />)
 
     // Wait for loading to finish
     await waitFor(() => {
-      expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
+      expect(container.querySelector('.properties-panel-loading')).not.toBeInTheDocument()
     })
 
     // Click "Add property" button
@@ -311,11 +314,11 @@ describe('PropertiesPanel', () => {
     const user = userEvent.setup()
     mockInvokeWith([])
 
-    render(<PropertiesPanel blockId="BLOCK001" />)
+    const { container } = render(<PropertiesPanel blockId="BLOCK001" />)
 
     // Wait for loading to finish
     await waitFor(() => {
-      expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
+      expect(container.querySelector('.properties-panel-loading')).not.toBeInTheDocument()
     })
 
     // Open add form
@@ -346,11 +349,11 @@ describe('PropertiesPanel', () => {
       return null
     })
 
-    render(<PropertiesPanel blockId="BLOCK001" />)
+    const { container } = render(<PropertiesPanel blockId="BLOCK001" />)
 
     // Should not crash and loading should clear
     await waitFor(() => {
-      expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
+      expect(container.querySelector('.properties-panel-loading')).not.toBeInTheDocument()
     })
 
     // Should show empty state since error results in no properties

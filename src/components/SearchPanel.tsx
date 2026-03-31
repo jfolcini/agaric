@@ -138,7 +138,7 @@ export function SearchPanel(): React.ReactElement {
         <Button type="submit" variant="outline" disabled={!query.trim()}>
           Search
         </Button>
-        {typing && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+        {(typing || loading) && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
       </form>
 
       {hasCJK(query) && (

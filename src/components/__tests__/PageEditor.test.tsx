@@ -327,9 +327,9 @@ describe('PageEditor detail panel', () => {
     expect(panel).toBeInTheDocument()
 
     // Tab buttons should be visible
-    expect(screen.getByRole('button', { name: /backlinks/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /history/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /tags/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /backlinks/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /history/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /tags/i })).toBeInTheDocument()
 
     // Panel content should NOT be auto-opened
     expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
@@ -347,7 +347,7 @@ describe('PageEditor detail panel', () => {
     expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
 
     // Click Backlinks tab explicitly
-    await user.click(screen.getByRole('button', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
 
     // Now panel content should be shown
     expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
@@ -361,7 +361,7 @@ describe('PageEditor detail panel', () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Click a tab to open panel
-    await user.click(screen.getByRole('button', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
 
     expect(capturedBacklinksBlockId).toBe('BLOCK_42')
   })
@@ -373,25 +373,25 @@ describe('PageEditor detail panel', () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Open Backlinks tab first (panel is collapsed by default)
-    await user.click(screen.getByRole('button', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
     expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
     expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
 
     // Switch to History tab
-    await user.click(screen.getByRole('button', { name: /history/i }))
+    await user.click(screen.getByRole('tab', { name: /history/i }))
     expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
     expect(screen.getByTestId('history-panel')).toBeInTheDocument()
     expect(capturedHistoryBlockId).toBe('BLOCK_1')
 
     // Switch to Tags tab
-    await user.click(screen.getByRole('button', { name: /tags/i }))
+    await user.click(screen.getByRole('tab', { name: /tags/i }))
     expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
     expect(screen.getByTestId('tag-panel')).toBeInTheDocument()
     expect(capturedTagBlockId).toBe('BLOCK_1')
 
     // Switch back to Backlinks tab
-    await user.click(screen.getByRole('button', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
     expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
     expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
   })
@@ -403,7 +403,7 @@ describe('PageEditor detail panel', () => {
     const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Open tab explicitly
-    await user.click(screen.getByRole('button', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
 
     // Panel visible with BLOCK_1
     expect(screen.getByTestId('detail-panel')).toBeInTheDocument()
@@ -426,7 +426,7 @@ describe('PageEditor detail panel', () => {
     const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Open tab explicitly
-    await user.click(screen.getByRole('button', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
     expect(capturedBacklinksBlockId).toBe('BLOCK_1')
 
     act(() => {
@@ -444,7 +444,7 @@ describe('PageEditor detail panel', () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Open tab explicitly
-    await user.click(screen.getByRole('button', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
 
     // Panel content is visible
     expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
@@ -471,7 +471,7 @@ describe('PageEditor detail panel', () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Open tab to reveal content area
-    await user.click(screen.getByRole('button', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
 
     // The content container should have max-height + overflow classes
     const contentEl = screen.getByTestId('backlinks-panel').parentElement
@@ -486,12 +486,12 @@ describe('PageEditor detail panel', () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Open and then collapse
-    await user.click(screen.getByRole('button', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
     await user.click(screen.getByRole('button', { name: /collapse detail panel/i }))
     expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
 
     // Click History tab — should expand and switch tab
-    await user.click(screen.getByRole('button', { name: /history/i }))
+    await user.click(screen.getByRole('tab', { name: /history/i }))
     expect(screen.getByTestId('history-panel')).toBeInTheDocument()
   })
 
@@ -504,5 +504,92 @@ describe('PageEditor detail panel', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+
+  it('tab bar has tablist role and tab buttons have tab role with aria-selected', () => {
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // tablist wrapper
+    const tablist = screen.getByRole('tablist', { name: /block details/i })
+    expect(tablist).toBeInTheDocument()
+
+    // Each tab button
+    const backlinksTab = screen.getByRole('tab', { name: /backlinks/i })
+    const historyTab = screen.getByRole('tab', { name: /history/i })
+    const tagsTab = screen.getByRole('tab', { name: /tags/i })
+    const propertiesTab = screen.getByRole('tab', { name: /properties/i })
+
+    expect(backlinksTab).toHaveAttribute('aria-selected', 'false')
+    expect(historyTab).toHaveAttribute('aria-selected', 'false')
+    expect(tagsTab).toHaveAttribute('aria-selected', 'false')
+    expect(propertiesTab).toHaveAttribute('aria-selected', 'false')
+  })
+
+  it('clicking a tab sets aria-selected and renders tabpanel with aria-labelledby', async () => {
+    const user = userEvent.setup()
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Click Backlinks tab
+    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
+
+    // aria-selected should be true for the clicked tab
+    expect(screen.getByRole('tab', { name: /backlinks/i })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /history/i })).toHaveAttribute('aria-selected', 'false')
+
+    // tabpanel should appear with correct aria-labelledby
+    const tabpanel = screen.getByRole('tabpanel')
+    expect(tabpanel).toHaveAttribute('id', 'detail-tabpanel')
+    expect(tabpanel).toHaveAttribute('aria-labelledby', 'detail-tab-backlinks')
+
+    // Switch to history
+    await user.click(screen.getByRole('tab', { name: /history/i }))
+
+    expect(screen.getByRole('tab', { name: /backlinks/i })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    )
+    expect(screen.getByRole('tab', { name: /history/i })).toHaveAttribute('aria-selected', 'true')
+
+    const updatedTabpanel = screen.getByRole('tabpanel')
+    expect(updatedTabpanel).toHaveAttribute('aria-labelledby', 'detail-tab-history')
+  })
+})
+
+describe('PageEditor empty title revert', () => {
+  it('reverts to original title on blur when title is empty', async () => {
+    const user = userEvent.setup()
+
+    render(<PageEditor pageId="PAGE_1" title="Original Title" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+
+    // Clear existing text
+    await user.clear(titleEl)
+    // Blur to trigger revert
+    await user.tab()
+
+    // Should revert to original title
+    expect(titleEl).toHaveTextContent('Original Title')
+    // Should NOT have called editBlock
+    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+  })
+
+  it('reverts to original title on blur when title is whitespace only', async () => {
+    const user = userEvent.setup()
+
+    render(<PageEditor pageId="PAGE_1" title="Original Title" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+
+    await user.clear(titleEl)
+    await user.type(titleEl, '   ')
+    await user.tab()
+
+    expect(titleEl).toHaveTextContent('Original Title')
+    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
   })
 })

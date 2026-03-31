@@ -144,6 +144,30 @@ describe('TrashView', () => {
     expect(mockedInvoke).toHaveBeenCalledTimes(1) // Still only the initial list call
   })
 
+  it('pressing Escape dismisses the purge confirmation', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
+    mockedInvoke.mockResolvedValueOnce({
+      items: [block],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<TrashView />)
+
+    // First click: shows confirmation
+    const purgeBtn = await screen.findByRole('button', { name: /Purge/i })
+    await user.click(purgeBtn)
+
+    expect(screen.getByText('Delete forever?')).toBeInTheDocument()
+
+    // Press Escape to dismiss
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByText('Delete forever?')).not.toBeInTheDocument()
+    expect(mockedInvoke).toHaveBeenCalledTimes(1) // Only the initial list call
+  })
+
   it('purge executes on confirmation Yes click', async () => {
     const user = userEvent.setup()
     const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')

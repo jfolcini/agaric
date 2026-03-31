@@ -628,4 +628,51 @@ describe('TagFilterPanel', () => {
       expect(removeBtn).toHaveAttribute('type', 'button')
     })
   })
+
+  it('matching tags section uses <section> element', async () => {
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    // The "Matching tags" heading should be inside a <section>
+    const heading = screen.getByText('Matching tags')
+    const section = heading.closest('section')
+    expect(section).not.toBeNull()
+    expect(section?.tagName).toBe('SECTION')
+    expect(section).toHaveClass('rounded-lg', 'border', 'bg-card', 'p-3')
+  })
+
+  it('results section uses <section> element', async () => {
+    // list_tags_by_prefix response
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    const addBtn = screen.getByRole('button', { name: /Add/i })
+
+    // query_by_tags returns results
+    mockedInvoke.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', content: 'result one' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    await act(async () => {
+      fireEvent.click(addBtn)
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    // The results heading should be inside a <section>
+    const heading = screen.getByText(/Results \(1\)/)
+    const section = heading.closest('section')
+    expect(section).not.toBeNull()
+    expect(section?.tagName).toBe('SECTION')
+    expect(section).toHaveClass('tag-filter-results', 'space-y-3')
+  })
 })

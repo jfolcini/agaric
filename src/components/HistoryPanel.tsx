@@ -5,7 +5,7 @@
  * Supports restoring a block to a previous state via the op log payload.
  */
 
-import { Clock, RotateCcw } from 'lucide-react'
+import { Clock, Loader2, RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
@@ -26,6 +26,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const [loading, setLoading] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
+  const [restoringSeq, setRestoringSeq] = useState<number | null>(null)
 
   const loadHistory = useCallback(
     async (cursor?: string) => {
@@ -63,6 +64,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const handleRestore = useCallback(
     async (entry: HistoryEntry) => {
       if (!blockId) return
+      setRestoringSeq(entry.seq)
       try {
         const parsed = JSON.parse(entry.payload) as { to_text?: string }
         if (parsed.to_text != null) {
@@ -71,6 +73,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
       } catch {
         // Silently fail
       }
+      setRestoringSeq(null)
     },
     [blockId],
   )
@@ -136,8 +139,13 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                   size="sm"
                   className="history-restore-btn shrink-0"
                   onClick={() => handleRestore(entry)}
+                  disabled={restoringSeq === entry.seq}
                 >
-                  <RotateCcw className="h-3.5 w-3.5" />
+                  {restoringSeq === entry.seq ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RotateCcw className="h-3.5 w-3.5" />
+                  )}
                   Restore
                 </Button>
               )}

@@ -147,6 +147,30 @@ describe('ConflictList', () => {
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
   })
 
+  it('pressing Escape dismisses the discard confirmation', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'to discard')
+    mockedInvoke.mockResolvedValueOnce({
+      items: [conflict],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<ConflictList />)
+
+    // First click: shows confirmation
+    const discardBtn = await screen.findByRole('button', { name: /Discard/i })
+    await user.click(discardBtn)
+
+    expect(screen.getByText('Discard forever?')).toBeInTheDocument()
+
+    // Press Escape to dismiss
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByText('Discard forever?')).not.toBeInTheDocument()
+    expect(mockedInvoke).toHaveBeenCalledTimes(1) // Only the initial get_conflicts call
+  })
+
   it('Discard executes on confirmation Yes click', async () => {
     const user = userEvent.setup()
     const conflict = makeConflict('C1', 'to discard')

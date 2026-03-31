@@ -378,4 +378,59 @@ describe('PageBrowser', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // UX #171: "New Page" button loading state
+  describe('new page loading state', () => {
+    it('disables "New Page" button during creation', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
+      })
+
+      // Mock create_block to return a pending promise (never resolves)
+      mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+
+      const newPageBtn = screen.getByRole('button', { name: /New Page/i })
+      await user.click(newPageBtn)
+
+      // Button should be disabled while creating
+      expect(newPageBtn).toBeDisabled()
+    })
+
+    it('re-enables "New Page" button after creation completes', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
+      })
+
+      // Mock create_block to resolve
+      let resolveCreate!: (v: unknown) => void
+      const p = new Promise((r) => {
+        resolveCreate = r
+      })
+      mockedInvoke.mockReturnValueOnce(p)
+
+      const newPageBtn = screen.getByRole('button', { name: /New Page/i })
+      await user.click(newPageBtn)
+
+      // Button should be disabled while creating
+      expect(newPageBtn).toBeDisabled()
+
+      // Resolve the create call
+      resolveCreate(makePage('P_NEW', 'Untitled'))
+
+      // Button should re-enable after creation
+      await waitFor(() => {
+        expect(newPageBtn).toBeEnabled()
+      })
+    })
+  })
 })

@@ -104,7 +104,12 @@ export function PageEditor({
 
   const handleTitleBlur = useCallback(async () => {
     const newTitle = editableTitle.trim()
-    if (newTitle && newTitle !== title) {
+    if (!newTitle) {
+      setEditableTitle(title)
+      if (titleRef.current) titleRef.current.textContent = title
+      return
+    }
+    if (newTitle !== title) {
       await editBlock(pageId, newTitle)
     }
   }, [editableTitle, title, pageId])
@@ -192,54 +197,72 @@ export function PageEditor({
         <div className="detail-panel rounded-lg border" data-testid="detail-panel">
           {/* Tab bar + collapse toggle */}
           <div className="detail-panel-header flex items-center gap-1 border-b px-3 py-1.5">
-            <Button
-              variant={activeTab === 'backlinks' ? 'default' : 'ghost'}
-              size="sm"
-              className="detail-tab-backlinks gap-1"
-              onClick={() => {
-                setActiveTab('backlinks')
-                setPanelCollapsed(false)
-              }}
-            >
-              <Link className="h-3.5 w-3.5" />
-              Backlinks
-            </Button>
-            <Button
-              variant={activeTab === 'history' ? 'default' : 'ghost'}
-              size="sm"
-              className="detail-tab-history gap-1"
-              onClick={() => {
-                setActiveTab('history')
-                setPanelCollapsed(false)
-              }}
-            >
-              <History className="h-3.5 w-3.5" />
-              History
-            </Button>
-            <Button
-              variant={activeTab === 'tags' ? 'default' : 'ghost'}
-              size="sm"
-              className="detail-tab-tags gap-1"
-              onClick={() => {
-                setActiveTab('tags')
-                setPanelCollapsed(false)
-              }}
-            >
-              <Tag className="h-3.5 w-3.5" />
-              Tags
-            </Button>
-            <Button
-              variant={activeTab === 'properties' ? 'default' : 'ghost'}
-              size="sm"
-              className="detail-tab-properties gap-1"
-              onClick={() => {
-                setActiveTab('properties')
-                setPanelCollapsed(false)
-              }}
-            >
-              <Settings2Icon className="h-3.5 w-3.5" />
-              Properties
-            </Button>
+            <div role="tablist" aria-label="Block details" className="flex items-center gap-1">
+              <Button
+                role="tab"
+                id="detail-tab-backlinks"
+                aria-selected={activeTab === 'backlinks'}
+                aria-controls="detail-tabpanel"
+                variant={activeTab === 'backlinks' ? 'default' : 'ghost'}
+                size="sm"
+                className="detail-tab-backlinks gap-1"
+                onClick={() => {
+                  setActiveTab('backlinks')
+                  setPanelCollapsed(false)
+                }}
+              >
+                <Link className="h-3.5 w-3.5" />
+                Backlinks
+              </Button>
+              <Button
+                role="tab"
+                id="detail-tab-history"
+                aria-selected={activeTab === 'history'}
+                aria-controls="detail-tabpanel"
+                variant={activeTab === 'history' ? 'default' : 'ghost'}
+                size="sm"
+                className="detail-tab-history gap-1"
+                onClick={() => {
+                  setActiveTab('history')
+                  setPanelCollapsed(false)
+                }}
+              >
+                <History className="h-3.5 w-3.5" />
+                History
+              </Button>
+              <Button
+                role="tab"
+                id="detail-tab-tags"
+                aria-selected={activeTab === 'tags'}
+                aria-controls="detail-tabpanel"
+                variant={activeTab === 'tags' ? 'default' : 'ghost'}
+                size="sm"
+                className="detail-tab-tags gap-1"
+                onClick={() => {
+                  setActiveTab('tags')
+                  setPanelCollapsed(false)
+                }}
+              >
+                <Tag className="h-3.5 w-3.5" />
+                Tags
+              </Button>
+              <Button
+                role="tab"
+                id="detail-tab-properties"
+                aria-selected={activeTab === 'properties'}
+                aria-controls="detail-tabpanel"
+                variant={activeTab === 'properties' ? 'default' : 'ghost'}
+                size="sm"
+                className="detail-tab-properties gap-1"
+                onClick={() => {
+                  setActiveTab('properties')
+                  setPanelCollapsed(false)
+                }}
+              >
+                <Settings2Icon className="h-3.5 w-3.5" />
+                Properties
+              </Button>
+            </div>
 
             <div className="flex-1" />
 
@@ -261,7 +284,12 @@ export function PageEditor({
 
           {/* Panel content */}
           {activeTab != null && !panelCollapsed && (
-            <div className="detail-panel-content max-h-60 overflow-y-auto p-3">
+            <div
+              role="tabpanel"
+              id="detail-tabpanel"
+              aria-labelledby={`detail-tab-${activeTab}`}
+              className="detail-panel-content max-h-60 overflow-y-auto p-3"
+            >
               {activeTab === 'backlinks' && <BacklinksPanel blockId={effectiveBlockId} />}
               {activeTab === 'history' && <HistoryPanel blockId={effectiveBlockId} />}
               {activeTab === 'tags' && <TagPanel blockId={effectiveBlockId} />}

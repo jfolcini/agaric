@@ -6,7 +6,7 @@
  * Includes delete with confirmation dialog and toast error feedback.
  */
 
-import { FileText, Plus, Trash2 } from 'lucide-react'
+import { FileText, Loader2, Plus, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
@@ -36,6 +36,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [isCreating, setIsCreating] = useState(false)
 
   const loadPages = useCallback(async (cursor?: string) => {
     setLoading(true)
@@ -63,6 +64,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   }, [nextCursor, loadPages])
 
   const handleCreatePage = useCallback(async () => {
+    setIsCreating(true)
     try {
       const resp = await createBlock({ blockType: 'page', content: 'Untitled' })
       const newPage: BlockRow = {
@@ -79,6 +81,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     } catch (error) {
       toast.error(`Failed to create page: ${String(error)}`)
     }
+    setIsCreating(false)
   }, [])
 
   const handleDeletePage = useCallback(async (pageId: string) => {
@@ -100,8 +103,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   return (
     <div className="page-browser space-y-4">
       <div className="flex items-center justify-end">
-        <Button variant="outline" size="sm" onClick={handleCreatePage}>
-          <Plus className="h-4 w-4" /> New Page
+        <Button variant="outline" size="sm" onClick={handleCreatePage} disabled={isCreating}>
+          {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          New Page
         </Button>
       </div>
 
@@ -122,8 +126,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
             size="sm"
             className="mt-3 mx-auto flex items-center gap-1"
             onClick={handleCreatePage}
+            disabled={isCreating}
           >
-            <Plus className="h-4 w-4" />
+            {isCreating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
             Create your first page
           </Button>
         </div>

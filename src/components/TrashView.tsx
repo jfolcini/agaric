@@ -24,6 +24,16 @@ export function TrashView(): React.ReactElement {
   const [hasMore, setHasMore] = useState(false)
   const [confirmPurgeId, setConfirmPurgeId] = useState<string | null>(null)
 
+  // Dismiss purge confirmation on Escape key
+  useEffect(() => {
+    if (!confirmPurgeId) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirmPurgeId(null)
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [confirmPurgeId])
+
   const loadTrash = useCallback(async (cursor?: string) => {
     setLoading(true)
     try {

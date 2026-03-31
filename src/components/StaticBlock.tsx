@@ -77,6 +77,10 @@ export function renderRichContent(
                 }}
               >
                 {node.text}
+                <span className="sr-only"> (opens in new tab)</span>
+                <span className="inline-block ml-0.5 text-[0.7em] opacity-60" aria-hidden="true">
+                  ↗
+                </span>
               </span>
             ) : (
               node.text

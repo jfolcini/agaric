@@ -23,6 +23,16 @@ export function ConflictList(): React.ReactElement {
   const [hasMore, setHasMore] = useState(false)
   const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null)
 
+  // Dismiss discard confirmation on Escape key
+  useEffect(() => {
+    if (!confirmDiscardId) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirmDiscardId(null)
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [confirmDiscardId])
+
   const loadConflicts = useCallback(async (cursor?: string) => {
     setLoading(true)
     try {

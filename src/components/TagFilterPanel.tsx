@@ -264,7 +264,7 @@ export function TagFilterPanel(): React.ReactElement {
 
       {/* Matching tags from prefix search */}
       {filteredMatching.length > 0 && (
-        <div className="rounded-lg border bg-card p-3">
+        <section className="rounded-lg border bg-card p-3">
           <h4 className="mb-2 text-sm font-medium text-muted-foreground">Matching tags</h4>
           <div className="space-y-1">
             {filteredMatching.map((tag) => (
@@ -287,7 +287,7 @@ export function TagFilterPanel(): React.ReactElement {
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
       {/* Loading indicator */}
@@ -308,7 +308,7 @@ export function TagFilterPanel(): React.ReactElement {
 
       {/* Results */}
       {results.length > 0 && (
-        <div className="tag-filter-results space-y-3">
+        <section className="tag-filter-results space-y-3">
           <h4 className="text-sm font-medium text-muted-foreground">Results ({results.length})</h4>
           {results.map((block) => (
             <button
@@ -327,7 +327,7 @@ export function TagFilterPanel(): React.ReactElement {
               </div>
             </button>
           ))}
-        </div>
+        </section>
       )}
 
       {/* Load more */}

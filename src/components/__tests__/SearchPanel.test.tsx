@@ -591,4 +591,18 @@ describe('SearchPanel', () => {
     expect(screen.getByText('page three result')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Load more/i })).not.toBeInTheDocument()
   })
+
+  it('shows spinner during loading state (not just typing)', () => {
+    // Never resolve to keep loading state
+    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+
+    const { container } = render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'loading')
+
+    // Spinner should be visible because loading is true (form submit sets loading immediately)
+    const spinner = container.querySelector('.animate-spin')
+    expect(spinner).toBeInTheDocument()
+  })
 })

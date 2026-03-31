@@ -302,7 +302,7 @@ describe('StaticBlock', () => {
 
     const link = container.querySelector('span.external-link')
     expect(link).not.toBeNull()
-    expect(link?.textContent).toBe('click here')
+    expect(link?.textContent).toContain('click here')
     expect(link?.getAttribute('data-href')).toBe('https://example.com')
     expect(link?.classList.contains('cursor-pointer')).toBe(true)
   })
@@ -331,7 +331,7 @@ describe('StaticBlock', () => {
     )
 
     const extLink = container.querySelector('span.external-link')
-    expect(extLink?.textContent).toBe('docs')
+    expect(extLink?.textContent).toContain('docs')
     expect(extLink?.getAttribute('data-href')).toBe('https://docs.com')
 
     expect(screen.getByText('My Page')).toBeInTheDocument()
@@ -352,6 +352,24 @@ describe('StaticBlock', () => {
     )
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  it('external link renders new-tab indicator and sr-only text', () => {
+    const content = '[click here](https://example.com)'
+    const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+
+    const link = container.querySelector('span.external-link')
+    expect(link).not.toBeNull()
+
+    // sr-only text for screen readers
+    const srOnly = link?.querySelector('.sr-only')
+    expect(srOnly).not.toBeNull()
+    expect(srOnly?.textContent).toBe(' (opens in new tab)')
+
+    // Visual arrow indicator
+    const arrow = link?.querySelector('[aria-hidden="true"]')
+    expect(arrow).not.toBeNull()
+    expect(arrow?.textContent).toBe('↗')
   })
 
   // -- Bold / italic / code marks ---------------------------------------------
@@ -397,7 +415,7 @@ describe('StaticBlock', () => {
     expect(strong).toBeInTheDocument()
     const link = strong?.querySelector('.external-link')
     expect(link).toBeInTheDocument()
-    expect(link?.textContent).toBe('click')
+    expect(link?.textContent).toContain('click')
   })
 
   it('renders bold text adjacent to block_link chip', () => {
@@ -424,7 +442,7 @@ describe('StaticBlock', () => {
     expect(em).toBeInTheDocument()
     const link = em?.querySelector('.external-link')
     expect(link).toBeInTheDocument()
-    expect(link?.textContent).toBe('click')
+    expect(link?.textContent).toContain('click')
   })
 
   it('renders mixed bold, italic, and plain text segments', () => {
