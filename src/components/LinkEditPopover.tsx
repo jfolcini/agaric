@@ -34,6 +34,9 @@ export interface LinkEditPopoverProps {
 export function normalizeUrl(url: string): string {
   const trimmed = url.trim()
   if (!trimmed) return ''
+  // Block dangerous protocols
+  const lower = trimmed.toLowerCase()
+  if (lower.startsWith('javascript:') || lower.startsWith('data:')) return ''
   // scheme://…  (http://, https://, ftp://, etc.)
   if (/^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(trimmed)) return trimmed
   // mailto: and tel: — no authority component
@@ -92,7 +95,7 @@ export function LinkEditPopover({
       />
       <div className="flex items-center gap-2">
         <Button size="xs" onMouseDown={(e) => e.preventDefault()} onClick={handleApply}>
-          Apply
+          {isEditing ? 'Update' : 'Apply'}
         </Button>
         {isEditing && (
           <Button

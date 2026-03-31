@@ -267,7 +267,7 @@ export function SortableBlock({
           ) : todoState === 'TODO' ? (
             <div className="task-checkbox task-checkbox-todo h-4 w-4 rounded border-2 border-muted-foreground" />
           ) : (
-            <div className="task-checkbox task-checkbox-empty h-4 w-4 rounded border-2 border-muted-foreground/30 transition-colors" />
+            <div className="task-checkbox task-checkbox-empty h-4 w-4 rounded border-2 border-muted-foreground/40 transition-colors" />
           )}
         </button>
 

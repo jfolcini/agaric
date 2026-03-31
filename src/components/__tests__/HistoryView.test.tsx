@@ -581,4 +581,174 @@ describe('HistoryView', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  it('confirmation dialog Cancel button closes dialog without calling revertOps', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select the entry
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0])
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+
+    // Open confirmation dialog via Enter
+    await user.keyboard('{Enter}')
+    expect(screen.getByText('Revert 1 operations?')).toBeInTheDocument()
+
+    // Click Cancel
+    await user.click(screen.getByRole('button', { name: /Cancel/ }))
+
+    // Dialog should be closed
+    await waitFor(() => {
+      expect(screen.queryByText('Revert 1 operations?')).not.toBeInTheDocument()
+    })
+
+    // revertOps should NOT have been called (only the initial list_page_history invoke)
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+
+    // Selection should be preserved
+    const checkbox = screen.getByRole('checkbox', { name: /Select operation edit_block #1/ })
+    expect(checkbox).toBeChecked()
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+  })
+
+  it('handles revert error gracefully', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }),
+        makeHistoryEntry(2, 'create_block', { content: 'item 2' }, '2025-01-14T10:00:00Z'),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockRejectedValueOnce(new Error('revert failed')) // revertOps throws
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select an entry
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0])
+
+    // Open dialog and confirm revert
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    expect(screen.getByText('Revert 1 operations?')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    // Dialog should close
+    await waitFor(() => {
+      expect(screen.queryByText('Revert 1 operations?')).not.toBeInTheDocument()
+    })
+
+    // Component should not crash — entries are still visible
+    expect(screen.getByText('item 1')).toBeInTheDocument()
+    expect(screen.getByText('item 2')).toBeInTheDocument()
+  })
+
+  it('reloads history after successful revert', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'original' }, '2025-01-15T12:00:00Z')],
+      next_cursor: null,
+      has_more: false,
+    }
+    const page2 = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'original' }, '2025-01-15T12:00:00Z'),
+        makeHistoryEntry(
+          2,
+          'edit_block',
+          { to_text: 'reverse op' },
+          '2025-01-15T13:00:00Z',
+          'DEVICE01',
+        ),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page1) // initial load
+      .mockResolvedValueOnce([]) // revertOps succeeds
+      .mockResolvedValueOnce(page2) // reload after revert
+
+    render(<HistoryView />)
+
+    await screen.findByText('original')
+
+    // Select the entry
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0])
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+
+    // Open dialog and confirm
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    // listPageHistory should be called again (reload)
+    await waitFor(() => {
+      const listCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_page_history')
+      expect(listCalls).toHaveLength(2) // initial load + reload after revert
+    })
+
+    // Selection should be cleared
+    expect(screen.queryByText('1 selected')).not.toBeInTheDocument()
+
+    // New data should be visible
+    expect(await screen.findByText('reverse op')).toBeInTheDocument()
+  })
+
+  it('preserves selection when revert fails', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, '2025-01-15T11:00:00Z'),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockRejectedValueOnce(new Error('revert failed')) // revertOps fails
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select both entries
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0])
+    await user.click(items[1])
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+
+    // Open dialog and confirm
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    // Wait for dialog to close
+    await waitFor(() => {
+      expect(screen.queryByText('Revert 2 operations?')).not.toBeInTheDocument()
+    })
+
+    // Selection should still be preserved
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+
+    const checkboxes = screen.getAllByRole('checkbox')
+    expect(checkboxes[0]).toBeChecked()
+    expect(checkboxes[1]).toBeChecked()
+  })
 })

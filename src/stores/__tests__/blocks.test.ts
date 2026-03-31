@@ -4,6 +4,16 @@ import { useBlockStore } from '../blocks'
 
 const mockedInvoke = vi.mocked(invoke)
 
+// --- Mock for undo store (used by notifyUndoNewAction in blocks.ts) ---
+const mockOnNewAction = vi.fn()
+vi.mock('@/stores/undo', () => ({
+  useUndoStore: {
+    getState: () => ({
+      onNewAction: mockOnNewAction,
+    }),
+  },
+}))
+
 /** Helper — build a FlatBlock with defaults. */
 function makeBlock(
   overrides: Partial<{
@@ -881,6 +891,113 @@ describe('useBlockStore', () => {
       const blocks = useBlockStore.getState().blocks
       expect(blocks.map((b) => b.id)).toEqual(['A', 'C', 'B'])
       expect(blocks[1].position).toBe(5)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // undo store integration — notifyUndoNewAction
+  // ---------------------------------------------------------------------------
+  describe('undo store integration', () => {
+    it('createBelow calls onNewAction after successful create', async () => {
+      const block = makeBlock({ id: 'A', position: 0 })
+      useBlockStore.setState({ blocks: [block], rootParentId: 'PAGE1' })
+
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'NEW',
+        block_type: 'text',
+        content: '',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+
+      await useBlockStore.getState().createBelow('A')
+
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE1')
+    })
+
+    it('edit calls onNewAction after successful edit', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A', content: 'old' })],
+        rootParentId: 'PAGE1',
+      })
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'new',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+
+      await useBlockStore.getState().edit('A', 'new')
+
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE1')
+    })
+
+    it('remove calls onNewAction after successful delete', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A' })],
+        focusedBlockId: null,
+        rootParentId: 'PAGE1',
+      })
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'A',
+        deleted_at: '2025-01-01T00:00:00Z',
+        descendants_affected: 0,
+      })
+
+      await useBlockStore.getState().remove('A')
+
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE1')
+    })
+
+    it('does NOT call onNewAction when createBelow fails', async () => {
+      const block = makeBlock({ id: 'A', position: 0 })
+      useBlockStore.setState({ blocks: [block], rootParentId: 'PAGE1' })
+
+      mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
+
+      await useBlockStore.getState().createBelow('A')
+
+      expect(mockOnNewAction).not.toHaveBeenCalled()
+    })
+
+    it('does NOT call onNewAction when edit fails', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A', content: 'old' })],
+        rootParentId: 'PAGE1',
+      })
+      mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
+
+      await useBlockStore.getState().edit('A', 'new')
+
+      expect(mockOnNewAction).not.toHaveBeenCalled()
+    })
+
+    it('does NOT call onNewAction when remove fails', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A' })],
+        focusedBlockId: 'A',
+        rootParentId: 'PAGE1',
+      })
+      mockedInvoke.mockRejectedValueOnce(new Error('delete failed'))
+
+      await useBlockStore.getState().remove('A')
+
+      expect(mockOnNewAction).not.toHaveBeenCalled()
+    })
+
+    it('does NOT call onNewAction when rootParentId is null', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A', content: 'old' })],
+        rootParentId: null,
+      })
+      mockedInvoke.mockResolvedValueOnce({})
+
+      await useBlockStore.getState().edit('A', 'new')
+
+      expect(mockOnNewAction).not.toHaveBeenCalled()
     })
   })
 })

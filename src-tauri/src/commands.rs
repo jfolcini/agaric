@@ -7648,4 +7648,417 @@ mod tests {
             "block should be soft-deleted after reverting create"
         );
     }
+
+    // -- Group 5: Additional integration tests (5 tests) --
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_history_includes_ops_after_block_moved_to_different_page() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create page A
+        let page_a = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page A".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Create page B
+        let page_b = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page B".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Create child under page A
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "child text".into(),
+            Some(page_a.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Edit child while under page A
+        edit_block_inner(&pool, DEV, &mat, child.id.clone(), "edited child".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Move child to page B
+        move_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            child.id.clone(),
+            Some(page_b.id.clone()),
+            1,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Query page A history — child is no longer under A
+        let history_a = list_page_history_inner(&pool, page_a.id.clone(), None, None, Some(50))
+            .await
+            .unwrap();
+
+        // Query page B history — child is now under B
+        let history_b = list_page_history_inner(&pool, page_b.id.clone(), None, None, Some(50))
+            .await
+            .unwrap();
+
+        // Verify page B contains the child's ops (create, edit, move)
+        let child_ops_in_b: Vec<_> = history_b
+            .items
+            .iter()
+            .filter(|e| {
+                let payload: serde_json::Value =
+                    serde_json::from_str(&e.payload).unwrap_or_default();
+                payload.get("block_id").and_then(|v| v.as_str()) == Some(&child.id)
+            })
+            .collect();
+
+        // The child is now under B, so all ops for child should appear in B's history.
+        assert!(
+            !child_ops_in_b.is_empty(),
+            "page B history should include ops for the moved child"
+        );
+
+        // Page A should NOT include the child's ops anymore (child is no longer a descendant)
+        let child_ops_in_a: Vec<_> = history_a
+            .items
+            .iter()
+            .filter(|e| {
+                let payload: serde_json::Value =
+                    serde_json::from_str(&e.payload).unwrap_or_default();
+                payload.get("block_id").and_then(|v| v.as_str()) == Some(&child.id)
+            })
+            .collect();
+        assert!(
+            child_ops_in_a.is_empty(),
+            "page A history should NOT include ops for child that moved away"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_reverses_delete_block() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "child content".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Delete the child
+        delete_block_inner(&pool, DEV, &mat, child.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify deleted
+        let deleted = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert!(deleted.deleted_at.is_some(), "child should be deleted");
+
+        // Undo the delete (depth=0)
+        let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(
+            result.new_op_type, "restore_block",
+            "undo of delete should produce restore"
+        );
+
+        // Verify restored
+        let restored = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert!(
+            restored.deleted_at.is_none(),
+            "child should be restored after undo"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_reverses_move_block() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let parent_a = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Parent A".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let parent_b = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Parent B".into(),
+            Some(page.id.clone()),
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "moveable".into(),
+            Some(parent_a.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Move child from parent_a to parent_b
+        move_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            child.id.clone(),
+            Some(parent_b.id.clone()),
+            5,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify moved
+        let moved = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert_eq!(moved.parent_id.as_deref(), Some(parent_b.id.as_str()));
+
+        // Undo the move (depth=0)
+        let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(
+            result.new_op_type, "move_block",
+            "undo of move should produce move"
+        );
+
+        // Verify moved back
+        let restored = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert_eq!(
+            restored.parent_id.as_deref(),
+            Some(parent_a.id.as_str()),
+            "child should be back under parent A"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_reverses_add_tag() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let tag = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "tag".into(),
+            "important".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "child".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Add tag to child
+        add_tag_inner(&pool, DEV, &mat, child.id.clone(), tag.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify tag exists
+        let count_before: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(&child.id)
+                .bind(&tag.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count_before, 1);
+
+        // Undo the add_tag (depth=0)
+        let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(result.new_op_type, "remove_tag");
+
+        // Verify tag removed
+        let count_after: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(&child.id)
+                .bind(&tag.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count_after, 0, "tag should be removed after undo");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_reverses_set_property() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "child".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set property
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            child.id.clone(),
+            "priority".into(),
+            Some("high".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify property exists
+        let props = get_properties_inner(&pool, child.id.clone()).await.unwrap();
+        assert!(props
+            .iter()
+            .any(|p| p.key == "priority" && p.value_text.as_deref() == Some("high")));
+
+        // Undo the set_property (depth=0) — should produce delete_property since it was the first set
+        let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(result.new_op_type, "delete_property");
+
+        // Verify property removed
+        let props_after = get_properties_inner(&pool, child.id.clone()).await.unwrap();
+        assert!(
+            !props_after.iter().any(|p| p.key == "priority"),
+            "property should be removed after undo"
+        );
+    }
 }

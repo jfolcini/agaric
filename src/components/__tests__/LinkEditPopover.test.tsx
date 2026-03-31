@@ -105,6 +105,20 @@ describe('normalizeUrl', () => {
   it('preserves custom scheme:// protocols', () => {
     expect(normalizeUrl('custom-app://open')).toBe('custom-app://open')
   })
+
+  it('blocks javascript: URLs', () => {
+    expect(normalizeUrl('javascript:alert("xss")')).toBe('')
+  })
+
+  it('blocks JavaScript: URLs (case-insensitive)', () => {
+    expect(normalizeUrl('JavaScript:alert("xss")')).toBe('')
+    expect(normalizeUrl('JAVASCRIPT:void(0)')).toBe('')
+  })
+
+  it('blocks data: URLs', () => {
+    expect(normalizeUrl('data:text/html,<script>alert(1)</script>')).toBe('')
+    expect(normalizeUrl('DATA:text/html,test')).toBe('')
+  })
 })
 
 // ── LinkEditPopover component ────────────────────────────────────────────
@@ -138,11 +152,24 @@ describe('LinkEditPopover', () => {
       expect(input).toHaveFocus()
     })
 
-    it('renders Apply button', () => {
+    it('renders Apply button when creating new link', () => {
       render(
         <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
       )
       expect(screen.getByRole('button', { name: 'Apply' })).toBeInTheDocument()
+    })
+
+    it('renders Update button when editing existing link', () => {
+      render(
+        <LinkEditPopover
+          editor={makeEditor()}
+          isEditing={true}
+          initialUrl="https://example.com"
+          onClose={onClose}
+        />,
+      )
+      expect(screen.getByRole('button', { name: 'Update' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument()
     })
 
     it('does NOT render Remove button when not editing', () => {
@@ -348,7 +375,7 @@ describe('LinkEditPopover', () => {
       expect(input).toHaveValue('https://old.com')
 
       fireEvent.change(input, { target: { value: 'https://new.com' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Update' }))
 
       expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://new.com' })
     })

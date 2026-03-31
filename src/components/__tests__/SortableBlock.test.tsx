@@ -1350,7 +1350,7 @@ describe('SortableBlock a11y enhancements', () => {
     expect(deleteBtn.className).toContain('focus-visible:opacity-100')
   })
 
-  it('empty checkbox has border-muted-foreground/30 (not border-transparent)', () => {
+  it('empty checkbox has border-muted-foreground/40 (not border-transparent)', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1362,7 +1362,7 @@ describe('SortableBlock a11y enhancements', () => {
     )
 
     const emptyCheckbox = container.querySelector('.task-checkbox-empty')
-    expect(emptyCheckbox?.className).toContain('border-muted-foreground/30')
+    expect(emptyCheckbox?.className).toContain('border-muted-foreground/40')
     expect(emptyCheckbox?.className).not.toContain('border-transparent')
   })
 })
