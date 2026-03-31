@@ -1,18 +1,30 @@
 /**
  * FormattingToolbar — always-visible toolbar rendered above the active editor.
  *
- * Buttons: Bold, Italic, Code | External Link, Code Block | Undo, Redo.
+ * Buttons: Bold, Italic, Code | External Link, Code Block | Priority 1/2/3, Date | Undo, Redo.
  * Uses onMouseDown + preventDefault so clicks never steal focus from TipTap.
  * Active marks are highlighted via aria-pressed + bg-accent.
  *
  * The External Link button opens a LinkEditPopover (shadcn Popover) instead
  * of the old `window.prompt()`. The popover is also opened by the Ctrl+K
  * keyboard shortcut (dispatched from the ExternalLink TipTap extension).
+ *
+ * Priority and Date buttons dispatch custom events that BlockTree listens for.
  */
 
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
-import { Bold, Code, FileCode2, Italic, Link2, Redo2, Undo2 } from 'lucide-react'
+import {
+  Bold,
+  CalendarDays,
+  Code,
+  FileCode2,
+  Italic,
+  Link2,
+  Redo2,
+  Signal,
+  Undo2,
+} from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { LinkEditPopover } from './LinkEditPopover'
@@ -138,6 +150,57 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
         }}
       >
         <FileCode2 size={14} />
+      </Button>
+
+      <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
+
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Priority 1 (high)"
+        title="Set priority 1 (high)"
+        onMouseDown={(e) => {
+          e.preventDefault()
+          document.dispatchEvent(new CustomEvent('set-priority-1'))
+        }}
+      >
+        <Signal size={14} className="text-red-500" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Priority 2 (medium)"
+        title="Set priority 2 (medium)"
+        onMouseDown={(e) => {
+          e.preventDefault()
+          document.dispatchEvent(new CustomEvent('set-priority-2'))
+        }}
+      >
+        <Signal size={14} className="text-yellow-500" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Priority 3 (low)"
+        title="Set priority 3 (low)"
+        onMouseDown={(e) => {
+          e.preventDefault()
+          document.dispatchEvent(new CustomEvent('set-priority-3'))
+        }}
+      >
+        <Signal size={14} className="text-blue-500" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Insert date"
+        title="Insert date link"
+        onMouseDown={(e) => {
+          e.preventDefault()
+          document.dispatchEvent(new CustomEvent('open-date-picker'))
+        }}
+      >
+        <CalendarDays size={14} />
       </Button>
 
       <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />

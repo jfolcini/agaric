@@ -159,6 +159,10 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Code' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'External link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Priority 1 (high)' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Priority 2 (medium)' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Priority 3 (low)' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Insert date' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Redo' })).toBeInTheDocument()
     })
@@ -166,7 +170,7 @@ describe('FormattingToolbar', () => {
     it('renders separators between button groups', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const seps = screen.getAllByTestId('separator')
-      expect(seps).toHaveLength(2)
+      expect(seps).toHaveLength(3)
       for (const sep of seps) {
         expect(sep).toHaveAttribute('data-orientation', 'vertical')
       }
@@ -396,6 +400,62 @@ describe('FormattingToolbar', () => {
       mockEditorState.canUndo = true
       const { container } = render(<FormattingToolbar editor={makeEditor()} />)
       expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
+  // ── Priority and Date buttons ──────────────────────────────────────
+
+  describe('priority and date buttons', () => {
+    it('priority 1 button dispatches set-priority-1 event', () => {
+      const spy = vi.fn()
+      document.addEventListener('set-priority-1', spy)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.mouseDown(screen.getByRole('button', { name: 'Priority 1 (high)' }))
+      expect(spy).toHaveBeenCalledOnce()
+      document.removeEventListener('set-priority-1', spy)
+    })
+
+    it('priority 2 button dispatches set-priority-2 event', () => {
+      const spy = vi.fn()
+      document.addEventListener('set-priority-2', spy)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.mouseDown(screen.getByRole('button', { name: 'Priority 2 (medium)' }))
+      expect(spy).toHaveBeenCalledOnce()
+      document.removeEventListener('set-priority-2', spy)
+    })
+
+    it('priority 3 button dispatches set-priority-3 event', () => {
+      const spy = vi.fn()
+      document.addEventListener('set-priority-3', spy)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.mouseDown(screen.getByRole('button', { name: 'Priority 3 (low)' }))
+      expect(spy).toHaveBeenCalledOnce()
+      document.removeEventListener('set-priority-3', spy)
+    })
+
+    it('date button dispatches open-date-picker event', () => {
+      const spy = vi.fn()
+      document.addEventListener('open-date-picker', spy)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.mouseDown(screen.getByRole('button', { name: 'Insert date' }))
+      expect(spy).toHaveBeenCalledOnce()
+      document.removeEventListener('open-date-picker', spy)
+    })
+
+    it('priority buttons prevent default to preserve editor focus', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Priority 1 (high)' })
+      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      const prevented = !btn.dispatchEvent(event)
+      expect(prevented).toBe(true)
+    })
+
+    it('date button prevents default to preserve editor focus', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Insert date' })
+      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      const prevented = !btn.dispatchEvent(event)
+      expect(prevented).toBe(true)
     })
   })
 })

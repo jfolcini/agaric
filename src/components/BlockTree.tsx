@@ -740,6 +740,17 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     }
   }, [focusedBlockId, setBlockProperties])
 
+  // ── Listen for toolbar date picker event ────────────────────────────
+  useEffect(() => {
+    const handleDateEvent = () => {
+      if (!focusedBlockId) return
+      datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
+      setDatePickerOpen(true)
+    }
+    document.addEventListener('open-date-picker', handleDateEvent)
+    return () => document.removeEventListener('open-date-picker', handleDateEvent)
+  }, [focusedBlockId, rovingEditor.editor])
+
   // ── Active item for DragOverlay ────────────────────────────────────
   const activeBlock = dnd.activeId ? blocks.find((b) => b.id === dnd.activeId) : null
 
