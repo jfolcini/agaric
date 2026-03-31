@@ -250,6 +250,20 @@ describe('BlockContextMenu', () => {
     expect(items[items.length - 1]).toHaveFocus()
   })
 
+  it('ArrowDown wraps from last item to first', () => {
+    renderMenu()
+
+    const menu = screen.getByRole('menu')
+    const items = screen.getAllByRole('menuitem')
+    // Move to last item
+    fireEvent.keyDown(menu, { key: 'End' })
+    expect(items[items.length - 1]).toHaveFocus()
+
+    // ArrowDown should wrap to first
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    expect(items[0]).toHaveFocus()
+  })
+
   it('Enter activates the focused menu item', async () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
@@ -360,5 +374,17 @@ describe('BlockContextMenu', () => {
 
     const menu = screen.getByRole('menu')
     expect(menu).toHaveAttribute('aria-label', 'Block actions')
+  })
+
+  it('focused menu item has focus-visible highlight classes', () => {
+    renderMenu()
+
+    const items = screen.getAllByRole('menuitem')
+    // All items should have focus-visible:bg-accent for keyboard highlight
+    for (const item of items) {
+      expect(item.className).toContain('focus-visible:bg-accent')
+      expect(item.className).toContain('focus-visible:text-accent-foreground')
+      expect(item.className).toContain('focus-visible:outline-none')
+    }
   })
 })
