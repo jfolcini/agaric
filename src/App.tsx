@@ -5,6 +5,7 @@ import {
   ChevronsLeft,
   FileText,
   GitMerge,
+  History,
   Keyboard,
   Search,
   Tag,
@@ -13,6 +14,7 @@ import {
 import { useCallback, useEffect, useState } from 'react'
 import { BootGate } from './components/BootGate'
 import { ConflictList } from './components/ConflictList'
+import { HistoryView } from './components/HistoryView'
 import { JournalControls, JournalPage } from './components/JournalPage'
 import { KeyboardShortcuts } from './components/KeyboardShortcuts'
 import { PageBrowser } from './components/PageBrowser'
@@ -39,6 +41,7 @@ import {
   useSidebar,
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
+import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { createBlock } from './lib/tauri'
 import { useJournalStore } from './stores/journal'
 import { useNavigationStore, type View } from './stores/navigation'
@@ -53,6 +56,7 @@ const NAV_ITEMS: { id: Exclude<View, 'page-editor'>; icon: React.ElementType; la
   { id: 'trash', icon: Trash2, label: 'Trash' },
   { id: 'status', icon: Activity, label: 'Status' },
   { id: 'conflicts', icon: GitMerge, label: 'Conflicts' },
+  { id: 'history', icon: History, label: 'History' },
 ]
 
 function CollapseButton() {
@@ -89,6 +93,9 @@ function App() {
     useResolveStore.getState().preload()
   }, [])
 
+  // ── Op-level undo/redo shortcuts (Ctrl+Z / Ctrl+Y) ─────────────────
+  useUndoShortcuts()
+
   // ── Journal navigation shortcuts (Alt+Arrow, Alt+T) ────────────────
   useEffect(() => {
     function handleJournalNav(e: KeyboardEvent) {
@@ -123,17 +130,15 @@ function App() {
     return () => document.removeEventListener('keydown', handleJournalNav)
   }, [])
 
-  // ── Global shortcuts (Ctrl/Cmd+F for search, Ctrl/Cmd+N for new page) ──
+  // ── Global shortcuts (Ctrl+F → search, Ctrl+N → new page) ──────────
   useEffect(() => {
     function handleGlobalShortcuts(e: KeyboardEvent) {
       const mod = e.ctrlKey || e.metaKey
       if (!mod) return
-
       if (e.key === 'f') {
         e.preventDefault()
         useNavigationStore.getState().setView('search')
       }
-
       if (e.key === 'n') {
         e.preventDefault()
         createBlock({ blockType: 'page', content: 'Untitled' }).then((resp) => {
@@ -230,6 +235,7 @@ function App() {
             {currentView === 'trash' && <TrashView />}
             {currentView === 'status' && <StatusPanel />}
             {currentView === 'conflicts' && <ConflictList />}
+            {currentView === 'history' && <HistoryView />}
             {currentView === 'page-editor' && activePage && (
               <PageEditor
                 pageId={activePage.pageId}

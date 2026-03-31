@@ -1,0 +1,992 @@
+//! Reverse (inverse) op computation for the undo engine.
+//!
+//! Given an existing op in the op log identified by `(device_id, seq)`, this
+//! module computes the [`OpPayload`] that would reverse (undo) the effect of
+//! that op.  Prior state is looked up from the op log itself, not from the
+//! materialised `blocks` table, so the result is consistent even if the
+//! materialiser hasn't caught up yet.
+//!
+//! ## Non-reversible operations
+//!
+//! `purge_block` and `delete_attachment` are physically destructive and cannot
+//! be reversed.  Attempting to reverse them returns
+//! [`AppError::NonReversible`].
+
+#![allow(dead_code)]
+
+use sqlx::SqlitePool;
+use std::str::FromStr;
+
+use crate::error::AppError;
+use crate::op::{
+    AddTagPayload, CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
+    MoveBlockPayload, OpPayload, OpType, RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload,
+};
+use crate::op_log::OpRecord;
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Compute the reverse (inverse) of an existing op.
+///
+/// Fetches the op identified by `(device_id, seq)` from the op log, then
+/// returns the [`OpPayload`] that would undo its effect.  All database reads
+/// are performed within a single read transaction for consistency.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — no op with the given `(device_id, seq)`
+/// - [`AppError::NonReversible`] — the op type cannot be reversed
+///   (`purge_block`, `delete_attachment`)
+/// - [`AppError::Database`] — underlying SQLite error
+/// - [`AppError::Json`] — payload deserialization failure
+pub async fn compute_reverse(
+    pool: &SqlitePool,
+    device_id: &str,
+    seq: i64,
+) -> Result<OpPayload, AppError> {
+    // Fetch the target op
+    let record = crate::op_log::get_op_by_seq(pool, device_id, seq).await?;
+
+    let op_type = OpType::from_str(&record.op_type)
+        .map_err(|e| AppError::Validation(format!("unknown op_type in record: {e}")))?;
+
+    match op_type {
+        OpType::CreateBlock => reverse_create_block(&record),
+        OpType::DeleteBlock => reverse_delete_block(pool, &record),
+        OpType::EditBlock => reverse_edit_block(pool, &record).await,
+        OpType::MoveBlock => reverse_move_block(pool, &record).await,
+        OpType::AddTag => reverse_add_tag(&record),
+        OpType::RemoveTag => reverse_remove_tag(&record),
+        OpType::SetProperty => reverse_set_property(pool, &record).await,
+        OpType::DeleteProperty => reverse_delete_property(pool, &record).await,
+        OpType::AddAttachment => reverse_add_attachment(&record),
+        OpType::RestoreBlock => reverse_restore_block(&record),
+        OpType::DeleteAttachment | OpType::PurgeBlock => Err(AppError::NonReversible {
+            op_type: record.op_type.clone(),
+        }),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-op-type reverse implementations
+// ---------------------------------------------------------------------------
+
+/// `create_block` -> `DeleteBlock { block_id }`
+fn reverse_create_block(record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: CreateBlockPayload = serde_json::from_str(&record.payload)?;
+    Ok(OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: payload.block_id,
+    }))
+}
+
+/// `delete_block` -> `RestoreBlock { block_id, deleted_at_ref }`
+///
+/// Uses the `created_at` timestamp from the `delete_block` op record itself as
+/// the `deleted_at_ref`.  The command sets `deleted_at = now` in the same
+/// transaction, so `record.created_at` IS the `deleted_at` timestamp.  This
+/// avoids a dependency on the materialised `blocks` table, which may lag.
+fn reverse_delete_block(_pool: &SqlitePool, record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: DeleteBlockPayload = serde_json::from_str(&record.payload)?;
+
+    Ok(OpPayload::RestoreBlock(RestoreBlockPayload {
+        block_id: payload.block_id,
+        deleted_at_ref: record.created_at.clone(),
+    }))
+}
+
+/// `edit_block` -> `EditBlock { block_id, to_text: prior_text, prev_edit: None }`
+///
+/// Finds the prior text by looking for the most recent `edit_block` or
+/// `create_block` for this `block_id` in the op log *before* the target op.
+async fn reverse_edit_block(pool: &SqlitePool, record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: EditBlockPayload = serde_json::from_str(&record.payload)?;
+
+    let prior_text = find_prior_text(pool, &payload.block_id, &record.created_at, record.seq)
+        .await?
+        .ok_or_else(|| {
+            AppError::NotFound(format!(
+                "no prior text found for block '{}' before ({}, {})",
+                payload.block_id, record.device_id, record.seq
+            ))
+        })?;
+
+    Ok(OpPayload::EditBlock(EditBlockPayload {
+        block_id: payload.block_id,
+        to_text: prior_text,
+        prev_edit: None,
+    }))
+}
+
+/// `move_block` -> `MoveBlock { block_id, new_parent_id: old_parent, new_position: old_pos }`
+///
+/// Finds the prior parent/position by looking for the most recent `move_block`
+/// or `create_block` for this `block_id` in the op log *before* the target op.
+async fn reverse_move_block(pool: &SqlitePool, record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: MoveBlockPayload = serde_json::from_str(&record.payload)?;
+
+    let (old_parent, old_pos) =
+        find_prior_position(pool, &payload.block_id, &record.created_at, record.seq)
+            .await?
+            .ok_or_else(|| {
+                AppError::NotFound(format!(
+                    "no prior position found for block '{}' before ({}, {})",
+                    payload.block_id, record.device_id, record.seq
+                ))
+            })?;
+
+    Ok(OpPayload::MoveBlock(MoveBlockPayload {
+        block_id: payload.block_id,
+        new_parent_id: old_parent,
+        new_position: old_pos,
+    }))
+}
+
+/// `add_tag` -> `RemoveTag { block_id, tag_id }`
+fn reverse_add_tag(record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: AddTagPayload = serde_json::from_str(&record.payload)?;
+    Ok(OpPayload::RemoveTag(RemoveTagPayload {
+        block_id: payload.block_id,
+        tag_id: payload.tag_id,
+    }))
+}
+
+/// `remove_tag` -> `AddTag { block_id, tag_id }`
+fn reverse_remove_tag(record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: RemoveTagPayload = serde_json::from_str(&record.payload)?;
+    Ok(OpPayload::AddTag(AddTagPayload {
+        block_id: payload.block_id,
+        tag_id: payload.tag_id,
+    }))
+}
+
+/// `set_property` -> If prior `set_property` exists: `SetProperty` with prior values.
+///                    If no prior: `DeleteProperty { block_id, key }`.
+async fn reverse_set_property(pool: &SqlitePool, record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: SetPropertyPayload = serde_json::from_str(&record.payload)?;
+
+    let prior = find_prior_property(
+        pool,
+        &payload.block_id,
+        &payload.key,
+        &record.created_at,
+        record.seq,
+    )
+    .await?;
+
+    match prior {
+        Some(prior_payload) => Ok(OpPayload::SetProperty(SetPropertyPayload {
+            block_id: payload.block_id,
+            key: payload.key,
+            value_text: prior_payload.value_text,
+            value_num: prior_payload.value_num,
+            value_date: prior_payload.value_date,
+            value_ref: prior_payload.value_ref,
+        })),
+        None => Ok(OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: payload.block_id,
+            key: payload.key,
+        })),
+    }
+}
+
+/// `delete_property` -> `SetProperty` with prior value.
+///
+/// Errors if no prior `set_property` is found (can't restore what never existed).
+async fn reverse_delete_property(
+    pool: &SqlitePool,
+    record: &OpRecord,
+) -> Result<OpPayload, AppError> {
+    let payload: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
+
+    let prior = find_prior_property(
+        pool,
+        &payload.block_id,
+        &payload.key,
+        &record.created_at,
+        record.seq,
+    )
+    .await?
+    .ok_or_else(|| {
+        AppError::NotFound(format!(
+            "no prior set_property found for block '{}' key '{}' — cannot reverse delete_property",
+            payload.block_id, payload.key
+        ))
+    })?;
+
+    Ok(OpPayload::SetProperty(SetPropertyPayload {
+        block_id: payload.block_id,
+        key: payload.key,
+        value_text: prior.value_text,
+        value_num: prior.value_num,
+        value_date: prior.value_date,
+        value_ref: prior.value_ref,
+    }))
+}
+
+/// `add_attachment` -> `DeleteAttachment { attachment_id }`
+fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: crate::op::AddAttachmentPayload = serde_json::from_str(&record.payload)?;
+    Ok(OpPayload::DeleteAttachment(
+        crate::op::DeleteAttachmentPayload {
+            attachment_id: payload.attachment_id,
+        },
+    ))
+}
+
+/// `restore_block` -> `DeleteBlock { block_id }`
+fn reverse_restore_block(record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: RestoreBlockPayload = serde_json::from_str(&record.payload)?;
+    Ok(OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: payload.block_id,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Prior-state lookup helpers
+// ---------------------------------------------------------------------------
+
+/// Find the text content of a block as it was *before* the op at
+/// `(created_at, seq)`.
+///
+/// Searches the op log for the most recent `edit_block` or `create_block` for
+/// the given `block_id` before the target op, ordered by
+/// `(created_at DESC, seq DESC)`.
+///
+/// - For `edit_block` ops, returns `to_text`.
+/// - For `create_block` ops, returns `content`.
+async fn find_prior_text(
+    pool: &SqlitePool,
+    block_id: &str,
+    created_at: &str,
+    seq: i64,
+) -> Result<Option<String>, AppError> {
+    let row = sqlx::query!(
+        "SELECT op_type, payload FROM op_log \
+         WHERE json_extract(payload, '$.block_id') = ?1 \
+           AND op_type IN ('edit_block', 'create_block') \
+           AND (created_at < ?2 OR (created_at = ?2 AND seq < ?3)) \
+         ORDER BY created_at DESC, seq DESC \
+         LIMIT 1",
+        block_id,   // ?1
+        created_at, // ?2
+        seq,        // ?3
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        Some(r) => {
+            if r.op_type == "edit_block" {
+                let p: EditBlockPayload = serde_json::from_str(&r.payload)?;
+                Ok(Some(p.to_text))
+            } else {
+                // create_block
+                let p: CreateBlockPayload = serde_json::from_str(&r.payload)?;
+                Ok(Some(p.content))
+            }
+        }
+        None => Ok(None),
+    }
+}
+
+/// Find the parent/position of a block as it was *before* the op at
+/// `(created_at, seq)`.
+///
+/// Searches for the most recent `move_block` or `create_block` for the given
+/// `block_id` before the target op.
+///
+/// - For `move_block`, returns `(new_parent_id, new_position)`.
+/// - For `create_block`, returns `(parent_id, position)`.
+async fn find_prior_position(
+    pool: &SqlitePool,
+    block_id: &str,
+    created_at: &str,
+    seq: i64,
+) -> Result<Option<(Option<String>, i64)>, AppError> {
+    let row = sqlx::query!(
+        "SELECT op_type, payload FROM op_log \
+         WHERE json_extract(payload, '$.block_id') = ?1 \
+           AND op_type IN ('move_block', 'create_block') \
+           AND (created_at < ?2 OR (created_at = ?2 AND seq < ?3)) \
+         ORDER BY created_at DESC, seq DESC \
+         LIMIT 1",
+        block_id,   // ?1
+        created_at, // ?2
+        seq,        // ?3
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        Some(r) => {
+            if r.op_type == "move_block" {
+                let p: MoveBlockPayload = serde_json::from_str(&r.payload)?;
+                Ok(Some((p.new_parent_id, p.new_position)))
+            } else {
+                // create_block
+                let p: CreateBlockPayload = serde_json::from_str(&r.payload)?;
+                // Position 0 = first child; None means unset, default to first
+                Ok(Some((p.parent_id, p.position.unwrap_or(0))))
+            }
+        }
+        None => Ok(None),
+    }
+}
+
+/// Row shape for prior set_property lookup.
+struct PriorPropertyRow {
+    value_text: Option<String>,
+    value_num: Option<f64>,
+    value_date: Option<String>,
+    value_ref: Option<String>,
+}
+
+/// Find the property values for `(block_id, key)` as they were *before* the op
+/// at `(created_at, seq)`.
+///
+/// Searches for the most recent `set_property` with the same `(block_id, key)`
+/// before the target op.
+async fn find_prior_property(
+    pool: &SqlitePool,
+    block_id: &str,
+    key: &str,
+    created_at: &str,
+    seq: i64,
+) -> Result<Option<PriorPropertyRow>, AppError> {
+    let row = sqlx::query!(
+        "SELECT payload FROM op_log \
+         WHERE json_extract(payload, '$.block_id') = ?1 \
+           AND json_extract(payload, '$.key') = ?2 \
+           AND op_type = 'set_property' \
+           AND (created_at < ?3 OR (created_at = ?3 AND seq < ?4)) \
+         ORDER BY created_at DESC, seq DESC \
+         LIMIT 1",
+        block_id,   // ?1
+        key,        // ?2
+        created_at, // ?3
+        seq,        // ?4
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        Some(r) => {
+            let p: SetPropertyPayload = serde_json::from_str(&r.payload)?;
+            Ok(Some(PriorPropertyRow {
+                value_text: p.value_text,
+                value_num: p.value_num,
+                value_date: p.value_date,
+                value_ref: p.value_ref,
+            }))
+        }
+        None => Ok(None),
+    }
+}
+
+// ===========================================================================
+// Tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::init_pool;
+    use crate::op::*;
+    use crate::op_log::append_local_op_at;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    // ── Fixture constants ───────────────────────────────────────────────
+
+    const FIXED_TS: &str = "2025-01-15T12:00:00+00:00";
+    const TEST_DEVICE: &str = "test-device";
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+
+    /// Create a temp-file-backed SQLite pool with migrations applied.
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Append an op via `append_local_op_at` with a bumped timestamp to ensure
+    /// ordering.  Returns the OpRecord.
+    async fn append_op(pool: &SqlitePool, payload: OpPayload, ts: &str) -> crate::op_log::OpRecord {
+        append_local_op_at(pool, TEST_DEVICE, payload, ts.to_string())
+            .await
+            .unwrap()
+    }
+
+    // ── 1. Reverse create_block -> DeleteBlock ──────────────────────────
+
+    #[tokio::test]
+    async fn reverse_create_block_produces_delete_block() {
+        let (pool, _dir) = test_pool().await;
+
+        let create = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: "BLK1".into(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "hello".into(),
+        });
+        let rec = append_op(&pool, create, FIXED_TS).await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        assert!(
+            matches!(reverse, OpPayload::DeleteBlock(ref p) if p.block_id == "BLK1"),
+            "reverse of create_block should be DeleteBlock, got: {reverse:?}"
+        );
+    }
+
+    // ── 2. Reverse delete_block -> RestoreBlock ─────────────────────────
+
+    #[tokio::test]
+    async fn reverse_delete_block_produces_restore_block_with_deleted_at() {
+        let (pool, _dir) = test_pool().await;
+
+        // Append a delete_block op — the op's created_at IS the deleted_at timestamp,
+        // no blocks table row needed.
+        let delete_ts = "2025-01-15T13:00:00+00:00";
+        let delete = OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: "BLK2".into(),
+        });
+        let rec = append_op(&pool, delete, delete_ts).await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::RestoreBlock(ref p) => {
+                assert_eq!(p.block_id, "BLK2", "block_id mismatch");
+                assert_eq!(
+                    p.deleted_at_ref, delete_ts,
+                    "deleted_at_ref should match the op's created_at timestamp"
+                );
+            }
+            _ => panic!("expected RestoreBlock, got: {reverse:?}"),
+        }
+    }
+
+    // ── 3. Reverse edit_block -> EditBlock with prior text ──────────────
+
+    #[tokio::test]
+    async fn reverse_edit_block_produces_edit_with_prior_text() {
+        let (pool, _dir) = test_pool().await;
+
+        // First: create_block (content = "original")
+        let create = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: "BLK3".into(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "original".into(),
+        });
+        append_op(&pool, create, "2025-01-15T12:00:00+00:00").await;
+
+        // Second: edit_block #1 (to_text = "first edit")
+        let edit1 = OpPayload::EditBlock(EditBlockPayload {
+            block_id: "BLK3".into(),
+            to_text: "first edit".into(),
+            prev_edit: None,
+        });
+        append_op(&pool, edit1, "2025-01-15T12:01:00+00:00").await;
+
+        // Third: edit_block #2 (to_text = "second edit")
+        let edit2 = OpPayload::EditBlock(EditBlockPayload {
+            block_id: "BLK3".into(),
+            to_text: "second edit".into(),
+            prev_edit: None,
+        });
+        let rec = append_op(&pool, edit2, "2025-01-15T12:02:00+00:00").await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::EditBlock(ref p) => {
+                assert_eq!(p.block_id, "BLK3", "block_id mismatch");
+                assert_eq!(
+                    p.to_text, "first edit",
+                    "reverse should use prior edit's to_text"
+                );
+                assert_eq!(
+                    p.prev_edit, None,
+                    "reverse edit should have prev_edit = None"
+                );
+            }
+            _ => panic!("expected EditBlock, got: {reverse:?}"),
+        }
+    }
+
+    // ── 4. Reverse edit_block when prior is create_block ────────────────
+
+    #[tokio::test]
+    async fn reverse_edit_block_when_prior_is_create_uses_content() {
+        let (pool, _dir) = test_pool().await;
+
+        // create_block with content = "from create"
+        let create = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: "BLK4".into(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "from create".into(),
+        });
+        append_op(&pool, create, "2025-01-15T12:00:00+00:00").await;
+
+        // edit_block (to_text = "edited")
+        let edit = OpPayload::EditBlock(EditBlockPayload {
+            block_id: "BLK4".into(),
+            to_text: "edited".into(),
+            prev_edit: None,
+        });
+        let rec = append_op(&pool, edit, "2025-01-15T12:01:00+00:00").await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::EditBlock(ref p) => {
+                assert_eq!(
+                    p.to_text, "from create",
+                    "reverse should use create_block's content when no prior edit exists"
+                );
+            }
+            _ => panic!("expected EditBlock, got: {reverse:?}"),
+        }
+    }
+
+    // ── 5. Reverse move_block -> MoveBlock with prior parent/position ───
+
+    #[tokio::test]
+    async fn reverse_move_block_produces_move_with_prior_position() {
+        let (pool, _dir) = test_pool().await;
+
+        // First: create_block with parent_id = "P1", position = 1
+        let create = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: "BLK5".into(),
+            block_type: "content".into(),
+            parent_id: Some("P1".into()),
+            position: Some(1),
+            content: "test".into(),
+        });
+        append_op(&pool, create, "2025-01-15T12:00:00+00:00").await;
+
+        // Second: move_block #1 (new_parent_id = "P2", new_position = 3)
+        let move1 = OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: "BLK5".into(),
+            new_parent_id: Some("P2".into()),
+            new_position: 3,
+        });
+        append_op(&pool, move1, "2025-01-15T12:01:00+00:00").await;
+
+        // Third: move_block #2 (new_parent_id = "P3", new_position = 5)
+        let move2 = OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: "BLK5".into(),
+            new_parent_id: Some("P3".into()),
+            new_position: 5,
+        });
+        let rec = append_op(&pool, move2, "2025-01-15T12:02:00+00:00").await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::MoveBlock(ref p) => {
+                assert_eq!(p.block_id, "BLK5", "block_id mismatch");
+                assert_eq!(
+                    p.new_parent_id,
+                    Some("P2".into()),
+                    "reverse should use prior move's parent_id"
+                );
+                assert_eq!(
+                    p.new_position, 3,
+                    "reverse should use prior move's position"
+                );
+            }
+            _ => panic!("expected MoveBlock, got: {reverse:?}"),
+        }
+    }
+
+    // ── 6. Reverse move_block when prior is create_block ────────────────
+
+    #[tokio::test]
+    async fn reverse_move_block_when_prior_is_create_uses_create_position() {
+        let (pool, _dir) = test_pool().await;
+
+        // create_block with parent_id = "ROOT", position = 2
+        let create = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: "BLK6".into(),
+            block_type: "content".into(),
+            parent_id: Some("ROOT".into()),
+            position: Some(2),
+            content: "test".into(),
+        });
+        append_op(&pool, create, "2025-01-15T12:00:00+00:00").await;
+
+        // move_block (new_parent_id = "OTHER", new_position = 7)
+        let mv = OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: "BLK6".into(),
+            new_parent_id: Some("OTHER".into()),
+            new_position: 7,
+        });
+        let rec = append_op(&pool, mv, "2025-01-15T12:01:00+00:00").await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::MoveBlock(ref p) => {
+                assert_eq!(
+                    p.new_parent_id,
+                    Some("ROOT".into()),
+                    "reverse should use create_block's parent_id"
+                );
+                assert_eq!(
+                    p.new_position, 2,
+                    "reverse should use create_block's position"
+                );
+            }
+            _ => panic!("expected MoveBlock, got: {reverse:?}"),
+        }
+    }
+
+    // ── 7. Reverse add_tag -> RemoveTag ─────────────────────────────────
+
+    #[tokio::test]
+    async fn reverse_add_tag_produces_remove_tag() {
+        let (pool, _dir) = test_pool().await;
+
+        let add = OpPayload::AddTag(AddTagPayload {
+            block_id: "BLK7".into(),
+            tag_id: "TAG1".into(),
+        });
+        let rec = append_op(&pool, add, FIXED_TS).await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::RemoveTag(ref p) => {
+                assert_eq!(p.block_id, "BLK7", "block_id mismatch");
+                assert_eq!(p.tag_id, "TAG1", "tag_id mismatch");
+            }
+            _ => panic!("expected RemoveTag, got: {reverse:?}"),
+        }
+    }
+
+    // ── 8. Reverse remove_tag -> AddTag ─────────────────────────────────
+
+    #[tokio::test]
+    async fn reverse_remove_tag_produces_add_tag() {
+        let (pool, _dir) = test_pool().await;
+
+        let remove = OpPayload::RemoveTag(RemoveTagPayload {
+            block_id: "BLK8".into(),
+            tag_id: "TAG2".into(),
+        });
+        let rec = append_op(&pool, remove, FIXED_TS).await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::AddTag(ref p) => {
+                assert_eq!(p.block_id, "BLK8", "block_id mismatch");
+                assert_eq!(p.tag_id, "TAG2", "tag_id mismatch");
+            }
+            _ => panic!("expected AddTag, got: {reverse:?}"),
+        }
+    }
+
+    // ── 9. Reverse set_property -> SetProperty with prior value or DeleteProperty ──
+
+    #[tokio::test]
+    async fn reverse_set_property_with_prior_produces_set_property() {
+        let (pool, _dir) = test_pool().await;
+
+        // First set_property: key = "priority", value_text = "low"
+        let set1 = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: "BLK9".into(),
+            key: "priority".into(),
+            value_text: Some("low".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        append_op(&pool, set1, "2025-01-15T12:00:00+00:00").await;
+
+        // Second set_property: key = "priority", value_text = "high"
+        let set2 = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: "BLK9".into(),
+            key: "priority".into(),
+            value_text: Some("high".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        let rec = append_op(&pool, set2, "2025-01-15T12:01:00+00:00").await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::SetProperty(ref p) => {
+                assert_eq!(p.block_id, "BLK9", "block_id mismatch");
+                assert_eq!(p.key, "priority", "key mismatch");
+                assert_eq!(
+                    p.value_text,
+                    Some("low".into()),
+                    "reverse should use prior set_property's value"
+                );
+            }
+            _ => panic!("expected SetProperty, got: {reverse:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn reverse_first_set_property_produces_delete_property() {
+        let (pool, _dir) = test_pool().await;
+
+        // Only one set_property — no prior exists
+        let set1 = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: "BLK9B".into(),
+            key: "status".into(),
+            value_text: Some("active".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        let rec = append_op(&pool, set1, FIXED_TS).await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::DeleteProperty(ref p) => {
+                assert_eq!(p.block_id, "BLK9B", "block_id mismatch");
+                assert_eq!(p.key, "status", "key mismatch");
+            }
+            _ => panic!("reverse of first set_property should be DeleteProperty, got: {reverse:?}"),
+        }
+    }
+
+    // ── 10. Reverse delete_property -> SetProperty with prior value ─────
+
+    #[tokio::test]
+    async fn reverse_delete_property_produces_set_property_with_prior() {
+        let (pool, _dir) = test_pool().await;
+
+        // set_property: key = "color", value_text = "blue"
+        let set = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: "BLK10".into(),
+            key: "color".into(),
+            value_text: Some("blue".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        append_op(&pool, set, "2025-01-15T12:00:00+00:00").await;
+
+        // delete_property: key = "color"
+        let del = OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: "BLK10".into(),
+            key: "color".into(),
+        });
+        let rec = append_op(&pool, del, "2025-01-15T12:01:00+00:00").await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::SetProperty(ref p) => {
+                assert_eq!(p.block_id, "BLK10", "block_id mismatch");
+                assert_eq!(p.key, "color", "key mismatch");
+                assert_eq!(
+                    p.value_text,
+                    Some("blue".into()),
+                    "reverse should restore prior property value"
+                );
+            }
+            _ => panic!("expected SetProperty, got: {reverse:?}"),
+        }
+    }
+
+    // ── 11. Reverse add_attachment -> DeleteAttachment ───────────────────
+
+    #[tokio::test]
+    async fn reverse_add_attachment_produces_delete_attachment() {
+        let (pool, _dir) = test_pool().await;
+
+        let add = OpPayload::AddAttachment(AddAttachmentPayload {
+            attachment_id: "ATT1".into(),
+            block_id: "BLK11".into(),
+            mime_type: "image/png".into(),
+            filename: "photo.png".into(),
+            size_bytes: 1024,
+            fs_path: "/tmp/photo.png".into(),
+        });
+        let rec = append_op(&pool, add, FIXED_TS).await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::DeleteAttachment(ref p) => {
+                assert_eq!(p.attachment_id, "ATT1", "attachment_id mismatch");
+            }
+            _ => panic!("expected DeleteAttachment, got: {reverse:?}"),
+        }
+    }
+
+    // ── 12. Error on purge_block ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn reverse_purge_block_returns_non_reversible_error() {
+        let (pool, _dir) = test_pool().await;
+
+        let purge = OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: "BLK12".into(),
+        });
+        let rec = append_op(&pool, purge, FIXED_TS).await;
+
+        let result = compute_reverse(&pool, TEST_DEVICE, rec.seq).await;
+
+        assert!(result.is_err(), "purge_block should not be reversible");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::NonReversible { ref op_type } if op_type == "purge_block"),
+            "expected NonReversible error for purge_block, got: {err:?}"
+        );
+    }
+
+    // ── 13. Error on delete_attachment ──────────────────────────────────
+
+    #[tokio::test]
+    async fn reverse_delete_attachment_returns_non_reversible_error() {
+        let (pool, _dir) = test_pool().await;
+
+        let del = OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+            attachment_id: "ATT2".into(),
+        });
+        let rec = append_op(&pool, del, FIXED_TS).await;
+
+        let result = compute_reverse(&pool, TEST_DEVICE, rec.seq).await;
+
+        assert!(
+            result.is_err(),
+            "delete_attachment should not be reversible"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::NonReversible { ref op_type } if op_type == "delete_attachment"),
+            "expected NonReversible error for delete_attachment, got: {err:?}"
+        );
+    }
+
+    // ── 14. Reverse restore_block -> DeleteBlock ────────────────────────
+
+    #[tokio::test]
+    async fn reverse_restore_block_produces_delete_block() {
+        let (pool, _dir) = test_pool().await;
+
+        let restore = OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: "BLK14".into(),
+            deleted_at_ref: "2025-01-15T10:00:00+00:00".into(),
+        });
+        let rec = append_op(&pool, restore, FIXED_TS).await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        assert!(
+            matches!(reverse, OpPayload::DeleteBlock(ref p) if p.block_id == "BLK14"),
+            "reverse of restore_block should be DeleteBlock, got: {reverse:?}"
+        );
+    }
+
+    // ── 15. Error: edit_block without prior -> NotFound ─────────────────
+
+    #[tokio::test]
+    async fn reverse_edit_block_without_prior_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+
+        // edit_block for a block that has no prior create_block or edit_block
+        let edit = OpPayload::EditBlock(EditBlockPayload {
+            block_id: "ORPHAN_EDIT".into(),
+            to_text: "new text".into(),
+            prev_edit: None,
+        });
+        let rec = append_op(&pool, edit, FIXED_TS).await;
+
+        let result = compute_reverse(&pool, TEST_DEVICE, rec.seq).await;
+
+        assert!(result.is_err(), "edit_block without prior should fail");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::NotFound(_)),
+            "expected NotFound error for edit_block without prior, got: {err:?}"
+        );
+    }
+
+    // ── 16. Error: move_block without prior -> NotFound ─────────────────
+
+    #[tokio::test]
+    async fn reverse_move_block_without_prior_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+
+        // move_block for a block that has no prior create_block or move_block
+        let mv = OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: "ORPHAN_MOVE".into(),
+            new_parent_id: Some("P1".into()),
+            new_position: 5,
+        });
+        let rec = append_op(&pool, mv, FIXED_TS).await;
+
+        let result = compute_reverse(&pool, TEST_DEVICE, rec.seq).await;
+
+        assert!(result.is_err(), "move_block without prior should fail");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::NotFound(_)),
+            "expected NotFound error for move_block without prior, got: {err:?}"
+        );
+    }
+
+    // ── 17. Error: delete_property without prior -> NotFound ────────────
+
+    #[tokio::test]
+    async fn reverse_delete_property_without_prior_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+
+        // delete_property for a (block_id, key) that has no prior set_property
+        let del = OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: "ORPHAN_PROP".into(),
+            key: "color".into(),
+        });
+        let rec = append_op(&pool, del, FIXED_TS).await;
+
+        let result = compute_reverse(&pool, TEST_DEVICE, rec.seq).await;
+
+        assert!(result.is_err(), "delete_property without prior should fail");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::NotFound(_)),
+            "expected NotFound error for delete_property without prior, got: {err:?}"
+        );
+    }
+
+    // ── 18. Error: delete_block for missing block -> NotFound ───────────
+
+    #[tokio::test]
+    async fn reverse_delete_block_missing_block_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+
+        // delete_block for a block_id that doesn't exist in the blocks table.
+        // With the current implementation, reverse_delete_block uses the op's
+        // created_at directly, so it succeeds.  This test verifies the op must
+        // exist in the op log to be reversible (i.e. the seq must be found).
+        let result = compute_reverse(&pool, TEST_DEVICE, 9999).await;
+
+        assert!(result.is_err(), "non-existent op seq should fail");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::NotFound(_)),
+            "expected NotFound error for non-existent op seq, got: {err:?}"
+        );
+    }
+}

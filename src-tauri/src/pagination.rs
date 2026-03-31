@@ -570,6 +570,76 @@ pub async fn list_block_history(
     })
 }
 
+/// List op-log history for all blocks descended from a page, paginated.
+///
+/// Uses a recursive CTE to find all block IDs in the page subtree, then
+/// queries the op_log for ops touching those blocks. Ordered by
+/// `(created_at DESC, seq DESC)` (newest first). Optionally filters by
+/// `op_type`.
+///
+/// The cursor stores `created_at` (in the `deleted_at` field, reused for
+/// this timestamp purpose) and `seq` for correct keyset pagination.
+pub async fn list_page_history(
+    pool: &SqlitePool,
+    page_id: &str,
+    op_type_filter: Option<&str>,
+    page: &PageRequest,
+) -> Result<PageResponse<HistoryEntry>, AppError> {
+    let fetch_limit = page.limit + 1;
+
+    // Cursor: reuse `deleted_at` field for `created_at` and `seq` + `id` for device_id
+    let (cursor_flag, cursor_created_at, cursor_seq, cursor_device_id): (
+        Option<i64>,
+        String,
+        i64,
+        String,
+    ) = match page.after.as_ref() {
+        Some(c) => {
+            let created_at = c.deleted_at.clone().ok_or_else(|| {
+                AppError::Validation("cursor missing created_at for page history query".into())
+            })?;
+            (Some(1), created_at, c.seq.unwrap_or(0), c.id.clone())
+        }
+        None => (None, String::new(), 0, String::new()),
+    };
+
+    let rows = sqlx::query_as!(
+        HistoryEntry,
+        "WITH RECURSIVE page_blocks(id) AS ( \
+             SELECT id FROM blocks WHERE id = ?1 \
+             UNION ALL \
+             SELECT b.id FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
+         ) \
+         SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
+         FROM op_log ol \
+         WHERE json_extract(ol.payload, '$.block_id') IN (SELECT id FROM page_blocks) \
+           AND (?2 IS NULL OR ol.op_type = ?2) \
+           AND (?3 IS NULL OR ( \
+                ol.created_at < ?4 \
+                OR (ol.created_at = ?4 AND ol.seq < ?5) \
+                OR (ol.created_at = ?4 AND ol.seq = ?5 AND ol.device_id < ?7))) \
+         ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
+         LIMIT ?6",
+        page_id,           // ?1
+        op_type_filter,    // ?2
+        cursor_flag,       // ?3
+        cursor_created_at, // ?4
+        cursor_seq,        // ?5
+        fetch_limit,       // ?6
+        cursor_device_id,  // ?7
+    )
+    .fetch_all(pool)
+    .await?;
+
+    build_page_response(rows, page.limit, |last| Cursor {
+        id: last.device_id.clone(),
+        position: None,
+        deleted_at: Some(last.created_at.clone()), // reuse deleted_at for created_at
+        seq: Some(last.seq),
+        rank: None,
+    })
+}
+
 /// List conflict blocks, paginated.
 ///
 /// Ordered by `id ASC` (ULID ≈ chronological).

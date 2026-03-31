@@ -674,6 +674,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     onMergeWithPrev: handleMergeWithPrev,
     onEnterSave: handleEnterSave,
     onEscapeCancel: handleEscapeCancel,
+    onToggleTodo: () => focusedBlockId && handleToggleTodo(focusedBlockId),
+    onToggleCollapse: () => focusedBlockId && toggleCollapse(focusedBlockId),
   })
 
   // ── Keyboard shortcut for collapse toggle (Mod+.) ──────────────────

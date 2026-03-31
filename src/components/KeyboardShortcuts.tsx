@@ -41,13 +41,11 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
         keys: 'Ctrl + Enter',
         description: 'Cycle task state (TODO → DOING → DONE → none)',
       },
+      { keys: 'Ctrl + .', description: 'Collapse / expand children' },
       { keys: 'Ctrl + K', description: 'Insert or edit external link' },
-      { keys: 'Ctrl + Shift + C', description: 'Toggle code block' },
-      { keys: 'Ctrl + Shift + ↑', description: 'Move block up' },
-      { keys: 'Ctrl + Shift + ↓', description: 'Move block down' },
-      { keys: 'Ctrl + Shift + 1', description: 'Set priority 1 (high)' },
-      { keys: 'Ctrl + Shift + 2', description: 'Set priority 2 (medium)' },
-      { keys: 'Ctrl + Shift + 3', description: 'Set priority 3 (low)' },
+      { keys: 'Ctrl + Shift + C', condition: 'in editor', description: 'Toggle code block' },
+      { keys: 'Ctrl + Shift + Arrow Up', description: 'Move block up' },
+      { keys: 'Ctrl + Shift + Arrow Down', description: 'Move block down' },
     ],
   },
   {
@@ -64,6 +62,25 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
       { keys: 'Alt + ←', description: 'Previous day / week / month' },
       { keys: 'Alt + →', description: 'Next day / week / month' },
       { keys: 'Alt + T', description: 'Go to today' },
+    ],
+  },
+  {
+    category: 'Undo / Redo',
+    shortcuts: [
+      { keys: 'Ctrl + Z', condition: 'outside editor', description: 'Undo last page operation' },
+      { keys: 'Ctrl + Y', condition: 'outside editor', description: 'Redo last undone operation' },
+    ],
+  },
+  {
+    category: 'History View',
+    shortcuts: [
+      { keys: 'Space', description: 'Toggle selection' },
+      { keys: 'Shift + Click', description: 'Range select' },
+      { keys: 'Ctrl + A', description: 'Select all' },
+      { keys: 'Enter', description: 'Revert selected' },
+      { keys: 'Escape', description: 'Clear selection' },
+      { keys: 'Arrow Up / Arrow Down', description: 'Navigate items' },
+      { keys: 'j / k', description: 'Navigate items (vim-style)' },
     ],
   },
   {

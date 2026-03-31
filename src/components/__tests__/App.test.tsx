@@ -9,7 +9,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -268,5 +268,66 @@ describe('App', () => {
     // The header should NOT show the page title (it's shown in PageEditor itself)
     const headerLabel = screen.getByTestId('header-label')
     expect(headerLabel.textContent).toBe('')
+  })
+
+  it('Ctrl+F switches to search view', async () => {
+    render(<App />)
+
+    // Wait for boot
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+
+    // Fire Ctrl+F on window
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+
+    // Should switch to search view
+    await waitFor(() => {
+      expect(useNavigationStore.getState().currentView).toBe('search')
+    })
+  })
+
+  it('Ctrl+N creates a new page and navigates to it', async () => {
+    // Mock create_block to return a new page
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_block') {
+        return {
+          id: 'NEW_PAGE_ID_00000000000000',
+          block_type: 'page',
+          content: 'Untitled',
+          parent_id: null,
+          position: 0,
+        }
+      }
+      return emptyPage
+    })
+
+    render(<App />)
+
+    // Wait for boot
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+
+    // Fire Ctrl+N on window
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+
+    // Should call create_block and then navigate to the new page
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+        blockType: 'page',
+        content: 'Untitled',
+        parentId: null,
+        position: null,
+      })
+    })
+
+    await waitFor(() => {
+      const state = useNavigationStore.getState()
+      expect(state.currentView).toBe('page-editor')
+      expect(state.pageStack).toContainEqual(
+        expect.objectContaining({ pageId: 'NEW_PAGE_ID_00000000000000', title: 'Untitled' }),
+      )
+    })
   })
 })

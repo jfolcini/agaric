@@ -269,6 +269,50 @@ async getBatchProperties(blockIds: string[]) : Promise<Result<Partial<{ [key in 
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: list page history. Delegates to [`list_page_history_inner`].
+ */
+async listPageHistory(pageId: string, opTypeFilter: string | null, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<HistoryEntry>, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_page_history", { pageId, opTypeFilter, cursor, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: batch revert ops. Delegates to [`revert_ops_inner`].
+ */
+async revertOps(ops: OpRef[]) : Promise<Result<UndoResult[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("revert_ops", { ops }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: undo page op. Delegates to [`undo_page_op_inner`].
+ */
+async undoPageOp(pageId: string, undoDepth: number) : Promise<Result<UndoResult, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("undo_page_op", { pageId, undoDepth }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: redo page op. Delegates to [`redo_page_op_inner`].
+ */
+async redoPageOp(undoDeviceId: string, undoSeq: number) : Promise<Result<UndoResult, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("redo_page_op", { undoDeviceId, undoSeq }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -292,6 +336,10 @@ export type DeleteResponse = { block_id: string; deleted_at: string; descendants
  */
 export type HistoryEntry = { device_id: string; seq: number; op_type: string; payload: string; created_at: string }
 export type MoveResponse = { block_id: string; new_parent_id: string | null; new_position: number }
+/**
+ * Reference to a specific op in the log.
+ */
+export type OpRef = { device_id: string; seq: number }
 /**
  * Paginated response.
  *
@@ -321,6 +369,26 @@ export type StatusInfo = { foreground_queue_depth: number; background_queue_dept
  */
 export type TagCacheRow = { tag_id: string; name: string; usage_count: number; updated_at: string }
 export type TagResponse = { block_id: string; tag_id: string }
+/**
+ * Result of an undo or redo operation.
+ */
+export type UndoResult = {
+/**
+ * The op that was reversed (the original op for undo, the undo-op for redo).
+ */
+reversed_op: OpRef;
+/**
+ * The newly appended reverse op.
+ */
+new_op_ref: OpRef;
+/**
+ * The op_type of the newly appended op.
+ */
+new_op_type: string;
+/**
+ * Whether this was a redo (true) or undo (false).
+ */
+is_redo: boolean }
 
 /** tauri-specta globals **/
 

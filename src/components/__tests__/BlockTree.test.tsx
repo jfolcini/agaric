@@ -1784,3 +1784,121 @@ describe('BlockTree priority slash commands', () => {
     })
   })
 })
+
+// =========================================================================
+// Heading slash command execution tests
+// =========================================================================
+
+describe('BlockTree heading slash command execution', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('when /h1 is selected, block content gets "# " prefix', async () => {
+    const tree = [makeBlock('A', null, 0, 'My heading text')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    // Mock edit_block call
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'h1', label: 'Heading 1 — Large heading' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: '# My heading text',
+      })
+    })
+
+    // Store should reflect the new content
+    await waitFor(() => {
+      const block = useBlockStore.getState().blocks.find((b) => b.id === 'A')
+      expect(block?.content).toBe('# My heading text')
+    })
+  })
+
+  it('when /h3 is selected, block content gets "### " prefix', async () => {
+    const tree = [makeBlock('A', null, 0, 'Small heading')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'h3', label: 'Heading 3 — Small heading' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: '### Small heading',
+      })
+    })
+
+    await waitFor(() => {
+      const block = useBlockStore.getState().blocks.find((b) => b.id === 'A')
+      expect(block?.content).toBe('### Small heading')
+    })
+  })
+
+  it('when /h2 is selected, block content gets "## " prefix', async () => {
+    const tree = [makeBlock('A', null, 0, 'Medium')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'h2', label: 'Heading 2 — Medium heading' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: '## Medium',
+      })
+    })
+  })
+
+  it('heading commands appear in searchSlashCommands when query matches', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('heading')
+
+    expect(results).toBeDefined()
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).toContain('h1')
+    expect(ids).toContain('h2')
+    expect(ids).toContain('h3')
+  })
+})

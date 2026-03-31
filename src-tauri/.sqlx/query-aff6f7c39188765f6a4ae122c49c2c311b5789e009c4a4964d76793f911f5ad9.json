@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT op_type, payload FROM op_log WHERE json_extract(payload, '$.block_id') = ?1 AND op_type IN ('move_block', 'create_block') AND (created_at < ?2 OR (created_at = ?2 AND seq < ?3)) ORDER BY created_at DESC, seq DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "op_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "payload",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "aff6f7c39188765f6a4ae122c49c2c311b5789e009c4a4964d76793f911f5ad9"
+}

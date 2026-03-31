@@ -44,6 +44,10 @@ function makeCallbacks(): BlockKeyboardCallbacks & { _calls: Record<string, numb
     onMergeWithPrev: track('onMergeWithPrev'),
     onEnterSave: track('onEnterSave'),
     onEscapeCancel: track('onEscapeCancel'),
+    onMoveUp: track('onMoveUp'),
+    onMoveDown: track('onMoveDown'),
+    onToggleTodo: track('onToggleTodo'),
+    onToggleCollapse: track('onToggleCollapse'),
     _calls,
   }
 }
@@ -405,6 +409,136 @@ describe('handleBlockKeyDown', () => {
 
       expect(event.preventDefault).not.toHaveBeenCalled()
       expect(cbs._calls.onMergeWithPrev).toBeUndefined()
+    })
+  })
+
+  describe('Ctrl+Enter (toggle todo)', () => {
+    it('Ctrl+Enter calls onToggleTodo', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('Enter', { ctrlKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onToggleTodo).toBe(1)
+      expect(cbs._calls.onEnterSave).toBeUndefined()
+    })
+
+    it('Meta+Enter calls onToggleTodo (macOS)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('Enter', { metaKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onToggleTodo).toBe(1)
+      expect(cbs._calls.onEnterSave).toBeUndefined()
+    })
+
+    it('plain Enter does NOT call onToggleTodo', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('Enter')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(cbs._calls.onToggleTodo).toBeUndefined()
+      expect(cbs._calls.onEnterSave).toBe(1)
+    })
+  })
+
+  describe('Ctrl+. (toggle collapse)', () => {
+    it('Ctrl+. calls onToggleCollapse', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('.', { ctrlKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onToggleCollapse).toBe(1)
+    })
+
+    it('Meta+. calls onToggleCollapse (macOS)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('.', { metaKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onToggleCollapse).toBe(1)
+    })
+
+    it('plain . does NOT call onToggleCollapse', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('.')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls.onToggleCollapse).toBeUndefined()
+    })
+  })
+
+  describe('Ctrl+Shift+Arrow (move block)', () => {
+    it('Ctrl+Shift+ArrowUp calls onFlush + onMoveUp', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowUp', { ctrlKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onFlush).toBe(1)
+      expect(cbs._calls.onMoveUp).toBe(1)
+    })
+
+    it('Ctrl+Shift+ArrowDown calls onFlush + onMoveDown', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowDown', { ctrlKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onFlush).toBe(1)
+      expect(cbs._calls.onMoveDown).toBe(1)
+    })
+
+    it('Meta+Shift+ArrowUp calls onMoveUp (macOS)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowUp', { metaKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onMoveUp).toBe(1)
+    })
+
+    it('Meta+Shift+ArrowDown calls onMoveDown (macOS)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowDown', { metaKey: true, shiftKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onMoveDown).toBe(1)
+    })
+
+    it('Ctrl+ArrowUp without Shift does NOT call onMoveUp', () => {
+      const editor = makeEditor({ from: 5, to: 5 })
+      const cbs = makeCallbacks()
+      const event = makeEvent('ArrowUp', { ctrlKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(cbs._calls.onMoveUp).toBeUndefined()
     })
   })
 })

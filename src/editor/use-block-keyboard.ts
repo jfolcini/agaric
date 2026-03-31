@@ -32,6 +32,10 @@ export interface BlockKeyboardCallbacks {
   onMoveUp?: () => void
   /** Move block down among siblings (Ctrl/Cmd+Shift+ArrowDown). */
   onMoveDown?: () => void
+  /** Toggle task state (Ctrl/Cmd+Enter). */
+  onToggleTodo?: () => void
+  /** Toggle collapse/expand children (Ctrl/Cmd+.). */
+  onToggleCollapse?: () => void
 }
 
 /** Minimal editor shape needed by the key handler (for testability). */
@@ -74,6 +78,20 @@ export function handleBlockKeyDown(
     event.preventDefault()
     callbacks.onFlush()
     callbacks.onMoveDown?.()
+    return
+  }
+
+  // Ctrl/Cmd+Enter: toggle task state
+  if ((ctrlKey || metaKey) && key === 'Enter') {
+    event.preventDefault()
+    callbacks.onToggleTodo?.()
+    return
+  }
+
+  // Ctrl/Cmd+.: toggle collapse/expand children
+  if ((ctrlKey || metaKey) && key === '.') {
+    event.preventDefault()
+    callbacks.onToggleCollapse?.()
     return
   }
 
@@ -148,6 +166,8 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     onEscapeCancel,
     onMoveUp,
     onMoveDown,
+    onToggleTodo,
+    onToggleCollapse,
   } = callbacks
 
   const handleKeyDown = useCallback(
@@ -165,6 +185,8 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onEscapeCancel,
         onMoveUp,
         onMoveDown,
+        onToggleTodo,
+        onToggleCollapse,
       })
     },
     [
@@ -180,6 +202,8 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       onEscapeCancel,
       onMoveUp,
       onMoveDown,
+      onToggleTodo,
+      onToggleCollapse,
     ],
   )
 

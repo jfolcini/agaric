@@ -35,6 +35,8 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText('Navigation')).toBeInTheDocument()
     expect(screen.getByText('Editing')).toBeInTheDocument()
     expect(screen.getByText('Pickers')).toBeInTheDocument()
+    expect(screen.getByText('Undo / Redo')).toBeInTheDocument()
+    expect(screen.getByText('History View')).toBeInTheDocument()
     expect(screen.getByText('Global')).toBeInTheDocument()
 
     // Verify all shortcuts are present
@@ -55,6 +57,7 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText('Move block down')).toBeInTheDocument()
     expect(screen.getByText('Focus search')).toBeInTheDocument()
     expect(screen.getByText('Create new page')).toBeInTheDocument()
+    expect(screen.getByText('Collapse / expand children')).toBeInTheDocument()
 
     // Verify key labels (keys are now split into individual <kbd> elements)
     expect(screen.getAllByText('Enter').length).toBeGreaterThanOrEqual(1)
@@ -62,10 +65,10 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getAllByText('Shift').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('@')).toBeInTheDocument()
     expect(screen.getByText('[[')).toBeInTheDocument()
-    expect(screen.getByText('Escape')).toBeInTheDocument()
+    expect(screen.getAllByText('Escape').length).toBeGreaterThanOrEqual(1)
 
     // Verify conditions are rendered separately from keys
-    expect(screen.getAllByText('in editor').length).toBe(3)
+    expect(screen.getAllByText('in editor').length).toBe(4)
     expect(screen.getByText('at start')).toBeInTheDocument()
     expect(screen.getByText('at end')).toBeInTheDocument()
   })
@@ -176,6 +179,6 @@ describe('KeyboardShortcuts', () => {
 
     expect(screen.getByText('at start')).toBeInTheDocument()
     expect(screen.getByText('at end')).toBeInTheDocument()
-    expect(screen.getAllByText('in editor')).toHaveLength(3)
+    expect(screen.getAllByText('in editor')).toHaveLength(4)
   })
 })

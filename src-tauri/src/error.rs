@@ -49,6 +49,9 @@ pub enum AppError {
 
     #[error("Validation error: {0}")]
     Validation(String),
+
+    #[error("Non-reversible operation: {op_type} cannot be undone")]
+    NonReversible { op_type: String },
 }
 
 /// Tauri 2 requires command error types to implement `Serialize`.
@@ -71,6 +74,7 @@ impl Serialize for AppError {
             AppError::Channel(_) => "channel",
             AppError::Snapshot(_) => "snapshot",
             AppError::Validation(_) => "validation",
+            AppError::NonReversible { .. } => "non_reversible",
         };
 
         let mut state = serializer.serialize_struct("AppError", 2)?;
@@ -268,6 +272,16 @@ mod tests {
                 .contains("Migration error"),
             "Migration message prefix"
         );
+    }
+
+    #[test]
+    fn serialize_non_reversible_variant_has_correct_kind_and_message() {
+        let err = AppError::NonReversible {
+            op_type: "purge_block".into(),
+        };
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["kind"], "non_reversible");
+        assert!(json["message"].as_str().unwrap().contains("purge_block"));
     }
 
     #[test]

@@ -257,6 +257,28 @@ export async function getBatchProperties(
   return invoke('get_batch_properties', { blockIds })
 }
 
+/** List global operation history (page-scoped), paginated (newest first). */
+export async function listPageHistory(params: {
+  pageId: string
+  opTypeFilter?: string
+  cursor?: string
+  limit?: number
+}): Promise<PageResponse<HistoryEntry>> {
+  return invoke('list_page_history', {
+    pageId: params.pageId,
+    opTypeFilter: params.opTypeFilter ?? null,
+    cursor: params.cursor ?? null,
+    limit: params.limit ?? null,
+  })
+}
+
+/** Revert a batch of operations (by device_id + seq pairs). */
+export async function revertOps(params: {
+  ops: Array<{ device_id: string; seq: number }>
+}): Promise<unknown> {
+  return invoke('revert_ops', { ops: params.ops })
+}
+
 /** Query blocks by property key and optional value, with cursor pagination. */
 export async function queryByProperty(params: {
   key: string
@@ -269,5 +291,48 @@ export async function queryByProperty(params: {
     valueText: params.valueText ?? null,
     cursor: params.cursor ?? null,
     limit: params.limit ?? null,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Undo / Redo commands
+// ---------------------------------------------------------------------------
+
+export interface OpRef {
+  device_id: string
+  seq: number
+}
+
+export interface UndoResult {
+  reversed_op: OpRef
+  new_op: {
+    device_id: string
+    seq: number
+    op_type: string
+    payload: string
+    created_at: string
+  }
+  is_redo: boolean
+}
+
+/** Undo the Nth most-recent undoable op on a page. */
+export async function undoPageOp(params: {
+  pageId: string
+  undoDepth: number
+}): Promise<UndoResult> {
+  return invoke('undo_page_op', {
+    pageId: params.pageId,
+    undoDepth: params.undoDepth,
+  })
+}
+
+/** Redo a previously undone op by reversing it again. */
+export async function redoPageOp(params: {
+  undoDeviceId: string
+  undoSeq: number
+}): Promise<UndoResult> {
+  return invoke('redo_page_op', {
+    undoDeviceId: params.undoDeviceId,
+    undoSeq: params.undoSeq,
   })
 }

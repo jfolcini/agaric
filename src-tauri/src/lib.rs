@@ -13,6 +13,7 @@ pub mod op;
 pub mod op_log;
 pub mod pagination;
 pub mod recovery;
+pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;
 pub mod tag_query;
@@ -67,6 +68,10 @@ mod specta_tests {
             crate::commands::delete_property,
             crate::commands::get_properties,
             crate::commands::get_batch_properties,
+            crate::commands::list_page_history,
+            crate::commands::revert_ops,
+            crate::commands::undo_page_op,
+            crate::commands::redo_page_op,
         ])
     }
 
@@ -182,6 +187,10 @@ pub fn run() {
         commands::delete_property,
         commands::get_properties,
         commands::get_batch_properties,
+        commands::list_page_history,
+        commands::revert_ops,
+        commands::undo_page_op,
+        commands::redo_page_op,
     ]);
 
     tauri::Builder::default()

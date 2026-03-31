@@ -24,8 +24,8 @@ use crate::materializer::{Materializer, StatusInfo};
 use crate::now_rfc3339;
 use crate::op::{
     validate_set_property, AddTagPayload, CreateBlockPayload, DeleteBlockPayload,
-    DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload, PurgeBlockPayload,
-    RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload,
+    DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload, OpRef, PurgeBlockPayload,
+    RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload, UndoResult,
 };
 use crate::op_log;
 use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
@@ -1697,6 +1697,340 @@ pub async fn get_batch_properties_inner(
 }
 
 // ---------------------------------------------------------------------------
+// Undo/Redo helpers and inner functions
+// ---------------------------------------------------------------------------
+
+/// Apply the materialized effect of a reverse [`OpPayload`] to the blocks/tags/properties
+/// tables inside an existing transaction.
+///
+/// This mirrors the SQL patterns used in the original command handlers (e.g.,
+/// reverse of `create_block` → same SQL as `delete_block`, reverse of
+/// `edit_block` → same SQL as `edit_block`, etc.).
+///
+/// Only handles the subset of op types that can result from `compute_reverse`:
+/// `DeleteBlock`, `RestoreBlock`, `EditBlock`, `MoveBlock`, `AddTag`,
+/// `RemoveTag`, `SetProperty`, `DeleteProperty`, `DeleteAttachment`.
+pub async fn apply_reverse_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    reverse_payload: &OpPayload,
+) -> Result<(), AppError> {
+    match reverse_payload {
+        OpPayload::DeleteBlock(p) => {
+            // Cascade soft-delete (same as delete_block_inner)
+            let now = now_rfc3339();
+            sqlx::query(
+                "WITH RECURSIVE descendants(id) AS ( \
+                     SELECT id FROM blocks WHERE id = ? \
+                     UNION ALL \
+                     SELECT b.id FROM blocks b \
+                     INNER JOIN descendants d ON b.parent_id = d.id \
+                     WHERE b.deleted_at IS NULL \
+                 ) \
+                 UPDATE blocks SET deleted_at = ? \
+                 WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
+            )
+            .bind(&p.block_id)
+            .bind(&now)
+            .execute(&mut **tx)
+            .await?;
+        }
+        OpPayload::RestoreBlock(p) => {
+            // Cascade restore (same as restore_block_inner)
+            sqlx::query(
+                "WITH RECURSIVE descendants(id) AS ( \
+                     SELECT id FROM blocks WHERE id = ? \
+                     UNION ALL \
+                     SELECT b.id FROM blocks b \
+                     INNER JOIN descendants d ON b.parent_id = d.id \
+                 ) \
+                 UPDATE blocks SET deleted_at = NULL \
+                 WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
+            )
+            .bind(&p.block_id)
+            .bind(&p.deleted_at_ref)
+            .execute(&mut **tx)
+            .await?;
+        }
+        OpPayload::EditBlock(p) => {
+            sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
+                .bind(&p.to_text)
+                .bind(&p.block_id)
+                .execute(&mut **tx)
+                .await?;
+        }
+        OpPayload::MoveBlock(p) => {
+            sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
+                .bind(&p.new_parent_id)
+                .bind(p.new_position)
+                .bind(&p.block_id)
+                .execute(&mut **tx)
+                .await?;
+        }
+        OpPayload::AddTag(p) => {
+            sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+                .bind(&p.block_id)
+                .bind(&p.tag_id)
+                .execute(&mut **tx)
+                .await?;
+        }
+        OpPayload::RemoveTag(p) => {
+            sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(&p.block_id)
+                .bind(&p.tag_id)
+                .execute(&mut **tx)
+                .await?;
+        }
+        OpPayload::SetProperty(p) => {
+            sqlx::query(
+                "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&p.block_id)
+            .bind(&p.key)
+            .bind(&p.value_text)
+            .bind(p.value_num)
+            .bind(&p.value_date)
+            .bind(&p.value_ref)
+            .execute(&mut **tx)
+            .await?;
+        }
+        OpPayload::DeleteProperty(p) => {
+            sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+                .bind(&p.block_id)
+                .bind(&p.key)
+                .execute(&mut **tx)
+                .await?;
+        }
+        OpPayload::DeleteAttachment(p) => {
+            sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
+                .bind(now_rfc3339())
+                .bind(&p.attachment_id)
+                .execute(&mut **tx)
+                .await?;
+        }
+        // Note: CreateBlock never appears here because reverse::compute_reverse
+        // maps CreateBlock → DeleteBlock, and RestoreBlock → DeleteBlock.
+        // Both are handled by the DeleteBlock arm above.
+        other => {
+            return Err(AppError::InvalidOperation(format!(
+                "cannot apply reverse payload of type '{}' — unexpected variant",
+                other.op_type_str()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// List all ops for blocks descended from a page, with cursor pagination
+/// and optional op_type filter.
+pub async fn list_page_history_inner(
+    pool: &SqlitePool,
+    page_id: String,
+    op_type_filter: Option<String>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<HistoryEntry>, AppError> {
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    pagination::list_page_history(pool, &page_id, op_type_filter.as_deref(), &page).await
+}
+
+/// Batch revert: compute and apply reverse ops for a list of op refs.
+///
+/// All ops are processed in a single transaction for atomicity. Ops are
+/// sorted newest-first (by `created_at DESC, seq DESC`) and reversed in
+/// that order. Non-reversible ops cause early abort (before any are applied).
+pub async fn revert_ops_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    ops: Vec<OpRef>,
+) -> Result<Vec<UndoResult>, AppError> {
+    use crate::reverse;
+
+    if ops.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Phase 1: Validate all ops are reversible by computing their reverse payloads.
+    // This uses read-only access — no mutations yet.
+    let mut reverses = Vec::with_capacity(ops.len());
+    for op_ref in &ops {
+        let reverse_payload = reverse::compute_reverse(pool, &op_ref.device_id, op_ref.seq).await?;
+        // Fetch created_at for sorting
+        let record = op_log::get_op_by_seq(pool, &op_ref.device_id, op_ref.seq).await?;
+        reverses.push((op_ref.clone(), reverse_payload, record.created_at));
+    }
+
+    // Sort newest-first (by created_at DESC, seq DESC, device_id DESC)
+    reverses.sort_by(|a, b| {
+        b.2.cmp(&a.2) // created_at DESC
+            .then_with(|| b.0.seq.cmp(&a.0.seq)) // seq DESC
+            .then_with(|| b.0.device_id.cmp(&a.0.device_id)) // device_id DESC
+    });
+
+    // Phase 2: Apply all reverses in a single IMMEDIATE transaction.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut results = Vec::with_capacity(reverses.len());
+    let mut op_records = Vec::new();
+
+    for (op_ref, reverse_payload, _created_at) in &reverses {
+        let new_op_type = reverse_payload.op_type_str().to_owned();
+
+        // Append reverse op to log
+        let op_record = op_log::append_local_op_in_tx(
+            &mut tx,
+            device_id,
+            reverse_payload.clone(),
+            now_rfc3339(),
+        )
+        .await?;
+
+        // Apply to blocks/tags/properties tables
+        apply_reverse_in_tx(&mut tx, reverse_payload).await?;
+
+        results.push(UndoResult {
+            reversed_op: op_ref.clone(),
+            new_op_ref: OpRef {
+                device_id: op_record.device_id.clone(),
+                seq: op_record.seq,
+            },
+            new_op_type,
+            is_redo: false,
+        });
+
+        op_records.push(op_record);
+    }
+
+    tx.commit().await?;
+
+    // Dispatch background cache tasks (fire-and-forget)
+    for record in &op_records {
+        let _ = materializer.dispatch_background(record);
+    }
+
+    Ok(results)
+}
+
+/// Undo the Nth most recent undoable op on a page.
+///
+/// `undo_depth` is 0-based: 0 = most recent op, 1 = second most recent, etc.
+/// Queries the page's op history (using recursive CTE), applies OFFSET to
+/// skip `undo_depth` ops, then computes and applies the reverse.
+pub async fn undo_page_op_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    page_id: String,
+    undo_depth: i64,
+) -> Result<UndoResult, AppError> {
+    use crate::reverse;
+
+    // Find the op to undo: page ops ordered newest first, offset by undo_depth.
+    // Uses the write pool for consistency — these reads feed into the write
+    // transaction below.
+    let target = sqlx::query_as!(
+        HistoryEntry,
+        "WITH RECURSIVE page_blocks(id) AS ( \
+             SELECT id FROM blocks WHERE id = ?1 \
+             UNION ALL \
+             SELECT b.id FROM blocks b JOIN page_blocks pb ON b.parent_id = pb.id \
+         ) \
+         SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
+         FROM op_log ol \
+         WHERE json_extract(ol.payload, '$.block_id') IN (SELECT id FROM page_blocks) \
+         ORDER BY ol.created_at DESC, ol.seq DESC \
+         LIMIT 1 OFFSET ?2",
+        page_id,    // ?1
+        undo_depth, // ?2
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let target = target.ok_or_else(|| {
+        AppError::NotFound(format!(
+            "no op found at undo_depth {undo_depth} for page '{page_id}'"
+        ))
+    })?;
+
+    // Compute reverse
+    let reverse_payload = reverse::compute_reverse(pool, &target.device_id, target.seq).await?;
+    let new_op_type = reverse_payload.op_type_str().to_owned();
+
+    // Apply in single IMMEDIATE transaction
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, reverse_payload.clone(), now_rfc3339())
+            .await?;
+
+    apply_reverse_in_tx(&mut tx, &reverse_payload).await?;
+
+    tx.commit().await?;
+
+    // Dispatch background cache tasks
+    let _ = materializer.dispatch_background(&op_record);
+
+    Ok(UndoResult {
+        reversed_op: OpRef {
+            device_id: target.device_id,
+            seq: target.seq,
+        },
+        new_op_ref: OpRef {
+            device_id: op_record.device_id,
+            seq: op_record.seq,
+        },
+        new_op_type,
+        is_redo: false,
+    })
+}
+
+/// Redo by reversing an undo op.
+///
+/// The `(undo_device_id, undo_seq)` identifies the UNDO op that was
+/// previously appended. Reversing the undo effectively re-applies the
+/// original operation.
+pub async fn redo_page_op_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    undo_device_id: String,
+    undo_seq: i64,
+) -> Result<UndoResult, AppError> {
+    use crate::reverse;
+
+    // Compute reverse of the undo op
+    let reverse_payload = reverse::compute_reverse(pool, &undo_device_id, undo_seq).await?;
+    let new_op_type = reverse_payload.op_type_str().to_owned();
+
+    // Apply in single IMMEDIATE transaction
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, reverse_payload.clone(), now_rfc3339())
+            .await?;
+
+    apply_reverse_in_tx(&mut tx, &reverse_payload).await?;
+
+    tx.commit().await?;
+
+    // Dispatch background cache tasks
+    let _ = materializer.dispatch_background(&op_record);
+
+    Ok(UndoResult {
+        reversed_op: OpRef {
+            device_id: undo_device_id,
+            seq: undo_seq,
+        },
+        new_op_ref: OpRef {
+            device_id: op_record.device_id,
+            seq: op_record.seq,
+        },
+        new_op_type,
+        is_redo: true,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
@@ -2114,6 +2448,75 @@ pub async fn get_batch_properties(
     get_batch_properties_inner(&pool.0, block_ids)
         .await
         .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: list page history. Delegates to [`list_page_history_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_page_history(
+    pool: State<'_, ReadPool>,
+    page_id: String,
+    op_type_filter: Option<String>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<HistoryEntry>, AppError> {
+    list_page_history_inner(&pool.0, page_id, op_type_filter, cursor, limit)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: batch revert ops. Delegates to [`revert_ops_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn revert_ops(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    ops: Vec<OpRef>,
+) -> Result<Vec<UndoResult>, AppError> {
+    revert_ops_inner(&pool.0, &device_id.0, &materializer, ops)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: undo page op. Delegates to [`undo_page_op_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn undo_page_op(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    page_id: String,
+    undo_depth: i64,
+) -> Result<UndoResult, AppError> {
+    undo_page_op_inner(&pool.0, &device_id.0, &materializer, page_id, undo_depth)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: redo page op. Delegates to [`redo_page_op_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn redo_page_op(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    undo_device_id: String,
+    undo_seq: i64,
+) -> Result<UndoResult, AppError> {
+    redo_page_op_inner(
+        &pool.0,
+        &device_id.0,
+        &materializer,
+        undo_device_id,
+        undo_seq,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -5477,5 +5880,524 @@ mod tests {
         assert!(types.contains(&"page"));
         assert!(types.contains(&"tag"));
         assert!(types.contains(&"content"));
+    }
+
+    // ======================================================================
+    // Undo/Redo tests
+    // ======================================================================
+
+    /// Helper: create a page with children and return (page_id, child_ids)
+    async fn create_page_with_children(
+        pool: &SqlitePool,
+        mat: &Materializer,
+    ) -> (String, Vec<String>) {
+        let page = create_block_inner(
+            pool,
+            DEV,
+            mat,
+            "page".into(),
+            "Test Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child1 = create_block_inner(
+            pool,
+            DEV,
+            mat,
+            "content".into(),
+            "child one".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child2 = create_block_inner(
+            pool,
+            DEV,
+            mat,
+            "content".into(),
+            "child two".into(),
+            Some(page.id.clone()),
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        (page.id, vec![child1.id, child2.id])
+    }
+
+    // -- list_page_history tests --
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_history_returns_ops_for_page_descendants() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+
+        // Edit child1 to produce more ops
+        edit_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            child_ids[0].clone(),
+            "edited child one".into(),
+        )
+        .await
+        .unwrap();
+
+        // Also create an unrelated block to ensure it's excluded
+        create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "unrelated".into(),
+            None,
+            Some(10),
+        )
+        .await
+        .unwrap();
+
+        let result = list_page_history_inner(&pool, page_id.clone(), None, None, None)
+            .await
+            .unwrap();
+
+        // Should include: create_block (page), create_block (child1), create_block (child2), edit_block (child1)
+        assert_eq!(
+            result.items.len(),
+            4,
+            "should have 4 ops for page descendants"
+        );
+
+        // Verify all ops are for page or its descendants
+        for entry in &result.items {
+            let payload: serde_json::Value = serde_json::from_str(&entry.payload).unwrap();
+            let block_id = payload["block_id"].as_str().unwrap();
+            assert!(
+                block_id == page_id || child_ids.contains(&block_id.to_string()),
+                "op should be for page or its descendants, got block_id: {block_id}"
+            );
+        }
+
+        // Newest first
+        assert_eq!(result.items[0].op_type, "edit_block", "newest op first");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_history_with_op_type_filter() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+
+        // Edit child1
+        edit_block_inner(&pool, DEV, &mat, child_ids[0].clone(), "edited".into())
+            .await
+            .unwrap();
+
+        let result = list_page_history_inner(
+            &pool,
+            page_id.clone(),
+            Some("edit_block".into()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.items.len(), 1, "should only have edit_block ops");
+        assert_eq!(result.items[0].op_type, "edit_block");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_history_pagination_works() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+
+        // Edit child to have 4 total ops
+        edit_block_inner(&pool, DEV, &mat, child_ids[0].clone(), "edited".into())
+            .await
+            .unwrap();
+
+        // Page 1: limit 2
+        let page1 = list_page_history_inner(&pool, page_id.clone(), None, None, Some(2))
+            .await
+            .unwrap();
+        assert_eq!(page1.items.len(), 2, "first page should have 2 items");
+        assert!(page1.has_more, "should have more items");
+        assert!(page1.next_cursor.is_some(), "should have a cursor");
+
+        // Page 2: use cursor from page 1
+        let page2 =
+            list_page_history_inner(&pool, page_id.clone(), None, page1.next_cursor, Some(2))
+                .await
+                .unwrap();
+        assert_eq!(page2.items.len(), 2, "second page should have 2 items");
+        assert!(!page2.has_more, "should be the last page");
+    }
+
+    // -- revert_ops tests --
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_ops_reverses_single_edit() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create and edit a block
+        let created = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "original".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let _edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "modified".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify block is now "modified"
+        let before_undo = get_block_inner(&pool, created.id.clone()).await.unwrap();
+        assert_eq!(before_undo.content, Some("modified".into()));
+
+        // Get the edit op's seq
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let edit_op = ops.iter().find(|o| o.op_type == "edit_block").unwrap();
+
+        // Revert it
+        let results = revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![OpRef {
+                device_id: DEV.into(),
+                seq: edit_op.seq,
+            }],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(results.len(), 1, "should have one result");
+        assert_eq!(results[0].reversed_op.seq, edit_op.seq);
+        assert_eq!(results[0].new_op_type, "edit_block");
+        assert!(!results[0].is_redo);
+
+        // Block should be back to "original"
+        let after_undo = get_block_inner(&pool, created.id).await.unwrap();
+        assert_eq!(
+            after_undo.content,
+            Some("original".into()),
+            "content should revert to original"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_ops_reverses_multiple_ops_in_correct_order() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let created = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "v0".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Edit twice
+        edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v2".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Get both edit ops
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let edit_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "edit_block").collect();
+        assert_eq!(edit_ops.len(), 2);
+
+        let op_refs: Vec<OpRef> = edit_ops
+            .iter()
+            .map(|o| OpRef {
+                device_id: DEV.into(),
+                seq: o.seq,
+            })
+            .collect();
+
+        let results = revert_ops_inner(&pool, DEV, &mat, op_refs).await.unwrap();
+
+        assert_eq!(results.len(), 2, "should have two results");
+
+        // After reverting both edits, block should be back to "v0"
+        let after = get_block_inner(&pool, created.id).await.unwrap();
+        assert_eq!(
+            after.content,
+            Some("v0".into()),
+            "content should revert to original after reversing both edits"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_ops_rejects_non_reversible_op() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create and soft-delete and purge a block
+        let created = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "doomed".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        delete_block_inner(&pool, DEV, &mat, created.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        purge_block_inner(&pool, DEV, &mat, created.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Get the purge op
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let purge_op = ops.iter().find(|o| o.op_type == "purge_block").unwrap();
+
+        // Try to revert it — should fail
+        let result = revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![OpRef {
+                device_id: DEV.into(),
+                seq: purge_op.seq,
+            }],
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::NonReversible { .. })),
+            "should fail with NonReversible for purge_block, got: {result:?}"
+        );
+    }
+
+    // -- undo_page_op tests --
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_depth_0_reverses_most_recent() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+
+        // Edit child1
+        edit_block_inner(&pool, DEV, &mat, child_ids[0].clone(), "edited".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify block is "edited"
+        let before = get_block_inner(&pool, child_ids[0].clone()).await.unwrap();
+        assert_eq!(before.content, Some("edited".into()));
+
+        // Undo most recent op (depth=0) — the edit
+        let result = undo_page_op_inner(&pool, DEV, &mat, page_id.clone(), 0)
+            .await
+            .unwrap();
+
+        assert_eq!(result.reversed_op.device_id, DEV);
+        assert_eq!(result.new_op_type, "edit_block");
+        assert!(!result.is_redo);
+
+        // Block should be back to "child one"
+        let after = get_block_inner(&pool, child_ids[0].clone()).await.unwrap();
+        assert_eq!(
+            after.content,
+            Some("child one".into()),
+            "content should revert to original after undo"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_depth_1_reverses_second_most_recent() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+
+        // Edit child1 twice
+        edit_block_inner(&pool, DEV, &mat, child_ids[0].clone(), "edit1".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        edit_block_inner(&pool, DEV, &mat, child_ids[0].clone(), "edit2".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Undo depth=1 — should reverse the first edit (second most recent op)
+        let result = undo_page_op_inner(&pool, DEV, &mat, page_id.clone(), 1)
+            .await
+            .unwrap();
+
+        // The second most recent op is "edit1" (edit_block)
+        assert_eq!(result.new_op_type, "edit_block");
+        assert!(!result.is_redo);
+    }
+
+    // -- redo_page_op tests --
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn redo_page_op_reverses_undo_restoring_state() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+
+        // Edit child1
+        edit_block_inner(&pool, DEV, &mat, child_ids[0].clone(), "edited".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Undo the edit
+        let undo_result = undo_page_op_inner(&pool, DEV, &mat, page_id.clone(), 0)
+            .await
+            .unwrap();
+
+        // Verify it's undone
+        let after_undo = get_block_inner(&pool, child_ids[0].clone()).await.unwrap();
+        assert_eq!(after_undo.content, Some("child one".into()));
+
+        // Redo it
+        let redo_result = redo_page_op_inner(
+            &pool,
+            DEV,
+            &mat,
+            undo_result.new_op_ref.device_id.clone(),
+            undo_result.new_op_ref.seq,
+        )
+        .await
+        .unwrap();
+
+        assert!(redo_result.is_redo, "should be flagged as redo");
+        assert_eq!(redo_result.new_op_type, "edit_block");
+
+        // Block should be back to "edited"
+        let after_redo = get_block_inner(&pool, child_ids[0].clone()).await.unwrap();
+        assert_eq!(
+            after_redo.content,
+            Some("edited".into()),
+            "content should be restored after redo"
+        );
+    }
+
+    // -- Full cycle test --
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn full_cycle_create_edit_undo_redo() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create page + child
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "My Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "original".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Edit
+        edit_block_inner(&pool, DEV, &mat, child.id.clone(), "modified".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let after_edit = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert_eq!(after_edit.content, Some("modified".into()));
+
+        // Undo the edit (depth=0 = most recent)
+        let undo = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+            .await
+            .unwrap();
+        assert!(!undo.is_redo);
+
+        let after_undo = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert_eq!(
+            after_undo.content,
+            Some("original".into()),
+            "undo should restore original content"
+        );
+
+        // Redo the undo
+        let redo = redo_page_op_inner(
+            &pool,
+            DEV,
+            &mat,
+            undo.new_op_ref.device_id.clone(),
+            undo.new_op_ref.seq,
+        )
+        .await
+        .unwrap();
+        assert!(redo.is_redo);
+
+        let after_redo = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert_eq!(
+            after_redo.content,
+            Some("modified".into()),
+            "redo should produce original edit result"
+        );
     }
 }

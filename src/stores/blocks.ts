@@ -14,6 +14,7 @@ import { parse, serialize } from '../editor/markdown-serializer'
 import type { BlockRow, PageResponse } from '../lib/tauri'
 import { createBlock, deleteBlock, editBlock, listBlocks, moveBlock } from '../lib/tauri'
 import { buildFlatTree, type FlatBlock, getDragDescendants } from '../lib/tree-utils'
+import { useUndoStore } from './undo'
 
 export type { FlatBlock }
 
@@ -64,6 +65,11 @@ interface BlockStore {
 }
 
 // ── Recursive subtree loader ─────────────────────────────────────────────
+
+/** Notify the undo store that a new action occurred on the current page. */
+function notifyUndoNewAction(rootParentId: string | null): void {
+  if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+}
 
 async function loadSubtree(
   parentId: string | undefined,
@@ -142,6 +148,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       const newBlocks = [...blocks]
       newBlocks.splice(insertIdx, 0, newBlock)
       set({ blocks: newBlocks })
+      notifyUndoNewAction(get().rootParentId)
       return result.id
     } catch {
       return null
@@ -154,6 +161,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       set((state) => ({
         blocks: state.blocks.map((b) => (b.id === blockId ? { ...b, content } : b)),
       }))
+      notifyUndoNewAction(get().rootParentId)
     } catch {
       // Silently fail — content is already in the editor
     }
@@ -169,6 +177,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
         blocks: state.blocks.filter((b) => b.id !== blockId && !descendants.has(b.id)),
         focusedBlockId: state.focusedBlockId === blockId ? null : state.focusedBlockId,
       }))
+      notifyUndoNewAction(get().rootParentId)
     } catch {
       // Silently fail
     }
@@ -249,6 +258,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
         position: newPosition,
       })
       set({ blocks: newBlocks })
+      notifyUndoNewAction(get().rootParentId)
     } catch {
       // Silently fail
     }
@@ -262,6 +272,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       // a flattened tree with depth changes.
       const { rootParentId } = get()
       await get().load(rootParentId ?? undefined)
+      notifyUndoNewAction(rootParentId)
     } catch {
       // Silently fail
     }
@@ -317,6 +328,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
 
       remaining.splice(insertAt, 0, ...movedItems)
       set({ blocks: remaining })
+      notifyUndoNewAction(get().rootParentId)
     } catch {
       // Silently fail
     }
@@ -359,6 +371,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
 
       remaining.splice(insertAt, 0, ...movedItems)
       set({ blocks: remaining })
+      notifyUndoNewAction(get().rootParentId)
     } catch {
       // Silently fail
     }
@@ -384,6 +397,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     try {
       await moveBlock(blockId, parentId, newPosition)
       await get().load(rootParentId ?? undefined)
+      notifyUndoNewAction(rootParentId)
     } catch {
       // Silently fail
     }
@@ -409,6 +423,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     try {
       await moveBlock(blockId, parentId, newPosition)
       await get().load(rootParentId ?? undefined)
+      notifyUndoNewAction(rootParentId)
     } catch {
       // Silently fail
     }

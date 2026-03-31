@@ -335,6 +335,14 @@ export function setupMock(): void {
         return { items: [], next_cursor: null, has_more: false }
       }
 
+      case 'list_page_history': {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+
+      case 'revert_ops': {
+        return []
+      }
+
       case 'get_conflicts': {
         return { items: [], next_cursor: null, has_more: false }
       }
@@ -423,6 +431,45 @@ export function setupMock(): void {
         const blockProps = properties.get(blockId)
         if (!blockProps) return []
         return [...blockProps.values()]
+      }
+
+      case 'get_batch_properties': {
+        const a = args as Record<string, unknown>
+        const blockIds = a.blockIds as string[]
+        const result: Record<string, Record<string, unknown>[]> = {}
+        for (const id of blockIds) {
+          const blockProps = properties.get(id)
+          result[id] = blockProps ? [...blockProps.values()] : []
+        }
+        return result
+      }
+
+      case 'undo_page_op': {
+        return {
+          reversed_op: { device_id: 'mock', seq: 1 },
+          new_op: {
+            device_id: 'mock',
+            seq: 2,
+            op_type: 'edit_block',
+            payload: '{}',
+            created_at: new Date().toISOString(),
+          },
+          is_redo: false,
+        }
+      }
+
+      case 'redo_page_op': {
+        return {
+          reversed_op: { device_id: 'mock', seq: 2 },
+          new_op: {
+            device_id: 'mock',
+            seq: 3,
+            op_type: 'edit_block',
+            payload: '{}',
+            created_at: new Date().toISOString(),
+          },
+          is_redo: true,
+        }
       }
 
       default:

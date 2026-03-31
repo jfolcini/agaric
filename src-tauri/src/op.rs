@@ -204,6 +204,30 @@ pub struct DeleteAttachmentPayload {
 }
 
 // ---------------------------------------------------------------------------
+// Undo/Redo types
+// ---------------------------------------------------------------------------
+
+/// Reference to a specific op in the log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct OpRef {
+    pub device_id: String,
+    pub seq: i64,
+}
+
+/// Result of an undo or redo operation.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct UndoResult {
+    /// The op that was reversed (the original op for undo, the undo-op for redo).
+    pub reversed_op: OpRef,
+    /// The newly appended reverse op.
+    pub new_op_ref: OpRef,
+    /// The op_type of the newly appended op.
+    pub new_op_type: String,
+    /// Whether this was a redo (true) or undo (false).
+    pub is_redo: bool,
+}
+
+// ---------------------------------------------------------------------------
 // OpPayload — tagged union of all payload structs
 // ---------------------------------------------------------------------------
 

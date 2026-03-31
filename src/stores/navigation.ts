@@ -15,6 +15,7 @@ export type View =
   | 'trash'
   | 'status'
   | 'conflicts'
+  | 'history'
   | 'page-editor'
 
 interface PageEntry {
