@@ -37,7 +37,7 @@ import {
   Plus,
 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
@@ -232,6 +232,93 @@ function TaskSection({ title, status, icon: Icon, iconColor, onNavigateToPage }:
         </div>
       )}
     </div>
+  )
+}
+
+// ── Viewport-aware calendar dropdown ──────────────────────────────────
+
+interface JournalCalendarDropdownProps {
+  currentDate: Date
+  highlightedDays: Date[]
+  onSelectDate: (day: Date) => void
+  onSelectWeek: (dates: Date[]) => void
+  onSelectMonth: (month: Date) => void
+  onClose: () => void
+}
+
+function JournalCalendarDropdown({
+  currentDate,
+  highlightedDays,
+  onSelectDate,
+  onSelectWeek,
+  onSelectMonth,
+  onClose,
+}: JournalCalendarDropdownProps): React.ReactElement {
+  const calRef = useRef<HTMLDivElement>(null)
+  const [flipAbove, setFlipAbove] = useState(false)
+
+  // Escape key closes the calendar
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  // Check if calendar overflows viewport and flip above if needed
+  useEffect(() => {
+    const el = calRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    if (rect.bottom > window.innerHeight - 8) {
+      setFlipAbove(true)
+    }
+  }, [])
+
+  return (
+    <>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div
+        ref={calRef}
+        className={`absolute right-0 z-50 rounded-md border bg-popover p-2 shadow-md ${
+          flipAbove ? 'bottom-full mb-1' : 'top-full mt-1'
+        }`}
+      >
+        <Calendar
+          mode="single"
+          selected={currentDate}
+          onSelect={(day) => day && onSelectDate(day)}
+          defaultMonth={currentDate}
+          weekStartsOn={1}
+          showWeekNumber
+          showOutsideDays
+          onWeekNumberClick={(_wn: number, dates: Date[]) => onSelectWeek(dates)}
+          onMonthClick={(month: Date) => onSelectMonth(month)}
+          modifiers={{ hasContent: highlightedDays }}
+          modifiersClassNames={{ hasContent: 'has-content-dot' }}
+        />
+        <style>{`
+          .has-content-dot { position: relative; }
+          .has-content-dot::after {
+            content: '';
+            position: absolute;
+            bottom: 2px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: var(--primary);
+          }
+        `}</style>
+      </div>
+    </>
   )
 }
 
@@ -665,53 +752,25 @@ export function JournalControls(): React.ReactElement {
               <CalendarIcon className="h-4 w-4" />
             </Button>
             {calendarOpen && (
-              <>
-                {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
-                {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
-                <div className="fixed inset-0 z-40" onClick={() => setCalendarOpen(false)} />
-                <div className="absolute right-0 top-full z-50 mt-1 rounded-md border bg-popover p-2 shadow-md">
-                  <Calendar
-                    mode="single"
-                    selected={currentDate}
-                    onSelect={(day) => {
-                      if (day) {
-                        navigateToDate(day, 'daily')
-                        setCalendarOpen(false)
-                      }
-                    }}
-                    defaultMonth={currentDate}
-                    weekStartsOn={1}
-                    showWeekNumber
-                    showOutsideDays
-                    onWeekNumberClick={(_wn: number, dates: Date[]) => {
-                      if (dates.length > 0) {
-                        navigateToDate(dates[0], 'weekly')
-                        setCalendarOpen(false)
-                      }
-                    }}
-                    onMonthClick={(month: Date) => {
-                      navigateToDate(month, 'monthly')
-                      setCalendarOpen(false)
-                    }}
-                    modifiers={{ hasContent: highlightedDays }}
-                    modifiersClassNames={{ hasContent: 'has-content-dot' }}
-                  />
-                  <style>{`
-                    .has-content-dot { position: relative; }
-                    .has-content-dot::after {
-                      content: '';
-                      position: absolute;
-                      bottom: 2px;
-                      left: 50%;
-                      transform: translateX(-50%);
-                      width: 5px;
-                      height: 5px;
-                      border-radius: 50%;
-                      background: var(--primary);
-                    }
-                  `}</style>
-                </div>
-              </>
+              <JournalCalendarDropdown
+                currentDate={currentDate}
+                highlightedDays={highlightedDays}
+                onSelectDate={(day) => {
+                  navigateToDate(day, 'daily')
+                  setCalendarOpen(false)
+                }}
+                onSelectWeek={(dates) => {
+                  if (dates.length > 0) {
+                    navigateToDate(dates[0], 'weekly')
+                    setCalendarOpen(false)
+                  }
+                }}
+                onSelectMonth={(month) => {
+                  navigateToDate(month, 'monthly')
+                  setCalendarOpen(false)
+                }}
+                onClose={() => setCalendarOpen(false)}
+              />
             )}
           </div>
         </div>

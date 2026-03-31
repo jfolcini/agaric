@@ -43,6 +43,38 @@ import { EmptyState } from './EmptyState'
 import { INDENT_WIDTH, SortableBlock } from './SortableBlock'
 import { Calendar } from './ui/calendar'
 
+// ── Floating date picker with Escape + viewport centering ─────────────
+
+function DatePickerOverlay({
+  onSelect,
+  onClose,
+}: {
+  onSelect: (day: Date | undefined) => void
+  onClose: () => void
+}): React.ReactElement {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  return (
+    <>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className="date-picker-popup fixed left-1/2 top-1/3 z-50 -translate-x-1/2 rounded-md border bg-popover p-2 shadow-lg">
+        <Calendar mode="single" weekStartsOn={1} showOutsideDays onSelect={onSelect} />
+      </div>
+    </>
+  )
+}
+
 /**
  * Detect markdown checkbox syntax at the start of content.
  * `- [ ] ` → TODO, `- [x] ` / `- [X] ` → DONE.
@@ -866,19 +898,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
       {/* Floating date picker for /DATE slash command */}
       {datePickerOpen && (
-        <>
-          {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
-          <div className="fixed inset-0 z-40" onClick={() => setDatePickerOpen(false)} />
-          <div className="date-picker-popup fixed left-1/2 top-1/3 z-50 -translate-x-1/2 rounded-md border bg-popover p-2 shadow-lg">
-            <Calendar
-              mode="single"
-              weekStartsOn={1}
-              showOutsideDays
-              onSelect={(day) => day && handleDatePick(day)}
-            />
-          </div>
-        </>
+        <DatePickerOverlay
+          onSelect={(day) => day && handleDatePick(day)}
+          onClose={() => setDatePickerOpen(false)}
+        />
       )}
     </>
   )
