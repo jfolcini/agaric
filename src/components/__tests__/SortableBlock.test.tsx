@@ -1195,6 +1195,97 @@ describe('SortableBlock inline controls', () => {
     const gutter = container.querySelector('.w-\\[44px\\]')
     expect(gutter).toBeInTheDocument()
   })
+
+  it('outer wrapper uses gap-1 for uniform spacing between gutter and inline controls', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const wrapper = container.querySelector('.sortable-block')
+    expect(wrapper?.className).toContain('gap-1')
+    expect(wrapper?.className).not.toContain('gap-0')
+  })
+
+  it('gutter uses gap-1 between grip and delete', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const gutter = container.querySelector('.w-\\[44px\\]')
+    expect(gutter?.className).toContain('gap-1')
+  })
+
+  it('gutter has no flex-1 spacer between grip and delete', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const gutter = container.querySelector('.w-\\[44px\\]')
+    // Gutter should have exactly 2 children (grip + delete), no spacer div
+    const children = gutter?.children
+    expect(children?.length).toBe(2)
+    // Both should be buttons
+    expect(children?.[0]?.tagName).toBe('BUTTON')
+    expect(children?.[1]?.tagName).toBe('BUTTON')
+  })
+
+  it('inline controls use gap-1 between items', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="A"
+        onTogglePriority={vi.fn()}
+      />,
+    )
+
+    const inlineControls = container.querySelector('.inline-controls')
+    expect(inlineControls?.className).toContain('gap-1')
+  })
+
+  it('all control buttons share mt-1.5 for vertical alignment', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={true}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+        onToggleTodo={vi.fn()}
+        priority="A"
+        onTogglePriority={vi.fn()}
+      />,
+    )
+
+    const grip = container.querySelector('.drag-handle')
+    const del = container.querySelector('.delete-handle')
+    const checkbox = container.querySelector('.task-marker')
+    const badge = container.querySelector('.priority-badge')
+
+    expect(grip?.className).toContain('mt-1.5')
+    expect(del?.className).toContain('mt-1.5')
+    expect(checkbox?.className).toContain('mt-1.5')
+    expect(badge?.className).toContain('mt-1.5')
+  })
 })
 
 // =========================================================================
