@@ -185,7 +185,11 @@ export function JournalPage({
     const compact = options?.compact ?? false
 
     return (
-      <section key={entry.dateStr} aria-label={`Journal for ${entry.displayDate}`}>
+      <section
+        key={entry.dateStr}
+        aria-label={`Journal for ${entry.displayDate}`}
+        className={cn(isToday && 'bg-accent/[0.04] rounded-lg px-3 py-2 -mx-3')}
+      >
         {/* Day heading — hidden in daily mode since header shows the date */}
         {!options?.hideHeading && (
           <div className="flex items-center gap-2 mb-2">

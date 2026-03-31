@@ -12,63 +12,34 @@
  * and depth.
  */
 
-import {
-  closestCenter,
-  DndContext,
-  type DragEndEvent,
-  type DragMoveEvent,
-  type DragOverEvent,
-  DragOverlay,
-  type DragStartEvent,
-  KeyboardSensor,
-  MeasuringStrategy,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable'
+import { closestCenter, DndContext, DragOverlay, MeasuringStrategy } from '@dnd-kit/core'
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { parse } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
+import { useBlockDnD } from '../hooks/useBlockDnD'
+import { useBlockProperties } from '../hooks/useBlockProperties'
+import { useBlockResolve } from '../hooks/useBlockResolve'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import type { PropertyRow } from '../lib/tauri'
 import {
   batchResolve,
   createBlock,
-  deleteProperty,
   getBlock,
   getProperties,
   listBlocks,
   listTagsByPrefix,
-  searchBlocks,
   setProperty,
 } from '../lib/tauri'
-import {
-  computePosition,
-  type FlatBlock,
-  getDragDescendants,
-  getProjection,
-} from '../lib/tree-utils'
+import { getDragDescendants } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
+import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 import { INDENT_WIDTH, SortableBlock } from './SortableBlock'
 import { Calendar } from './ui/calendar'
-
-/** Cached info about a block/tag for resolve callbacks. */
-interface BlockInfo {
-  title: string
-  deleted: boolean
-}
-
-/** Task state cycle: none → TODO → DOING → DONE → none. */
-const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE']
 
 /**
  * Detect markdown checkbox syntax at the start of content.
@@ -113,30 +84,17 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     moveToParent,
   } = useBlockStore()
 
-  // ── DnD state ──────────────────────────────────────────────────────
-  const [activeId, setActiveId] = useState<string | null>(null)
-  const [overId, setOverId] = useState<string | null>(null)
-  const [offsetLeft, setOffsetLeft] = useState(0)
-
   // ── Collapse state ─────────────────────────────────────────────────
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
-
-  // ── Block properties (task state) ─────────────────────────────────
-  const [blockProperties, setBlockProperties] = useState<Map<string, PropertyRow[]>>(new Map())
 
   // ── Date picker for /DATE command ─────────────────────────────────
   const [datePickerOpen, setDatePickerOpen] = useState(false)
   const datePickerCursorPos = useRef<number | undefined>(undefined)
 
-  /** Get the current todo state for a block from the properties cache. */
-  const getTodoState = useCallback(
-    (blockId: string): string | null => {
-      const props = blockProperties.get(blockId)
-      const todoProp = props?.find((p) => p.key === 'todo')
-      return todoProp?.value_text ?? null
-    },
-    [blockProperties],
-  )
+  // ── Extracted hooks ────────────────────────────────────────────────
+  const resolve = useBlockResolve()
+  const properties = useBlockProperties()
+  const { getTodoState, handleToggleTodo, setBlockProperties } = properties
 
   /** Set of block IDs that have children (next block in flat tree has greater depth). */
   const hasChildrenSet = useMemo(() => {
@@ -152,7 +110,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   /** Blocks visible after collapse filtering (before DnD filtering). */
   const collapsedVisible = useMemo(() => {
     if (collapsedIds.size === 0) return blocks
-    const result: FlatBlock[] = []
+    const result: typeof blocks = []
     const skipUntilDepth: number[] = []
 
     for (const block of blocks) {
@@ -173,140 +131,6 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     }
     return result
   }, [blocks, collapsedIds])
-
-  // Items visible during drag: exclude descendants of the active item
-  const activeDescendants = useMemo(
-    () => (activeId ? getDragDescendants(collapsedVisible, activeId) : new Set<string>()),
-    [activeId, collapsedVisible],
-  )
-
-  const visibleItems = useMemo(
-    () =>
-      activeId ? collapsedVisible.filter((b) => !activeDescendants.has(b.id)) : collapsedVisible,
-    [collapsedVisible, activeId, activeDescendants],
-  )
-
-  // Projection of where the dragged item would land
-  const projected = useMemo(() => {
-    if (!activeId || !overId) return null
-    return getProjection(visibleItems, activeId, overId, offsetLeft, INDENT_WIDTH, rootParentId)
-  }, [activeId, overId, offsetLeft, visibleItems, rootParentId])
-
-  // ── Resolve cache ──────────────────────────────────────────────────
-  // Simple in-memory cache of block/tag info for resolve callbacks.
-  // Populated by the preload effect below + handleNavigate.
-  const blockInfoCache = useRef<Map<string, BlockInfo>>(new Map())
-  const pagesListRef = useRef<Array<{ id: string; title: string }>>([])
-  // Bumped after preload to trigger re-render with resolved titles.
-  const [resolveVersion, setResolveVersion] = useState(0)
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
-  const resolveBlockTitle = useCallback(
-    (id: string): string => {
-      const cached = blockInfoCache.current.get(id)
-      if (cached) return cached.title
-      return `[[${id.slice(0, 8)}...]]`
-    },
-    [resolveVersion],
-  )
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
-  const resolveBlockStatus = useCallback(
-    (id: string): 'active' | 'deleted' => {
-      const cached = blockInfoCache.current.get(id)
-      if (cached) return cached.deleted ? 'deleted' : 'active'
-      return 'active'
-    },
-    [resolveVersion],
-  )
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
-  const resolveTagName = useCallback(
-    (id: string): string => {
-      const cached = blockInfoCache.current.get(id)
-      if (cached) return cached.title
-      return `#${id.slice(0, 8)}...`
-    },
-    [resolveVersion],
-  )
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
-  const resolveTagStatus = useCallback(
-    (id: string): 'active' | 'deleted' => {
-      const cached = blockInfoCache.current.get(id)
-      if (cached) return cached.deleted ? 'deleted' : 'active'
-      return 'active'
-    },
-    [resolveVersion],
-  )
-
-  // ── Picker callbacks ────────────────────────────────────────────────
-  const searchTags = useCallback(async (query: string): Promise<PickerItem[]> => {
-    const tags = await listTagsByPrefix({ prefix: query })
-    return tags.map((tag) => ({
-      id: tag.tag_id,
-      label: tag.name,
-    }))
-  }, [])
-
-  const searchPages = useCallback(async (query: string): Promise<PickerItem[]> => {
-    const q = query.toLowerCase().trim()
-
-    // For short/empty queries, use the preloaded pages cache for instant results.
-    // For longer queries, use FTS5 server-side search for relevance-ranked results.
-    let matches: PickerItem[]
-
-    if (q.length <= 2) {
-      // Short query — use cache (substring match)
-      let source = pagesListRef.current
-      if (source.length === 0) {
-        const resp = await listBlocks({ blockType: 'page', limit: 500 })
-        source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
-        pagesListRef.current = source
-      }
-      matches = source
-        .filter((p) => !q || p.title.toLowerCase().includes(q))
-        .slice(0, 20)
-        .map((p) => ({ id: p.id, label: p.title }))
-    } else {
-      // Longer query — use FTS5 search, filter to pages
-      const resp = await searchBlocks({ query: q, limit: 20 })
-      matches = resp.items
-        .filter((b) => b.block_type === 'page')
-        .map((b) => ({ id: b.id, label: b.content ?? 'Untitled' }))
-
-      // If FTS returns few results, supplement from cache
-      if (matches.length < 5 && pagesListRef.current.length > 0) {
-        const ftsIds = new Set(matches.map((m) => m.id))
-        const cacheMatches = pagesListRef.current
-          .filter((p) => p.title.toLowerCase().includes(q) && !ftsIds.has(p.id))
-          .slice(0, 10)
-          .map((p) => ({ id: p.id, label: p.title }))
-        matches = [...matches, ...cacheMatches].slice(0, 20)
-      }
-    }
-
-    // Append a "Create new" option when the query doesn't exactly match an existing page
-    if (q.length > 0) {
-      const allSource = pagesListRef.current.length > 0 ? pagesListRef.current : matches
-      const exactMatch = allSource.some(
-        (p) => ('title' in p ? p.title : p.label).toLowerCase() === q,
-      )
-      if (!exactMatch) {
-        matches.push({ id: '__create__', label: query.trim(), isCreate: true })
-      }
-    }
-    return matches
-  }, [])
-
-  const onCreatePage = useCallback(async (label: string): Promise<string> => {
-    const block = await createBlock({ blockType: 'page', content: label })
-    // Populate resolve cache so the link chip shows the title immediately
-    blockInfoCache.current.set(block.id, { title: label, deleted: false })
-    pagesListRef.current = [...pagesListRef.current, { id: block.id, title: label }]
-    setResolveVersion((v) => v + 1)
-    return block.id
-  }, [])
 
   // ── Slash command definitions ──────────────────────────────────────
   const SLASH_COMMANDS: PickerItem[] = useMemo(
@@ -334,26 +158,19 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const handleSlashCommandRef = useRef<(item: PickerItem) => void>(() => {})
 
   const rovingEditor = useRovingEditor({
-    resolveBlockTitle,
-    resolveTagName,
+    resolveBlockTitle: resolve.resolveBlockTitle,
+    resolveTagName: resolve.resolveTagName,
     onNavigate: (id: string) => handleNavigateRef.current(id),
-    resolveBlockStatus,
-    resolveTagStatus,
-    searchTags,
-    searchPages,
-    onCreatePage,
+    resolveBlockStatus: resolve.resolveBlockStatus,
+    resolveTagStatus: resolve.resolveTagStatus,
+    searchTags: resolve.searchTags,
+    searchPages: resolve.searchPages,
+    onCreatePage: resolve.onCreatePage,
     searchSlashCommands,
     onSlashCommand: (item: PickerItem) => handleSlashCommandRef.current(item),
   })
 
   const viewport = useViewportObserver()
-
-  // ── DnD sensors ────────────────────────────────────────────────────
-  // PointerSensor with 8px activation distance so clicks still work.
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  )
 
   useEffect(() => {
     load(parentId)
@@ -366,37 +183,34 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     let cancelled = false
     async function preload() {
       try {
+        const store = useResolveStore.getState()
+
         // Fetch all pages
         const pagesResp = await listBlocks({ blockType: 'page', limit: 1000 })
         if (cancelled) return
         const pagesList: Array<{ id: string; title: string }> = []
         for (const p of pagesResp.items) {
           const title = p.content ?? 'Untitled'
-          blockInfoCache.current.set(p.id, {
-            title,
-            deleted: p.deleted_at !== null,
-          })
+          store.set(p.id, title, p.deleted_at !== null)
           pagesList.push({ id: p.id, title })
         }
-        pagesListRef.current = pagesList
+        resolve.pagesListRef.current = pagesList
 
         // Fetch all tags
         const tags = await listTagsByPrefix({ prefix: '' })
         if (cancelled) return
         for (const t of tags) {
-          blockInfoCache.current.set(t.tag_id, {
-            title: t.name,
-            deleted: false,
-          })
+          store.set(t.tag_id, t.name, false)
         }
 
         // Scan loaded blocks for [[ULID]] tokens not yet cached
         const ULID_LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
         const uncached = new Set<string>()
+        const currentCache = useResolveStore.getState().cache
         for (const b of blocks) {
           if (!b.content) continue
           for (const m of b.content.matchAll(ULID_LINK_RE)) {
-            if (!blockInfoCache.current.has(m[1])) uncached.add(m[1])
+            if (!currentCache.has(m[1])) uncached.add(m[1])
           }
         }
 
@@ -406,18 +220,13 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
             const resolved = await batchResolve([...uncached])
             if (!cancelled) {
               for (const r of resolved) {
-                blockInfoCache.current.set(r.id, {
-                  title: r.title?.slice(0, 60) || `[[${r.id.slice(0, 8)}...]]`,
-                  deleted: r.deleted,
-                })
+                store.set(r.id, r.title?.slice(0, 60) || `[[${r.id.slice(0, 8)}...]]`, r.deleted)
               }
             }
           } catch {
             // Batch resolve failed — fallback entries stay as truncated ULIDs
           }
         }
-
-        if (!cancelled) setResolveVersion((v) => v + 1)
       } catch {
         // Preload failed — resolve callbacks will use fallbacks
       }
@@ -426,7 +235,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     return () => {
       cancelled = true
     }
-  }, [blocks])
+  }, [blocks, resolve.pagesListRef])
 
   // ── Fetch properties for all blocks (batch) ────────────────────────
   useEffect(() => {
@@ -446,7 +255,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       setBlockProperties(propsMap)
     }
     fetchProps()
-  }, [blocks])
+  }, [blocks, setBlockProperties])
 
   // Keyboard callbacks
   const handleFlush = useCallback((): string | null => {
@@ -487,7 +296,19 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       }
     }
     return changed
-  }, [rovingEditor, edit, splitBlock])
+  }, [rovingEditor, edit, splitBlock, setBlockProperties])
+
+  // ── DnD hook (needs handleFlush + collapsedVisible) ────────────────
+  const dnd = useBlockDnD({
+    blocks,
+    collapsedVisible,
+    rootParentId,
+    rovingEditor,
+    handleFlush,
+    setFocused,
+    reorder,
+    moveToParent,
+  })
 
   const toggleCollapse = useCallback(
     (blockId: string) => {
@@ -519,10 +340,13 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       try {
         const targetBlock = await getBlock(targetId)
         // Populate cache with the fetched block info
-        blockInfoCache.current.set(targetId, {
-          title: targetBlock.content?.slice(0, 60) || `[[${targetId.slice(0, 8)}...]]`,
-          deleted: targetBlock.deleted_at !== null,
-        })
+        useResolveStore
+          .getState()
+          .set(
+            targetId,
+            targetBlock.content?.slice(0, 60) || `[[${targetId.slice(0, 8)}...]]`,
+            targetBlock.deleted_at !== null,
+          )
 
         // If target is a page, navigate to it in the page editor
         if (targetBlock.block_type === 'page') {
@@ -588,10 +412,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         setDatePickerOpen(true)
       }
     },
-    [focusedBlockId],
+    [focusedBlockId, setBlockProperties],
   )
 
   /** Handle date selection from the /DATE picker. Finds or creates the date page and inserts a block link. */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolve.pagesListRef is a stable ref, not a reactive dependency
   const handleDatePick = useCallback(
     async (d: Date) => {
       setDatePickerOpen(false)
@@ -609,9 +434,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         const newPage = await createBlock({ blockType: 'page', content: dateStr })
         datePageId = newPage.id
         // Update resolve cache so the link chip shows the date immediately
-        blockInfoCache.current.set(newPage.id, { title: dateStr, deleted: false })
-        pagesListRef.current = [...pagesListRef.current, { id: newPage.id, title: dateStr }]
-        setResolveVersion((v) => v + 1)
+        useResolveStore.getState().set(newPage.id, dateStr, false)
+        resolve.pagesListRef.current = [
+          ...resolve.pagesListRef.current,
+          { id: newPage.id, title: dateStr },
+        ]
       }
 
       // Restore focus and insert the block link at cursor position
@@ -683,81 +510,6 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     dedent(focusedBlockId)
   }, [focusedBlockId, handleFlush, dedent])
 
-  // ── DnD handlers ───────────────────────────────────────────────────
-  const handleDragStart = useCallback(
-    (event: DragStartEvent) => {
-      const id = event.active.id as string
-      setActiveId(id)
-      setOverId(id)
-      setOffsetLeft(0)
-
-      // Flush editor if active
-      if (rovingEditor.activeBlockId) {
-        handleFlush()
-        setFocused(null)
-      }
-    },
-    [rovingEditor, handleFlush, setFocused],
-  )
-
-  const handleDragMove = useCallback((event: DragMoveEvent) => {
-    setOffsetLeft(event.delta.x)
-  }, [])
-
-  const handleDragOver = useCallback((event: DragOverEvent) => {
-    setOverId((event.over?.id as string) ?? null)
-  }, [])
-
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const { active, over } = event
-
-      // Reset DnD state
-      setActiveId(null)
-      setOverId(null)
-      setOffsetLeft(0)
-
-      if (!over) return
-
-      const blockId = active.id as string
-      const activeBlock = blocks.find((b) => b.id === blockId)
-
-      if (projected && activeBlock) {
-        // Check if the projection indicates a depth/parent change
-        const currentParentId = activeBlock.parent_id ?? rootParentId
-        const depthChanged = projected.depth !== activeBlock.depth
-        const parentChanged = projected.parentId !== currentParentId
-
-        if (depthChanged || parentChanged || active.id !== over.id) {
-          // Tree-aware move: use projection to determine new parent + position
-          const newPosition = computePosition(
-            visibleItems,
-            projected.parentId,
-            visibleItems.findIndex((b) => b.id === over.id),
-            blockId,
-          )
-          moveToParent(blockId, projected.parentId, newPosition)
-          return
-        }
-      }
-
-      // Same-level reorder (no depth/parent change)
-      if (active.id !== over.id) {
-        const overIndex = blocks.findIndex((b) => b.id === over.id)
-        if (overIndex >= 0) {
-          reorder(blockId, overIndex)
-        }
-      }
-    },
-    [blocks, rootParentId, projected, visibleItems, moveToParent, reorder],
-  )
-
-  const handleDragCancel = useCallback(() => {
-    setActiveId(null)
-    setOverId(null)
-    setOffsetLeft(0)
-  }, [])
-
   // ── Merge with previous block (p2-t11) ────────────────────────────
   const handleMergeWithPrev = useCallback(() => {
     if (!focusedBlockId) return
@@ -809,44 +561,6 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     setFocused(null)
   }, [focusedBlockId, rovingEditor, setFocused])
 
-  // ── Task state cycling ─────────────────────────────────────────────
-  const handleToggleTodo = useCallback(
-    async (blockId: string) => {
-      const current = getTodoState(blockId)
-      const currentIdx = TASK_CYCLE.indexOf(current)
-      const nextIdx = (currentIdx + 1) % TASK_CYCLE.length
-      const nextState = TASK_CYCLE[nextIdx]
-
-      if (nextState === null) {
-        await deleteProperty(blockId, 'todo')
-      } else {
-        await setProperty({ blockId, key: 'todo', valueText: nextState })
-      }
-
-      // Update local cache
-      setBlockProperties((prev) => {
-        const next = new Map(prev)
-        if (nextState === null) {
-          const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'todo')
-          if (props.length === 0) next.delete(blockId)
-          else next.set(blockId, props)
-        } else {
-          const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'todo')
-          props.push({
-            key: 'todo',
-            value_text: nextState,
-            value_num: null,
-            value_date: null,
-            value_ref: null,
-          })
-          next.set(blockId, props)
-        }
-        return next
-      })
-    },
-    [getTodoState],
-  )
-
   useBlockKeyboard(rovingEditor.editor, {
     onFocusPrev: handleFocusPrev,
     onFocusNext: handleFocusNext,
@@ -888,7 +602,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   }, [focusedBlockId, handleToggleTodo])
 
   // ── Active item for DragOverlay ────────────────────────────────────
-  const activeBlock = activeId ? blocks.find((b) => b.id === activeId) : null
+  const activeBlock = dnd.activeId ? blocks.find((b) => b.id === dnd.activeId) : null
 
   if (loading) {
     return (
@@ -906,25 +620,27 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   return (
     <>
       <DndContext
-        sensors={sensors}
+        sensors={dnd.sensors}
         collisionDetection={closestCenter}
         measuring={measuring}
-        onDragStart={handleDragStart}
-        onDragMove={handleDragMove}
-        onDragOver={handleDragOver}
-        onDragEnd={handleDragEnd}
-        onDragCancel={handleDragCancel}
+        onDragStart={dnd.handleDragStart}
+        onDragMove={dnd.handleDragMove}
+        onDragOver={dnd.handleDragOver}
+        onDragEnd={dnd.handleDragEnd}
+        onDragCancel={dnd.handleDragCancel}
       >
         <SortableContext
-          items={visibleItems.map((b) => b.id)}
+          items={dnd.visibleItems.map((b) => b.id)}
           strategy={verticalListSortingStrategy}
         >
-          <div className="block-tree space-y-px">
-            {visibleItems.map((block) => {
+          <div className="block-tree space-y-0.5">
+            {dnd.visibleItems.map((block) => {
               const isFocused = focusedBlockId === block.id
               // Show projected depth during drag for the active item's over target
               const projectedDepth =
-                projected && activeId && overId === block.id ? projected.depth : block.depth
+                dnd.projected && dnd.activeId && dnd.overId === block.id
+                  ? dnd.projected.depth
+                  : block.depth
 
               // Focused block is never virtualized — always render fully
               if (!isFocused && viewport.isOffscreen(block.id)) {
@@ -941,24 +657,24 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
               return (
                 <div key={block.id} ref={viewport.observeRef} data-block-id={block.id}>
                   {/* Drop indicator: shows where the dragged block will land */}
-                  {projected && overId === block.id && activeId !== block.id && (
+                  {dnd.projected && dnd.overId === block.id && dnd.activeId !== block.id && (
                     <div
-                      className="drop-indicator h-1 bg-primary rounded-full"
-                      style={{ marginLeft: projected.depth * INDENT_WIDTH }}
+                      className="drop-indicator h-[3px] bg-primary rounded-full ring-2 ring-primary/20"
+                      style={{ marginLeft: dnd.projected.depth * INDENT_WIDTH }}
                     />
                   )}
                   <SortableBlock
                     blockId={block.id}
                     content={block.content ?? ''}
                     isFocused={isFocused}
-                    depth={block.id === activeId ? projectedDepth : block.depth}
+                    depth={block.id === dnd.activeId ? projectedDepth : block.depth}
                     rovingEditor={rovingEditor}
                     onNavigate={handleNavigate}
                     onDelete={(id) => remove(id)}
-                    resolveBlockTitle={resolveBlockTitle}
-                    resolveTagName={resolveTagName}
-                    resolveBlockStatus={resolveBlockStatus}
-                    resolveTagStatus={resolveTagStatus}
+                    resolveBlockTitle={resolve.resolveBlockTitle}
+                    resolveTagName={resolve.resolveTagName}
+                    resolveBlockStatus={resolve.resolveBlockStatus}
+                    resolveTagStatus={resolve.resolveTagStatus}
                     hasChildren={hasChildrenSet.has(block.id)}
                     isCollapsed={collapsedIds.has(block.id)}
                     onToggleCollapse={toggleCollapse}

@@ -75,13 +75,21 @@ export function SortableBlock({
       ref={setNodeRef}
       style={style}
       data-block-id={blockId}
-      className="sortable-block group flex items-start gap-1"
+      className="sortable-block group relative flex items-start gap-1"
     >
+      {/* Indent guide line for nested blocks */}
+      {depth > 0 && (
+        <div
+          className="absolute left-0 top-0 bottom-0 border-l border-border/20"
+          style={{ left: (depth - 1) * INDENT_WIDTH + INDENT_WIDTH / 2 }}
+        />
+      )}
       {hasChildren ? (
         <button
           type="button"
           className="collapse-toggle flex-shrink-0 p-0.5 mt-1.5 text-muted-foreground hover:text-foreground"
           onClick={() => onToggleCollapse?.(blockId)}
+          title={isCollapsed ? 'Expand (Ctrl+.)' : 'Collapse (Ctrl+.)'}
           aria-label={isCollapsed ? 'Expand children' : 'Collapse children'}
         >
           <ChevronRight
@@ -92,9 +100,16 @@ export function SortableBlock({
       ) : (
         <span className="collapse-spacer flex-shrink-0 w-[19px] mt-1.5" />
       )}
+      {/* Bullet point */}
+      <span className="block-bullet flex-shrink-0 mt-2 w-1.5 h-1.5 rounded-full bg-muted-foreground/40" />
       <button
         type="button"
         className="task-marker flex-shrink-0 p-0.5 mt-1.5 transition-colors"
+        title={
+          todoState
+            ? `${todoState} → Click or Ctrl+Enter to cycle (TODO → DOING → DONE → none)`
+            : 'Click or Ctrl+Enter to set as TODO'
+        }
         onClick={(e) => {
           e.stopPropagation()
           onToggleTodo?.(blockId)
@@ -118,6 +133,7 @@ export function SortableBlock({
       <button
         type="button"
         className="drag-handle flex-shrink-0 cursor-grab opacity-30 group-hover:opacity-100 transition-opacity p-0.5 mt-1.5 text-muted-foreground hover:text-foreground"
+        title="Drag to reorder"
         aria-label="Drag to reorder"
         {...attributes}
         {...listeners}
@@ -128,6 +144,7 @@ export function SortableBlock({
         <button
           type="button"
           className="delete-handle flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 mt-1.5 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10"
+          title="Delete block"
           aria-label="Delete block"
           onClick={() => onDelete(blockId)}
         >

@@ -254,7 +254,8 @@ function serializeHeading(node: HeadingNode): string {
 
 function serializeCodeBlock(node: CodeBlockNode): string {
   const code = node.content?.[0]?.text ?? ''
-  return `\`\`\`\n${code}\n\`\`\``
+  const lang = node.attrs?.language ?? ''
+  return `\`\`\`${lang}\n${code}\n\`\`\``
 }
 
 export function serialize(doc: DocNode): string {
@@ -446,6 +447,7 @@ export function parse(markdown: string): DocNode {
 
     // Fenced code block: ```
     if (line.startsWith('```')) {
+      const language = line.slice(3).trim() || null
       const codeLines: string[] = []
       i++ // skip opening fence
       while (i < lines.length && !lines[i].startsWith('```')) {
@@ -454,10 +456,15 @@ export function parse(markdown: string): DocNode {
       }
       if (i < lines.length) i++ // skip closing fence
       const code = codeLines.join('\n')
+      const attrs = language ? { language } : undefined
       if (code.length === 0) {
-        blocks.push({ type: 'codeBlock' })
+        blocks.push(attrs ? { type: 'codeBlock', attrs } : { type: 'codeBlock' })
       } else {
-        blocks.push({ type: 'codeBlock', content: [{ type: 'text', text: code }] })
+        blocks.push(
+          attrs
+            ? { type: 'codeBlock', attrs, content: [{ type: 'text', text: code }] }
+            : { type: 'codeBlock', content: [{ type: 'text', text: code }] },
+        )
       }
       continue
     }

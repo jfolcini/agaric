@@ -244,7 +244,11 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
   return (
     <div className="backlinks-panel space-y-3">
       {/* Filter bar */}
-      <div className="backlinks-filters flex flex-wrap items-center gap-1.5" role="toolbar" aria-label="Backlink filters">
+      <div
+        className="backlinks-filters flex flex-wrap items-center gap-1.5"
+        role="toolbar"
+        aria-label="Backlink filters"
+      >
         <select
           className="backlinks-filter-type h-7 rounded-md border bg-background px-2 text-xs"
           value={typeFilter}

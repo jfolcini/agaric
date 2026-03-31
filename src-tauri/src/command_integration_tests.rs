@@ -2855,6 +2855,147 @@ async fn delete_property_on_nonexistent_block_returns_not_found() {
 }
 
 // ======================================================================
+// get_batch_properties — happy paths & error paths
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_batch_properties_happy_path() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Create two blocks via the command layer
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block A".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block B".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Set properties via command layer
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        "priority".into(),
+        Some("high".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone(),
+        "status".into(),
+        Some("done".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Batch-fetch
+    let result = get_batch_properties_inner(&pool, vec![b1.id.clone(), b2.id.clone()])
+        .await
+        .unwrap();
+
+    assert_eq!(result.len(), 2, "both blocks must be in result");
+    assert_eq!(result[&b1.id][0].key, "priority");
+    assert_eq!(result[&b1.id][0].value_text, Some("high".into()));
+    assert_eq!(result[&b2.id][0].key, "status");
+    assert_eq!(result[&b2.id][0].value_text, Some("done".into()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_batch_properties_empty_ids_returns_validation_error() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = get_batch_properties_inner(&pool, vec![]).await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "empty block_ids must return Validation error, got: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_batch_properties_does_not_affect_op_log() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "op-log check".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "key1".into(),
+        Some("val".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Count op_log entries before the read-only batch call
+    let ops_before = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+
+    // Read-only batch fetch
+    let _ = get_batch_properties_inner(&pool, vec![block.id.clone()])
+        .await
+        .unwrap();
+
+    // op_log must not change
+    let ops_after = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    assert_eq!(
+        ops_before.len(),
+        ops_after.len(),
+        "get_batch_properties must not write to op_log"
+    );
+}
+
+// ======================================================================
 // Date validation edge cases — comprehensive format checks
 // ======================================================================
 

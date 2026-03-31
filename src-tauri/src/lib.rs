@@ -68,6 +68,7 @@ mod specta_tests {
             crate::commands::set_property,
             crate::commands::delete_property,
             crate::commands::get_properties,
+            crate::commands::get_batch_properties,
         ])
     }
 
@@ -181,6 +182,7 @@ pub fn run() {
         commands::set_property,
         commands::delete_property,
         commands::get_properties,
+        commands::get_batch_properties,
     ]);
 
     tauri::Builder::default()

@@ -8,7 +8,7 @@
 
 import Bold from '@tiptap/extension-bold'
 import Code from '@tiptap/extension-code'
-import CodeBlock from '@tiptap/extension-code-block'
+import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
 import HardBreak from '@tiptap/extension-hard-break'
 import Heading from '@tiptap/extension-heading'
@@ -18,6 +18,7 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Placeholder from '@tiptap/extension-placeholder'
 import Text from '@tiptap/extension-text'
 import { type Editor, useEditor } from '@tiptap/react'
+import { common, createLowlight } from 'lowlight'
 import { useCallback, useRef } from 'react'
 import { AtTagPicker } from './extensions/at-tag-picker'
 import { BlockLink } from './extensions/block-link'
@@ -28,6 +29,8 @@ import { TagRef } from './extensions/tag-ref'
 import { parse, serialize } from './markdown-serializer'
 import type { PickerItem } from './SuggestionList'
 import type { DocNode } from './types'
+
+const lowlight = createLowlight(common)
 
 export interface RovingEditorOptions {
   /** Resolve tag ULID → display name */
@@ -128,7 +131,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Bold,
       Italic,
       Code,
-      CodeBlock,
+      CodeBlockLowlight.configure({ lowlight }),
       Heading.configure({ levels: [1, 2, 3, 4, 5, 6] }),
       HardBreak,
       History,

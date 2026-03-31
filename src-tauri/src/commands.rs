@@ -8,6 +8,8 @@
 //! All commands return `Result<T, AppError>` — `AppError` already implements
 //! `Serialize` for Tauri 2 command error propagation.
 
+use std::collections::HashMap;
+
 use chrono::Utc;
 use serde::Serialize;
 use specta::Type;
@@ -1613,6 +1615,63 @@ pub async fn get_properties_inner(
     Ok(rows)
 }
 
+/// Internal row type for the batch properties query (sqlx-compatible).
+#[derive(Debug, sqlx::FromRow)]
+struct BatchPropertyRow {
+    block_id: String,
+    key: String,
+    value_text: Option<String>,
+    value_num: Option<f64>,
+    value_date: Option<String>,
+    value_ref: Option<String>,
+}
+
+/// Batch-fetch properties for multiple blocks in a single query.
+///
+/// Returns a map of block_id → Vec<PropertyRow>. Block IDs with no properties
+/// are omitted from the result (not an error).
+///
+/// Uses `json_each()` so the full ID list is passed as a single JSON-encoded
+/// bind parameter — no dynamic SQL construction.
+///
+/// # Errors
+/// - [`AppError::Validation`] — `block_ids` is empty
+pub async fn get_batch_properties_inner(
+    pool: &SqlitePool,
+    block_ids: Vec<String>,
+) -> Result<HashMap<String, Vec<PropertyRow>>, AppError> {
+    if block_ids.is_empty() {
+        return Err(AppError::Validation(
+            "block_ids list cannot be empty".into(),
+        ));
+    }
+
+    let ids_json = serde_json::to_string(&block_ids)?;
+
+    let rows = sqlx::query_as!(
+        BatchPropertyRow,
+        r#"SELECT block_id, key, value_text, value_num, value_date, value_ref
+           FROM block_properties
+           WHERE block_id IN (SELECT value FROM json_each(?1))"#,
+        ids_json,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut map: HashMap<String, Vec<PropertyRow>> = HashMap::new();
+    for r in rows {
+        map.entry(r.block_id).or_default().push(PropertyRow {
+            key: r.key,
+            value_text: r.value_text,
+            value_num: r.value_num,
+            value_date: r.value_date,
+            value_ref: r.value_ref,
+        });
+    }
+
+    Ok(map)
+}
+
 // ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
@@ -2000,6 +2059,19 @@ pub async fn get_properties(
     block_id: String,
 ) -> Result<Vec<PropertyRow>, AppError> {
     get_properties_inner(&pool.0, block_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: batch-fetch properties. Delegates to [`get_batch_properties_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_batch_properties(
+    pool: State<'_, ReadPool>,
+    block_ids: Vec<String>,
+) -> Result<HashMap<String, Vec<PropertyRow>>, AppError> {
+    get_batch_properties_inner(&pool.0, block_ids)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -4859,6 +4931,217 @@ mod tests {
             props.is_empty(),
             "new block should have no properties, got: {props:?}"
         );
+    }
+
+    // ─── get_batch_properties tests ──────────────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_properties_returns_all_for_multiple_blocks() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create 3 blocks
+        let b1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "block one".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let b2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "block two".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let b3 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "block three".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set properties on blocks 1 and 2
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            b1.id.clone(),
+            "priority".into(),
+            Some("high".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            b2.id.clone(),
+            "status".into(),
+            Some("active".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Batch-fetch for all 3
+        let result =
+            get_batch_properties_inner(&pool, vec![b1.id.clone(), b2.id.clone(), b3.id.clone()])
+                .await
+                .unwrap();
+
+        // b1 and b2 should have properties, b3 should be omitted
+        assert!(result.contains_key(&b1.id), "b1 must be in result");
+        assert!(result.contains_key(&b2.id), "b2 must be in result");
+        assert_eq!(result[&b1.id].len(), 1);
+        assert_eq!(result[&b1.id][0].key, "priority");
+        assert_eq!(result[&b2.id].len(), 1);
+        assert_eq!(result[&b2.id][0].key, "status");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_properties_empty_ids_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = get_batch_properties_inner(&pool, vec![]).await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "empty block_ids list must return Validation error, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_properties_omits_blocks_without_properties() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block with no properties
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "no props".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let result = get_batch_properties_inner(&pool, vec![block.id.clone()])
+            .await
+            .unwrap();
+
+        assert!(
+            !result.contains_key(&block.id),
+            "block with no properties must be omitted from result, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_properties_returns_multiple_props_per_block() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "multi-prop".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set 3 different properties
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "priority".into(),
+            Some("high".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "status".into(),
+            Some("active".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "score".into(),
+            None,
+            Some(42.0),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let result = get_batch_properties_inner(&pool, vec![block.id.clone()])
+            .await
+            .unwrap();
+
+        assert!(result.contains_key(&block.id), "block must be in result");
+        let props = &result[&block.id];
+        assert_eq!(props.len(), 3, "must return all 3 properties");
+
+        let keys: Vec<&str> = props.iter().map(|p| p.key.as_str()).collect();
+        assert!(keys.contains(&"priority"), "must contain priority");
+        assert!(keys.contains(&"status"), "must contain status");
+        assert!(keys.contains(&"score"), "must contain score");
     }
 
     // ─── batch_resolve tests ─────────────────────────────────────────

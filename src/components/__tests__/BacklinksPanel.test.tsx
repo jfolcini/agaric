@@ -580,9 +580,25 @@ describe('BacklinksPanel', () => {
         if (cmd === 'get_properties') {
           const blockId = (args as { blockId: string }).blockId
           if (blockId === '01HAAAAA00000000000001')
-            return [{ key: 'todo', value_text: 'TODO', value_num: null, value_date: null, value_ref: null }]
+            return [
+              {
+                key: 'todo',
+                value_text: 'TODO',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ]
           if (blockId === '01HBBBBB00000000000002')
-            return [{ key: 'todo', value_text: 'DONE', value_num: null, value_date: null, value_ref: null }]
+            return [
+              {
+                key: 'todo',
+                value_text: 'DONE',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ]
           return []
         }
         return emptyPage
@@ -643,7 +659,7 @@ describe('BacklinksPanel', () => {
 
     it('shows task status badge for TODO/DOING/DONE blocks', async () => {
       // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
-      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
         if (cmd === 'get_backlinks') {
           return {
             items: [makeBlock('01HAAAAA00000000000001', 'In progress item', 'content')],
@@ -652,7 +668,15 @@ describe('BacklinksPanel', () => {
           }
         }
         if (cmd === 'get_properties') {
-          return [{ key: 'todo', value_text: 'DOING', value_num: null, value_date: null, value_ref: null }]
+          return [
+            {
+              key: 'todo',
+              value_text: 'DOING',
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+            },
+          ]
         }
         return emptyPage
       })

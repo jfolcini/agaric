@@ -62,6 +62,7 @@ export interface HeadingNode {
 
 export interface CodeBlockNode {
   readonly type: 'codeBlock'
+  readonly attrs?: { readonly language: string | null }
   readonly content?: readonly [TextNode]
 }
 
@@ -124,9 +125,14 @@ export function heading(level: number, ...nodes: InlineNode[]): HeadingNode {
   return { type: 'heading', attrs: { level }, content: nodes }
 }
 
-export function codeBlock(code: string): CodeBlockNode {
-  if (code.length === 0) return { type: 'codeBlock' }
-  return { type: 'codeBlock', content: [{ type: 'text', text: code }] }
+export function codeBlock(code: string, language?: string): CodeBlockNode {
+  const attrs = language ? { language } : undefined
+  if (code.length === 0) {
+    return attrs ? { type: 'codeBlock', attrs } : { type: 'codeBlock' }
+  }
+  return attrs
+    ? { type: 'codeBlock', attrs, content: [{ type: 'text', text: code }] }
+    : { type: 'codeBlock', content: [{ type: 'text', text: code }] }
 }
 
 export function doc(...blocks: BlockLevelNode[]): DocNode {

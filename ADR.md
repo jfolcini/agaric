@@ -1318,85 +1318,45 @@ this app is WYSIWYG. Rejected.
 
 ## UX Review Notes (2026-03-31)
 
-Comprehensive UX review of the Journal and Outliner identified architectural issues that need
-ADR-level discussion before implementation. Documented here for traceability.
+Comprehensive UX review of the Journal and Outliner identified architectural issues. Decisions
+recorded here after user review.
 
-### Auto-split on blur — design tension
+### Auto-split on blur — KEEP AS IS
 
-**Current:** Every `\n` in `blocks.content` triggers auto-split on blur. This is the core
-"write prose freely, get structure on exit" mechanic (ADR-01).
+**Decision:** Keep current auto-split behavior. Accept paste-split as a trade-off for the
+"write prose freely, get structure on exit" mechanic. No ADR amendment needed.
 
-**Problem identified:** Auto-split is too aggressive for paste workflows. Users pasting multi-line
-content from external sources get unexpected block decomposition. The split is non-undoable
-(Ctrl+Z doesn't cross mount boundaries). This is the #1 frustration reported.
+### Cross-block undo — KEEP AS IS (per ADR-02)
 
-**Resolution options:**
-1. Keep current behavior — accept paste-split as a trade-off for the prose mechanic.
-2. Only split on explicit Enter — remove auto-split on blur entirely.
-3. Smart detection — only auto-split content that was typed (not pasted). Requires tracking paste
-   events in the editor.
+**Decision:** Keep undo scoped per block mount. Op-level undo/redo as designed in ADR-02.
+History panel remains the deliberate revert mechanism for cross-block changes.
 
-**No change without ADR amendment.** This is a Phase 1.5 core mechanic.
+### Collapse state persistence — KEEP AS IS
 
-### Cross-block undo — intentional limitation
+**Decision:** Keep ephemeral collapse state. Not a priority.
 
-**Current:** Ctrl+Z is scoped per block mount. History cleared on blur/flush (ADR-02).
+### Monthly journal view — OPTIMIZE PERFORMANCE, KEEP STACKED LAYOUT
 
-**Problem identified:** Users expect session-level undo. Editing block A, then B, then pressing
-Ctrl+Z only undoes block B's changes. Block A's changes are committed to the op log.
+**Decision:** Keep the stacked day-section layout but optimize performance. Do NOT replace with
+calendar grid. Lazy-load BlockTree components for off-screen days. The resolve cache
+centralization (see below) eliminates the per-BlockTree preload overhead.
 
-**Resolution options:**
-1. Keep current behavior — history panel is the deliberate revert mechanism.
-2. Page-level undo stack — maintain an in-memory stack of (blockId, previousContent) tuples.
-   Ctrl+Z pops the stack and emits a new `edit_block` op reverting the content.
-3. Op-log based undo — expensive, requires "undo op" concept.
+### BlockTree component size — DECOMPOSE
 
-**Option 2 is the simplest viable path.** Does not violate ADR-02 or ADR-07 (op log is still
-append-only; undo is just another edit).
-
-### Collapse state persistence
-
-**Current:** Collapse state is ephemeral React state in BlockTree. Lost on navigation/reload.
-
-**Decision needed:** Persist via localStorage (keyed by pageId) or via a `collapsed` block
-property in the database. localStorage is simpler and avoids sync complexity. Block property
-would sync across devices but adds ops to the log for UI-only state.
-
-**Recommendation:** localStorage, migrated to block property when sync ships (Phase 4).
-
-### Monthly journal view — calendar grid vs stacked sections
-
-**Current:** Monthly view renders 28-31 day sections, each with its own BlockTree. This is a
-performance problem — 31 BlockTree components mount, each preloading pages/tags.
-
-**Decision needed:** Replace with a calendar grid (like the date picker) that shows content
-indicators and navigates to daily view on click. This is a pure frontend change.
-
-### BlockTree component size (1007 lines)
-
-**Current:** BlockTree handles DnD, keyboard, collapse, task cycling, date picker, resolve
-cache, and property fetching. This is the largest component in the app.
-
-**Recommendation:** Extract into smaller hooks and components:
+**Decision: Approved.** Extract into smaller hooks:
 - `useBlockResolve()` — resolve cache management
 - `useBlockDnD()` — DnD state and handlers
 - `useBlockProperties()` — property fetch and task state
 - Keep BlockTree as the orchestrator.
 
-### N+1 property fetch
+### N+1 property fetch — ADD BATCH COMMAND
 
-**Current:** BlockTree fetches properties for each block individually (`getProperties(b.id)` in
-a `Promise.all`). For 100 blocks, this is 100 IPC calls.
+**Decision: Approved.** Add `get_batch_properties` Tauri command accepting `Vec<String>` block
+IDs, returning `HashMap<String, Vec<PropertyRow>>`. Uses `json_each()` pattern from
+`batch_resolve_inner`. Include benchmark tests matching existing command bench coverage.
 
-**Fix:** Add a `get_batch_properties` Tauri command that accepts `Vec<String>` block IDs and
-returns all properties in one query. Schema already supports
-`SELECT * FROM block_properties WHERE block_id IN (...)`.
+### Resolve cache duplication — CENTRALIZE TO ZUSTAND STORE
 
-### Resolve cache duplication
-
-**Current:** Both JournalPage and BlockTree call `listBlocks({ limit: 500/1000 })` on mount to
-build page maps. Multiple BlockTree instances (journal multi-day view) each run independent
-preloads.
-
-**Fix:** Move the resolve cache to a Zustand store. Fetch once on boot. Update incrementally on
-block creation/edit/delete.
+**Decision: Approved.** Move the resolve cache to a Zustand store (`stores/resolve.ts`). Fetch
+once on boot via `preload()`. Update incrementally on block creation/edit/delete. Both
+JournalPage and BlockTree consume from the same store — no more duplicate `listBlocks` calls.

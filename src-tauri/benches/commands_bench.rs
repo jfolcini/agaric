@@ -6,7 +6,8 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use block_notes_lib::commands::{
-    batch_resolve_inner, create_block_inner, edit_block_inner, list_blocks_inner,
+    batch_resolve_inner, create_block_inner, edit_block_inner, get_batch_properties_inner,
+    list_blocks_inner, set_property_inner,
 };
 use block_notes_lib::db::init_pool;
 use block_notes_lib::materializer::Materializer;
@@ -502,6 +503,74 @@ fn bench_batch_resolve_500(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// batch_properties benchmarks
+// ===========================================================================
+
+fn bench_batch_properties(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "batch_props"));
+    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+
+    // Seed 100 blocks with 2 properties each
+    let ids = rt.block_on(async {
+        let ids = seed_blocks(&pool, &materializer, 100).await;
+        for id in &ids {
+            set_property_inner(
+                &pool,
+                "dev-bench",
+                &materializer,
+                id.clone(),
+                "priority".into(),
+                Some("high".into()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            materializer.flush_background().await.unwrap();
+
+            set_property_inner(
+                &pool,
+                "dev-bench",
+                &materializer,
+                id.clone(),
+                "status".into(),
+                Some("active".into()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            materializer.flush_background().await.unwrap();
+        }
+        ids
+    });
+
+    let mut group = c.benchmark_group("batch_properties");
+
+    for size in [10, 50, 100] {
+        let subset: Vec<String> = ids[..size].to_vec();
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{size}_blocks")),
+            &size,
+            |b, _| {
+                b.to_async(&rt).iter(|| {
+                    let pool = pool.clone();
+                    let ids = subset.clone();
+                    async move { get_batch_properties_inner(&pool, ids).await.unwrap() }
+                })
+            },
+        );
+    }
+
+    group.finish();
+    rt.block_on(async { materializer.shutdown() });
+}
+
+// ===========================================================================
 // Scale benchmarks — measure hot-path ops at realistic DB sizes
 // ===========================================================================
 
@@ -647,6 +716,8 @@ criterion_group!(
     bench_batch_resolve_500,
 );
 
+criterion_group!(properties_benches, bench_batch_properties,);
+
 criterion_group!(
     scale_benches,
     bench_create_block_at_scale,
@@ -659,5 +730,6 @@ criterion_main!(
     edit_benches,
     list_benches,
     resolve_benches,
+    properties_benches,
     scale_benches,
 );

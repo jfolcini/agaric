@@ -247,6 +247,17 @@ async getProperties(blockId: string) : Promise<Result<PropertyRow[], { kind: str
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: batch-fetch properties. Delegates to [`get_batch_properties_inner`].
+ */
+async getBatchProperties(blockIds: string[]) : Promise<Result<Partial<{ [key in string]: PropertyRow[] }>, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_batch_properties", { blockIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

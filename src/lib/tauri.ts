@@ -249,3 +249,10 @@ export async function deleteProperty(blockId: string, key: string): Promise<void
 export async function getProperties(blockId: string): Promise<PropertyRow[]> {
   return invoke('get_properties', { blockId })
 }
+
+/** Batch-fetch properties for multiple blocks in a single IPC call. */
+export async function getBatchProperties(
+  blockIds: string[],
+): Promise<Record<string, PropertyRow[]>> {
+  return invoke('get_batch_properties', { blockIds })
+}

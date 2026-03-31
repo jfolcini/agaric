@@ -8,9 +8,13 @@
  * with optional click-to-navigate (block links) and deleted decoration.
  */
 
+import { toHtml } from 'hast-util-to-html'
+import { common, createLowlight } from 'lowlight'
 import type React from 'react'
 import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
+
+const lowlight = createLowlight(common)
 
 export interface StaticBlockProps {
   blockId: string
@@ -165,9 +169,24 @@ export function renderRichContent(
       )
     } else if (block.type === 'codeBlock') {
       const code = block.content?.[0]?.text ?? ''
+      const language = block.attrs?.language ?? ''
+      let highlighted: string
+      try {
+        const tree = language ? lowlight.highlight(language, code) : lowlight.highlightAuto(code)
+        highlighted = toHtml(tree)
+      } catch {
+        highlighted = code
+      }
       elements.push(
-        <pre key={`code-${keyIdx++}`} className="bg-muted rounded-md px-3 py-2 text-sm font-mono">
-          <code>{code}</code>
+        <pre
+          key={`code-${keyIdx++}`}
+          className="bg-muted rounded-md px-3 py-2 text-sm font-mono overflow-x-auto"
+        >
+          <code
+            className={language ? `language-${language} hljs` : 'hljs'}
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: lowlight output is safe
+            dangerouslySetInnerHTML={{ __html: highlighted }}
+          />
         </pre>,
       )
     } else {

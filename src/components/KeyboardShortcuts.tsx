@@ -32,6 +32,7 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: { keys: string; descriptio
         { keys: 'Backspace at start of block', description: 'Merge with previous' },
         { keys: 'Tab', description: 'Indent block' },
         { keys: 'Shift + Tab', description: 'Dedent block' },
+        { keys: 'Ctrl + Enter', description: 'Cycle task state (TODO → DOING → DONE → none)' },
       ],
     },
     {
@@ -39,6 +40,14 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: { keys: string; descriptio
       shortcuts: [
         { keys: '# in editor', description: 'Tag picker' },
         { keys: '[[ in editor', description: 'Block link picker' },
+      ],
+    },
+    {
+      category: 'Journal',
+      shortcuts: [
+        { keys: 'Alt + ←', description: 'Previous day / week / month' },
+        { keys: 'Alt + →', description: 'Next day / week / month' },
+        { keys: 'Alt + T', description: 'Go to today' },
       ],
     },
     {

@@ -1,3 +1,4 @@
+import { addDays, addMonths, addWeeks, subDays, subMonths, subWeeks } from 'date-fns'
 import {
   Activity,
   Calendar,
@@ -9,7 +10,7 @@ import {
   Tag,
   Trash2,
 } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { BootGate } from './components/BootGate'
 import { ConflictList } from './components/ConflictList'
 import { JournalControls, JournalPage } from './components/JournalPage'
@@ -38,7 +39,9 @@ import {
   useSidebar,
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
+import { useJournalStore } from './stores/journal'
 import { useNavigationStore, type View } from './stores/navigation'
+import { useResolveStore } from './stores/resolve'
 
 /** Sidebar nav items — page-editor is not listed here (it's navigated to programmatically). */
 const NAV_ITEMS: { id: Exclude<View, 'page-editor'>; icon: React.ElementType; label: string }[] = [
@@ -79,6 +82,45 @@ function App() {
   const { currentView, pageStack, setView, navigateToPage, goBack } = useNavigationStore()
   const headerLabel = useHeaderLabel()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+
+  // Preload the resolve cache (pages + tags) once on app boot
+  useEffect(() => {
+    useResolveStore.getState().preload()
+  }, [])
+
+  // ── Journal navigation shortcuts (Alt+Arrow, Alt+T) ────────────────
+  useEffect(() => {
+    function handleJournalNav(e: KeyboardEvent) {
+      if (!e.altKey) return
+      const { currentView } = useNavigationStore.getState()
+      if (currentView !== 'journal') return
+
+      const target = e.target as HTMLElement
+      if (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
+        return
+
+      const { mode, currentDate, setCurrentDate } = useJournalStore.getState()
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        if (mode === 'daily') setCurrentDate(subDays(currentDate, 1))
+        else if (mode === 'weekly') setCurrentDate(subWeeks(currentDate, 1))
+        else setCurrentDate(subMonths(currentDate, 1))
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        if (mode === 'daily') setCurrentDate(addDays(currentDate, 1))
+        else if (mode === 'weekly') setCurrentDate(addWeeks(currentDate, 1))
+        else setCurrentDate(addMonths(currentDate, 1))
+      }
+      if (e.key === 't' || e.key === 'T') {
+        e.preventDefault()
+        setCurrentDate(new Date())
+      }
+    }
+    document.addEventListener('keydown', handleJournalNav)
+    return () => document.removeEventListener('keydown', handleJournalNav)
+  }, [])
 
   const handlePageSelect = useCallback(
     (pageId: string, title?: string, blockId?: string) => {
