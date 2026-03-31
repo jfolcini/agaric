@@ -12,26 +12,29 @@ export function BootGate({ children }: { children: React.ReactNode }) {
 
   if (state === 'booting') {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-3 transition-opacity duration-200">
+      <output className="flex h-screen flex-col items-center justify-center gap-3 transition-opacity duration-200">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         <p className="text-sm text-muted-foreground">Starting Agaric&hellip;</p>
-      </div>
+      </output>
     )
   }
 
   if (state === 'recovering') {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-2 transition-opacity duration-200">
+      <output className="flex h-screen flex-col items-center justify-center gap-2 transition-opacity duration-200">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         <p className="text-sm text-muted-foreground">Recovering&hellip;</p>
-      </div>
+      </output>
     )
   }
 
   if (state === 'error') {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-4 transition-opacity duration-200">
-        <div className="flex flex-col items-center gap-3 rounded-lg border bg-destructive/5 p-8">
+        <div
+          className="flex flex-col items-center gap-3 rounded-lg border bg-destructive/5 p-8"
+          role="alert"
+        >
           <AlertCircle className="h-8 w-8 text-destructive" />
           <h2 className="text-lg font-semibold">Failed to start</h2>
           <p className="text-sm text-muted-foreground max-w-sm text-center">{error}</p>

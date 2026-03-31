@@ -147,7 +147,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
               variant="ghost"
               size="icon-xs"
               aria-label="Delete page"
-              className="shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+              className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
               onClick={(e) => {
                 e.stopPropagation()
                 setDeleteTarget({ id: page.id, name: page.content ?? 'Untitled' })

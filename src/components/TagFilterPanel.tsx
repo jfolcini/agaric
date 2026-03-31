@@ -314,7 +314,7 @@ export function TagFilterPanel(): React.ReactElement {
             <button
               key={block.id}
               type="button"
-              className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50"
+              className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
               onClick={() => handleResultClick(block)}
             >
               <div className="flex items-center gap-2">

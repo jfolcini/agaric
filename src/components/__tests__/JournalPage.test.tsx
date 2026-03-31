@@ -121,9 +121,12 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      // Daily mode: heading is hidden, date is in the header controls
+      // Daily mode: date heading is hidden (shown in header bar instead).
+      // The only h2 may come from EmptyState; no date heading should exist.
       const h2s = screen.queryAllByRole('heading', { level: 2 })
-      expect(h2s).toHaveLength(0)
+      for (const h2 of h2s) {
+        expect(h2.textContent).toMatch(/No blocks/)
+      }
     })
 
     it('shows empty state with "No blocks" when no page exists for the day', async () => {

@@ -179,6 +179,7 @@ function App() {
                     <SidebarMenuItem key={item.id}>
                       <SidebarMenuButton
                         isActive={currentView === item.id}
+                        aria-current={currentView === item.id ? 'page' : undefined}
                         tooltip={item.label}
                         onClick={() => setView(item.id)}
                       >

@@ -84,7 +84,7 @@ function Calendar({
                 return (
                   <button
                     type="button"
-                    className="text-[0.7rem] text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground hover:bg-accent rounded-md transition-colors"
+                    className="text-[0.7rem] text-muted-foreground w-8 text-center cursor-pointer hover:text-foreground hover:bg-accent rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                     onClick={() => onWeekNumberClick(weekNum, dates)}
                     aria-label={`Go to week ${weekNum}`}
                   >
@@ -100,7 +100,7 @@ function Calendar({
                 return (
                   <button
                     type="button"
-                    className="text-sm font-medium cursor-pointer rounded-md px-2 py-1 hover:bg-accent hover:text-accent-foreground transition-colors"
+                    className="text-sm font-medium cursor-pointer rounded-md px-2 py-1 hover:bg-accent hover:text-accent-foreground transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                     onClick={() => onMonthClick(props.defaultMonth ?? new Date())}
                     aria-label="Go to monthly view"
                   >

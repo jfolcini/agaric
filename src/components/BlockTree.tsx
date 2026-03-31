@@ -788,9 +788,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   if (loading) {
     return (
-      <div className="block-tree-loading flex items-center justify-center p-8 text-sm text-muted-foreground">
+      <output className="block-tree-loading flex items-center justify-center p-8 text-sm text-muted-foreground">
         Loading blocks...
-      </div>
+      </output>
     )
   }
 

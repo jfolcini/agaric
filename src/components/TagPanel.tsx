@@ -121,7 +121,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
             {tag.name}
             <button
               type="button"
-              className="tag-chip-remove ml-1 rounded-full hover:bg-muted"
+              className="tag-chip-remove ml-1 rounded-full hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
               onClick={() => handleRemoveTag(tag.id)}
               aria-label={`Remove tag ${tag.name}`}
             >

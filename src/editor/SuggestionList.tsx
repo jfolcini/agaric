@@ -62,7 +62,9 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
     }))
 
     if (items.length === 0) {
-      return <div className="suggestion-empty p-2 text-sm text-muted-foreground">No results</div>
+      return (
+        <output className="suggestion-empty p-2 text-sm text-muted-foreground">No results</output>
+      )
     }
 
     return (

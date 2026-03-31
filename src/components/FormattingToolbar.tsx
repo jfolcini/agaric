@@ -90,7 +90,11 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
 
   return (
     <TooltipProvider delayDuration={400}>
-      <div className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px">
+      <div
+        role="toolbar"
+        aria-label="Formatting"
+        className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px"
+      >
         <Tip label="Bold (Ctrl+B)">
           <Button
             variant="ghost"
