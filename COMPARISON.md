@@ -17,7 +17,7 @@
 | Block UUIDs | UUID v4 auto-assigned, visible via `id::` property | ULID (uppercase Crockford base32) | None (ULIDs are better -- sortable) |
 | Block references `((uuid))` | Inline reference renders source content, live-updating | Not implemented -- `[[ULID]]` links to pages/blocks but does NOT embed content inline | **Critical gap** |
 | Block embeds `{{embed ((uuid))}}` | Full content + children rendered inline, editable in-place | Not implemented | **Critical gap** |
-| Block properties `key:: value` | Inline `key:: value` syntax on lines after block content | `block_properties` table with typed values (text, num, date, ref). Backend supports it. No UI for viewing/editing properties | **UI gap** -- backend ready, frontend missing |
+| Block properties `key:: value` | Inline `key:: value` syntax on lines after block content | `block_properties` table with typed values (text, num, date, ref). PropertiesPanel UI for viewing/editing. Priority property with color-coded badges | Partial -- general property UI done, no inline `key::` syntax |
 | Collapse/expand children | Click arrow or `Ctrl+Up/Down` | Chevron toggle, `Ctrl+.` shortcut, client-side state, focus rescue | Partial -- collapse state lost on page reload (not persisted) |
 | Zoom into block (focus mode) | `Alt+Right` focuses on block + descendants only | Not implemented | **Gap** |
 | Move block up/down | `Alt+Shift+Up/Down` | Drag-and-drop reordering (tree-aware) | Partial -- no keyboard shortcut for move up/down |
@@ -53,7 +53,7 @@
 | Math/LaTeX | `$$E=mc^2$$` inline and block | Not implemented | **Gap** |
 | Tables | Markdown tables | Not implemented | **Gap** |
 | Blockquotes | `> quote` | Not implemented | **Gap** |
-| Slash commands `/` | 20+ commands (TODO, template, date, embed, etc.) | `/TODO`, `/DOING`, `/DONE`, `/date` — 4 commands via TipTap Suggestion extension | Partial — framework built, 4 commands. Extensible for more |
+| Slash commands `/` | 20+ commands (TODO, template, date, embed, etc.) | `/TODO`, `/DOING`, `/DONE`, `/date`, `/PRIORITY HIGH/MED/LOW` — 7 commands via TipTap Suggestion extension | Partial — framework built, 7 commands. Extensible for more |
 | Autocomplete for `[[` | Search all pages | Yes -- `block-link-picker` extension, searches pages, "Create new" option | None |
 | Autocomplete for `#` | Search all tags | Yes -- `tag-picker` extension, searches tags | None |
 | Autocomplete for `((` | Search all blocks for reference | Not implemented -- no block reference system | **Gap** (requires block refs first) |
@@ -440,13 +440,13 @@ Not everything is a gap. Block Notes has architectural advantages:
 |---|:---:|:---:|---|
 | Block CRUD | 10 | 9 | Collapse state not persisted. No visual bullets/tree lines. Cross-block undo missing |
 | Page management | 9 | 7 | Missing aliases, namespaces, page properties UI |
-| Editor formatting | 9 | 6 | Bold/italic/code + headings/code blocks (static). No tables, highlight, strikethrough in editor |
+| Editor formatting | 9 | 7 | Bold/italic/code + headings/code blocks with syntax highlighting. /PRIORITY commands. No tables, highlight, strikethrough |
 | Linking system | 10 | 5 | Have page links + backlinks + external links. Missing block refs, embeds, unlinked refs |
-| Properties | 8 | 7 | Backend + API complete. Task marker is first property UI. No general editor |
+| Properties | 8 | 8 | Full property system: backend + PropertiesPanel UI + priority badges + property-based filtering + query_by_property |
 | Tags | 8 | 7 | Good filtering. Tags not unified with pages (design choice) |
-| Query system | 9 | 2 | Only tag queries + FTS. No inline queries, no property/task queries |
-| Task management | 8 | 5 | TODO/DOING/DONE + checkboxes + /commands. No priority, scheduling, queries |
-| Daily journal | 8 | 6 | Tri-mode view, calendar picker. Monthly view is perf issue. No templates, no auto-create today, no keyboard nav |
+| Query system | 9 | 4 | Tag queries + FTS + property queries. No inline queries yet |
+| Task management | 8 | 7 | TODO/DOING/DONE + priority [A/B/C] + agenda mode + /commands. No scheduling, deadline semantics |
+| Daily journal | 8 | 7 | Tri-mode + agenda mode, calendar picker, keyboard nav. No templates, no auto-create today |
 | Search | 8 | 7 | Good FTS5. Missing scope filters, unlinked references |
 | Templates | 7 | 0 | Not started |
 | Sync/storage | 5 | 8 | Our architecture is fundamentally better, but sync not exposed yet |
