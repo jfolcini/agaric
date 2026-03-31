@@ -880,7 +880,7 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    const badge = container.querySelector('.priority-badge')
+    const badge = container.querySelector('.priority-badge > div')
     expect(badge?.className).toContain('bg-red-100')
     expect(badge?.className).toContain('text-red-700')
   })
@@ -896,7 +896,7 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    const badge = container.querySelector('.priority-badge')
+    const badge = container.querySelector('.priority-badge > div')
     expect(badge?.className).toContain('bg-yellow-100')
     expect(badge?.className).toContain('text-yellow-700')
   })
@@ -912,7 +912,7 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    const badge = container.querySelector('.priority-badge')
+    const badge = container.querySelector('.priority-badge > div')
     expect(badge?.className).toContain('bg-blue-100')
     expect(badge?.className).toContain('text-blue-700')
   })

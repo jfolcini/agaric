@@ -273,14 +273,7 @@ export function SortableBlock({
         {priority && (
           <button
             type="button"
-            className={cn(
-              'priority-badge flex-shrink-0 text-[10px] font-bold mt-1.5 w-4 h-4 rounded-full flex items-center justify-center transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center',
-              priority === 'A' && 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-              priority === 'B' &&
-                'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
-              priority === 'C' &&
-                'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-            )}
+            className="priority-badge flex-shrink-0 p-0.5 mt-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
             title={`Priority ${PRIORITY_DISPLAY[priority]} — Click to cycle (1 → 2 → 3 → none)`}
             aria-label={`Priority ${PRIORITY_DISPLAY[priority]}. Click to cycle.`}
             onClick={(e) => {
@@ -288,7 +281,18 @@ export function SortableBlock({
               onTogglePriority?.(blockId)
             }}
           >
-            {PRIORITY_DISPLAY[priority]}
+            <div
+              className={cn(
+                'w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold',
+                priority === 'A' && 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+                priority === 'B' &&
+                  'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+                priority === 'C' &&
+                  'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+              )}
+            >
+              {PRIORITY_DISPLAY[priority]}
+            </div>
           </button>
         )}
       </div>
