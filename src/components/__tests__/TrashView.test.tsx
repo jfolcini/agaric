@@ -246,6 +246,63 @@ describe('TrashView', () => {
     })
   })
 
+  // ── Error handling ──────────────────────────────────────────────────
+
+  it('handles failed load gracefully', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('DB error'))
+
+    render(<TrashView />)
+
+    // Component silently catches the error, loading ends, blocks stays empty
+    // so the empty state is shown
+    expect(
+      await screen.findByText(/Nothing in trash\. Deleted items will appear here\./),
+    ).toBeInTheDocument()
+  })
+
+  it('handles failed restore gracefully', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock('B1', 'item', '2025-01-15T00:00:00Z')
+    mockedInvoke
+      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
+      .mockRejectedValueOnce(new Error('Restore failed'))
+
+    render(<TrashView />)
+
+    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    await user.click(restoreBtn)
+
+    // Block should still be in the list (restore failed silently, so don't remove it)
+    await waitFor(() => {
+      expect(screen.getByText('item')).toBeInTheDocument()
+    })
+  })
+
+  it('handles failed purge gracefully', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock('B1', 'item', '2025-01-15T00:00:00Z')
+    mockedInvoke
+      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
+      .mockRejectedValueOnce(new Error('Purge failed'))
+
+    render(<TrashView />)
+
+    // First click shows confirmation
+    const purgeBtn = await screen.findByRole('button', { name: /Purge/i })
+    await user.click(purgeBtn)
+
+    // Second click (Yes) triggers purge which fails
+    const yesBtn = screen.getByRole('button', { name: /Yes/i })
+    await user.click(yesBtn)
+
+    // Block should still be in the list (purge failed silently)
+    await waitFor(() => {
+      expect(screen.getByText('item')).toBeInTheDocument()
+    })
+  })
+
+  // ── a11y ────────────────────────────────────────────────────────────
+
   it('has no a11y violations', async () => {
     const page = {
       items: [makeBlock('B1', 'accessible item', '2025-01-15T00:00:00Z')],

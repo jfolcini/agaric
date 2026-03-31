@@ -697,6 +697,23 @@ describe('JournalPage', () => {
     expect(skeletons.length).toBe(3)
   })
 
+  // ── Error handling ──────────────────────────────────────────────────
+
+  it('shows empty state when page listing fails', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('Failed to load'))
+
+    renderJournal()
+
+    // Loading skeleton should disappear (component catches the error and sets loading=false)
+    await waitFor(() => {
+      expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+    })
+
+    // Component falls back to empty pageMap, so today's date shows the empty state
+    const todayDisplay = formatDateDisplay(new Date())
+    expect(screen.getByText(`No blocks for ${todayDisplay}.`)).toBeInTheDocument()
+  })
+
   // ── a11y ────────────────────────────────────────────────────────────
 
   it('has no a11y violations (daily mode, empty state)', async () => {

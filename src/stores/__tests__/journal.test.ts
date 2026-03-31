@@ -1,8 +1,9 @@
 /**
- * Tests for journal store — scrollToDate, goToDateAndScroll, clearScrollTarget.
+ * Tests for journal store — setMode, setCurrentDate, navigateToDate,
+ * goToDateAndScroll, clearScrollTarget.
  *
- * Validates the new scroll-to-today feature where clicking "Today" in
- * weekly/monthly mode sets both currentDate and a scroll target.
+ * Covers all five store actions and validates correct state isolation
+ * (each action only touches its intended fields).
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -19,6 +20,48 @@ beforeEach(() => {
 describe('journal store', () => {
   it('scrollToDate defaults to null', () => {
     expect(useJournalStore.getState().scrollToDate).toBeNull()
+  })
+
+  // -- setMode --
+  it('setMode updates the mode', () => {
+    useJournalStore.getState().setMode('weekly')
+    expect(useJournalStore.getState().mode).toBe('weekly')
+  })
+
+  it('setMode does not change currentDate or scrollToDate', () => {
+    const dateBefore = useJournalStore.getState().currentDate
+    useJournalStore.getState().setMode('monthly')
+    expect(useJournalStore.getState().currentDate).toEqual(dateBefore)
+    expect(useJournalStore.getState().scrollToDate).toBeNull()
+  })
+
+  // -- setCurrentDate --
+  it('setCurrentDate updates the currentDate', () => {
+    const newDate = new Date(2026, 5, 15)
+    useJournalStore.getState().setCurrentDate(newDate)
+    expect(useJournalStore.getState().currentDate).toEqual(newDate)
+  })
+
+  it('setCurrentDate does not change mode or scrollToDate', () => {
+    useJournalStore.setState({ mode: 'weekly' })
+    useJournalStore.getState().setCurrentDate(new Date(2026, 6, 1))
+    expect(useJournalStore.getState().mode).toBe('weekly')
+    expect(useJournalStore.getState().scrollToDate).toBeNull()
+  })
+
+  // -- navigateToDate --
+  it('navigateToDate sets both currentDate and mode', () => {
+    const newDate = new Date(2026, 11, 25)
+    useJournalStore.getState().navigateToDate(newDate, 'monthly')
+    const state = useJournalStore.getState()
+    expect(state.currentDate).toEqual(newDate)
+    expect(state.mode).toBe('monthly')
+  })
+
+  it('navigateToDate does not change scrollToDate', () => {
+    useJournalStore.setState({ scrollToDate: '2026-01-01' })
+    useJournalStore.getState().navigateToDate(new Date(), 'agenda')
+    expect(useJournalStore.getState().scrollToDate).toBe('2026-01-01')
   })
 
   it('goToDateAndScroll sets currentDate and scrollToDate', () => {

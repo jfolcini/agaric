@@ -278,3 +278,34 @@ describe('useUndoShortcuts', () => {
     removeSpy.mockRestore()
   })
 })
+
+describe('error handling', () => {
+  it('does not crash when undo rejects (unhandled rejection)', () => {
+    mockUndo.mockRejectedValueOnce(new Error('undo failed'))
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    // Should not throw synchronously
+    expect(() => {
+      fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+    }).not.toThrow()
+
+    expect(mockUndo).toHaveBeenCalledWith('PAGE_1')
+
+    unmount()
+  })
+
+  it('does not crash when redo rejects', () => {
+    mockRedo.mockRejectedValueOnce(new Error('redo failed'))
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    expect(() => {
+      fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
+    }).not.toThrow()
+
+    expect(mockRedo).toHaveBeenCalledWith('PAGE_1')
+
+    unmount()
+  })
+})

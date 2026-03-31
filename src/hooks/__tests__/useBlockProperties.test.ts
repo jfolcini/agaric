@@ -331,3 +331,84 @@ describe('useBlockProperties handleToggleTodo (regression)', () => {
     expect(result.current.getTodoState('NONEXISTENT')).toBeNull()
   })
 })
+
+describe('useBlockProperties error handling', () => {
+  it('handleToggleTodo propagates IPC error (no silent swallow)', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    await expect(
+      act(async () => {
+        await result.current.handleToggleTodo('BLOCK_1')
+      }),
+    ).rejects.toThrow('IPC failed')
+  })
+
+  it('handleToggleTodo does not update cache on IPC failure', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    try {
+      await act(async () => {
+        await result.current.handleToggleTodo('BLOCK_1')
+      })
+    } catch {
+      // Expected
+    }
+
+    // Cache should remain empty since the IPC failed before setState
+    expect(result.current.blockProperties.size).toBe(0)
+  })
+
+  it('handleTogglePriority propagates IPC error', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    await expect(
+      act(async () => {
+        await result.current.handleTogglePriority('BLOCK_1')
+      }),
+    ).rejects.toThrow('IPC failed')
+  })
+
+  it('handleTogglePriority does not update cache on IPC failure', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    // Set initial properties
+    act(() => {
+      result.current.setBlockProperties(
+        new Map([
+          [
+            'BLOCK_1',
+            [
+              {
+                key: 'priority',
+                value_text: 'A',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ],
+          ],
+        ]),
+      )
+    })
+
+    try {
+      await act(async () => {
+        await result.current.handleTogglePriority('BLOCK_1')
+      })
+    } catch {
+      // Expected
+    }
+
+    // Cache should still have 'A' (not updated to 'B')
+    const props = result.current.blockProperties.get('BLOCK_1')
+    expect(props?.find((p) => p.key === 'priority')?.value_text).toBe('A')
+  })
+})

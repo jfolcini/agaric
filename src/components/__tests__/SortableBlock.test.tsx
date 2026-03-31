@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 
 // Mock @dnd-kit/sortable to control sortable state
 const mockUseSortable = vi.fn()
@@ -1498,5 +1499,23 @@ describe('SortableBlock a11y enhancements', () => {
     const emptyCheckbox = container.querySelector('.task-checkbox-empty')
     expect(emptyCheckbox?.className).toContain('border-muted-foreground/40')
     expect(emptyCheckbox?.className).not.toContain('border-transparent')
+  })
+
+  it('has no a11y violations', async () => {
+    mockUseSortable.mockReturnValue(makeSortable())
+
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello world"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 })

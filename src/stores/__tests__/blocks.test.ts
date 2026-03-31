@@ -895,6 +895,141 @@ describe('useBlockStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // moveUp
+  // ---------------------------------------------------------------------------
+  describe('moveUp', () => {
+    it('calls move_block with prevSibling.position - 1, then reloads', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 5, parent_id: null, depth: 0 })
+      useBlockStore.setState({ blocks: [blockA, blockB], rootParentId: 'PAGE1' })
+
+      // move_block
+      mockedInvoke.mockResolvedValueOnce({})
+      // list_blocks (reload)
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+
+      await useBlockStore.getState().moveUp('B')
+
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'B',
+        newParentId: null,
+        newPosition: -1, // prevSibling(A).position(0) - 1
+      })
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_blocks',
+        expect.objectContaining({ parentId: 'PAGE1' }),
+      )
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE1')
+    })
+
+    it('is no-op when block is the first sibling', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      useBlockStore.setState({ blocks: [blockA, blockB] })
+
+      await useBlockStore.getState().moveUp('A')
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('is no-op when block is not found', async () => {
+      useBlockStore.setState({ blocks: [makeBlock({ id: 'A' })] })
+
+      await useBlockStore.getState().moveUp('NONEXISTENT')
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('does not crash on backend error (silently fails)', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 5, parent_id: null, depth: 0 })
+      useBlockStore.setState({ blocks: [blockA, blockB] })
+
+      mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
+
+      await expect(useBlockStore.getState().moveUp('B')).resolves.toBeUndefined()
+      expect(useBlockStore.getState().blocks).toHaveLength(2)
+    })
+
+    it('uses correct parentId in move_block call', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: 'PARENT', depth: 1 })
+      const blockB = makeBlock({ id: 'B', position: 3, parent_id: 'PARENT', depth: 1 })
+      useBlockStore.setState({ blocks: [blockA, blockB], rootParentId: 'PAGE1' })
+
+      // move_block
+      mockedInvoke.mockResolvedValueOnce({})
+      // list_blocks (reload)
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+
+      await useBlockStore.getState().moveUp('B')
+
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'B',
+        newParentId: 'PARENT',
+        newPosition: -1, // prevSibling(A).position(0) - 1
+      })
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // moveDown
+  // ---------------------------------------------------------------------------
+  describe('moveDown', () => {
+    it('calls move_block with nextSibling.position + 1, then reloads', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 5, parent_id: null, depth: 0 })
+      useBlockStore.setState({ blocks: [blockA, blockB], rootParentId: 'PAGE1' })
+
+      // move_block
+      mockedInvoke.mockResolvedValueOnce({})
+      // list_blocks (reload)
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+
+      await useBlockStore.getState().moveDown('A')
+
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'A',
+        newParentId: null,
+        newPosition: 6, // nextSibling(B).position(5) + 1
+      })
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_blocks',
+        expect.objectContaining({ parentId: 'PAGE1' }),
+      )
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE1')
+    })
+
+    it('is no-op when block is the last sibling', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      useBlockStore.setState({ blocks: [blockA, blockB] })
+
+      await useBlockStore.getState().moveDown('B')
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('is no-op when block is not found', async () => {
+      useBlockStore.setState({ blocks: [makeBlock({ id: 'A' })] })
+
+      await useBlockStore.getState().moveDown('NONEXISTENT')
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('does not crash on backend error (silently fails)', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 5, parent_id: null, depth: 0 })
+      useBlockStore.setState({ blocks: [blockA, blockB] })
+
+      mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
+
+      await expect(useBlockStore.getState().moveDown('A')).resolves.toBeUndefined()
+      expect(useBlockStore.getState().blocks).toHaveLength(2)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // undo store integration — notifyUndoNewAction
   // ---------------------------------------------------------------------------
   describe('undo store integration', () => {
