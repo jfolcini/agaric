@@ -37,6 +37,17 @@ language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
 
+# CSS variable wrapper guard — theme uses oklch(), so hsl()/rgb() wrappers are invalid
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "no-hsl-rgb-var-wrap"
+name = "no hsl/rgb wrapping css vars"
+entry = "bash -c 'if grep -rn \"hsl(var(--\\|rgb(var(--\" src/ --include=\"*.tsx\" --include=\"*.ts\" --include=\"*.css\"; then echo \"ERROR: Use var(--name) directly, not hsl(var(--name)) — theme uses oklch values\"; exit 1; fi'"
+language = "system"
+pass_filenames = false
+types_or = ["ts", "tsx", "css"]
+
 # Vitest (run on TS changes)
 [[repos]]
 repo = "local"
