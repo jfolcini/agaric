@@ -26,7 +26,7 @@ import { EditableBlock } from './EditableBlock'
 export const INDENT_WIDTH = 24
 
 /** Fixed width for the gutter so positions never shift. */
-const GUTTER_WIDTH = 'w-[48px]'
+const GUTTER_WIDTH = 'w-[44px]'
 
 /** Display labels for stored priority values. */
 const PRIORITY_DISPLAY: Record<string, string> = { A: '1', B: '2', C: '3' }
@@ -176,7 +176,7 @@ export function SortableBlock({
       style={style}
       data-block-id={blockId}
       className={cn(
-        'sortable-block group relative flex items-start gap-0',
+        'sortable-block group relative flex items-start gap-1',
         isFocused && 'block-active',
       )}
       onTouchStart={handleTouchStart}
@@ -193,7 +193,7 @@ export function SortableBlock({
       )}
 
       {/* ── Narrow gutter — grip + delete only ─────────────────── */}
-      <div className={cn(GUTTER_WIDTH, 'flex-shrink-0 flex items-start')}>
+      <div className={cn(GUTTER_WIDTH, 'flex-shrink-0 flex items-start gap-1')}>
         {/* Drag handle — far left */}
         <button
           type="button"
@@ -206,9 +206,7 @@ export function SortableBlock({
           <GripVertical size={16} />
         </button>
 
-        <div className="flex-1" />
-
-        {/* Delete — right side of gutter */}
+        {/* Delete — next to grip */}
         {onDelete && (
           <button
             type="button"
@@ -223,7 +221,7 @@ export function SortableBlock({
       </div>
 
       {/* ── Inline controls — chevron, checkbox, priority ─────── */}
-      <div className="inline-controls flex items-start flex-shrink-0 gap-0.5">
+      <div className="inline-controls flex items-start flex-shrink-0 gap-1">
         {/* Chevron — only when hasChildren, always visible */}
         {hasChildren && (
           <button

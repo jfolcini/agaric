@@ -1182,7 +1182,7 @@ describe('SortableBlock inline controls', () => {
     expect(badge).toBeInTheDocument()
   })
 
-  it('gutter width is w-[48px]', () => {
+  it('gutter width is w-[44px]', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1192,7 +1192,7 @@ describe('SortableBlock inline controls', () => {
       />,
     )
 
-    const gutter = container.querySelector('.w-\\[48px\\]')
+    const gutter = container.querySelector('.w-\\[44px\\]')
     expect(gutter).toBeInTheDocument()
   })
 })
