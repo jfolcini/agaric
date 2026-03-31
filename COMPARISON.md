@@ -313,19 +313,19 @@
 - Kanban view via plugin
 
 **Block Notes current state:**
-- Can create project pages
-- Properties exist in backend but no UI
-- Tags for categorization
-- No queries for aggregation
-- No namespace support
+- Project pages with PropertiesPanel (add/edit/delete properties)
+- Property-based queries (`query_by_property` command, paginated)
+- Tags for categorization with boolean AND/OR queries
+- Task markers + priority on blocks
+- Agenda mode aggregates all tasks by status
+- No namespace support, no inline queries
 
 **Gaps to close:**
-1. Property UI (view/edit on blocks and pages)
-2. Property-based queries
-3. Namespace support (or equivalent organizational structure)
-4. Task aggregation
+1. Inline query blocks (embed task lists in project pages)
+2. Namespace support (or equivalent organizational structure)
+3. Date-range property queries for deadline tracking
 
-**Verdict: Infrastructure exists, UX doesn't.**
+**Verdict: Most primitives done, composition layer missing.** Properties, queries, tasks all work individually. Missing inline queries to compose them into project dashboards on a page.
 
 ---
 
@@ -339,69 +339,59 @@
 - Literature note templates
 
 **Block Notes current state:**
-- Can create pages and blocks for notes
+- Pages and blocks for notes with external URL links
+- Properties for metadata (PropertiesPanel)
 - Attachments tracked in backend (not rendered in UI)
-- No PDF reader
-- No web clipper
-- No highlight syntax
+- No PDF reader, no web clipper, no highlight syntax
 
 **Gaps to close:**
-This is a deep feature set. Minimum viable:
 1. Highlight/mark syntax in editor
-2. Attachment rendering in UI (at least images)
-3. External link syntax and rendering
+2. Attachment/image rendering in UI
 
-**Verdict: Not started** on the specialized tooling. Basic note-taking works.
+**Verdict: Basic.** Can take notes with links and properties. Missing highlight syntax and specialized research tooling.
 
 ---
 
 ## Part 3: Priority Gap Analysis
 
-### Tier 1 -- Critical (blocks core Logseq replacement)
+### Tier 1 -- Next Up (user-selected priorities)
 
-| # | Feature | Why Critical | Backend Ready? |
-|---|---------|-------------|----------------|
-| 1 | **Task markers** (TODO/DOING/DONE) | Enables GTD, meeting action items, project management | **Done** -- `set_property` command + cycling UI |
-| 2 | **Block references** `((id))` | Core Zettelkasten, reuse of ideas | Need new inline syntax + resolver |
-| 3 | **Block embeds** `{{embed ((id))}}` | Content reuse, editable in context | Need embed component + renderer |
-| 4 | **Collapse/expand** | Essential for large outlines | **Done** -- chevron toggle, Ctrl+., client-side state |
-| 5 | **Properties UI** | Backend supports it, users can't see/edit them | Frontend only |
-| 6 | **Slash commands** `/` | Discovery, task creation, template insertion | **Partial** -- framework + 4 commands (/TODO /DOING /DONE /date) |
-| 7 | **Inline queries** | Task dashboards, project overviews | Need query block renderer + backend support |
+| # | Feature | Why Critical | Effort |
+|---|---------|-------------|--------|
+| 1 | **Templates** | Journal/meeting/project templates. Auto-populate daily pages. `/Template` slash command | New: template storage (property or dedicated table), template block trees, insertion logic, dynamic variables (`<% today %>`) |
+| 2 | **Scheduled/deadline date semantics** | "Show me overdue tasks", "tasks due this week". Turns date links into actionable scheduling | Backend: agenda_cache query by date range, `SCHEDULED`/`DEADLINE` property conventions. Frontend: date-range filters in agenda mode |
+| 3 | **Auto-create today's journal on launch** | Logseq opens ready-to-type. We open to a blank page | Frontend only -- create page block on boot if today's journal doesn't exist |
+| 4 | **Persist collapse state** | Outliner users lose their carefully structured view on every reload | localStorage keyed by block ID, or `collapsed` block property |
+| 5 | **Strikethrough (`~~text~~`)** | Basic formatting people use constantly for "done but visible" items | Serializer + TipTap Strike extension + StaticBlock rendering |
+| 6 | **Highlight (`==text==`)** | Emphasis for progressive summarization, research notes | Serializer + TipTap Highlight extension + StaticBlock rendering |
+| 7 | **Date-range queries in agenda** | "This week's tasks", "overdue since last Monday" | Extend agenda mode to filter by scheduled/deadline date ranges, not just status |
 
-### Tier 2 -- Important (enables key workflows)
+### Tier 2 -- Important (improves daily use)
 
-| # | Feature | Why Important | Backend Ready? |
-|---|---------|--------------|----------------|
-| 8 | Templates | Reusable structures for journals, meetings, projects | Need template storage + insertion |
-| 9 | Scrollable past journals / "Load older days" | Journal-centric workflow | **Not implemented** -- monthly view is 28-31 stacked sections |
-| 10 | Property-based queries | Project management, PARA method | Need new query command |
-| 11 | Scheduled/deadline semantics | Task management with dates | Timestamps parsed, need semantic layer |
-| 12 | Strikethrough + highlight syntax | Formatting parity | Serializer extension |
-| 13 | Move block up/down keyboard shortcut | Fast outliner editing | Frontend only |
-| 14 | Zoom into block | Focus on subtree | Frontend only |
-| 15 | Persist collapse state | Users lose outline on reload | localStorage or block property |
-| 16 | Visual tree lines / bullets | Outline hard to scan without hierarchy cues | CSS + component change |
-| 17 | Auto-create today's journal on launch | First-time UX is blank | Frontend only |
-| 18 | Journal keyboard nav shortcuts (g n / g p) | Power users expect fast date nav | Frontend only |
-| 19 | Monthly view as calendar grid | Current stacked view renders 31 BlockTrees | Replace renderMonthly() |
-| 20 | Batch property fetch (single IPC) | Current N+1 fetch slows page load | New backend command |
-| 21 | Global resolve cache (Zustand store) | Duplicated listBlocks calls per mount | Refactor |
+| # | Feature | Notes |
+|---|---------|-------|
+| 8 | Inline query blocks | Embed live query results in any page (task dashboards, project overviews) |
+| 9 | Unlinked references | FTS5 search for page title as plain text -- serendipity engine |
+| 10 | Move block up/down keyboard shortcut | `Alt+Shift+Up/Down` for fast outliner editing |
+| 11 | Zoom into block (focus mode) | Show only a block + descendants |
+| 12 | Visual tree lines / bullets | Outline readability without squinting at indentation |
+| 13 | Blockquotes (`> quote`) | Common formatting |
+| 14 | Tables | Structured data in blocks |
 
 ### Tier 3 -- Nice to Have (polish and parity)
 
 | # | Feature | Notes |
 |---|---------|-------|
-| 16 | Page aliases | Multiple names for same page |
-| 17 | Namespaced pages | Hierarchical organization |
-| 18 | Unlinked references | Discover implicit connections |
-| 19 | Code blocks with syntax highlighting | Rich content |
-| 20 | Math/LaTeX rendering | Academic use |
-| 21 | Tables | Structured data in blocks |
-| 22 | Headings within blocks | Document structure |
-| 23 | Block-level selection (multi-select) | Bulk operations |
-| 24 | Import/export | Migration and backup |
-| 25 | Custom link labels | `[display](target)` |
+| 15 | Page aliases | Multiple names for same page |
+| 16 | Namespaced pages | Hierarchical organization |
+| 17 | Import/export | Migration from Logseq, backups |
+| 18 | Math/LaTeX rendering | Academic use |
+| 19 | Block-level selection (multi-select) | Bulk operations |
+| 20 | Custom link labels for internal links | `[display]([[page]])` |
+| 21 | Cross-block undo | Undo across flush boundaries |
+| 22 | CANCELLED/WAITING task states | GTD completeness |
+| 23 | Block references `((id))` | Inline rendering of referenced block content |
+| 24 | Block/page embeds `{{embed}}` | Full subtree rendered inline, editable |
 
 ### Tier 4 -- Deferred (noted, not priority)
 
@@ -418,19 +408,22 @@ This is a deep feature set. Minimum viable:
 
 ## Part 4: What We Do Better Than Logseq
 
-Not everything is a gap. Block Notes has architectural advantages:
-
 | Area | Block Notes Advantage | Logseq Limitation |
 |---|---|---|
+| **Journal views** | 4 modes (daily/weekly/monthly/agenda) with calendar grid | Single scrollable daily view |
+| **Task dashboard** | Dedicated agenda mode with collapsible sections per state | Requires manually writing Datalog queries |
+| **Backlink filtering** | 4 filter dimensions (type, status, date, priority) | Basic filter bar |
+| **Formatting toolbar** | BubbleMenu with bold/italic/code/link/codeblock/undo/redo | None (keyboard shortcuts only) |
 | **Sync foundation** | Append-only op log, DAG-based merge, three-way conflict resolution, blake3 integrity | File-based sync is fragile, conflicts are file-level |
 | **Data integrity** | Every op is hash-verified, crash recovery at boot | File corruption possible, no checksums |
-| **Performance architecture** | CQRS materializer, cursor-based pagination everywhere, FTS5 with proper ranking | Datascript in-memory DB can be slow for large graphs |
+| **Performance architecture** | CQRS materializer, cursor-based pagination everywhere, FTS5 with BM25 | Datascript in-memory DB can be slow for large graphs |
 | **Storage efficiency** | Single SQLite file with WAL, zstd-compressed snapshots | One file per page = thousands of small files |
-| **Structured properties** | Typed properties (text, num, date, ref) with validation | Properties are untyped strings in file graph |
+| **Structured properties** | Typed properties (text, num, date, ref) with validation + PropertiesPanel UI | Properties are untyped strings in file graph |
 | **ID system** | ULIDs are sortable, case-normalized, deterministic ordering | UUID v4 is random, not sortable |
 | **Soft delete** | Cascade soft-delete with restore + purge, timestamp verification | Delete is file deletion or block removal |
-| **Test coverage** | 1,571 tests across 3 layers (Rust, Vitest, Playwright) | Community-reported quality issues |
+| **Test coverage** | 1,777 tests across 3 layers (836 Rust + 903 Vitest + 38 Playwright) | Community-reported quality issues |
 | **Desktop performance** | Tauri 2 (Rust + WebView) -- small binary, low memory | Electron -- large binary, high memory |
+| **Android** | Tauri 2 Android target (spike working, IPC confirmed) | Electron-based, no native mobile |
 
 ---
 
@@ -438,23 +431,23 @@ Not everything is a gap. Block Notes has architectural advantages:
 
 | Category | Logseq | Block Notes | Notes |
 |---|:---:|:---:|---|
-| Block CRUD | 10 | 9 | Collapse state not persisted. No visual bullets/tree lines. Cross-block undo missing |
-| Page management | 9 | 7 | Missing aliases, namespaces, page properties UI |
-| Editor formatting | 9 | 7 | Bold/italic/code + headings/code blocks with syntax highlighting. /PRIORITY commands. No tables, highlight, strikethrough |
-| Linking system | 10 | 5 | Have page links + backlinks + external links. Missing block refs, embeds, unlinked refs |
-| Properties | 8 | 8 | Full property system: backend + PropertiesPanel UI + priority badges + property-based filtering + query_by_property |
-| Tags | 8 | 7 | Good filtering. Tags not unified with pages (design choice) |
-| Query system | 9 | 4 | Tag queries + FTS + property queries. No inline queries yet |
-| Task management | 8 | 7 | TODO/DOING/DONE + priority [A/B/C] + agenda mode + /commands. No scheduling, deadline semantics |
-| Daily journal | 8 | 7 | Tri-mode + agenda mode, calendar picker, keyboard nav. No templates, no auto-create today |
-| Search | 8 | 7 | Good FTS5. Missing scope filters, unlinked references |
-| Templates | 7 | 0 | Not started |
-| Sync/storage | 5 | 8 | Our architecture is fundamentally better, but sync not exposed yet |
-| Data integrity | 4 | 9 | Op log + hashing + recovery is far ahead |
-| Performance arch | 6 | 8 | CQRS + cursor pagination + Tauri 2. N+1 property fetch, resolve preload issues |
+| Block CRUD | 10 | 9 | Collapse works (not persisted). No visual bullets/tree lines. No cross-block undo |
+| Page management | 9 | 7 | Missing aliases, namespaces |
+| Editor formatting | 9 | 8 | Bold/italic/code/headings/code blocks with syntax highlighting + formatting toolbar. No tables, highlight, strikethrough |
+| Linking system | 10 | 6 | Page links + backlinks + external links + rich backlink filtering. Missing block refs, embeds, unlinked refs |
+| Properties | 8 | 8 | Full system: backend + PropertiesPanel + priority badges + batch fetch + query_by_property |
+| Tags | 8 | 7 | Boolean AND/OR/NOT filtering. Tags not unified with pages (design choice) |
+| Query system | 9 | 5 | Tag queries + FTS + property queries + agenda mode. No inline query blocks |
+| Task management | 8 | 7 | TODO/DOING/DONE + priority A/B/C + agenda mode + slash commands. No scheduling/deadline semantics |
+| Daily journal | 8 | 8 | 4 modes (daily/weekly/monthly/agenda) + calendar picker. No templates, no auto-create today |
+| Search | 8 | 7 | FTS5 + FTS in pickers + batch resolve. Missing scope filters, unlinked refs |
+| Templates | 7 | 0 | Not started -- **top priority** |
+| Sync/storage | 5 | 8 | Architecture fundamentally better, transport not exposed yet |
+| Data integrity | 4 | 9 | Op log + blake3 hashing + recovery far ahead |
+| Performance arch | 6 | 8 | CQRS + cursor pagination + Tauri 2 |
 | Import/export | 7 | 0 | Not started |
 
-**Overall: Block Notes has a rock-solid foundation (data model, sync, integrity, performance) but is missing the user-facing features that make Logseq's workflows possible. The priority is building up from Tier 1 gaps. Key UX issues (collapse persistence, cross-block undo, visual hierarchy, monthly view) need fixing alongside feature gaps.**
+**Overall: Block Notes has closed most original gaps and now has features Logseq lacks (4 journal modes, agenda dashboard, formatting toolbar, rich backlink filtering). The next sprint is templates + UX polish (auto-create today, collapse persistence, strikethrough/highlight) + date-aware task scheduling. Block refs/embeds are deferred -- not needed for the target workflow.**
 
 ---
 
