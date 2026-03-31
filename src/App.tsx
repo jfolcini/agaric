@@ -39,6 +39,7 @@ import {
   useSidebar,
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
+import { createBlock } from './lib/tauri'
 import { useJournalStore } from './stores/journal'
 import { useNavigationStore, type View } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
@@ -120,6 +121,28 @@ function App() {
     }
     document.addEventListener('keydown', handleJournalNav)
     return () => document.removeEventListener('keydown', handleJournalNav)
+  }, [])
+
+  // ── Global shortcuts (Ctrl/Cmd+F for search, Ctrl/Cmd+N for new page) ──
+  useEffect(() => {
+    function handleGlobalShortcuts(e: KeyboardEvent) {
+      const mod = e.ctrlKey || e.metaKey
+      if (!mod) return
+
+      if (e.key === 'f') {
+        e.preventDefault()
+        useNavigationStore.getState().setView('search')
+      }
+
+      if (e.key === 'n') {
+        e.preventDefault()
+        createBlock({ blockType: 'page', content: 'Untitled' }).then((resp) => {
+          useNavigationStore.getState().navigateToPage(resp.id, 'Untitled')
+        })
+      }
+    }
+    window.addEventListener('keydown', handleGlobalShortcuts)
+    return () => window.removeEventListener('keydown', handleGlobalShortcuts)
   }, [])
 
   const handlePageSelect = useCallback(

@@ -56,6 +56,11 @@ interface BlockStore {
   indent: (blockId: string) => Promise<void>
   /** Dedent: move block up one level to grandparent. */
   dedent: (blockId: string) => Promise<void>
+
+  /** Move block up among its siblings (swap with previous sibling). */
+  moveUp: (blockId: string) => Promise<void>
+  /** Move block down among its siblings (swap with next sibling). */
+  moveDown: (blockId: string) => Promise<void>
 }
 
 // ── Recursive subtree loader ─────────────────────────────────────────────
@@ -354,6 +359,56 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
 
       remaining.splice(insertAt, 0, ...movedItems)
       set({ blocks: remaining })
+    } catch {
+      // Silently fail
+    }
+  },
+
+  moveUp: async (blockId: string) => {
+    const { blocks, rootParentId } = get()
+    const block = blocks.find((b) => b.id === blockId)
+    if (!block) return
+
+    const parentId = block.parent_id
+
+    // Collect siblings (same parent_id and depth) in flat-tree order
+    const siblings = blocks.filter(
+      (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === block.depth,
+    )
+    const sibIndex = siblings.findIndex((b) => b.id === blockId)
+    if (sibIndex <= 0) return // Already first sibling or not found
+
+    const prevSibling = siblings[sibIndex - 1]
+    const newPosition = (prevSibling.position ?? 0) - 1
+
+    try {
+      await moveBlock(blockId, parentId, newPosition)
+      await get().load(rootParentId ?? undefined)
+    } catch {
+      // Silently fail
+    }
+  },
+
+  moveDown: async (blockId: string) => {
+    const { blocks, rootParentId } = get()
+    const block = blocks.find((b) => b.id === blockId)
+    if (!block) return
+
+    const parentId = block.parent_id
+
+    // Collect siblings (same parent_id and depth) in flat-tree order
+    const siblings = blocks.filter(
+      (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === block.depth,
+    )
+    const sibIndex = siblings.findIndex((b) => b.id === blockId)
+    if (sibIndex < 0 || sibIndex >= siblings.length - 1) return // Already last sibling
+
+    const nextSibling = siblings[sibIndex + 1]
+    const newPosition = (nextSibling.position ?? 0) + 1
+
+    try {
+      await moveBlock(blockId, parentId, newPosition)
+      await get().load(rootParentId ?? undefined)
     } catch {
       // Silently fail
     }

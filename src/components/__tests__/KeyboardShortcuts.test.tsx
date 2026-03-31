@@ -35,7 +35,7 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText('Navigation')).toBeInTheDocument()
     expect(screen.getByText('Editing')).toBeInTheDocument()
     expect(screen.getByText('Pickers')).toBeInTheDocument()
-    expect(screen.getByText('UI')).toBeInTheDocument()
+    expect(screen.getByText('Global')).toBeInTheDocument()
 
     // Verify all shortcuts are present
     expect(screen.getByText('Move to previous block')).toBeInTheDocument()
@@ -47,19 +47,25 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText('Dedent block')).toBeInTheDocument()
     expect(screen.getByText('Tag picker')).toBeInTheDocument()
     expect(screen.getByText('Block link picker')).toBeInTheDocument()
+    expect(screen.getByText('Slash command menu')).toBeInTheDocument()
     expect(screen.getByText('Show keyboard shortcuts')).toBeInTheDocument()
     expect(screen.getByText('Close dialog / cancel editing')).toBeInTheDocument()
+    expect(screen.getByText('Toggle code block')).toBeInTheDocument()
+    expect(screen.getByText('Move block up')).toBeInTheDocument()
+    expect(screen.getByText('Move block down')).toBeInTheDocument()
+    expect(screen.getByText('Focus search')).toBeInTheDocument()
+    expect(screen.getByText('Create new page')).toBeInTheDocument()
 
     // Verify key labels (keys are now split into individual <kbd> elements)
     expect(screen.getAllByText('Enter').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Tab').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('Shift')).toBeInTheDocument()
-    expect(screen.getByText('#')).toBeInTheDocument()
+    expect(screen.getAllByText('Shift').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('@')).toBeInTheDocument()
     expect(screen.getByText('[[')).toBeInTheDocument()
     expect(screen.getByText('Escape')).toBeInTheDocument()
 
     // Verify conditions are rendered separately from keys
-    expect(screen.getAllByText('in editor').length).toBe(2)
+    expect(screen.getAllByText('in editor').length).toBe(3)
     expect(screen.getByText('at start')).toBeInTheDocument()
     expect(screen.getByText('at end')).toBeInTheDocument()
   })
@@ -170,6 +176,6 @@ describe('KeyboardShortcuts', () => {
 
     expect(screen.getByText('at start')).toBeInTheDocument()
     expect(screen.getByText('at end')).toBeInTheDocument()
-    expect(screen.getAllByText('in editor')).toHaveLength(2)
+    expect(screen.getAllByText('in editor')).toHaveLength(3)
   })
 })

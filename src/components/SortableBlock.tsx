@@ -7,14 +7,19 @@
  *
  * Left-to-right order:
  *   [grip] [chevron] [spacer...] [trash] [priority] [checkbox] [content]
+ *
+ * Mobile / right-click context menu (long-press or right-click) provides
+ * touch-friendly access to block actions: delete, indent, dedent, TODO, priority.
  */
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Check, ChevronRight, GripVertical, Trash2 } from 'lucide-react'
 import type React from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { cn } from '../lib/utils'
+import { BlockContextMenu } from './BlockContextMenu'
 import { EditableBlock } from './EditableBlock'
 
 /** Pixels of left padding per depth level. */
@@ -26,6 +31,12 @@ const GUTTER_WIDTH = 'w-[120px]'
 /** Display labels for stored priority values. */
 const PRIORITY_DISPLAY: Record<string, string> = { A: '1', B: '2', C: '3' }
 
+/** Minimum touch hold duration (ms) to trigger the context menu. */
+const LONG_PRESS_DELAY = 500
+
+/** Max touch movement (px) before the long-press gesture is cancelled. */
+const LONG_PRESS_MOVE_THRESHOLD = 10
+
 interface SortableBlockProps {
   blockId: string
   content: string
@@ -35,6 +46,10 @@ interface SortableBlockProps {
   rovingEditor: RovingEditorHandle
   onNavigate?: (id: string) => void
   onDelete?: (blockId: string) => void
+  /** Indent: make block a child of its previous sibling. */
+  onIndent?: (blockId: string) => void
+  /** Dedent: move block up one level to grandparent. */
+  onDedent?: (blockId: string) => void
   resolveBlockTitle?: (id: string) => string
   resolveTagName?: (id: string) => string
   resolveBlockStatus?: (id: string) => 'active' | 'deleted'
@@ -63,6 +78,8 @@ export function SortableBlock({
   rovingEditor,
   onNavigate,
   onDelete,
+  onIndent,
+  onDedent,
   resolveBlockTitle,
   resolveTagName,
   resolveBlockStatus,
@@ -79,6 +96,66 @@ export function SortableBlock({
     id: blockId,
   })
 
+  // ── Context menu state ───────────────────────────────────────────
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const touchStartPos = useRef<{ x: number; y: number } | null>(null)
+
+  const clearLongPress = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+    touchStartPos.current = null
+  }, [])
+
+  const openContextMenu = useCallback((x: number, y: number) => {
+    setContextMenu({ x, y })
+  }, [])
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null)
+  }, [])
+
+  // ── Touch handlers for long-press detection ──────────────────────
+  const handleTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      const touch = e.touches[0]
+      touchStartPos.current = { x: touch.clientX, y: touch.clientY }
+      longPressTimer.current = setTimeout(() => {
+        openContextMenu(touch.clientX, touch.clientY)
+        longPressTimer.current = null
+      }, LONG_PRESS_DELAY)
+    },
+    [openContextMenu],
+  )
+
+  const handleTouchEnd = useCallback(() => {
+    clearLongPress()
+  }, [clearLongPress])
+
+  const handleTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      if (!touchStartPos.current) return
+      const touch = e.touches[0]
+      const dx = touch.clientX - touchStartPos.current.x
+      const dy = touch.clientY - touchStartPos.current.y
+      if (Math.sqrt(dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD) {
+        clearLongPress()
+      }
+    },
+    [clearLongPress],
+  )
+
+  // ── Right-click handler (desktop bonus) ──────────────────────────
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      openContextMenu(e.clientX, e.clientY)
+    },
+    [openContextMenu],
+  )
+
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -87,6 +164,7 @@ export function SortableBlock({
   }
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: touch handlers for long-press context menu
     <div
       ref={setNodeRef}
       style={style}
@@ -95,6 +173,10 @@ export function SortableBlock({
         'sortable-block group relative flex items-start gap-0',
         isFocused && 'block-active',
       )}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchMove}
+      onContextMenu={handleContextMenu}
     >
       {/* Indent guide line for nested blocks */}
       {depth > 0 && (
@@ -231,6 +313,20 @@ export function SortableBlock({
           resolveTagStatus={resolveTagStatus}
         />
       </div>
+
+      {/* ── Context menu (long-press / right-click) ───────────────── */}
+      {contextMenu && (
+        <BlockContextMenu
+          blockId={blockId}
+          position={contextMenu}
+          onClose={closeContextMenu}
+          onDelete={onDelete}
+          onIndent={onIndent}
+          onDedent={onDedent}
+          onToggleTodo={onToggleTodo}
+          onTogglePriority={onTogglePriority}
+        />
+      )}
     </div>
   )
 }

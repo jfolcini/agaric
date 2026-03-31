@@ -42,13 +42,20 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
         description: 'Cycle task state (TODO → DOING → DONE → none)',
       },
       { keys: 'Ctrl + K', description: 'Insert or edit external link' },
+      { keys: 'Ctrl + Shift + C', description: 'Toggle code block' },
+      { keys: 'Ctrl + Shift + ↑', description: 'Move block up' },
+      { keys: 'Ctrl + Shift + ↓', description: 'Move block down' },
+      { keys: 'Ctrl + Shift + 1', description: 'Set priority 1 (high)' },
+      { keys: 'Ctrl + Shift + 2', description: 'Set priority 2 (medium)' },
+      { keys: 'Ctrl + Shift + 3', description: 'Set priority 3 (low)' },
     ],
   },
   {
     category: 'Pickers',
     shortcuts: [
-      { keys: '#', condition: 'in editor', description: 'Tag picker' },
+      { keys: '@', condition: 'in editor', description: 'Tag picker' },
       { keys: '[[', condition: 'in editor', description: 'Block link picker' },
+      { keys: '/', condition: 'in editor', description: 'Slash command menu' },
     ],
   },
   {
@@ -60,8 +67,10 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
     ],
   },
   {
-    category: 'UI',
+    category: 'Global',
     shortcuts: [
+      { keys: 'Ctrl + F', description: 'Focus search' },
+      { keys: 'Ctrl + N', description: 'Create new page' },
       { keys: '?', description: 'Show keyboard shortcuts' },
       { keys: 'Escape', description: 'Close dialog / cancel editing' },
     ],

@@ -50,11 +50,13 @@ function makeCallbacks(): BlockKeyboardCallbacks & { _calls: Record<string, numb
 
 function makeEvent(
   key: string,
-  opts: Partial<{ shiftKey: boolean }> = {},
-): Pick<KeyboardEvent, 'key' | 'shiftKey' | 'preventDefault'> {
+  opts: Partial<{ shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }> = {},
+): Pick<KeyboardEvent, 'key' | 'shiftKey' | 'ctrlKey' | 'metaKey' | 'preventDefault'> {
   return {
     key,
     shiftKey: opts.shiftKey ?? false,
+    ctrlKey: opts.ctrlKey ?? false,
+    metaKey: opts.metaKey ?? false,
     preventDefault: vi.fn(),
   }
 }

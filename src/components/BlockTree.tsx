@@ -16,8 +16,9 @@ import { closestCenter, DndContext, DragOverlay, MeasuringStrategy } from '@dnd-
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { parse } from '../editor/markdown-serializer'
+import { parse, serialize } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
+import type { DocNode } from '../editor/types'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
 import { useBlockDnD } from '../hooks/useBlockDnD'
@@ -28,6 +29,7 @@ import type { PropertyRow } from '../lib/tauri'
 import {
   batchResolve,
   createBlock,
+  editBlock,
   getBlock,
   getProperties,
   listBlocks,
@@ -82,6 +84,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     dedent,
     reorder,
     moveToParent,
+    moveUp,
+    moveDown,
   } = useBlockStore()
 
   // ── Collapse state ─────────────────────────────────────────────────
@@ -162,15 +166,29 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     [],
   )
 
+  /** Heading commands — shown only when query matches (progressive disclosure). */
+  const HEADING_COMMANDS: PickerItem[] = useMemo(
+    () => [
+      { id: 'h1', label: 'Heading 1 — Large heading' },
+      { id: 'h2', label: 'Heading 2 — Medium heading' },
+      { id: 'h3', label: 'Heading 3 — Small heading' },
+      { id: 'h4', label: 'Heading 4' },
+      { id: 'h5', label: 'Heading 5' },
+      { id: 'h6', label: 'Heading 6' },
+    ],
+    [],
+  )
+
   const searchSlashCommands = useCallback(
     async (query: string): Promise<PickerItem[]> => {
       const q = query.toLowerCase()
       const baseResults = SLASH_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       if (!q) return baseResults
       const priorityResults = PRIORITY_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-      return [...baseResults, ...priorityResults]
+      const headingResults = HEADING_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
+      return [...baseResults, ...priorityResults, ...headingResults]
     },
-    [SLASH_COMMANDS, PRIORITY_COMMANDS],
+    [SLASH_COMMANDS, PRIORITY_COMMANDS, HEADING_COMMANDS],
   )
 
   // ── Roving editor ──────────────────────────────────────────────────
@@ -456,6 +474,31 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           return next
         })
       }
+
+      const headingMatch = item.id.match(/^h([1-6])$/)
+      if (headingMatch) {
+        const level = Number(headingMatch[1])
+        const prefix = `${'#'.repeat(level)} `
+        // Read current content from the editor (which has the slash text already removed)
+        let currentContent = ''
+        if (rovingEditor.editor) {
+          const json = rovingEditor.editor.getJSON() as DocNode
+          currentContent = serialize(json)
+        } else {
+          const block = useBlockStore.getState().blocks.find((b) => b.id === focusedBlockId)
+          currentContent = block?.content ?? ''
+        }
+        const newContent = prefix + currentContent
+        await editBlock(focusedBlockId, newContent)
+        // Reload the block in the store
+        useBlockStore.setState((state) => ({
+          blocks: state.blocks.map((b) =>
+            b.id === focusedBlockId ? { ...b, content: newContent } : b,
+          ),
+        }))
+        // Re-mount editor so the heading renders immediately
+        rovingEditor.mount(focusedBlockId, newContent)
+      }
     },
     [focusedBlockId, setBlockProperties],
   )
@@ -555,6 +598,19 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     dedent(focusedBlockId)
   }, [focusedBlockId, handleFlush, dedent])
 
+  // ── Move block up/down (Ctrl+Shift+Arrow) ─────────────────────────
+  const handleMoveUp = useCallback(() => {
+    if (!focusedBlockId) return
+    handleFlush()
+    moveUp(focusedBlockId)
+  }, [focusedBlockId, handleFlush, moveUp])
+
+  const handleMoveDown = useCallback(() => {
+    if (!focusedBlockId) return
+    handleFlush()
+    moveDown(focusedBlockId)
+  }, [focusedBlockId, handleFlush, moveDown])
+
   // ── Merge with previous block (p2-t11) ────────────────────────────
   const handleMergeWithPrev = useCallback(() => {
     if (!focusedBlockId) return
@@ -612,6 +668,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     onDeleteBlock: handleDeleteBlock,
     onIndent: handleIndent,
     onDedent: handleDedent,
+    onMoveUp: handleMoveUp,
+    onMoveDown: handleMoveDown,
     onFlush: handleFlush,
     onMergeWithPrev: handleMergeWithPrev,
     onEnterSave: handleEnterSave,
@@ -645,6 +703,38 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     document.addEventListener('keydown', handleTaskKey)
     return () => document.removeEventListener('keydown', handleTaskKey)
   }, [focusedBlockId, handleToggleTodo])
+
+  // ── Priority keyboard shortcut event listeners (Mod+Shift+1/2/3) ───
+  useEffect(() => {
+    const handlePriorityEvent = (e: Event) => {
+      if (!focusedBlockId) return
+      const eventType = e.type
+      const priority =
+        eventType === 'set-priority-1' ? 'A' : eventType === 'set-priority-2' ? 'B' : 'C'
+      setProperty({ blockId: focusedBlockId, key: 'priority', valueText: priority })
+      setBlockProperties((prev) => {
+        const next = new Map(prev)
+        const props = (next.get(focusedBlockId) ?? []).filter((p) => p.key !== 'priority')
+        props.push({
+          key: 'priority',
+          value_text: priority,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+        })
+        next.set(focusedBlockId, props)
+        return next
+      })
+    }
+    document.addEventListener('set-priority-1', handlePriorityEvent)
+    document.addEventListener('set-priority-2', handlePriorityEvent)
+    document.addEventListener('set-priority-3', handlePriorityEvent)
+    return () => {
+      document.removeEventListener('set-priority-1', handlePriorityEvent)
+      document.removeEventListener('set-priority-2', handlePriorityEvent)
+      document.removeEventListener('set-priority-3', handlePriorityEvent)
+    }
+  }, [focusedBlockId, setBlockProperties])
 
   // ── Active item for DragOverlay ────────────────────────────────────
   const activeBlock = dnd.activeId ? blocks.find((b) => b.id === dnd.activeId) : null
@@ -727,6 +817,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                     onToggleTodo={handleToggleTodo}
                     priority={getPriority(block.id)}
                     onTogglePriority={handleTogglePriority}
+                    onIndent={(id) => indent(id)}
+                    onDedent={(id) => dedent(id)}
                   />
                 </div>
               )

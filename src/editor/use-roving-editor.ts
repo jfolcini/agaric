@@ -17,7 +17,7 @@ import Italic from '@tiptap/extension-italic'
 import Paragraph from '@tiptap/extension-paragraph'
 import Placeholder from '@tiptap/extension-placeholder'
 import Text from '@tiptap/extension-text'
-import { type Editor, useEditor } from '@tiptap/react'
+import { type Editor, Extension, useEditor } from '@tiptap/react'
 import { common, createLowlight } from 'lowlight'
 import { useCallback, useRef } from 'react'
 import { AtTagPicker } from './extensions/at-tag-picker'
@@ -31,6 +31,40 @@ import type { PickerItem } from './SuggestionList'
 import type { DocNode } from './types'
 
 const lowlight = createLowlight(common)
+
+/** CodeBlockLowlight with Mod-Shift-c to toggle code blocks. */
+const CodeBlockWithShortcut = CodeBlockLowlight.extend({
+  addKeyboardShortcuts() {
+    return {
+      ...this.parent?.(),
+      'Mod-Shift-c': () => {
+        this.editor.chain().focus().toggleCodeBlock().run()
+        return true
+      },
+    }
+  },
+})
+
+/** Custom extension dispatching priority shortcut events. */
+const PriorityShortcuts = Extension.create({
+  name: 'priorityShortcuts',
+  addKeyboardShortcuts() {
+    return {
+      'Mod-Shift-1': () => {
+        document.dispatchEvent(new CustomEvent('set-priority-1'))
+        return true
+      },
+      'Mod-Shift-2': () => {
+        document.dispatchEvent(new CustomEvent('set-priority-2'))
+        return true
+      },
+      'Mod-Shift-3': () => {
+        document.dispatchEvent(new CustomEvent('set-priority-3'))
+        return true
+      },
+    }
+  },
+})
 
 export interface RovingEditorOptions {
   /** Resolve tag ULID → display name */
@@ -131,11 +165,12 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Bold,
       Italic,
       Code,
-      CodeBlockLowlight.configure({ lowlight }),
+      CodeBlockWithShortcut.configure({ lowlight }),
       Heading.configure({ levels: [1, 2, 3, 4, 5, 6] }),
       HardBreak,
       History,
       ExternalLink,
+      PriorityShortcuts,
       Placeholder.configure({ placeholder }),
       TagRef.configure({
         resolveName: (id: string) => resolveTagNameRef.current(id),

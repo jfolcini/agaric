@@ -28,6 +28,10 @@ export interface BlockKeyboardCallbacks {
   onEnterSave: () => void
   /** Escape pressed — cancel editing, discard changes, unfocus. */
   onEscapeCancel: () => void
+  /** Move block up among siblings (Ctrl/Cmd+Shift+ArrowUp). */
+  onMoveUp?: () => void
+  /** Move block down among siblings (Ctrl/Cmd+Shift+ArrowDown). */
+  onMoveDown?: () => void
 }
 
 /** Minimal editor shape needed by the key handler (for testability). */
@@ -46,16 +50,32 @@ export interface EditorLike {
  * Extracted from the hook for direct unit testing.
  */
 export function handleBlockKeyDown(
-  event: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'preventDefault'>,
+  event: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'ctrlKey' | 'metaKey' | 'preventDefault'>,
   editor: EditorLike,
   callbacks: BlockKeyboardCallbacks,
 ): void {
-  const { key, shiftKey } = event
+  const { key, shiftKey, ctrlKey, metaKey } = event
   const { from, to, empty: selectionEmpty } = editor.state.selection
   const docSize = editor.state.doc.content.size
   const atStart = from <= 1 && selectionEmpty
   const atEnd = to >= docSize - 1 && selectionEmpty
   const isEmpty = editor.isEmpty
+
+  // Ctrl/Cmd+Shift+ArrowUp: move block up among siblings
+  if ((ctrlKey || metaKey) && shiftKey && key === 'ArrowUp') {
+    event.preventDefault()
+    callbacks.onFlush()
+    callbacks.onMoveUp?.()
+    return
+  }
+
+  // Ctrl/Cmd+Shift+ArrowDown: move block down among siblings
+  if ((ctrlKey || metaKey) && shiftKey && key === 'ArrowDown') {
+    event.preventDefault()
+    callbacks.onFlush()
+    callbacks.onMoveDown?.()
+    return
+  }
 
   // Tab / Shift+Tab: indent / dedent
   if (key === 'Tab') {
@@ -126,6 +146,8 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     onMergeWithPrev,
     onEnterSave,
     onEscapeCancel,
+    onMoveUp,
+    onMoveDown,
   } = callbacks
 
   const handleKeyDown = useCallback(
@@ -141,6 +163,8 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onMergeWithPrev,
         onEnterSave,
         onEscapeCancel,
+        onMoveUp,
+        onMoveDown,
       })
     },
     [
@@ -154,6 +178,8 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       onMergeWithPrev,
       onEnterSave,
       onEscapeCancel,
+      onMoveUp,
+      onMoveDown,
     ],
   )
 
