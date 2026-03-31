@@ -707,7 +707,7 @@ export function JournalControls(): React.ReactElement {
                       width: 5px;
                       height: 5px;
                       border-radius: 50%;
-                      background: hsl(var(--primary));
+                      background: var(--primary);
                     }
                   `}</style>
                 </div>
