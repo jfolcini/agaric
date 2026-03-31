@@ -106,7 +106,7 @@ export function ConflictList(): React.ReactElement {
               <Button
                 variant="outline"
                 size="sm"
-                className="conflict-keep-btn"
+                className="conflict-keep-btn [@media(pointer:coarse)]:h-10"
                 onClick={() => handleKeep(block)}
               >
                 <Check className="h-3.5 w-3.5" />
@@ -119,7 +119,7 @@ export function ConflictList(): React.ReactElement {
                   <Button
                     variant="destructive"
                     size="xs"
-                    className="conflict-discard-yes"
+                    className="conflict-discard-yes [@media(pointer:coarse)]:h-9"
                     onClick={() => handleDiscard(block.id)}
                   >
                     Yes
@@ -127,7 +127,7 @@ export function ConflictList(): React.ReactElement {
                   <Button
                     variant="ghost"
                     size="xs"
-                    className="conflict-discard-no"
+                    className="conflict-discard-no [@media(pointer:coarse)]:h-9"
                     onClick={() => setConfirmDiscardId(null)}
                   >
                     No
@@ -137,7 +137,7 @@ export function ConflictList(): React.ReactElement {
                 <Button
                   variant="destructive"
                   size="sm"
-                  className="conflict-discard-btn"
+                  className="conflict-discard-btn [@media(pointer:coarse)]:h-10"
                   onClick={() => setConfirmDiscardId(block.id)}
                 >
                   <X className="h-3.5 w-3.5" />

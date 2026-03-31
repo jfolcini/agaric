@@ -104,7 +104,7 @@ export function TrashView(): React.ReactElement {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="trash-restore-btn"
+                      className="trash-restore-btn [@media(pointer:coarse)]:h-10"
                       onClick={() => handleRestore(block)}
                     >
                       <RotateCcw className="h-3.5 w-3.5" />
@@ -123,7 +123,7 @@ export function TrashView(): React.ReactElement {
                   <Button
                     variant="destructive"
                     size="xs"
-                    className="trash-purge-yes"
+                    className="trash-purge-yes [@media(pointer:coarse)]:h-9"
                     onClick={() => handlePurge(block.id)}
                   >
                     Yes
@@ -131,7 +131,7 @@ export function TrashView(): React.ReactElement {
                   <Button
                     variant="ghost"
                     size="xs"
-                    className="trash-purge-no"
+                    className="trash-purge-no [@media(pointer:coarse)]:h-9"
                     onClick={() => setConfirmPurgeId(null)}
                   >
                     No
@@ -141,7 +141,7 @@ export function TrashView(): React.ReactElement {
                 <Button
                   variant="destructive"
                   size="sm"
-                  className="trash-purge-btn"
+                  className="trash-purge-btn [@media(pointer:coarse)]:h-10"
                   onClick={() => setConfirmPurgeId(block.id)}
                 >
                   Purge

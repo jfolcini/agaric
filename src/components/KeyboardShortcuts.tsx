@@ -204,9 +204,9 @@ export function KeyboardShortcuts({
                         <span className="inline-flex flex-wrap items-center gap-1">
                           {renderKeys(shortcut.keys)}
                           {shortcut.condition && (
-                            <span className="text-xs text-muted-foreground font-normal">
+                            <small className="text-xs text-muted-foreground font-normal">
                               {shortcut.condition}
-                            </span>
+                            </small>
                           )}
                         </span>
                       </td>

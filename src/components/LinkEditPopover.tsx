@@ -83,7 +83,11 @@ export function LinkEditPopover({
 
   return (
     <div className="flex flex-col gap-2" data-testid="link-edit-popover">
+      <label htmlFor="link-url-input" className="text-xs font-medium text-muted-foreground">
+        URL
+      </label>
       <Input
+        id="link-url-input"
         type="url"
         placeholder="https://..."
         value={url}
@@ -94,13 +98,19 @@ export function LinkEditPopover({
         data-testid="link-url-input"
       />
       <div className="flex items-center gap-2">
-        <Button size="xs" onMouseDown={(e) => e.preventDefault()} onClick={handleApply}>
+        <Button
+          size="xs"
+          className="[@media(pointer:coarse)]:h-10"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={handleApply}
+        >
           {isEditing ? 'Update' : 'Apply'}
         </Button>
         {isEditing && (
           <Button
             size="xs"
             variant="destructive"
+            className="[@media(pointer:coarse)]:h-10"
             onMouseDown={(e) => e.preventDefault()}
             onClick={handleRemove}
           >

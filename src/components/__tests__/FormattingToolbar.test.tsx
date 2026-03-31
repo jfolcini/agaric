@@ -153,6 +153,12 @@ describe('FormattingToolbar', () => {
       expect(container.querySelector('.formatting-toolbar')).toBeInTheDocument()
     })
 
+    it('has role="toolbar" with aria-label', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const toolbar = screen.getByRole('toolbar', { name: 'Formatting' })
+      expect(toolbar).toBeInTheDocument()
+    })
+
     it('renders all thirteen formatting buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 

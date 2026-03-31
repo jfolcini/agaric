@@ -106,12 +106,12 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         <EmptyState icon={Clock} message="No history for this block" />
       )}
 
-      <div className="history-list space-y-2">
+      <ul className="history-list space-y-2 list-none p-0 m-0">
         {entries.map((entry) => {
           const preview = getPayloadPreview(entry)
           const isEditBlock = entry.op_type === 'edit_block'
           return (
-            <div
+            <li
               key={entry.seq}
               className="history-item flex items-start justify-between gap-3 rounded-lg border bg-card p-4"
             >
@@ -141,10 +141,10 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                   Restore
                 </Button>
               )}
-            </div>
+            </li>
           )
         })}
-      </div>
+      </ul>
 
       {hasMore && (
         <Button

@@ -48,7 +48,7 @@ export function StatusPanel(): React.ReactElement {
         </CardHeader>
         <CardContent>
           {loading && !status && (
-            <div className="status-panel-loading grid grid-cols-2 gap-4">
+            <div className="status-panel-loading grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Skeleton className="h-20 w-full rounded-lg" />
               <Skeleton className="h-20 w-full rounded-lg" />
               <Skeleton className="h-20 w-full rounded-lg" />
@@ -61,40 +61,42 @@ export function StatusPanel(): React.ReactElement {
           )}
 
           {status && (
-            <div className="status-panel-metrics grid grid-cols-2 gap-4">
-              <div className="status-metric rounded-lg border bg-muted/30 p-4 text-center">
-                <div className="status-metric-value text-2xl font-bold">
-                  {status.foreground_queue_depth}
+            <output className="status-panel-metrics block">
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="status-metric rounded-lg border bg-muted/30 p-4 text-center">
+                  <dd className="status-metric-value text-2xl font-bold">
+                    {status.foreground_queue_depth}
+                  </dd>
+                  <dt className="status-metric-label text-sm text-muted-foreground">
+                    Foreground Queue
+                  </dt>
                 </div>
-                <div className="status-metric-label text-sm text-muted-foreground">
-                  Foreground Queue
+                <div className="status-metric rounded-lg border bg-muted/30 p-4 text-center">
+                  <dd className="status-metric-value text-2xl font-bold">
+                    {status.background_queue_depth}
+                  </dd>
+                  <dt className="status-metric-label text-sm text-muted-foreground">
+                    Background Queue
+                  </dt>
                 </div>
-              </div>
-              <div className="status-metric rounded-lg border bg-muted/30 p-4 text-center">
-                <div className="status-metric-value text-2xl font-bold">
-                  {status.background_queue_depth}
+                <div className="status-metric rounded-lg border bg-muted/30 p-4 text-center">
+                  <dd className="status-metric-value text-2xl font-bold">
+                    {status.total_ops_dispatched}
+                  </dd>
+                  <dt className="status-metric-label text-sm text-muted-foreground">
+                    Ops Dispatched
+                  </dt>
                 </div>
-                <div className="status-metric-label text-sm text-muted-foreground">
-                  Background Queue
+                <div className="status-metric rounded-lg border bg-muted/30 p-4 text-center">
+                  <dd className="status-metric-value text-2xl font-bold">
+                    {status.total_background_dispatched}
+                  </dd>
+                  <dt className="status-metric-label text-sm text-muted-foreground">
+                    Background Dispatched
+                  </dt>
                 </div>
-              </div>
-              <div className="status-metric rounded-lg border bg-muted/30 p-4 text-center">
-                <div className="status-metric-value text-2xl font-bold">
-                  {status.total_ops_dispatched}
-                </div>
-                <div className="status-metric-label text-sm text-muted-foreground">
-                  Ops Dispatched
-                </div>
-              </div>
-              <div className="status-metric rounded-lg border bg-muted/30 p-4 text-center">
-                <div className="status-metric-value text-2xl font-bold">
-                  {status.total_background_dispatched}
-                </div>
-                <div className="status-metric-label text-sm text-muted-foreground">
-                  Background Dispatched
-                </div>
-              </div>
-            </div>
+              </dl>
+            </output>
           )}
         </CardContent>
       </Card>

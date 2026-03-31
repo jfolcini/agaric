@@ -89,7 +89,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
   }, [])
 
   return (
-    <TooltipProvider delayDuration={400}>
+    <TooltipProvider delayDuration={200}>
       <div
         role="toolbar"
         aria-label="Formatting"
