@@ -130,7 +130,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const {
     resolveTagName = (id: string) => `#${id.slice(0, 8)}...`,
     resolveBlockTitle = (id: string) => `[[${id.slice(0, 8)}...]]`,
-    placeholder = 'Type something...',
+    placeholder = 'Type / for commands, @ for tags, [[ for links...',
     searchTags = () => [],
     searchPages = () => [],
     onCreatePage,

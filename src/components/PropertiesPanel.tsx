@@ -73,7 +73,7 @@ export function PropertiesPanel({ blockId }: PropertiesPanelProps): React.ReactE
       )}
 
       {!loading && properties.length === 0 && (
-        <div className="text-xs text-muted-foreground">No properties set</div>
+        <EmptyState icon={Settings2} message="No properties set" compact />
       )}
 
       {properties.map((prop) => (

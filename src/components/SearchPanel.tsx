@@ -35,6 +35,7 @@ export function SearchPanel(): React.ReactElement {
   const [hasMore, setHasMore] = useState(false)
   const [searched, setSearched] = useState(false)
   const [typing, setTyping] = useState(false)
+  const [loadingResultId, setLoadingResultId] = useState<string | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
@@ -108,17 +109,22 @@ export function SearchPanel(): React.ReactElement {
 
   const handleResultClick = useCallback(
     async (block: BlockRow) => {
-      if (block.block_type === 'page') {
-        navigateToPage(block.id, block.content ?? 'Untitled')
-        return
-      }
-      if (block.parent_id) {
-        try {
-          const parent = await getBlock(block.parent_id)
-          navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
-        } catch {
-          // Silently fail — parent lookup failed
+      setLoadingResultId(block.id)
+      try {
+        if (block.block_type === 'page') {
+          navigateToPage(block.id, block.content ?? 'Untitled')
+          return
         }
+        if (block.parent_id) {
+          try {
+            const parent = await getBlock(block.parent_id)
+            navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
+          } catch {
+            // Silently fail — parent lookup failed
+          }
+        }
+      } finally {
+        setLoadingResultId(null)
       }
     },
     [navigateToPage],
@@ -170,11 +176,15 @@ export function SearchPanel(): React.ReactElement {
               type="button"
               className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50"
               onClick={() => handleResultClick(block)}
+              disabled={loadingResultId === block.id}
             >
               <div className="flex items-center gap-2">
                 <span className="flex-1 text-sm whitespace-pre-wrap">
                   {block.content || '(empty)'}
                 </span>
+                {loadingResultId === block.id && (
+                  <Loader2 className="h-4 w-4 animate-spin shrink-0 text-muted-foreground" />
+                )}
                 {(block.block_type === 'tag' || block.block_type === 'page') && (
                   <Badge variant="secondary">{block.block_type}</Badge>
                 )}

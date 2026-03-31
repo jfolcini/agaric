@@ -37,6 +37,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [hasMore, setHasMore] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [isCreating, setIsCreating] = useState(false)
+  const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
 
   const loadPages = useCallback(async (cursor?: string) => {
     setLoading(true)
@@ -44,8 +45,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       const resp = await listBlocks({ blockType: 'page', cursor, limit: 50 })
       if (cursor) {
         setPages((prev) => [...prev, ...resp.items])
+        setLoadMoreAnnouncement(`Loaded ${resp.items.length} more pages`)
       } else {
         setPages(resp.items)
+        setLoadMoreAnnouncement('')
       }
       setNextCursor(resp.next_cursor)
       setHasMore(resp.has_more)
@@ -79,7 +82,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       }
       setPages((prev) => [newPage, ...prev])
     } catch (error) {
-      toast.error(`Failed to create page: ${String(error)}`)
+      toast.error(`Failed to create page: ${String(error)}`, {
+        action: { label: 'Retry', onClick: () => handleCreatePage() },
+      })
     }
     setIsCreating(false)
   }, [])
@@ -89,7 +94,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       await deleteBlock(pageId)
       setPages((prev) => prev.filter((p) => p.id !== pageId))
     } catch (error) {
-      toast.error(`Failed to delete page: ${String(error)}`)
+      toast.error(`Failed to delete page: ${String(error)}`, {
+        action: { label: 'Retry', onClick: () => handleDeletePage(pageId) },
+      })
     }
   }, [])
 
@@ -179,6 +186,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           {loading ? 'Loading...' : 'Load more'}
         </Button>
       )}
+
+      <output className="sr-only" aria-live="polite">
+        {loadMoreAnnouncement}
+      </output>
 
       {/* Delete confirmation dialog */}
       <AlertDialog

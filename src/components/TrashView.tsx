@@ -96,7 +96,7 @@ export function TrashView(): React.ReactElement {
         {blocks.map((block) => (
           <div
             key={block.id}
-            className="trash-item flex items-center justify-between rounded-lg border bg-card p-4"
+            className="trash-item flex items-center justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
           >
             <div className="trash-item-content flex min-w-0 items-center gap-3">
               <Badge variant="secondary" className="trash-item-type shrink-0">

@@ -204,14 +204,14 @@
 /* Broken / deleted block link: visual affordance for [[ULID]] pointing
    to a soft-deleted or purged block. */
 .block-link-deleted {
-  opacity: 0.5;
+  opacity: 0.6;
   text-decoration: line-through;
 }
 
 /* Deleted tag reference: visual affordance for #[ULID] pointing to a
    soft-deleted or purged tag. */
 .tag-ref-deleted {
-  opacity: 0.5;
+  opacity: 0.6;
   text-decoration: line-through;
 }
 

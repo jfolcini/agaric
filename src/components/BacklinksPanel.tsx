@@ -357,7 +357,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
           return (
             <div
               key={block.id}
-              className="backlink-item flex items-center gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-accent/50 cursor-default"
+              className="backlink-item flex items-center gap-3 rounded-lg border bg-card p-3 cursor-default"
             >
               <Badge variant="secondary" className="backlink-item-type shrink-0">
                 {block.block_type}

@@ -121,6 +121,7 @@ export function HistoryView(): React.ReactElement {
   const [hasMore, setHasMore] = useState(false)
   const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
   const [confirmRevert, setConfirmRevert] = useState(false)
+  const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
 
   const listRef = useRef<HTMLUListElement>(null)
 
@@ -137,8 +138,10 @@ export function HistoryView(): React.ReactElement {
         })
         if (cursor) {
           setEntries((prev) => [...prev, ...resp.items])
+          setLoadMoreAnnouncement(`Loaded ${resp.items.length} more entries`)
         } else {
           setEntries(resp.items)
+          setLoadMoreAnnouncement('')
         }
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
@@ -504,6 +507,10 @@ export function HistoryView(): React.ReactElement {
           {loading ? 'Loading...' : 'Load more'}
         </Button>
       )}
+
+      <output className="sr-only" aria-live="polite">
+        {loadMoreAnnouncement}
+      </output>
 
       {/* Revert confirmation dialog */}
       <AlertDialog open={confirmRevert} onOpenChange={setConfirmRevert}>

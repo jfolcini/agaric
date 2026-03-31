@@ -6,7 +6,7 @@
  * the Suggestion plugin via the imperative ref.
  */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 
 /** An item in the suggestion popup (tag or page). */
@@ -29,11 +29,23 @@ export interface SuggestionListRef {
 export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>(
   ({ items, command }, ref) => {
     const [selectedIndex, setSelectedIndex] = useState(0)
+    const listRef = useRef<HTMLDivElement>(null)
 
     // biome-ignore lint/correctness/useExhaustiveDependencies: items is a prop — reset selection when picker results change
     useEffect(() => {
       setSelectedIndex(0)
     }, [items])
+
+    // Scroll selected item into view on keyboard navigation
+    // biome-ignore lint/correctness/useExhaustiveDependencies: selectedIndex IS the trigger — we scroll when selection changes
+    useEffect(() => {
+      const list = listRef.current
+      if (!list) return
+      const selected = list.querySelector('[aria-selected="true"]')
+      if (selected) {
+        selected.scrollIntoView?.({ block: 'nearest' })
+      }
+    }, [selectedIndex])
 
     const selectItem = useCallback(
       (index: number) => {
@@ -69,6 +81,7 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
 
     return (
       <div
+        ref={listRef}
         className="suggestion-list flex flex-col gap-0.5 overflow-y-auto rounded-lg border bg-popover p-1 shadow-md"
         role="listbox"
       >

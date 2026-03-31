@@ -329,6 +329,9 @@ describe('PageBrowser', () => {
       await waitFor(() => {
         expect(mockedToastError).toHaveBeenCalledWith(
           expect.stringContaining('Failed to create page'),
+          expect.objectContaining({
+            action: expect.objectContaining({ label: 'Retry' }),
+          }),
         )
       })
     })
@@ -358,6 +361,9 @@ describe('PageBrowser', () => {
       await waitFor(() => {
         expect(mockedToastError).toHaveBeenCalledWith(
           expect.stringContaining('Failed to delete page'),
+          expect.objectContaining({
+            action: expect.objectContaining({ label: 'Retry' }),
+          }),
         )
       })
     })

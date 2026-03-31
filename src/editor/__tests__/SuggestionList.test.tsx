@@ -255,4 +255,24 @@ describe('SuggestionList', () => {
     })
     expect(results).toHaveNoViolations()
   })
+
+  it('scrolls the selected item into view on keyboard navigation', () => {
+    const ref = createRef<SuggestionListRef>()
+    const command = vi.fn()
+    render(<SuggestionList ref={ref} items={sampleItems} command={command} />)
+
+    // Mock scrollIntoView on all option elements
+    const options = screen.getAllByRole('option')
+    for (const option of options) {
+      option.scrollIntoView = vi.fn()
+    }
+
+    // ArrowDown → Beta becomes selected
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+    })
+
+    // The newly selected item (Beta) should have scrollIntoView called
+    expect(options[1].scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+  })
 })

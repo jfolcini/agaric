@@ -102,7 +102,7 @@ export function ConflictList(): React.ReactElement {
         {blocks.map((block) => (
           <div
             key={block.id}
-            className="conflict-item flex items-center justify-between rounded-lg border bg-card p-4"
+            className="conflict-item flex items-center justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
           >
             <div className="conflict-item-content flex min-w-0 items-center gap-3">
               <Badge variant="secondary" className="conflict-item-type shrink-0">

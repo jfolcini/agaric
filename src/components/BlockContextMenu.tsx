@@ -257,7 +257,8 @@ export function BlockContextMenu({
     >
       {groups.map((group, groupIdx) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: groups are static per render, never reorder
-        <div key={groupIdx}>
+        // biome-ignore lint/a11y/useSemanticElements: fieldset is for forms, not menu item groups
+        <div key={groupIdx} role="group">
           {groupIdx > 0 && <hr className="my-1 h-px border-0 bg-border" />}
           {group.map((item) => {
             const idx = itemIndex++

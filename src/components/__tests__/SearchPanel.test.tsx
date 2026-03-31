@@ -605,4 +605,66 @@ describe('SearchPanel', () => {
     const spinner = container.querySelector('.animate-spin')
     expect(spinner).toBeInTheDocument()
   })
+
+  it('disables result button during click loading', async () => {
+    const user = userEvent.setup()
+
+    // search_blocks returns a block with parent_id
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        makeSearchResult({
+          id: 'CHILD1',
+          parent_id: 'PARENT1',
+          content: 'child block',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'child')
+
+    await waitFor(() => {
+      expect(screen.getByText('child block')).toBeInTheDocument()
+    })
+
+    // Mock get_block with a pending promise so loading state persists
+    let resolveGetBlock!: (value: unknown) => void
+    mockedInvoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveGetBlock = resolve
+        }),
+    )
+
+    // biome-ignore lint/style/noNonNullAssertion: test assertion — button always exists in rendered output
+    const resultBtn = screen.getByText('child block').closest('button')!
+    await user.click(resultBtn)
+
+    // Button should be disabled while loading
+    await waitFor(() => {
+      expect(resultBtn).toBeDisabled()
+    })
+
+    // Resolve the pending get_block call
+    resolveGetBlock({
+      id: 'PARENT1',
+      block_type: 'page',
+      content: 'Parent Page',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+      archived_at: null,
+      is_conflict: false,
+    })
+
+    // Button should re-enable after loading completes
+    await waitFor(() => {
+      expect(resultBtn).not.toBeDisabled()
+    })
+  })
 })
