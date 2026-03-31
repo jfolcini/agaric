@@ -90,7 +90,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
   return (
     <TooltipProvider delayDuration={400}>
       <div className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px">
-        <Tip label="Bold">
+        <Tip label="Bold (Ctrl+B)">
           <Button
             variant="ghost"
             size="icon-xs"
@@ -105,7 +105,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             <Bold size={14} />
           </Button>
         </Tip>
-        <Tip label="Italic">
+        <Tip label="Italic (Ctrl+I)">
           <Button
             variant="ghost"
             size="icon-xs"
@@ -120,7 +120,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             <Italic size={14} />
           </Button>
         </Tip>
-        <Tip label="Inline code">
+        <Tip label="Inline code (Ctrl+E)">
           <Button
             variant="ghost"
             size="icon-xs"
@@ -180,7 +180,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
           </Button>
         </Tip>
 
-        <Tip label="Code block">
+        <Tip label="Code block (Ctrl+Shift+C)">
           <Button
             variant="ghost"
             size="icon-xs"
@@ -253,7 +253,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
 
         <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-        <Tip label="Undo">
+        <Tip label="Undo (Ctrl+Z)">
           <Button
             variant="ghost"
             size="icon-xs"
@@ -267,7 +267,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             <Undo2 size={14} />
           </Button>
         </Tip>
-        <Tip label="Redo">
+        <Tip label="Redo (Ctrl+Y)">
           <Button
             variant="ghost"
             size="icon-xs"
