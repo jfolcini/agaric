@@ -575,4 +575,57 @@ describe('TagFilterPanel', () => {
     expect(navState.pageStack[0].title).toBe('My Tagged Page')
     expect(navState.selectedBlockId).toBeNull()
   })
+
+  // -- Keyboard interaction tests -----------------------------------------------
+  // Note: TagFilterPanel does not implement custom arrow-key navigation in tag
+  // results or Escape to dismiss. All interactive elements are standard HTML
+  // buttons and inputs, so keyboard access works via native Tab + Enter/Space.
+
+  describe('keyboard interaction', () => {
+    it('search input is keyboard-accessible with proper aria-label', () => {
+      render(<TagFilterPanel />)
+      const input = screen.getByLabelText('Search tags by prefix')
+      expect(input.tagName).toBe('INPUT')
+      input.focus()
+      expect(document.activeElement).toBe(input)
+    })
+
+    it('tag results contain focusable Add buttons', async () => {
+      mockedInvoke.mockResolvedValueOnce([
+        makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 }),
+        makeTag({ tag_id: 'T2', name: 'personal', usage_count: 3 }),
+      ])
+      render(<TagFilterPanel />)
+
+      const input = screen.getByPlaceholderText('Search tags by prefix...')
+      await typeAndWaitForTags(input, 'work')
+
+      const addBtns = screen.getAllByRole('button', { name: /Add/i })
+      expect(addBtns).toHaveLength(2)
+      // Each is a real <button> reachable via Tab
+      for (const btn of addBtns) {
+        expect(btn.tagName).toBe('BUTTON')
+      }
+    })
+
+    it('selected tag remove button has accessible label for keyboard users', async () => {
+      mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+      render(<TagFilterPanel />)
+
+      const input = screen.getByPlaceholderText('Search tags by prefix...')
+      await typeAndWaitForTags(input, 'work')
+
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /Add/i }))
+        await vi.advanceTimersByTimeAsync(0)
+      })
+
+      // Remove button has aria-label for screen readers and keyboard users
+      const removeBtn = screen.getByLabelText('Remove tag work')
+      expect(removeBtn.tagName).toBe('BUTTON')
+      expect(removeBtn).toHaveAttribute('type', 'button')
+    })
+  })
 })

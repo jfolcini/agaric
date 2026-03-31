@@ -397,3 +397,198 @@ describe('get_status', () => {
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// move_block
+// ---------------------------------------------------------------------------
+
+describe('move_block', () => {
+  it('updates parent_id and position', () => {
+    const result = invoke('move_block', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      newParentId: SEED_IDS.PAGE_QUICK_NOTES,
+      newPosition: 99,
+    }) as Record<string, unknown>
+    expect(result.block_id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result.new_parent_id).toBe(SEED_IDS.PAGE_QUICK_NOTES)
+    expect(result.new_position).toBe(99)
+    // verify persisted
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(block.parent_id).toBe(SEED_IDS.PAGE_QUICK_NOTES)
+    expect(block.position).toBe(99)
+  })
+
+  it('throws for non-existent block', () => {
+    expect(() =>
+      invoke('move_block', { blockId: 'NONEXISTENT', newParentId: null, newPosition: 0 }),
+    ).toThrow('not found')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// delete_block (cascade behavior)
+// ---------------------------------------------------------------------------
+
+describe('delete_block', () => {
+  it('soft-deletes a block', () => {
+    const result = invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
+      string,
+      unknown
+    >
+    expect(result.block_id).toBe(SEED_IDS.BLOCK_GS_1)
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(block.deleted_at).not.toBeNull()
+  })
+
+  it('deleted blocks excluded from list_blocks', () => {
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    const result = invoke('list_blocks', { parentId: SEED_IDS.PAGE_GETTING_STARTED }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items.find((b) => b.id === SEED_IDS.BLOCK_GS_1)).toBeUndefined()
+  })
+
+  it('deleted blocks excluded from search', () => {
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    const result = invoke('search_blocks', { query: 'Welcome' }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// property commands (set_property / get_properties / delete_property)
+// ---------------------------------------------------------------------------
+
+describe('property commands', () => {
+  it('set_property creates a property', () => {
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      key: 'priority',
+      valueText: 'A',
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+    const props = invoke('get_properties', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
+      string,
+      unknown
+    >[]
+    expect(props).toHaveLength(1)
+    expect(props[0]).toMatchObject({ key: 'priority', value_text: 'A' })
+  })
+
+  it('set_property overwrites existing key', () => {
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      key: 'priority',
+      valueText: 'A',
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      key: 'priority',
+      valueText: 'B',
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+    const props = invoke('get_properties', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
+      string,
+      unknown
+    >[]
+    expect(props).toHaveLength(1)
+    expect(props[0].value_text).toBe('B')
+  })
+
+  it('delete_property removes a property', () => {
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      key: 'priority',
+      valueText: 'A',
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+    invoke('delete_property', { blockId: SEED_IDS.BLOCK_GS_1, key: 'priority' })
+    const props = invoke('get_properties', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
+      string,
+      unknown
+    >[]
+    expect(props).toHaveLength(0)
+  })
+
+  it('get_properties returns empty array for block with no properties', () => {
+    const props = invoke('get_properties', { blockId: SEED_IDS.BLOCK_GS_2 }) as Record<
+      string,
+      unknown
+    >[]
+    expect(props).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// get_batch_properties
+// ---------------------------------------------------------------------------
+
+describe('get_batch_properties', () => {
+  it('returns properties for multiple blocks', () => {
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      key: 'todo',
+      valueText: 'TODO',
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_2,
+      key: 'priority',
+      valueText: 'B',
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+    const result = invoke('get_batch_properties', {
+      blockIds: [SEED_IDS.BLOCK_GS_1, SEED_IDS.BLOCK_GS_2, SEED_IDS.BLOCK_GS_3],
+    }) as Record<string, Record<string, unknown>[]>
+    expect(result[SEED_IDS.BLOCK_GS_1]).toHaveLength(1)
+    expect(result[SEED_IDS.BLOCK_GS_2]).toHaveLength(1)
+    expect(result[SEED_IDS.BLOCK_GS_3]).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// undo_page_op
+// ---------------------------------------------------------------------------
+
+describe('undo_page_op', () => {
+  it('returns UndoResult shape', () => {
+    const result = invoke('undo_page_op', {
+      pageId: SEED_IDS.PAGE_GETTING_STARTED,
+      undoDepth: 0,
+    }) as Record<string, unknown>
+    expect(result).toHaveProperty('reversed_op')
+    expect(result).toHaveProperty('new_op')
+    expect(result).toHaveProperty('is_redo', false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// redo_page_op
+// ---------------------------------------------------------------------------
+
+describe('redo_page_op', () => {
+  it('returns UndoResult shape with is_redo true', () => {
+    const result = invoke('redo_page_op', {
+      pageId: SEED_IDS.PAGE_GETTING_STARTED,
+      redoDepth: 0,
+    }) as Record<string, unknown>
+    expect(result).toHaveProperty('reversed_op')
+    expect(result).toHaveProperty('new_op')
+    expect(result).toHaveProperty('is_redo', true)
+  })
+})

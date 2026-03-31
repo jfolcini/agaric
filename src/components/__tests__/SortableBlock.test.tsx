@@ -1,5 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 // Mock @dnd-kit/sortable to control sortable state
@@ -51,6 +51,25 @@ vi.mock('lucide-react', () => ({
   ),
   Trash2: (props: { size: number }) => (
     <svg data-testid="trash-icon" width={props.size} height={props.size} />
+  ),
+}))
+
+// Mock BlockContextMenu to avoid importing all its lucide-react icons
+vi.mock('../BlockContextMenu', () => ({
+  BlockContextMenu: ({
+    onClose,
+    blockId,
+  }: {
+    onClose: () => void
+    blockId: string
+    position: { x: number; y: number }
+  }) => (
+    <div data-testid="block-context-menu" role="menu" aria-label="Block actions">
+      <button type="button" role="menuitem" onClick={onClose} data-testid="close-context-menu">
+        Close
+      </button>
+      <span data-testid="context-menu-block-id">{blockId}</span>
+    </div>
   ),
 }))
 
@@ -1517,5 +1536,175 @@ describe('SortableBlock a11y enhancements', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+})
+
+// =========================================================================
+// Long-press gesture & context menu tests (#183, #184)
+// =========================================================================
+
+describe('SortableBlock long-press and context menu', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('long-press touch opens context menu after 400ms delay', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const wrapper = container.querySelector('.sortable-block') as HTMLElement
+
+    // Context menu should not exist initially
+    expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
+
+    // Start touch
+    fireEvent.touchStart(wrapper, {
+      touches: [{ clientX: 100, clientY: 200 }],
+    })
+
+    // Before delay, no context menu
+    act(() => {
+      vi.advanceTimersByTime(399)
+    })
+    expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
+
+    // After full delay (400ms), context menu should appear
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(screen.getByTestId('block-context-menu')).toBeInTheDocument()
+  })
+
+  it('touch move beyond threshold cancels long-press', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const wrapper = container.querySelector('.sortable-block') as HTMLElement
+
+    // Start touch at (100, 100)
+    fireEvent.touchStart(wrapper, {
+      touches: [{ clientX: 100, clientY: 100 }],
+    })
+
+    // Move beyond threshold (LONG_PRESS_MOVE_THRESHOLD = 10px)
+    fireEvent.touchMove(wrapper, {
+      touches: [{ clientX: 115, clientY: 100 }], // 15px away
+    })
+
+    // Advance past delay
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    // Context menu should NOT appear (gesture was cancelled)
+    expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
+  })
+
+  it('touch end before delay clears the long-press timer', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const wrapper = container.querySelector('.sortable-block') as HTMLElement
+
+    // Start touch
+    fireEvent.touchStart(wrapper, {
+      touches: [{ clientX: 100, clientY: 100 }],
+    })
+
+    // End touch before delay fires
+    fireEvent.touchEnd(wrapper)
+
+    // Advance past delay
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    // Context menu should NOT appear
+    expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
+  })
+
+  it('right-click opens context menu', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const wrapper = container.querySelector('.sortable-block') as HTMLElement
+
+    fireEvent.contextMenu(wrapper, { clientX: 50, clientY: 75 })
+
+    expect(screen.getByTestId('block-context-menu')).toBeInTheDocument()
+  })
+
+  it('context menu receives correct blockId', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_42"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const wrapper = container.querySelector('.sortable-block') as HTMLElement
+
+    fireEvent.contextMenu(wrapper, { clientX: 50, clientY: 75 })
+
+    expect(screen.getByTestId('context-menu-block-id')).toHaveTextContent('BLOCK_42')
+  })
+
+  it('context menu closes when onClose callback is triggered', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const wrapper = container.querySelector('.sortable-block') as HTMLElement
+
+    fireEvent.contextMenu(wrapper, { clientX: 50, clientY: 75 })
+    expect(screen.getByTestId('block-context-menu')).toBeInTheDocument()
+
+    // Click close button (triggers onClose callback)
+    fireEvent.click(screen.getByTestId('close-context-menu'))
+
+    expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
   })
 })

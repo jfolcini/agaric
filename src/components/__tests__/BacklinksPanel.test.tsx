@@ -702,5 +702,170 @@ describe('BacklinksPanel', () => {
         expect(results).toHaveNoViolations()
       })
     })
+
+    it('combines type and status filters to show only matching blocks', async () => {
+      const user = userEvent.setup()
+      const items = [
+        makeBlock('01HAAAAA00000000000001', 'Content with TODO', 'content'),
+        makeBlock('01HBBBBB00000000000002', 'Page with TODO', 'page'),
+        makeBlock('01HCCCCC00000000000003', 'Content no status', 'content'),
+      ]
+
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+        if (cmd === 'get_backlinks') {
+          return { items, next_cursor: null, has_more: false }
+        }
+        if (cmd === 'get_properties') {
+          const blockId = (args as { blockId: string }).blockId
+          if (blockId === '01HAAAAA00000000000001')
+            return [
+              {
+                key: 'todo',
+                value_text: 'TODO',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ]
+          if (blockId === '01HBBBBB00000000000002')
+            return [
+              {
+                key: 'todo',
+                value_text: 'TODO',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ]
+          return []
+        }
+        return emptyPage
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('Content with TODO')
+      // Wait for status properties to load (badges appear)
+      await waitFor(() => {
+        expect(screen.queryAllByText('TODO').length).toBeGreaterThanOrEqual(1)
+      })
+
+      // Apply type=content AND status=TODO
+      await user.selectOptions(screen.getByLabelText('Filter by type'), 'content')
+      await user.selectOptions(screen.getByLabelText('Filter by status'), 'TODO')
+
+      // Only the content-type block with TODO status should remain
+      expect(screen.getByText('Content with TODO')).toBeInTheDocument()
+      expect(screen.queryByText('Page with TODO')).not.toBeInTheDocument()
+      expect(screen.queryByText('Content no status')).not.toBeInTheDocument()
+    })
+
+    it('filters persist across pagination when loading more', async () => {
+      const user = userEvent.setup()
+      let callCount = 0
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+        if (cmd === 'get_backlinks') {
+          callCount++
+          if (callCount === 1) {
+            return {
+              items: [
+                makeBlock('01HAAAAA00000000000001', 'First content', 'content'),
+                makeBlock('01HBBBBB00000000000002', 'First tag', 'tag'),
+              ],
+              next_cursor: 'cursor_2',
+              has_more: true,
+            }
+          }
+          return {
+            items: [
+              makeBlock('01HCCCCC00000000000003', 'Second content', 'content'),
+              makeBlock('01HDDDDD00000000000004', 'Second tag', 'tag'),
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'get_properties') return []
+        return emptyPage
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('First content')
+
+      // Apply type filter to content only
+      await user.selectOptions(screen.getByLabelText('Filter by type'), 'content')
+      expect(screen.getByText('First content')).toBeInTheDocument()
+      expect(screen.queryByText('First tag')).not.toBeInTheDocument()
+
+      // Load more
+      await user.click(screen.getByRole('button', { name: /Load more/i }))
+
+      // Filter should still apply to both old and new items
+      await waitFor(() => {
+        expect(screen.getByText('Second content')).toBeInTheDocument()
+      })
+      expect(screen.getByText('First content')).toBeInTheDocument()
+      expect(screen.queryByText('First tag')).not.toBeInTheDocument()
+      expect(screen.queryByText('Second tag')).not.toBeInTheDocument()
+    })
+
+    it('filters by priority', async () => {
+      const user = userEvent.setup()
+      const items = [
+        makeBlock('01HAAAAA00000000000001', 'High priority item', 'content'),
+        makeBlock('01HBBBBB00000000000002', 'Low priority item', 'content'),
+        makeBlock('01HCCCCC00000000000003', 'No priority item', 'content'),
+      ]
+
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+        if (cmd === 'get_backlinks') {
+          return { items, next_cursor: null, has_more: false }
+        }
+        if (cmd === 'get_properties') {
+          const blockId = (args as { blockId: string }).blockId
+          if (blockId === '01HAAAAA00000000000001')
+            return [
+              {
+                key: 'priority',
+                value_text: 'A',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ]
+          if (blockId === '01HBBBBB00000000000002')
+            return [
+              {
+                key: 'priority',
+                value_text: 'C',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ]
+          return []
+        }
+        return emptyPage
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('High priority item')
+      // Wait for priority properties to load (badges appear)
+      await waitFor(() => {
+        expect(screen.getByText('HIGH')).toBeInTheDocument()
+      })
+
+      // Filter to high priority only (A)
+      await user.selectOptions(screen.getByLabelText('Filter by priority'), 'A')
+
+      expect(screen.getByText('High priority item')).toBeInTheDocument()
+      expect(screen.queryByText('Low priority item')).not.toBeInTheDocument()
+      expect(screen.queryByText('No priority item')).not.toBeInTheDocument()
+    })
   })
 })

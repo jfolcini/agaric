@@ -751,4 +751,75 @@ describe('HistoryView', () => {
     expect(checkboxes[0]).toBeChecked()
     expect(checkboxes[1]).toBeChecked()
   })
+
+  // -- Focus management edge cases (#187) -------------------------------------
+
+  it('focus ring resets when op type filter changes', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValue({
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Navigate to focus the first item
+    await user.keyboard('{ArrowDown}')
+    const items = screen.getAllByTestId(/^history-item-/)
+    expect(items[0]).toHaveClass('ring-2')
+
+    // Change op type filter — this triggers a reset
+    const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
+    await user.selectOptions(select, 'edit')
+
+    // After filter change, entries reload and focus should be reset (no ring-2)
+    await waitFor(() => {
+      const newItems = screen.getAllByTestId(/^history-item-/)
+      for (const item of newItems) {
+        expect(item).not.toHaveClass('ring-2')
+      }
+    })
+  })
+
+  it('arrow navigation works from reset position after filter change', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValue({
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'filtered item' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<HistoryView />)
+
+    await screen.findByText('filtered item')
+
+    // Navigate to focus the item
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByTestId('history-item-0')).toHaveClass('ring-2')
+
+    // Change filter — resets focusedIndex to -1
+    const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
+    await user.selectOptions(select, 'edit')
+
+    // Wait for reload
+    await waitFor(() => {
+      expect(screen.getByText('filtered item')).toBeInTheDocument()
+    })
+
+    // Move focus away from the <select> — the keyboard handler ignores
+    // events when target is INPUT/SELECT/TEXTAREA.
+    await user.click(document.body)
+
+    // ArrowDown from -1 should focus first item (index 0)
+    await user.keyboard('{ArrowDown}')
+    await waitFor(() => {
+      expect(screen.getByTestId('history-item-0')).toHaveClass('ring-2')
+    })
+  })
 })
