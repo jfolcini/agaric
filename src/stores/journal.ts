@@ -6,7 +6,7 @@
 
 import { create } from 'zustand'
 
-export type JournalMode = 'daily' | 'weekly' | 'monthly'
+export type JournalMode = 'daily' | 'weekly' | 'monthly' | 'agenda'
 
 interface JournalStore {
   mode: JournalMode

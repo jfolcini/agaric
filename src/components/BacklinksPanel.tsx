@@ -38,6 +38,7 @@ function ulidToMs(ulid: string): number {
 type TypeFilter = 'all' | 'content' | 'page' | 'tag'
 type StatusFilter = 'all' | 'TODO' | 'DOING' | 'DONE' | 'none'
 type DateFilter = 'all' | 'today' | 'week' | 'month'
+type PriorityFilter = 'all' | 'A' | 'B' | 'C' | 'none'
 
 interface BacklinksPanelProps {
   /** The block to show backlinks for. */
@@ -56,9 +57,13 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [dateFilter, setDateFilter] = useState<DateFilter>('all')
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all')
 
   // Task status cache (block ID → todo state or null)
   const [statusMap, setStatusMap] = useState<Map<string, string | null>>(new Map())
+
+  // Priority cache (block ID → priority value or null)
+  const [priorityMap, setPriorityMap] = useState<Map<string, string | null>>(new Map())
 
   const loadBacklinks = useCallback(
     async (cursor?: string) => {
@@ -87,6 +92,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
     setNextCursor(null)
     setHasMore(false)
     setStatusMap(new Map())
+    setPriorityMap(new Map())
     resolveCache.current.clear()
     loadBacklinks()
   }, [blockId, loadBacklinks])
@@ -98,18 +104,25 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
 
     async function fetchStatuses() {
       const newMap = new Map<string, string | null>()
+      const newPriorityMap = new Map<string, string | null>()
       await Promise.all(
         blocks.map(async (b) => {
           try {
             const props = await getProperties(b.id)
             const todo = props.find((p: PropertyRow) => p.key === 'todo')
             newMap.set(b.id, todo?.value_text ?? null)
+            const priority = props.find((p: PropertyRow) => p.key === 'priority')
+            newPriorityMap.set(b.id, priority?.value_text ?? null)
           } catch {
             newMap.set(b.id, null)
+            newPriorityMap.set(b.id, null)
           }
         }),
       )
-      if (!cancelled) setStatusMap(newMap)
+      if (!cancelled) {
+        setStatusMap(newMap)
+        setPriorityMap(newPriorityMap)
+      }
     }
     fetchStatuses()
     return () => {
@@ -231,11 +244,23 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
         if (dateFilter === 'month' && createdMs < monthStart) return false
       }
 
+      // Priority filter
+      if (priorityFilter !== 'all') {
+        const priority = priorityMap.get(block.id)
+        if (priorityFilter === 'none') {
+          if (priority != null) return false
+        } else if (priority !== priorityFilter) return false
+      }
+
       return true
     })
-  }, [blocks, typeFilter, statusFilter, dateFilter, statusMap])
+  }, [blocks, typeFilter, statusFilter, dateFilter, priorityFilter, statusMap, priorityMap])
 
-  const hasFilters = typeFilter !== 'all' || statusFilter !== 'all' || dateFilter !== 'all'
+  const hasFilters =
+    typeFilter !== 'all' ||
+    statusFilter !== 'all' ||
+    dateFilter !== 'all' ||
+    priorityFilter !== 'all'
 
   if (!blockId) {
     return <EmptyState icon={Link} message="Select a block to see backlinks" compact />
@@ -283,6 +308,18 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
           <option value="week">This week</option>
           <option value="month">This month</option>
         </select>
+        <select
+          className="backlinks-filter-priority h-7 rounded-md border bg-background px-2 text-xs"
+          value={priorityFilter}
+          onChange={(e) => setPriorityFilter(e.target.value as PriorityFilter)}
+          aria-label="Filter by priority"
+        >
+          <option value="all">All priorities</option>
+          <option value="A">High [A]</option>
+          <option value="B">Medium [B]</option>
+          <option value="C">Low [C]</option>
+          <option value="none">No priority</option>
+        </select>
         {hasFilters && (
           <Button
             variant="ghost"
@@ -292,6 +329,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
               setTypeFilter('all')
               setStatusFilter('all')
               setDateFilter('all')
+              setPriorityFilter('all')
             }}
           >
             Clear
@@ -315,6 +353,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
       <div className="backlinks-list space-y-2">
         {filteredBlocks.map((block) => {
           const todoStatus = statusMap.get(block.id)
+          const blockPriority = priorityMap.get(block.id)
           return (
             <div
               key={block.id}
@@ -335,6 +374,20 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
                   }`}
                 >
                   {todoStatus}
+                </Badge>
+              )}
+              {blockPriority && (
+                <Badge
+                  variant="outline"
+                  className={`backlink-item-priority shrink-0 text-[10px] ${
+                    blockPriority === 'A'
+                      ? 'border-red-600 text-red-600'
+                      : blockPriority === 'B'
+                        ? 'border-yellow-600 text-yellow-600'
+                        : 'border-blue-600 text-blue-600'
+                  }`}
+                >
+                  {blockPriority === 'A' ? 'HIGH' : blockPriority === 'B' ? 'MED' : 'LOW'}
                 </Badge>
               )}
               <span className="backlink-item-text text-sm flex-1 truncate">

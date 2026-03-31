@@ -39,6 +39,8 @@ interface SortableBlockProps {
   todoState?: string | null
   /** Callback to cycle task state. */
   onToggleTodo?: (blockId: string) => void
+  /** Priority level: 'A' (high), 'B' (medium), 'C' (low), or null/undefined. */
+  priority?: string | null
 }
 
 export function SortableBlock({
@@ -58,6 +60,7 @@ export function SortableBlock({
   onToggleCollapse,
   todoState,
   onToggleTodo,
+  priority,
 }: SortableBlockProps): React.ReactElement {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: blockId,
@@ -130,6 +133,19 @@ export function SortableBlock({
           <div className="task-checkbox task-checkbox-empty h-4 w-4 rounded border-2 border-transparent group-hover:border-muted-foreground/30 transition-colors" />
         )}
       </button>
+      {priority && (
+        <span
+          className={cn(
+            'priority-badge flex-shrink-0 text-[10px] font-bold mt-1.5 w-4 h-4 rounded-full flex items-center justify-center',
+            priority === 'A' && 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+            priority === 'B' &&
+              'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+            priority === 'C' && 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+          )}
+        >
+          {priority}
+        </span>
+      )}
       <button
         type="button"
         className="drag-handle flex-shrink-0 cursor-grab opacity-30 group-hover:opacity-100 transition-opacity p-0.5 mt-1.5 text-muted-foreground hover:text-foreground"

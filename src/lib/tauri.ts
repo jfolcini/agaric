@@ -256,3 +256,18 @@ export async function getBatchProperties(
 ): Promise<Record<string, PropertyRow[]>> {
   return invoke('get_batch_properties', { blockIds })
 }
+
+/** Query blocks by property key and optional value, with cursor pagination. */
+export async function queryByProperty(params: {
+  key: string
+  valueText?: string
+  cursor?: string
+  limit?: number
+}): Promise<PageResponse<BlockRow>> {
+  return invoke('query_by_property', {
+    key: params.key,
+    valueText: params.valueText ?? null,
+    cursor: params.cursor ?? null,
+    limit: params.limit ?? null,
+  })
+}

@@ -194,6 +194,17 @@ async queryByTags(tagIds: string[], prefixes: string[], mode: string, cursor: st
 }
 },
 /**
+ * Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
+ */
+async queryByProperty(key: string, valueText: string | null, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("query_by_property", { key, valueText, cursor, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
  */
 async listTagsByPrefix(prefix: string) : Promise<Result<TagCacheRow[], { kind: string; message: string }>> {

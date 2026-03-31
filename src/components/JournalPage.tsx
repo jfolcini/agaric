@@ -1,10 +1,12 @@
 /**
- * JournalPage — daily/weekly/monthly journal view backed by BlockTree.
+ * JournalPage — daily/weekly/monthly/agenda journal view backed by BlockTree.
  *
- * Three viewing modes:
+ * Four viewing modes:
  * - **Daily** (default): One day with prev/next navigation and today button.
  * - **Weekly**: Mon-Sun of one week, each day as a section with BlockTree.
  * - **Monthly**: Calendar grid showing content indicators; click to go to daily.
+ * - **Agenda**: Task panels (TODO / DOING / DONE) with collapsible sections
+ *   that load blocks matching the `todo` property on demand (paginated).
  *
  * A floating calendar date picker (react-day-picker in a positioned dropdown)
  * lets the user jump to any date. Days with content are highlighted.
@@ -26,18 +28,23 @@ import {
 } from 'date-fns'
 import {
   Calendar as CalendarIcon,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Circle,
+  CircleDot,
   ExternalLink,
   Plus,
 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import { createBlock, listBlocks } from '../lib/tauri'
+import type { BlockRow } from '../lib/tauri'
+import { createBlock, getBlock, listBlocks, queryByProperty } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
 import { BlockTree } from './BlockTree'
@@ -96,6 +103,136 @@ function formatWeekRange(d: Date): string {
   const startStr = format(start, 'MMM d')
   const endStr = format(end, 'MMM d, yyyy')
   return `${startStr} - ${endStr}`
+}
+
+// ── Agenda TaskSection ────────────────────────────────────────────────
+
+interface TaskSectionProps {
+  title: string
+  status: string
+  icon: React.ElementType
+  iconColor: string
+  onNavigateToPage?: (pageId: string, title?: string) => void
+}
+
+/** Collapsible section that lazily loads blocks matching a `todo` property value. */
+function TaskSection({ title, status, icon: Icon, iconColor, onNavigateToPage }: TaskSectionProps) {
+  const [expanded, setExpanded] = useState(false)
+  const [blocks, setBlocks] = useState<BlockRow[]>([])
+  const [loading, setLoading] = useState(false)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  const loadTasks = useCallback(
+    async (cursor?: string) => {
+      setLoading(true)
+      try {
+        const resp = await queryByProperty({
+          key: 'todo',
+          valueText: status,
+          cursor,
+          limit: 10,
+        })
+        if (cursor) {
+          setBlocks((prev) => [...prev, ...resp.items])
+        } else {
+          setBlocks(resp.items)
+        }
+        setNextCursor(resp.next_cursor)
+        setHasMore(resp.has_more)
+        setLoaded(true)
+      } catch {
+        /* query failed — leave empty */
+      }
+      setLoading(false)
+    },
+    [status],
+  )
+
+  const handleExpand = useCallback(() => {
+    const next = !expanded
+    setExpanded(next)
+    if (next && !loaded) loadTasks()
+  }, [expanded, loaded, loadTasks])
+
+  const handleNavigate = useCallback(
+    async (block: BlockRow) => {
+      if (block.parent_id && onNavigateToPage) {
+        try {
+          const parent = await getBlock(block.parent_id)
+          onNavigateToPage(block.parent_id, parent.content ?? 'Untitled')
+        } catch {
+          /* fallback — still navigate with generic title */
+          onNavigateToPage(block.parent_id, 'Untitled')
+        }
+      }
+    },
+    [onNavigateToPage],
+  )
+
+  return (
+    <div className="task-section rounded-lg border">
+      <button
+        type="button"
+        className="task-section-header flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-accent/50 transition-colors"
+        onClick={handleExpand}
+        aria-expanded={expanded}
+        aria-label={`${title} tasks`}
+      >
+        <ChevronRight className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')} />
+        <Icon className={cn('h-4 w-4', iconColor)} />
+        <span className="flex-1">{title}</span>
+        {loaded && (
+          <Badge variant="secondary" className="text-xs">
+            {blocks.length}
+            {hasMore ? '+' : ''}
+          </Badge>
+        )}
+      </button>
+
+      {expanded && (
+        <div className="task-section-content border-t px-3 py-2 space-y-1">
+          {loading && !loaded && (
+            <div className="space-y-2">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+            </div>
+          )}
+
+          {loaded && blocks.length === 0 && (
+            <div className="text-xs text-muted-foreground py-2">No tasks</div>
+          )}
+
+          {blocks.map((block) => (
+            <button
+              key={block.id}
+              type="button"
+              className="task-item flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/50 transition-colors"
+              onClick={() => handleNavigate(block)}
+            >
+              <span className="flex-1 truncate">{block.content || '(empty)'}</span>
+              <span className="text-[10px] text-muted-foreground font-mono">
+                {block.id.slice(0, 8)}
+              </span>
+            </button>
+          ))}
+
+          {hasMore && (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="w-full text-muted-foreground"
+              onClick={() => loadTasks(nextCursor ?? undefined)}
+              disabled={loading}
+            >
+              {loading ? 'Loading...' : 'Load more'}
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── Component ─────────────────────────────────────────────────────────
@@ -331,6 +468,35 @@ export function JournalPage({
     )
   }
 
+  /** Render agenda view — collapsible task sections grouped by TODO status. */
+  function renderAgenda() {
+    return (
+      <div className="agenda-view space-y-3">
+        <TaskSection
+          title="To Do"
+          status="TODO"
+          icon={Circle}
+          iconColor="text-muted-foreground"
+          onNavigateToPage={onNavigateToPage}
+        />
+        <TaskSection
+          title="In Progress"
+          status="DOING"
+          icon={CircleDot}
+          iconColor="text-blue-500"
+          onNavigateToPage={onNavigateToPage}
+        />
+        <TaskSection
+          title="Completed"
+          status="DONE"
+          icon={CheckCircle2}
+          iconColor="text-green-600"
+          onNavigateToPage={onNavigateToPage}
+        />
+      </div>
+    )
+  }
+
   // ── Highlighted days for the floating calendar picker ────────────────
 
   // ── Main render ─────────────────────────────────────────────────────
@@ -350,6 +516,7 @@ export function JournalPage({
       {!loading && mode === 'daily' && renderDaily()}
       {!loading && mode === 'weekly' && renderWeekly()}
       {!loading && mode === 'monthly' && renderMonthly()}
+      {!loading && mode === 'agenda' && renderAgenda()}
     </div>
   )
 }
@@ -399,6 +566,7 @@ export function JournalControls(): React.ReactElement {
   }
 
   function getDateDisplay(): string {
+    if (mode === 'agenda') return 'Tasks'
     if (mode === 'daily') return formatDateDisplay(currentDate)
     if (mode === 'weekly') return formatWeekRange(currentDate)
     return format(currentDate, 'MMMM yyyy')
@@ -414,7 +582,7 @@ export function JournalControls(): React.ReactElement {
     <div className="flex flex-1 items-center gap-2">
       {/* Mode switcher */}
       <div className="flex items-center gap-0.5" role="tablist" aria-label="Journal view mode">
-        {(['daily', 'weekly', 'monthly'] as const).map((m) => (
+        {(['daily', 'weekly', 'monthly', 'agenda'] as const).map((m) => (
           <Button
             key={m}
             variant={mode === m ? 'secondary' : 'ghost'}
@@ -424,92 +592,104 @@ export function JournalControls(): React.ReactElement {
             aria-label={`${m.charAt(0).toUpperCase() + m.slice(1)} view`}
             onClick={() => setMode(m)}
           >
-            {m === 'daily' ? 'Day' : m === 'weekly' ? 'Week' : 'Month'}
+            {m === 'daily' ? 'Day' : m === 'weekly' ? 'Week' : m === 'monthly' ? 'Month' : 'Agenda'}
           </Button>
         ))}
       </div>
 
       <div className="flex-1" />
 
-      {/* Date navigation */}
-      <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon-xs" aria-label={navLabels.prev} onClick={goPrev}>
-          <ChevronLeft className="h-4 w-4" />
-        </Button>
-        <span className="min-w-[140px] text-center text-sm font-medium" data-testid="date-display">
+      {/* Date navigation — hidden in agenda mode (no date context) */}
+      {mode !== 'agenda' && (
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon-xs" aria-label={navLabels.prev} onClick={goPrev}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <span
+            className="min-w-[140px] text-center text-sm font-medium"
+            data-testid="date-display"
+          >
+            {getDateDisplay()}
+          </span>
+          <Button variant="ghost" size="icon-xs" aria-label={navLabels.next} onClick={goNext}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={() => setCurrentDate(new Date())}
+            aria-label="Go to today"
+          >
+            Today
+          </Button>
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Open calendar picker"
+              onClick={() => setCalendarOpen((o) => !o)}
+            >
+              <CalendarIcon className="h-4 w-4" />
+            </Button>
+            {calendarOpen && (
+              <>
+                {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
+                <div className="fixed inset-0 z-40" onClick={() => setCalendarOpen(false)} />
+                <div className="absolute right-0 top-full z-50 mt-1 rounded-md border bg-popover p-2 shadow-md">
+                  <Calendar
+                    mode="single"
+                    selected={currentDate}
+                    onSelect={(day) => {
+                      if (day) {
+                        navigateToDate(day, 'daily')
+                        setCalendarOpen(false)
+                      }
+                    }}
+                    defaultMonth={currentDate}
+                    weekStartsOn={1}
+                    showWeekNumber
+                    showOutsideDays
+                    onWeekNumberClick={(_wn: number, dates: Date[]) => {
+                      if (dates.length > 0) {
+                        navigateToDate(dates[0], 'weekly')
+                        setCalendarOpen(false)
+                      }
+                    }}
+                    onMonthClick={(month: Date) => {
+                      navigateToDate(month, 'monthly')
+                      setCalendarOpen(false)
+                    }}
+                    modifiers={{ hasContent: highlightedDays }}
+                    modifiersClassNames={{ hasContent: 'has-content-dot' }}
+                  />
+                  <style>{`
+                    .has-content-dot { position: relative; }
+                    .has-content-dot::after {
+                      content: '';
+                      position: absolute;
+                      bottom: 2px;
+                      left: 50%;
+                      transform: translateX(-50%);
+                      width: 5px;
+                      height: 5px;
+                      border-radius: 50%;
+                      background: hsl(var(--primary));
+                    }
+                  `}</style>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Agenda mode: show title in place of date nav */}
+      {mode === 'agenda' && (
+        <span className="text-sm font-medium" data-testid="date-display">
           {getDateDisplay()}
         </span>
-        <Button variant="ghost" size="icon-xs" aria-label={navLabels.next} onClick={goNext}>
-          <ChevronRight className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="outline"
-          size="xs"
-          onClick={() => setCurrentDate(new Date())}
-          aria-label="Go to today"
-        >
-          Today
-        </Button>
-        <div className="relative">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Open calendar picker"
-            onClick={() => setCalendarOpen((o) => !o)}
-          >
-            <CalendarIcon className="h-4 w-4" />
-          </Button>
-          {calendarOpen && (
-            <>
-              {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
-              {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
-              <div className="fixed inset-0 z-40" onClick={() => setCalendarOpen(false)} />
-              <div className="absolute right-0 top-full z-50 mt-1 rounded-md border bg-popover p-2 shadow-md">
-                <Calendar
-                  mode="single"
-                  selected={currentDate}
-                  onSelect={(day) => {
-                    if (day) {
-                      navigateToDate(day, 'daily')
-                      setCalendarOpen(false)
-                    }
-                  }}
-                  defaultMonth={currentDate}
-                  weekStartsOn={1}
-                  showWeekNumber
-                  showOutsideDays
-                  onWeekNumberClick={(_wn: number, dates: Date[]) => {
-                    if (dates.length > 0) {
-                      navigateToDate(dates[0], 'weekly')
-                      setCalendarOpen(false)
-                    }
-                  }}
-                  onMonthClick={(month: Date) => {
-                    navigateToDate(month, 'monthly')
-                    setCalendarOpen(false)
-                  }}
-                  modifiers={{ hasContent: highlightedDays }}
-                  modifiersClassNames={{ hasContent: 'has-content-dot' }}
-                />
-                <style>{`
-                  .has-content-dot { position: relative; }
-                  .has-content-dot::after {
-                    content: '';
-                    position: absolute;
-                    bottom: 2px;
-                    left: 50%;
-                    transform: translateX(-50%);
-                    width: 5px;
-                    height: 5px;
-                    border-radius: 50%;
-                    background: hsl(var(--primary));
-                  }
-                `}</style>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   )
 }

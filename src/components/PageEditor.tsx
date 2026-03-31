@@ -15,7 +15,33 @@ import { useNavigationStore } from '../stores/navigation'
 import { BacklinksPanel } from './BacklinksPanel'
 import { BlockTree } from './BlockTree'
 import { HistoryPanel } from './HistoryPanel'
+import { PropertiesPanel } from './PropertiesPanel'
 import { TagPanel } from './TagPanel'
+
+/** Inline Settings2 icon — avoids adding to the lucide-react import which breaks existing test mocks. */
+function Settings2Icon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      role="img"
+      aria-label="Properties"
+    >
+      <path d="M20 7h-9" />
+      <path d="M14 17H5" />
+      <circle cx="17" cy="17" r="3" />
+      <circle cx="7" cy="7" r="3" />
+    </svg>
+  )
+}
 
 export interface PageEditorProps {
   pageId: string
@@ -24,7 +50,7 @@ export interface PageEditorProps {
   onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
 }
 
-type DetailTab = 'backlinks' | 'history' | 'tags'
+type DetailTab = 'backlinks' | 'history' | 'tags' | 'properties'
 
 export function PageEditor({
   pageId,
@@ -202,6 +228,18 @@ export function PageEditor({
               <Tag className="h-3.5 w-3.5" />
               Tags
             </Button>
+            <Button
+              variant={activeTab === 'properties' ? 'default' : 'ghost'}
+              size="sm"
+              className="detail-tab-properties gap-1"
+              onClick={() => {
+                setActiveTab('properties')
+                setPanelCollapsed(false)
+              }}
+            >
+              <Settings2Icon className="h-3.5 w-3.5" />
+              Properties
+            </Button>
 
             <div className="flex-1" />
 
@@ -227,6 +265,7 @@ export function PageEditor({
               {activeTab === 'backlinks' && <BacklinksPanel blockId={effectiveBlockId} />}
               {activeTab === 'history' && <HistoryPanel blockId={effectiveBlockId} />}
               {activeTab === 'tags' && <TagPanel blockId={effectiveBlockId} />}
+              {activeTab === 'properties' && <PropertiesPanel blockId={effectiveBlockId} />}
             </div>
           )}
         </div>

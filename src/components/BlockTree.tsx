@@ -96,6 +96,15 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const properties = useBlockProperties()
   const { getTodoState, handleToggleTodo, setBlockProperties } = properties
 
+  /** Get the priority value for a block from the properties cache. */
+  const getPriority = useCallback(
+    (blockId: string): string | null => {
+      const props = properties.blockProperties.get(blockId)
+      return props?.find((p) => p.key === 'priority')?.value_text ?? null
+    },
+    [properties.blockProperties],
+  )
+
   /** Set of block IDs that have children (next block in flat tree has greater depth). */
   const hasChildrenSet = useMemo(() => {
     const set = new Set<string>()
@@ -143,12 +152,25 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     [],
   )
 
+  /** Priority commands — shown only when query matches (progressive disclosure). */
+  const PRIORITY_COMMANDS: PickerItem[] = useMemo(
+    () => [
+      { id: 'priority-high', label: 'PRIORITY HIGH — Set high priority [A]' },
+      { id: 'priority-medium', label: 'PRIORITY MEDIUM — Set medium priority [B]' },
+      { id: 'priority-low', label: 'PRIORITY LOW — Set low priority [C]' },
+    ],
+    [],
+  )
+
   const searchSlashCommands = useCallback(
     async (query: string): Promise<PickerItem[]> => {
       const q = query.toLowerCase()
-      return SLASH_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
+      const baseResults = SLASH_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
+      if (!q) return baseResults
+      const priorityResults = PRIORITY_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
+      return [...baseResults, ...priorityResults]
     },
-    [SLASH_COMMANDS],
+    [SLASH_COMMANDS, PRIORITY_COMMANDS],
   )
 
   // ── Roving editor ──────────────────────────────────────────────────
@@ -410,6 +432,29 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         // will lose focus when the user clicks the calendar.
         datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
         setDatePickerOpen(true)
+      }
+
+      if (
+        item.id === 'priority-high' ||
+        item.id === 'priority-medium' ||
+        item.id === 'priority-low'
+      ) {
+        const priority =
+          item.id === 'priority-high' ? 'A' : item.id === 'priority-medium' ? 'B' : 'C'
+        await setProperty({ blockId: focusedBlockId, key: 'priority', valueText: priority })
+        setBlockProperties((prev) => {
+          const next = new Map(prev)
+          const props = (next.get(focusedBlockId) ?? []).filter((p) => p.key !== 'priority')
+          props.push({
+            key: 'priority',
+            value_text: priority,
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+          })
+          next.set(focusedBlockId, props)
+          return next
+        })
       }
     },
     [focusedBlockId, setBlockProperties],
@@ -680,6 +725,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                     onToggleCollapse={toggleCollapse}
                     todoState={getTodoState(block.id)}
                     onToggleTodo={handleToggleTodo}
+                    priority={getPriority(block.id)}
                   />
                 </div>
               )

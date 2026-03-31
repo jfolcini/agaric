@@ -3103,3 +3103,121 @@ async fn date_validation_non_date_string_returns_validation() {
         "'not-a-date' must return Validation error, got: {result:?}"
     );
 }
+
+// ======================================================================
+// query_by_property — integration
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_happy_path() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Create blocks via command layer
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task one".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task two".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b3 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task three".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Set properties via command layer
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        "todo".into(),
+        Some("TODO".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone(),
+        "todo".into(),
+        Some("DONE".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b3.id.clone(),
+        "priority".into(),
+        Some("high".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Query all blocks with 'todo' property (any value)
+    let result = query_by_property_inner(&pool, "todo".into(), None, None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(result.items.len(), 2, "two blocks have 'todo' property");
+
+    // Query with value filter: only TODO
+    let filtered = query_by_property_inner(&pool, "todo".into(), Some("TODO".into()), None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(filtered.items.len(), 1, "only one block has todo=TODO");
+    assert_eq!(filtered.items[0].id, b1.id);
+
+    // Query nonexistent key: empty
+    let empty = query_by_property_inner(&pool, "nonexistent".into(), None, None, None)
+        .await
+        .unwrap();
+
+    assert!(empty.items.is_empty(), "nonexistent key must return empty");
+}

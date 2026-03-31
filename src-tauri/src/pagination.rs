@@ -374,6 +374,58 @@ pub async fn list_by_tag(
     })
 }
 
+/// Query blocks by property key and optional value, with cursor pagination.
+///
+/// Returns blocks that have a row in `block_properties` matching the given
+/// `key`.  When `value_text` is `Some`, only rows whose `value_text` equals
+/// the supplied value are included.  Excludes soft-deleted and conflict
+/// blocks, consistent with other listing queries.
+///
+/// Ordered by `b.id ASC` (ULID ≈ chronological).
+pub async fn query_by_property(
+    pool: &SqlitePool,
+    key: &str,
+    value_text: Option<&str>,
+    page: &PageRequest,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    let fetch_limit = page.limit + 1;
+
+    let (cursor_flag, cursor_id): (Option<i64>, String) = match page.after.as_ref() {
+        Some(c) => (Some(1), c.id.clone()),
+        None => (None, String::new()),
+    };
+
+    let rows = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+                b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool"
+         FROM block_properties bp
+         JOIN blocks b ON b.id = bp.block_id
+         WHERE bp.key = ?1
+           AND b.deleted_at IS NULL
+           AND b.is_conflict = 0
+           AND (?2 IS NULL OR bp.value_text = ?2)
+           AND (?3 IS NULL OR b.id > ?4)
+         ORDER BY b.id ASC
+         LIMIT ?5"#,
+        key,         // ?1
+        value_text,  // ?2
+        cursor_flag, // ?3
+        cursor_id,   // ?4
+        fetch_limit, // ?5
+    )
+    .fetch_all(pool)
+    .await?;
+
+    build_page_response(rows, page.limit, |last| Cursor {
+        id: last.id.clone(),
+        position: None,
+        deleted_at: None,
+        seq: None,
+        rank: None,
+    })
+}
+
 /// List blocks for a specific date from the agenda cache, paginated.
 ///
 /// Ordered by `block_id ASC` (ULID ≈ chronological).
@@ -1444,6 +1496,143 @@ mod tests {
 
         assert!(resp.items.is_empty(), "unknown tag must return empty");
         assert!(!resp.has_more);
+    }
+
+    // ====================================================================
+    // query_by_property
+    // ====================================================================
+
+    /// Helper: insert a block_properties row directly.
+    async fn insert_property(pool: &SqlitePool, block_id: &str, key: &str, value_text: &str) {
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
+            .bind(block_id)
+            .bind(key)
+            .bind(value_text)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn query_by_property_returns_matching_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLOCK001", "content", "task 1", None, None).await;
+        insert_block(&pool, "BLOCK002", "content", "task 2", None, None).await;
+        insert_block(&pool, "BLOCK003", "content", "no prop", None, None).await;
+
+        insert_property(&pool, "BLOCK001", "todo", "TODO").await;
+        insert_property(&pool, "BLOCK002", "todo", "DONE").await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = query_by_property(&pool, "todo", None, &page).await.unwrap();
+
+        assert_eq!(resp.items.len(), 2, "only blocks with 'todo' property");
+        assert_eq!(resp.items[0].id, "BLOCK001");
+        assert_eq!(resp.items[1].id, "BLOCK002");
+    }
+
+    #[tokio::test]
+    async fn query_by_property_filters_by_value() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLOCK001", "content", "task 1", None, None).await;
+        insert_block(&pool, "BLOCK002", "content", "task 2", None, None).await;
+
+        insert_property(&pool, "BLOCK001", "todo", "TODO").await;
+        insert_property(&pool, "BLOCK002", "todo", "DONE").await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = query_by_property(&pool, "todo", Some("TODO"), &page)
+            .await
+            .unwrap();
+
+        assert_eq!(resp.items.len(), 1, "only block with todo=TODO");
+        assert_eq!(resp.items[0].id, "BLOCK001");
+    }
+
+    #[tokio::test]
+    async fn query_by_property_paginates_with_cursor() {
+        let (pool, _dir) = test_pool().await;
+
+        for i in 1..=5_i64 {
+            let id = format!("BLOCK{i:03}");
+            insert_block(&pool, &id, "content", &format!("b{i}"), None, None).await;
+            insert_property(&pool, &id, "status", "active").await;
+        }
+
+        let r1 = query_by_property(
+            &pool,
+            "status",
+            None,
+            &PageRequest::new(None, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r1.items.len(), 2);
+        assert!(r1.has_more);
+        assert_eq!(r1.items[0].id, "BLOCK001");
+        assert_eq!(r1.items[1].id, "BLOCK002");
+
+        let r2 = query_by_property(
+            &pool,
+            "status",
+            None,
+            &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r2.items.len(), 2);
+        assert!(r2.has_more);
+        assert_eq!(r2.items[0].id, "BLOCK003");
+        assert_eq!(r2.items[1].id, "BLOCK004");
+
+        let r3 = query_by_property(
+            &pool,
+            "status",
+            None,
+            &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r3.items.len(), 1);
+        assert!(!r3.has_more);
+        assert!(r3.next_cursor.is_none());
+        assert_eq!(r3.items[0].id, "BLOCK005");
+    }
+
+    #[tokio::test]
+    async fn query_by_property_returns_empty_for_nonexistent_key() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLOCK001", "content", "no props", None, None).await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = query_by_property(&pool, "nonexistent_key", None, &page)
+            .await
+            .unwrap();
+
+        assert!(resp.items.is_empty(), "nonexistent key must return empty");
+        assert!(!resp.has_more);
+        assert!(resp.next_cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn query_by_property_excludes_soft_deleted() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLOCK001", "content", "alive", None, None).await;
+        insert_block(&pool, "BLOCK002", "content", "deleted", None, None).await;
+
+        insert_property(&pool, "BLOCK001", "todo", "TODO").await;
+        insert_property(&pool, "BLOCK002", "todo", "TODO").await;
+        soft_delete_block(&pool, "BLOCK002", FIXED_DELETED_AT).await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+        let resp = query_by_property(&pool, "todo", None, &page).await.unwrap();
+
+        assert_eq!(resp.items.len(), 1, "soft-deleted block must be excluded");
+        assert_eq!(resp.items[0].id, "BLOCK001");
     }
 
     // ====================================================================

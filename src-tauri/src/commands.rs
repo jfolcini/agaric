@@ -1444,6 +1444,30 @@ pub async fn query_by_tags_inner(
     tag_query::eval_tag_query(pool, &expr, &page).await
 }
 
+/// Query blocks by property key and optional value filter.
+///
+/// Returns a paginated list of blocks that have the specified property.
+/// When `value_text` is provided, only blocks whose property value matches are returned.
+/// Results are paginated using cursor-based pagination (by block_id).
+///
+/// # Errors
+/// - [`AppError::Validation`] — `key` is empty
+pub async fn query_by_property_inner(
+    pool: &SqlitePool,
+    key: String,
+    value_text: Option<String>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    if key.trim().is_empty() {
+        return Err(AppError::Validation(
+            "property key must not be empty".into(),
+        ));
+    }
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    pagination::query_by_property(pool, &key, value_text.as_deref(), &page).await
+}
+
 /// List all tags matching a name prefix (autocomplete / UI).
 pub async fn list_tags_by_prefix_inner(
     pool: &SqlitePool,
@@ -1973,6 +1997,22 @@ pub async fn query_by_tags(
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     query_by_tags_inner(&pool.0, tag_ids, prefixes, mode, cursor, limit)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn query_by_property(
+    pool: State<'_, ReadPool>,
+    key: String,
+    value_text: Option<String>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<BlockRow>, AppError> {
+    query_by_property_inner(&pool.0, key, value_text, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -4451,6 +4491,136 @@ mod tests {
                 .unwrap();
 
         assert_eq!(result.items.len(), 2);
+    }
+
+    // ======================================================================
+    // query_by_property_inner
+    // ======================================================================
+
+    /// Helper: insert a property directly into the block_properties table.
+    async fn insert_property(pool: &SqlitePool, block_id: &str, key: &str, value_text: &str) {
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
+            .bind(block_id)
+            .bind(key)
+            .bind(value_text)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn query_by_property_returns_matching_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "QP_B1", "content", "task 1", None, Some(1)).await;
+        insert_block(&pool, "QP_B2", "content", "task 2", None, Some(2)).await;
+        insert_block(&pool, "QP_B3", "content", "no prop", None, Some(3)).await;
+
+        insert_property(&pool, "QP_B1", "todo", "TODO").await;
+        insert_property(&pool, "QP_B2", "todo", "DONE").await;
+
+        let result = query_by_property_inner(&pool, "todo".into(), None, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.items.len(), 2, "both blocks with 'todo' property");
+        assert_eq!(result.items[0].id, "QP_B1");
+        assert_eq!(result.items[1].id, "QP_B2");
+    }
+
+    #[tokio::test]
+    async fn query_by_property_empty_key_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = query_by_property_inner(&pool, "".into(), None, None, None).await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "empty key must return Validation error, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn query_by_property_filters_by_value() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "QP_A", "content", "task a", None, Some(1)).await;
+        insert_block(&pool, "QP_B", "content", "task b", None, Some(2)).await;
+
+        insert_property(&pool, "QP_A", "todo", "TODO").await;
+        insert_property(&pool, "QP_B", "todo", "DONE").await;
+
+        let result = query_by_property_inner(&pool, "todo".into(), Some("TODO".into()), None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.items.len(), 1, "only block with todo=TODO");
+        assert_eq!(result.items[0].id, "QP_A");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn query_by_property_paginates_correctly() {
+        let (pool, _dir) = test_pool().await;
+
+        for i in 1..=5_i64 {
+            let id = format!("QP_P{i:02}");
+            insert_block(&pool, &id, "content", &format!("item {i}"), None, Some(i)).await;
+            insert_property(&pool, &id, "status", "active").await;
+        }
+
+        // First page: limit 2
+        let r1 = query_by_property_inner(&pool, "status".into(), None, None, Some(2))
+            .await
+            .unwrap();
+
+        assert_eq!(r1.items.len(), 2);
+        assert!(r1.has_more);
+        assert!(r1.next_cursor.is_some());
+        assert_eq!(r1.items[0].id, "QP_P01");
+        assert_eq!(r1.items[1].id, "QP_P02");
+
+        // Second page
+        let r2 = query_by_property_inner(&pool, "status".into(), None, r1.next_cursor, Some(2))
+            .await
+            .unwrap();
+
+        assert_eq!(r2.items.len(), 2);
+        assert!(r2.has_more);
+        assert_eq!(r2.items[0].id, "QP_P03");
+        assert_eq!(r2.items[1].id, "QP_P04");
+
+        // Third page: last item
+        let r3 = query_by_property_inner(&pool, "status".into(), None, r2.next_cursor, Some(2))
+            .await
+            .unwrap();
+
+        assert_eq!(r3.items.len(), 1);
+        assert!(!r3.has_more);
+        assert!(r3.next_cursor.is_none());
+        assert_eq!(r3.items[0].id, "QP_P05");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn query_by_property_excludes_deleted_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "QP_DEL", "content", "deleted", None, Some(1)).await;
+        insert_property(&pool, "QP_DEL", "todo", "TODO").await;
+
+        // Soft-delete the block
+        sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'QP_DEL'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = query_by_property_inner(&pool, "todo".into(), None, None, None)
+            .await
+            .unwrap();
+
+        assert!(
+            result.items.is_empty(),
+            "deleted block must be excluded from query_by_property"
+        );
     }
 
     // ======================================================================
