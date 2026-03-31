@@ -195,6 +195,68 @@ adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-u
 # 2. The app's WebView appears under "Remote Target"
 ```
 
+#### Headless Android Testing via ADB
+
+You can test the Android app entirely from the command line without ever looking at the emulator window. This is useful for CI, scripting, and AI-assisted development.
+
+```bash
+# Start emulator headless (no window)
+emulator -avd dev_phone -gpu swiftshader_indirect -no-window -no-audio &
+
+# Wait for boot to complete
+adb wait-for-device
+adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
+
+# Build and install the debug APK
+cargo tauri android build --target x86_64 --debug
+adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+
+# Launch the app
+adb shell am start -n com.blocknotes.app/.MainActivity
+
+# Take a screenshot and pull it to your machine
+adb exec-out screencap -p > screenshot.png
+
+# Send a tap at coordinates (x, y)
+adb shell input tap 512 400
+
+# Type text into the focused field
+adb shell input text "hello"
+
+# Swipe (scroll down)
+adb shell input swipe 500 800 500 200
+
+# Read Rust backend logs
+adb logcat -s RustStdoutStderr:V -d
+
+# Dump the current activity's view hierarchy
+adb shell dumpsys activity top | head -100
+
+# Access the app's private data directory (requires debug build)
+adb shell run-as com.blocknotes.app ls files/
+adb shell run-as com.blocknotes.app cat files/device-id
+
+# Kill the app
+adb shell am force-stop com.blocknotes.app
+
+# Shut down the emulator
+adb emu kill
+```
+
+You can also script the WebView via Chrome DevTools Protocol. Forward the debug port and use `curl` or a CDP client to execute JavaScript, inspect the DOM, and capture console output:
+
+```bash
+# Find the WebView debug socket
+adb forward tcp:9222 localabstract:webview_devtools_remote_$(adb shell pidof com.blocknotes.app)
+
+# List inspectable pages
+curl -s http://localhost:9222/json
+
+# Execute JS in the WebView (via CDP websocket — use websocat or similar)
+# e.g., check if Tauri IPC is available:
+#   {"method":"Runtime.evaluate","params":{"expression":"typeof window.__TAURI__"},"id":1}
+```
+
 #### Known Limitations
 
 The Android build is functional but has open issues tracked in `REVIEW-LATER.md`:
