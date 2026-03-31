@@ -83,7 +83,12 @@ export function renderRichContent(
             )
 
           // Apply marks from innermost to outermost
-          if (hasCode) content = <code>{content}</code>
+          if (hasCode)
+            content = (
+              <code className="bg-muted rounded px-1 py-0.5 text-[0.85em] font-mono">
+                {content}
+              </code>
+            )
           if (hasItalic) content = <em>{content}</em>
           if (hasBold) content = <strong>{content}</strong>
 

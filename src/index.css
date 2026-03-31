@@ -187,6 +187,12 @@
   @apply bg-transparent p-0 text-sm font-mono;
 }
 
+/* Inline code inside the editor — visible background so the user
+   knows they're typing inside a code span, not plain text. */
+.ProseMirror code {
+  @apply bg-muted rounded px-1 py-0.5 text-[0.85em] font-mono;
+}
+
 /* Placeholder text (via TipTap Placeholder extension) */
 .ProseMirror p.is-editor-empty:first-child::before {
   @apply text-muted-foreground/60 pointer-events-none float-left h-0;

@@ -126,6 +126,28 @@ test.describe('Formatting buttons', () => {
 
     await expect(codeBlockBtn).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 })
   })
+
+  test('Code button applies visible background to inline code', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    await focusBlock(page)
+
+    // Type some text first
+    const editor = page.locator('.block-editor [contenteditable="true"]')
+    await editor.press('End')
+    await editor.type(' test-code')
+
+    // Select "test-code"
+    for (let i = 0; i < 9; i++) await page.keyboard.press('Shift+ArrowLeft')
+
+    // Apply inline code
+    const codeBtn = page.getByRole('button', { name: 'Code', exact: true })
+    await codeBtn.click()
+
+    // The code element should have bg-muted background styling
+    const codeEl = editor.locator('code')
+    await expect(codeEl).toBeVisible({ timeout: 3000 })
+    await expect(codeEl).toHaveCSS('border-radius', /\dpx/)
+  })
 })
 
 // ===========================================================================
@@ -176,6 +198,17 @@ test.describe('Link buttons', () => {
 
     // Click the Internal link toolbar button -- inserts [[ which triggers picker
     await page.getByRole('button', { name: 'Internal link' }).click()
+
+    // The suggestion popup should appear
+    await expect(page.locator('.suggestion-list')).toBeVisible({ timeout: 5000 })
+  })
+
+  test('Tag button triggers @ tag picker', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    await focusBlock(page)
+
+    // Click the Tag toolbar button -- inserts @ which triggers tag picker
+    await page.getByRole('button', { name: 'Insert tag' }).click()
 
     // The suggestion popup should appear
     await expect(page.locator('.suggestion-list')).toBeVisible({ timeout: 5000 })

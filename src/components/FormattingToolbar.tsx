@@ -20,6 +20,7 @@ import {
   Code,
   FileCode2,
   FileSymlink,
+  Hash,
   Italic,
   Link2,
   Redo2,
@@ -177,6 +178,20 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             }}
           >
             <FileSymlink size={14} />
+          </Button>
+        </Tip>
+
+        <Tip label="Tag (@)">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Insert tag"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              editor.chain().focus().insertContent('@').run()
+            }}
+          >
+            <Hash size={14} />
           </Button>
         </Tip>
 
