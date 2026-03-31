@@ -960,6 +960,34 @@ describe('SortableBlock priority badge', () => {
     expect(screen.getByRole('button', { name: 'Priority 2. Click to cycle.' })).toBeInTheDocument()
   })
 
+  it('priority badge has correct aria-label for priority A', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="A"
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /Priority 1.*Click to cycle/i })).toBeInTheDocument()
+  })
+
+  it('priority badge has correct aria-label for priority C', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="C"
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /Priority 3.*Click to cycle/i })).toBeInTheDocument()
+  })
+
   it('priority badge has mt-1.5 for first-line alignment', () => {
     const { container } = render(
       <SortableBlock
@@ -1067,6 +1095,21 @@ describe('SortableBlock visibility controls', () => {
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
     expect(deleteBtn.className).toContain('opacity-0')
+  })
+
+  it('delete handle has group-hover:opacity-100 class for hover reveal', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    expect(deleteBtn.className).toContain('group-hover:opacity-100')
   })
 
   it('collapse toggle does NOT have opacity-0 class (always visible when hasChildren)', () => {

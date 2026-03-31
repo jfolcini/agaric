@@ -2,7 +2,7 @@
  * Tests for FormattingToolbar component.
  *
  * Validates:
- *  - Renders all seven buttons (Bold, Italic, Code, External link, Code block, Undo, Redo)
+ *  - Renders all thirteen buttons (Bold, Italic, Code, External link, Internal link, Tag, Code block, Priority 1/2/3, Date, Undo, Redo)
  *  - Active marks get aria-pressed=true + bg-accent
  *  - Undo/Redo disabled state reflects editor.can()
  *  - Clicking buttons calls the correct editor chain commands
@@ -153,7 +153,7 @@ describe('FormattingToolbar', () => {
       expect(container.querySelector('.formatting-toolbar')).toBeInTheDocument()
     })
 
-    it('renders all seven formatting buttons', () => {
+    it('renders all thirteen formatting buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
@@ -161,6 +161,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Code' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'External link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Insert tag' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 1 (high)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 2 (medium)' })).toBeInTheDocument()
@@ -477,6 +478,46 @@ describe('FormattingToolbar', () => {
       const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
       const prevented = !btn.dispatchEvent(event)
       expect(prevented).toBe(true)
+    })
+  })
+
+  // ── Tag button ─────────────────────────────────────────────────────
+
+  describe('tag button', () => {
+    it('inserts @ into the editor to trigger the tag picker', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.mouseDown(screen.getByRole('button', { name: 'Insert tag' }))
+      expect(mockInsertContent).toHaveBeenCalledWith('@')
+    })
+
+    it('prevents default on mousedown to preserve editor focus', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Insert tag' })
+      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      const prevented = !btn.dispatchEvent(event)
+      expect(prevented).toBe(true)
+    })
+  })
+
+  // ── Tooltip labels (via aria-labels) ───────────────────────────────
+
+  describe('tooltip labels', () => {
+    it('all buttons have correct aria-labels', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Italic' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Code' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'External link' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Insert tag' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Priority 1 (high)' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Priority 2 (medium)' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Priority 3 (low)' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Insert date' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Redo' })).toBeInTheDocument()
     })
   })
 })

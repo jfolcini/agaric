@@ -352,39 +352,55 @@ test.describe('Priority buttons', () => {
     await waitForBoot(page)
   })
 
-  test('Priority 1 button sets high priority on focused block', async ({ page }) => {
+  test('Priority 1 button sets high priority, saves, and persists', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
-    // Click the Priority 1 button in the toolbar
     await page.getByRole('button', { name: 'Priority 1 (high)' }).click()
 
-    // A priority badge with "1" should appear on the block
-    const badge = page.locator('.priority-badge')
+    const firstBlock = page.locator('.sortable-block').first()
+    const badge = firstBlock.locator('.priority-badge')
     await expect(badge).toBeVisible({ timeout: 3000 })
     await expect(badge).toHaveText('1')
+
+    // Save and verify persists
+    await saveBlock(page)
+    await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.priority-badge')).toHaveText('1')
   })
 
-  test('Priority 2 button sets medium priority', async ({ page }) => {
+  test('Priority 2 button sets medium priority, saves, and persists', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
     await page.getByRole('button', { name: 'Priority 2 (medium)' }).click()
 
-    const badge = page.locator('.priority-badge')
+    const firstBlock = page.locator('.sortable-block').first()
+    const badge = firstBlock.locator('.priority-badge')
     await expect(badge).toBeVisible({ timeout: 3000 })
     await expect(badge).toHaveText('2')
+
+    // Save and verify persists
+    await saveBlock(page)
+    await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.priority-badge')).toHaveText('2')
   })
 
-  test('Priority 3 button sets low priority', async ({ page }) => {
+  test('Priority 3 button sets low priority, saves, and persists', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
     await page.getByRole('button', { name: 'Priority 3 (low)' }).click()
 
-    const badge = page.locator('.priority-badge')
+    const firstBlock = page.locator('.sortable-block').first()
+    const badge = firstBlock.locator('.priority-badge')
     await expect(badge).toBeVisible({ timeout: 3000 })
     await expect(badge).toHaveText('3')
+
+    // Save and verify persists
+    await saveBlock(page)
+    await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.priority-badge')).toHaveText('3')
   })
 })
 
@@ -509,5 +525,96 @@ test.describe('Block interactions', () => {
     // (could be TODO or DOING depending on whether both editor-level and
     // document-level handlers fire)
     await expect(firstBlock.locator('.task-checkbox-empty')).not.toBeVisible({ timeout: 5000 })
+  })
+})
+
+// ===========================================================================
+// 7. Undo / Redo
+// ===========================================================================
+
+test.describe('Undo / Redo', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('Undo button reverts last change in editor', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    const editor = await focusBlock(page)
+
+    // Remember original text
+    const originalText = await editor.textContent()
+
+    // Type additional text
+    await page.keyboard.press('End')
+    await editor.type(' extra')
+
+    // Click Undo
+    await page.getByRole('button', { name: 'Undo' }).click()
+
+    // Editor content should revert to original
+    await expect(editor).toHaveText(originalText ?? '', { timeout: 3000 })
+  })
+
+  test('Redo button re-applies undone change', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    const editor = await focusBlock(page)
+
+    // Type text
+    await page.keyboard.press('End')
+    await editor.type(' extra')
+    const withExtra = await editor.textContent()
+
+    // Undo
+    await page.getByRole('button', { name: 'Undo' }).click()
+
+    // Redo
+    await page.getByRole('button', { name: 'Redo' }).click()
+
+    // Should have the extra text back
+    await expect(editor).toHaveText(withExtra ?? '', { timeout: 3000 })
+  })
+
+  test('Undo via Ctrl+Z in editor reverts last change', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    const editor = await focusBlock(page)
+
+    const originalText = await editor.textContent()
+    await page.keyboard.press('End')
+    await editor.type(' typed')
+
+    await page.keyboard.press('Control+z')
+
+    await expect(editor).toHaveText(originalText ?? '', { timeout: 3000 })
+  })
+
+  test('Redo via Ctrl+Y in editor re-applies change', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+    const editor = await focusBlock(page)
+
+    await page.keyboard.press('End')
+    await editor.type(' typed')
+    const withTyped = await editor.textContent()
+
+    await page.keyboard.press('Control+z')
+    await page.keyboard.press('Control+y')
+
+    await expect(editor).toHaveText(withTyped ?? '', { timeout: 3000 })
+  })
+})
+
+// ===========================================================================
+// 8. Collapse / Expand
+// ===========================================================================
+
+test.describe('Collapse / Expand', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('blocks without children do not show collapse chevron', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+
+    const firstBlock = page.locator('.sortable-block').first()
+    await expect(firstBlock.locator('.collapse-toggle')).not.toBeVisible()
   })
 })
