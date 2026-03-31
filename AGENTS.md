@@ -23,7 +23,16 @@ cd src-tauri && cargo clippy -- -D warnings  # Lint
 
 # Full Tauri app
 cargo tauri dev          # Dev mode with hot reload
-cargo tauri build        # Production build
+cargo tauri build        # Production build (.deb + .AppImage)
+
+# Android (requires Android SDK + NDK 27 + emulator)
+cargo tauri android init                          # First-time project setup
+cargo tauri android build --target x86_64 --debug # Debug APK for emulator
+cargo tauri android build --target aarch64 --debug # Debug APK for arm64 device
+cargo tauri android build --release               # Release APK (all archs)
+cargo tauri android dev --target x86_64           # Build + install + run on emulator
+cargo tauri android dev --target aarch64          # Build + install + run on device
+adb logcat -s RustStdoutStderr:V                  # View Rust logs on Android
 
 # Pre-commit (this IS the verification)
 prek run --all-files     # All hooks, entire repo
@@ -62,6 +71,16 @@ cd src-tauri && cargo test -- specta_tests --ignored
 
 - **Pre-commit:** `prek.toml` — file-type-aware hooks (Rust hooks skip when no `.rs` staged, etc.)
 - **CI:** `.github/workflows/ci.yml`
+
+## Android
+
+- **Status:** APK builds and launches; read IPC works, write IPC (`create_block`) broken (see REVIEW-LATER.md #22)
+- **Generated project:** `src-tauri/gen/android/` — created by `cargo tauri android init`, committed to repo
+- **Min SDK:** 24, **Target SDK:** 36, **NDK:** 27 (set in `gen/android/app/build.gradle.kts`)
+- **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`
+- **DB path on Android:** `/data/data/com.blocknotes.app/files/notes.db` (via `app.path().app_data_dir()`)
+- **Known issues:** 24 open items in REVIEW-LATER.md Tier 4 (Android) + Tier 5 (A11y/UX)
+- **ProGuard:** `isMinifyEnabled = true` for release but keep rules are empty — release APK will crash (REVIEW-LATER.md #63)
 
 ## Tooling Efficiency Rules
 

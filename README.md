@@ -1,6 +1,6 @@
 # Block Notes (Agaric)
 
-A local-first, block-based note-taking app for Linux desktop (and eventually Android). Inspired by Org-mode and Logseq — journal-first, with powerful tagging and emergent structure. No cloud, no accounts. Your data lives on your machine.
+A local-first, block-based note-taking app for Linux desktop and Android. Inspired by Org-mode and Logseq — journal-first, with powerful tagging and emergent structure. No cloud, no accounts. Your data lives on your machine.
 
 ## What is it?
 
@@ -92,16 +92,116 @@ npm run test:coverage       # with v8 coverage
 cd src-tauri && cargo nextest run
 
 # E2E tests (Playwright)
-npx playwright test
+npm run test:e2e
 ```
 
 ### Building for Production
 
 ```bash
+# Linux desktop (.deb + .AppImage)
 cargo tauri build
 ```
 
 Produces a `.deb` and `.AppImage` in `src-tauri/target/release/bundle/`.
+
+### Android Development
+
+The app targets Android via Tauri 2's mobile support. You can build, run, and test the Android APK entirely from your Linux machine using the Android emulator.
+
+#### Android Prerequisites
+
+On top of the base prerequisites you need:
+
+- **Android SDK** with platform tools and build tools
+- **Android NDK** (v27 recommended)
+- **Android emulator** with a system image (e.g., `system-images;android-34;google_apis;x86_64`)
+- **Rust Android targets** — install all four:
+  ```bash
+  rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+  ```
+
+Set these environment variables (e.g., in `~/.bashrc`):
+```bash
+export ANDROID_HOME="$HOME/Android/Sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export NDK_HOME="$ANDROID_HOME/ndk/27.0.12077973"   # adjust to your NDK version
+export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+```
+
+#### First-Time Setup
+
+Initialize the Tauri Android project (only needed once):
+```bash
+cargo tauri android init
+```
+
+Create an emulator AVD if you don't have one:
+```bash
+# Install a system image
+sdkmanager "system-images;android-34;google_apis;x86_64"
+
+# Create the AVD
+avdmanager create avd -n dev_phone -k "system-images;android-34;google_apis;x86_64" --device "pixel_6"
+```
+
+#### Building the APK
+
+```bash
+# Debug APK for emulator (x86_64, fastest)
+cargo tauri android build --target x86_64 --debug
+
+# Debug APK for physical device (arm64)
+cargo tauri android build --target aarch64 --debug
+
+# Release APK (all architectures)
+cargo tauri android build --release
+```
+
+The APK lands in `src-tauri/gen/android/app/build/outputs/apk/`.
+
+#### Running on the Emulator
+
+```bash
+# Start the emulator in the background
+emulator -avd dev_phone -gpu host -no-snapshot-load &
+
+# Wait for it to boot, then run the app with hot-reload
+cargo tauri android dev --target x86_64
+```
+
+`cargo tauri android dev` builds, installs, and launches the app on the running emulator with live frontend reloading (Rust changes require a rebuild).
+
+#### Running on a Physical Device
+
+1. Enable **USB debugging** on the phone (Settings > Developer Options).
+2. Connect via USB and confirm the authorization dialog.
+3. Verify the device is visible: `adb devices`
+4. Run:
+   ```bash
+   cargo tauri android dev --target aarch64
+   ```
+
+#### Inspecting and Debugging
+
+```bash
+# View app logs (Rust tracing output goes to logcat)
+adb logcat -s RustStdoutStderr:V
+
+# Install a previously built APK manually
+adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+
+# Open Chrome DevTools for the Android WebView
+# 1. Open chrome://inspect in your desktop Chrome
+# 2. The app's WebView appears under "Remote Target"
+```
+
+#### Known Limitations
+
+The Android build is functional but has open issues tracked in `REVIEW-LATER.md`:
+- Write IPC (`create_block`) fails at runtime — read-only for now
+- `window.prompt()` and `window.open()` don't work in Android WebView
+- Touch targets and hover-dependent UI need mobile adaptation
+- ProGuard keep rules are missing for release builds
 
 ### Linting and Formatting
 
@@ -114,12 +214,20 @@ cd src-tauri && cargo clippy -- -D warnings
 
 ### Pre-commit Hooks
 
-The project uses `prek` for pre-commit hooks. They run automatically on `git commit` — no need to manually run the full suite beforehand:
+The project uses [`prek`](https://prek.j178.dev) (a fast, Rust-based pre-commit framework) instead of the Python `pre-commit`. Hooks are configured in `prek.toml` and run automatically on `git commit`. They are file-type-aware: Rust hooks skip when no `.rs` files are staged, frontend hooks skip when no `.ts`/`.tsx` files changed, etc.
 
 ```bash
-prek run --all-files        # run all hooks on entire repo
-prek run                    # run on staged files only
+# Install prek (if not already installed)
+cargo install prek
+
+# Manual run against entire repo
+prek run --all-files
+
+# Manual run on staged files only (same as what git commit triggers)
+prek run
 ```
+
+The hooks cover: trailing whitespace, EOF fixer, YAML/TOML/JSON validation, Biome lint+format, cargo fmt, cargo clippy, Vitest, cargo nextest, and TypeScript bindings sync. **prek hooks are the verification** — you never need to manually run the full lint/test suite before committing.
 
 ### Project Structure
 
