@@ -32,9 +32,27 @@ import { LinkEditPopover } from './LinkEditPopover'
 import { Button } from './ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
 import { Separator } from './ui/separator'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 
 interface FormattingToolbarProps {
   editor: Editor
+}
+
+function Tip({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactElement
+}): React.ReactElement {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={6}>
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  )
 }
 
 export function FormattingToolbar({ editor }: FormattingToolbarProps): React.ReactElement {
@@ -70,179 +88,200 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
   }, [])
 
   return (
-    <div className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px">
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Bold"
-        aria-pressed={state.bold}
-        className={state.bold ? 'bg-accent text-accent-foreground' : ''}
-        onMouseDown={(e) => {
-          e.preventDefault()
-          editor.chain().focus().toggleBold().run()
-        }}
-      >
-        <Bold size={14} />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Italic"
-        aria-pressed={state.italic}
-        className={state.italic ? 'bg-accent text-accent-foreground' : ''}
-        onMouseDown={(e) => {
-          e.preventDefault()
-          editor.chain().focus().toggleItalic().run()
-        }}
-      >
-        <Italic size={14} />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Code"
-        aria-pressed={state.code}
-        className={state.code ? 'bg-accent text-accent-foreground' : ''}
-        onMouseDown={(e) => {
-          e.preventDefault()
-          editor.chain().focus().toggleCode().run()
-        }}
-      >
-        <Code size={14} />
-      </Button>
-
-      <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
-
-      <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
-        <PopoverAnchor asChild>
+    <TooltipProvider delayDuration={400}>
+      <div className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px">
+        <Tip label="Bold">
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="External link"
-            aria-pressed={state.link}
-            className={state.link ? 'bg-accent text-accent-foreground' : ''}
+            aria-label="Bold"
+            aria-pressed={state.bold}
+            className={state.bold ? 'bg-accent text-accent-foreground' : ''}
             onMouseDown={(e) => {
               e.preventDefault()
-              setLinkPopoverOpen((prev) => !prev)
+              editor.chain().focus().toggleBold().run()
             }}
           >
-            <Link2 size={14} />
+            <Bold size={14} />
           </Button>
-        </PopoverAnchor>
-        <PopoverContent align="start" className="w-72 p-3">
-          <LinkEditPopover
-            editor={editor}
-            isEditing={state.link}
-            initialUrl={currentUrl}
-            onClose={handleLinkPopoverClose}
-          />
-        </PopoverContent>
-      </Popover>
+        </Tip>
+        <Tip label="Italic">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Italic"
+            aria-pressed={state.italic}
+            className={state.italic ? 'bg-accent text-accent-foreground' : ''}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              editor.chain().focus().toggleItalic().run()
+            }}
+          >
+            <Italic size={14} />
+          </Button>
+        </Tip>
+        <Tip label="Inline code">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Code"
+            aria-pressed={state.code}
+            className={state.code ? 'bg-accent text-accent-foreground' : ''}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              editor.chain().focus().toggleCode().run()
+            }}
+          >
+            <Code size={14} />
+          </Button>
+        </Tip>
 
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Internal link"
-        title="Insert page link ([[)"
-        onMouseDown={(e) => {
-          e.preventDefault()
-          editor.chain().focus().insertContent('[[').run()
-        }}
-      >
-        <FileSymlink size={14} />
-      </Button>
+        <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Code block"
-        aria-pressed={state.codeBlock}
-        className={state.codeBlock ? 'bg-accent text-accent-foreground' : ''}
-        onMouseDown={(e) => {
-          e.preventDefault()
-          editor.chain().focus().toggleCodeBlock().run()
-        }}
-      >
-        <FileCode2 size={14} />
-      </Button>
+        <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
+          <Tip label="External link (Ctrl+K)">
+            <PopoverAnchor asChild>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="External link"
+                aria-pressed={state.link}
+                className={state.link ? 'bg-accent text-accent-foreground' : ''}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  setLinkPopoverOpen((prev) => !prev)
+                }}
+              >
+                <Link2 size={14} />
+              </Button>
+            </PopoverAnchor>
+          </Tip>
+          <PopoverContent align="start" className="w-72 p-3">
+            <LinkEditPopover
+              editor={editor}
+              isEditing={state.link}
+              initialUrl={currentUrl}
+              onClose={handleLinkPopoverClose}
+            />
+          </PopoverContent>
+        </Popover>
 
-      <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
+        <Tip label="Page link ([[)">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Internal link"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              editor.chain().focus().insertContent('[[').run()
+            }}
+          >
+            <FileSymlink size={14} />
+          </Button>
+        </Tip>
 
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Priority 1 (high)"
-        title="Set priority 1 (high)"
-        onMouseDown={(e) => {
-          e.preventDefault()
-          document.dispatchEvent(new CustomEvent('set-priority-1'))
-        }}
-      >
-        <Signal size={14} className="text-red-500" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Priority 2 (medium)"
-        title="Set priority 2 (medium)"
-        onMouseDown={(e) => {
-          e.preventDefault()
-          document.dispatchEvent(new CustomEvent('set-priority-2'))
-        }}
-      >
-        <Signal size={14} className="text-yellow-500" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Priority 3 (low)"
-        title="Set priority 3 (low)"
-        onMouseDown={(e) => {
-          e.preventDefault()
-          document.dispatchEvent(new CustomEvent('set-priority-3'))
-        }}
-      >
-        <Signal size={14} className="text-blue-500" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Insert date"
-        title="Insert date link"
-        onMouseDown={(e) => {
-          e.preventDefault()
-          document.dispatchEvent(new CustomEvent('open-date-picker'))
-        }}
-      >
-        <CalendarDays size={14} />
-      </Button>
+        <Tip label="Code block">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Code block"
+            aria-pressed={state.codeBlock}
+            className={state.codeBlock ? 'bg-accent text-accent-foreground' : ''}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              editor.chain().focus().toggleCodeBlock().run()
+            }}
+          >
+            <FileCode2 size={14} />
+          </Button>
+        </Tip>
 
-      <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
+        <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Undo"
-        disabled={!state.canUndo}
-        onMouseDown={(e) => {
-          e.preventDefault()
-          editor.chain().focus().undo().run()
-        }}
-      >
-        <Undo2 size={14} />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Redo"
-        disabled={!state.canRedo}
-        onMouseDown={(e) => {
-          e.preventDefault()
-          editor.chain().focus().redo().run()
-        }}
-      >
-        <Redo2 size={14} />
-      </Button>
-    </div>
+        <Tip label="Priority 1 (high)">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Priority 1 (high)"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              document.dispatchEvent(new CustomEvent('set-priority-1'))
+            }}
+          >
+            <Signal size={14} className="text-red-500" />
+          </Button>
+        </Tip>
+        <Tip label="Priority 2 (medium)">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Priority 2 (medium)"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              document.dispatchEvent(new CustomEvent('set-priority-2'))
+            }}
+          >
+            <Signal size={14} className="text-yellow-500" />
+          </Button>
+        </Tip>
+        <Tip label="Priority 3 (low)">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Priority 3 (low)"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              document.dispatchEvent(new CustomEvent('set-priority-3'))
+            }}
+          >
+            <Signal size={14} className="text-blue-500" />
+          </Button>
+        </Tip>
+        <Tip label="Insert date">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Insert date"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              document.dispatchEvent(new CustomEvent('open-date-picker'))
+            }}
+          >
+            <CalendarDays size={14} />
+          </Button>
+        </Tip>
+
+        <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
+
+        <Tip label="Undo">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Undo"
+            disabled={!state.canUndo}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              editor.chain().focus().undo().run()
+            }}
+          >
+            <Undo2 size={14} />
+          </Button>
+        </Tip>
+        <Tip label="Redo">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Redo"
+            disabled={!state.canRedo}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              editor.chain().focus().redo().run()
+            }}
+          >
+            <Redo2 size={14} />
+          </Button>
+        </Tip>
+      </div>
+    </TooltipProvider>
   )
 }
