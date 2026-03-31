@@ -122,7 +122,7 @@ These tasks block everything downstream. Ship them before moving on.
 | p15-t8 | Roving TipTap instance — mount/unmount lifecycle | frontend | **YES** | [ADR-01] [REVIEWED] Exactly ONE instance at all times. Mount on focus (parse → setContent). Unmount on blur (serialize → compare → flush if dirty → clearHistory). Static div for all non-focused blocks. |
 | p15-t9 | useBlockKeyboard hook | frontend | | [ADR-01] [REVIEWED] ArrowUp/Left at pos 0 → prev block. ArrowDown/Right at end → next block. Backspace on empty → delete+focus prev. Enter → \n. Tab → indent. Shift+Tab → dedent. |
 | p15-t10 | Auto-split on blur | frontend | **YES** | [ADR-01] [REVIEWED] Serialized string contains \n → splitOnNewlines(). First segment: edit_block. Subsequent: create_block in order. Tags/props on first segment only. Same path as cross-block paste. |
-| p15-t11 | # picker extension (tag autocomplete) | frontend | | [ADR-01] [REVIEWED] Intercept # keystroke → fuzzy search tags_cache. Select → insert tag_ref node with ULID. Never writes #tagname to storage. |
+| p15-t11 | @ picker extension (tag autocomplete) | frontend | | [ADR-01] [REVIEWED] Intercept @ keystroke → fuzzy search tags_cache. Select → insert tag_ref node with ULID. Never writes @tagname to storage. |
 | p15-t12 | [[ picker extension (page/block link) | frontend | | [ADR-01] [REVIEWED] Intercept [[ → fuzzy search pages_cache. Select → insert block_link node with ULID. |
 | p15-t13 | Viewport Intersection Observer | frontend | | [ADR-01] [REVIEWED] Off-screen blocks: static div with known height. Intersection Observer drives visible window. Zero per-block TipTap overhead for off-screen blocks. |
 

@@ -285,7 +285,7 @@
 
 #### Tag Picker + Block-Link Picker Extensions [BUILT]
 - **Tasks:** p15-t11, t12
-- **Result:** `tag-picker.ts`, `block-link-picker.ts`, `SuggestionList.tsx`, `suggestion-renderer.ts`. Installed `@tiptap/suggestion`. Fuzzy search via TipTap suggestion plugin.
+- **Result:** `at-tag-picker.ts`, `block-link-picker.ts`, `SuggestionList.tsx`, `suggestion-renderer.ts`. Installed `@tiptap/suggestion`. Fuzzy search via TipTap suggestion plugin.
 - **Commit:** 519bedd
 
 #### Viewport Intersection Observer [BUILT]

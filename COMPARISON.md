@@ -41,13 +41,13 @@
 
 | Capability | Logseq | Block Notes | Gap |
 |---|---|---|---|
-| Markdown support | Full Markdown (headings, lists, tables, code blocks, etc.) | Org-mode based. Frontend uses TipTap with custom serializer | Different format -- see Org-mode section |
-| Org-mode support | Full .org format alternative | Org-mode inline syntax: `*bold*`, `/italic/`, `~code~` | Partial -- inline only, no headings/lists/tables/drawers |
-| **Bold** | `**bold**` | `*bold*` (org-mode) | None (different syntax, same feature) |
-| *Italic* | `*italic*` | `/italic/` (org-mode) | None |
-| ~~Strikethrough~~ | `~~text~~` | Not implemented in org parser | **Gap** |
+| Markdown support | Full Markdown (headings, lists, tables, code blocks, etc.) | Markdown-based. Frontend uses TipTap with custom serializer (`**bold**`, `*italic*`, `` `code` ``, `[text](url)`). Backend has separate Org-mode parser/emitter for future import/export | Subset -- no tables, blockquotes, or lists yet |
+| Org-mode support | Full .org format alternative | Backend only: `org_parser.rs` / `org_emitter.rs` (`*bold*`, `/italic/`, `~code~`). Not used in main editor flow | Partial -- backend parser exists, not active in frontend |
+| **Bold** | `**bold**` | `**bold**` | None |
+| *Italic* | `*italic*` | `*italic*` | None |
+| ~~Strikethrough~~ | `~~text~~` | Not implemented | **Gap** |
 | ==Highlight== | `^^text^^` | Not implemented | **Gap** |
-| `Inline code` | `` `code` `` | `~code~` (org-mode) | None |
+| `Inline code` | `` `code` `` | `` `code` `` | None |
 | Headings in blocks | `# H1`, `## H2`, etc. inside blocks | Parsed and rendered in static view (styled h1-h6). No syntax highlighting in editor | Partial -- static rendering works, editor support incomplete |
 | Code blocks with syntax highlighting | ````python ... ``` `` | Code blocks parsed + rendered in `<pre><code>` blocks. No syntax highlighting | Partial -- no language-aware highlighting |
 | Math/LaTeX | `$$E=mc^2$$` inline and block | Not implemented | **Gap** |
@@ -55,7 +55,7 @@
 | Blockquotes | `> quote` | Not implemented | **Gap** |
 | Slash commands `/` | 20+ commands (TODO, template, date, embed, etc.) | `/TODO`, `/DOING`, `/DONE`, `/date`, `/PRIORITY HIGH/MED/LOW` — 7 commands via TipTap Suggestion extension | Partial — framework built, 7 commands. Extensible for more |
 | Autocomplete for `[[` | Search all pages | Yes -- `block-link-picker` extension, searches pages, "Create new" option | None |
-| Autocomplete for `#` | Search all tags | Yes -- `tag-picker` extension, searches tags | None |
+| Autocomplete for `@` | Search all tags | Yes -- `at-tag-picker` extension, searches tags | None |
 | Autocomplete for `((` | Search all blocks for reference | Not implemented -- no block reference system | **Gap** (requires block refs first) |
 | Autocomplete for `::` | Property name suggestions | Not implemented | **Gap** |
 | Multi-line blocks | Content can span multiple lines within one block | `Shift+Enter` for hard break within block. `Enter` creates new sibling | None |
@@ -95,7 +95,7 @@
 | Tag hierarchy / namespaces | `/` separator in tag names | Not implemented | **Gap** |
 | Tag filtering | Filter in linked references, simple queries | `TagFilterPanel` with boolean AND/OR, prefix search | Good -- arguably better for structured queries |
 | Tag usage counts | Shown in various UIs | `tags_cache` tracks `usage_count` | None |
-| Tag autocomplete | `#` triggers search | Yes -- `tag-picker` extension | None |
+| Tag autocomplete | `@` triggers search | Yes -- `at-tag-picker` extension | None |
 | Tag inheritance (DB version) | Parent tags via `Extends`, child inherits properties | Not implemented | **Gap** (advanced feature) |
 
 ### 7. Query System

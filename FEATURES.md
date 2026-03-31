@@ -201,7 +201,7 @@
 | 75 | Tags as `block_type='tag'` (first-class blocks) | Done | 1 | U I | Unit: commands.rs (2). Integ: command_integration_tests (2) |
 | 76 | Tag creation UI (inline form in TagList) | Done | 1.5 | C | Comp: TagList.test.tsx (10) |
 | 77 | Tag deletion UI with confirmation | Done | 1.5 | C | Comp: TagList.test.tsx (3) |
-| 78 | `#` picker (tag autocomplete) | Done | 1.5 | U | Unit: suggestion-renderer.test.ts (3) |
+| 78 | `@` picker (tag autocomplete) | Done | 1.5 | U | Unit: suggestion-renderer.test.ts (3) |
 | 79 | Tag chip rendering (`#[ULID]` → styled name) | Done | 1.5 | U C | Unit: markdown-serializer.test.ts (several), extensions.test.ts (8), node-views.test.ts (8). Comp: StaticBlock.test.tsx (3), BacklinksPanel.test.tsx (1) |
 | 80 | Deleted tag decoration | Done | 2 | U C | Unit: node-views.test.ts (4). Comp: StaticBlock.test.tsx (1) |
 | 81 | Apply tag to block (`add_tag` op) | Done | 1 | U I | Unit: commands.rs (5). Integ: command_integration_tests (7) |
