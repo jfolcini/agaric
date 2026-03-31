@@ -44,6 +44,15 @@ async function focusBlock(page: import('@playwright/test').Page, index = 0) {
   return editor
 }
 
+/** Save the current block by pressing Enter (flush content -> close editor -> static render). */
+async function saveBlock(page: import('@playwright/test').Page) {
+  await page.keyboard.press('Enter')
+  // Wait for the editor to disappear and static block to re-render
+  await expect(page.locator('.block-editor [contenteditable="true"]')).not.toBeVisible({
+    timeout: 3000,
+  })
+}
+
 /**
  * Type a slash command filter inside the currently focused editor.
  * Moves to end of line, types ` /<command>`, and waits for the
@@ -104,12 +113,23 @@ test.describe('Task commands', () => {
     await openPage(page, 'Getting Started')
   })
 
-  test('/todo sets block as TODO', async ({ page }) => {
+  test('/todo sets block as TODO and persists after save', async ({ page }) => {
     await focusBlock(page)
     await typeSlashCommand(page, 'todo')
     await page.keyboard.press('Enter')
 
     const firstBlock = page.locator('.sortable-block').first()
+    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible({ timeout: 3000 })
+
+    // Save the block and verify TODO persists in static view
+    await saveBlock(page)
+    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible({ timeout: 3000 })
+
+    // Re-open the block and verify TODO is still there
+    await firstBlock.locator('.block-static').click()
+    await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible({
+      timeout: 3000,
+    })
     await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible({ timeout: 3000 })
   })
 
@@ -151,9 +171,9 @@ test.describe('Priority commands', () => {
     await expect(list.locator('.suggestion-item', { hasText: 'PRIORITY 3' })).toBeVisible()
   })
 
-  test('/priority 1 sets high priority', async ({ page }) => {
+  test('/priority 1 sets high priority and persists after save', async ({ page }) => {
     await focusBlock(page)
-    // Type /priority — first match is PRIORITY 1
+    // Type /priority -- first match is PRIORITY 1
     const list = await typeSlashCommand(page, 'priority')
     await expect(list.locator('.suggestion-item', { hasText: 'PRIORITY 1' })).toBeVisible()
     await page.keyboard.press('Enter')
@@ -162,6 +182,11 @@ test.describe('Priority commands', () => {
     const badge = firstBlock.locator('.priority-badge')
     await expect(badge).toBeVisible({ timeout: 3000 })
     await expect(badge).toContainText('1')
+
+    // Save the block and verify priority badge persists in static view
+    await saveBlock(page)
+    await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.priority-badge')).toContainText('1')
   })
 })
 
@@ -175,7 +200,7 @@ test.describe('Heading commands', () => {
     await openPage(page, 'Getting Started')
   })
 
-  test('/h1 sets heading level 1', async ({ page }) => {
+  test('/h1 sets heading level 1 and persists after save', async ({ page }) => {
     await focusBlock(page)
 
     // "heading" matches all heading commands; first is "Heading 1"
@@ -183,20 +208,20 @@ test.describe('Heading commands', () => {
     await expect(list.locator('.suggestion-item', { hasText: 'Heading 1' })).toBeVisible()
     await page.keyboard.press('Enter')
 
-    // Editor re-mounts with # prefix — wait for it to settle
+    // Editor re-mounts with # prefix -- wait for it to settle
     await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible({
       timeout: 3000,
     })
 
-    // Exit edit mode to see the static view
-    await page.keyboard.press('Escape')
+    // Save the block (Enter) instead of Escape (which cancels)
+    await saveBlock(page)
 
-    // The first block should render an <h1> heading
+    // The first block should render an <h1> heading in static view
     const firstBlock = page.locator('.sortable-block').first()
     await expect(firstBlock.locator('h1')).toBeVisible({ timeout: 3000 })
   })
 
-  test('/h2 sets heading level 2', async ({ page }) => {
+  test('/h2 sets heading level 2 and persists after save', async ({ page }) => {
     await focusBlock(page)
 
     // "heading" matches all heading commands; click "Heading 2" directly
@@ -210,10 +235,10 @@ test.describe('Heading commands', () => {
       timeout: 3000,
     })
 
-    // Exit edit mode
-    await page.keyboard.press('Escape')
+    // Save the block (Enter) instead of Escape (which cancels)
+    await saveBlock(page)
 
-    // The first block should render an <h2> heading
+    // The first block should render an <h2> heading in static view
     const firstBlock = page.locator('.sortable-block').first()
     await expect(firstBlock.locator('h2')).toBeVisible({ timeout: 3000 })
   })
