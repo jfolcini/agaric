@@ -599,6 +599,92 @@ describe('JournalPage', () => {
     })
   })
 
+  // ── Clickable day titles ─────────────────────────────────────────────
+
+  describe('clickable day titles', () => {
+    it('day headings in weekly view are clickable buttons', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+      renderJournal()
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+      const weekTab = screen.getByRole('tab', { name: /weekly view/i })
+      await user.click(weekTab)
+      const dayButtons = screen.getAllByRole('button', { name: /go to daily view for/i })
+      expect(dayButtons).toHaveLength(7)
+    })
+
+    it('clicking a day title in weekly view navigates to daily mode', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+      renderJournal()
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+      const weekTab = screen.getByRole('tab', { name: /weekly view/i })
+      await user.click(weekTab)
+      const dayButtons = screen.getAllByRole('button', { name: /go to daily view for/i })
+      await user.click(dayButtons[0])
+      expect(screen.getByRole('tab', { name: /daily view/i })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      )
+    })
+
+    it('day headings in monthly view are clickable buttons', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+      renderJournal()
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+      const monthTab = screen.getByRole('tab', { name: /monthly view/i })
+      await user.click(monthTab)
+      const dayButtons = screen.getAllByRole('button', { name: /go to daily view for/i })
+      expect(dayButtons.length).toBeGreaterThanOrEqual(28)
+    })
+
+    it('day headings in daily view are NOT clickable buttons', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+      renderJournal()
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+      expect(screen.queryAllByRole('button', { name: /go to daily view for/i })).toHaveLength(0)
+    })
+  })
+
+  // ── Day section IDs for scroll targeting ────────────────────────────
+
+  describe('day section IDs', () => {
+    it('day sections have id attributes for scroll targeting', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+      renderJournal()
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+      const weekTab = screen.getByRole('tab', { name: /weekly view/i })
+      await user.click(weekTab)
+      const sections = screen.getAllByRole('region')
+      for (const section of sections) {
+        expect(section.id).toMatch(/^journal-\d{4}-\d{2}-\d{2}$/)
+      }
+    })
+
+    it('today section has id matching today date string', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+      renderJournal()
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+      const todayId = `journal-${formatDate(new Date())}`
+      const section = document.getElementById(todayId)
+      expect(section).not.toBeNull()
+    })
+  })
+
   // ── Loading state ───────────────────────────────────────────────────
 
   it('shows loading state while fetching pages', () => {

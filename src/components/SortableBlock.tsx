@@ -103,8 +103,6 @@ export function SortableBlock({
       ) : (
         <span className="collapse-spacer flex-shrink-0 w-[19px] mt-1.5" />
       )}
-      {/* Bullet point */}
-      <span className="block-bullet flex-shrink-0 mt-2 w-1.5 h-1.5 rounded-full bg-muted-foreground/40" />
       <button
         type="button"
         className="task-marker flex-shrink-0 p-0.5 mt-1.5 transition-colors"

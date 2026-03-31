@@ -229,6 +229,27 @@ describe('App', () => {
     })
   })
 
+  it('active sidebar item has data-active=true attribute', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+    const sidebar = getSidebar()
+    const journalBtn = sidebar.getByText('Journal').closest('[data-sidebar="menu-button"]')
+    expect(journalBtn).toHaveAttribute('data-active', 'true')
+    const pagesBtn = sidebar.getByText('Pages').closest('[data-sidebar="menu-button"]')
+    expect(pagesBtn).toHaveAttribute('data-active', 'false')
+    await user.click(sidebar.getByText('Pages'))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
+    })
+    const journalBtnAfter = sidebar.getByText('Journal').closest('[data-sidebar="menu-button"]')
+    const pagesBtnAfter = sidebar.getByText('Pages').closest('[data-sidebar="menu-button"]')
+    expect(pagesBtnAfter).toHaveAttribute('data-active', 'true')
+    expect(journalBtnAfter).toHaveAttribute('data-active', 'false')
+  })
+
   it('shows empty header label for page-editor view (title is in PageEditor)', async () => {
     // Navigate to page-editor via the navigation store
     useNavigationStore.setState({

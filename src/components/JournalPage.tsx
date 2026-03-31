@@ -241,7 +241,7 @@ export function JournalPage({
   onBlockClick: _onBlockClick,
   onNavigateToPage,
 }: JournalPageProps): React.ReactElement {
-  const { mode, currentDate } = useJournalStore()
+  const { mode, currentDate, navigateToDate, scrollToDate, clearScrollTarget } = useJournalStore()
   const [pageMap, setPageMap] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(false)
   // Track per-day pageIds that were created by handleAddBlock so we can
@@ -272,6 +272,18 @@ export function JournalPage({
   useEffect(() => {
     fetchPages()
   }, [])
+
+  // Scroll to a specific day section when requested (e.g., Today button in weekly/monthly)
+  useEffect(() => {
+    if (!scrollToDate) return
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`journal-${scrollToDate}`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+      clearScrollTarget()
+    })
+  }, [scrollToDate, clearScrollTarget])
 
   /** Build a DayEntry from a Date. */
   const makeDayEntry = useCallback(
@@ -320,10 +332,12 @@ export function JournalPage({
     const isToday = entry.dateStr === todayStr
     const Heading = headingLevel === 'h2' ? 'h2' : 'h3'
     const compact = options?.compact ?? false
+    const isClickable = mode !== 'daily'
 
     return (
       <section
         key={entry.dateStr}
+        id={`journal-${entry.dateStr}`}
         aria-label={`Journal for ${entry.displayDate}`}
         className={cn(isToday && 'bg-accent/[0.04] rounded-lg px-3 py-2 -mx-3')}
       >
@@ -338,7 +352,18 @@ export function JournalPage({
                 isToday && headingLevel === 'h3' && 'text-foreground',
               )}
             >
-              {entry.displayDate}
+              {isClickable ? (
+                <button
+                  type="button"
+                  className="hover:text-primary hover:underline underline-offset-2 cursor-pointer transition-colors"
+                  onClick={() => navigateToDate(entry.date, 'daily')}
+                  aria-label={`Go to daily view for ${entry.displayDate}`}
+                >
+                  {entry.displayDate}
+                </button>
+              ) : (
+                entry.displayDate
+              )}
               {isToday && (
                 <span className="ml-2 text-xs text-muted-foreground font-normal">(Today)</span>
               )}
@@ -525,7 +550,8 @@ export function JournalPage({
 
 /** Journal mode/date controls — rendered in the App header for space efficiency. */
 export function JournalControls(): React.ReactElement {
-  const { mode, currentDate, setMode, setCurrentDate, navigateToDate } = useJournalStore()
+  const { mode, currentDate, setMode, setCurrentDate, navigateToDate, goToDateAndScroll } =
+    useJournalStore()
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [pageMap, setPageMap] = useState<Set<string>>(new Set())
 
@@ -617,7 +643,14 @@ export function JournalControls(): React.ReactElement {
           <Button
             variant="outline"
             size="xs"
-            onClick={() => setCurrentDate(new Date())}
+            onClick={() => {
+              const today = new Date()
+              if (mode === 'weekly' || mode === 'monthly') {
+                goToDateAndScroll(today, formatDate(today))
+              } else {
+                setCurrentDate(today)
+              }
+            }}
             aria-label="Go to today"
           >
             Today

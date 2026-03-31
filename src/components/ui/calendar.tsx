@@ -96,17 +96,13 @@ function Calendar({
           : {}),
         ...(onMonthClick
           ? {
-              CaptionLabel: ({
-                children,
-                ...labelProps
-              }: React.HTMLAttributes<HTMLSpanElement>) => {
+              CaptionLabel: ({ children }: React.HTMLAttributes<HTMLSpanElement>) => {
                 return (
                   <button
                     type="button"
-                    className="text-sm font-medium cursor-pointer hover:text-primary hover:underline transition-colors"
+                    className="text-sm font-medium cursor-pointer rounded-md px-2 py-1 hover:bg-accent hover:text-accent-foreground transition-colors"
                     onClick={() => onMonthClick(props.defaultMonth ?? new Date())}
                     aria-label="Go to monthly view"
-                    {...labelProps}
                   >
                     {children}
                   </button>

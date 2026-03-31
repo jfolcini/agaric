@@ -50,13 +50,18 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText('Show keyboard shortcuts')).toBeInTheDocument()
     expect(screen.getByText('Close dialog / cancel editing')).toBeInTheDocument()
 
-    // Verify key labels
-    expect(screen.getByText('Enter')).toBeInTheDocument()
-    expect(screen.getByText('Tab')).toBeInTheDocument()
-    expect(screen.getByText('Shift + Tab')).toBeInTheDocument()
-    expect(screen.getByText('# in editor')).toBeInTheDocument()
-    expect(screen.getByText('[[ in editor')).toBeInTheDocument()
+    // Verify key labels (keys are now split into individual <kbd> elements)
+    expect(screen.getAllByText('Enter').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('Tab').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('Shift')).toBeInTheDocument()
+    expect(screen.getByText('#')).toBeInTheDocument()
+    expect(screen.getByText('[[')).toBeInTheDocument()
     expect(screen.getByText('Escape')).toBeInTheDocument()
+
+    // Verify conditions are rendered separately from keys
+    expect(screen.getAllByText('in editor').length).toBe(2)
+    expect(screen.getByText('at start')).toBeInTheDocument()
+    expect(screen.getByText('at end')).toBeInTheDocument()
   })
 
   it('opens sheet when ? key is pressed on document', () => {
@@ -128,5 +133,43 @@ describe('KeyboardShortcuts', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  it('shortcuts table container is scrollable', () => {
+    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+    const table = screen.getByTestId('shortcuts-table')
+    expect(table.className).toContain('overflow-y-auto')
+  })
+
+  it('individual keys are rendered as separate kbd elements', () => {
+    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+    const kbds = screen.getByTestId('shortcuts-table').querySelectorAll('kbd')
+    expect(kbds.length).toBeGreaterThanOrEqual(15)
+
+    const kbdTexts = Array.from(kbds).map((el) => el.textContent)
+    expect(kbdTexts).toContain('Shift')
+    expect(kbdTexts).toContain('Tab')
+    expect(kbdTexts).toContain('Ctrl')
+    expect(kbdTexts).toContain('Enter')
+  })
+
+  it('conditions are rendered as normal text, not inside kbd elements', () => {
+    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+    const kbds = screen.getByTestId('shortcuts-table').querySelectorAll('kbd')
+    const kbdTexts = Array.from(kbds).map((el) => el.textContent)
+
+    for (const text of kbdTexts) {
+      expect(text).not.toContain('at start')
+      expect(text).not.toContain('at end')
+      expect(text).not.toContain('on empty block')
+      expect(text).not.toContain('in editor')
+    }
+
+    expect(screen.getByText('at start')).toBeInTheDocument()
+    expect(screen.getByText('at end')).toBeInTheDocument()
+    expect(screen.getAllByText('in editor')).toHaveLength(2)
   })
 })
