@@ -2,13 +2,12 @@
 
 ## Overview
 
-Four test layers, ~850+ tests total:
+Three test layers, ~850+ tests total:
 
 | Layer | Location | What it tests |
 |-------|----------|---------------|
 | **Unit** | `src/<module>.rs` → `mod tests` | Single-module logic: serde, hashing, pagination math, error formatting |
 | **Integration** | `src/integration_tests.rs`, `src/command_integration_tests.rs` | Cross-module pipelines through the full command stack |
-| **Serializer** | `tests/serializer_tests.rs` | Org-mode parser/emitter round-trips (separate binary, no DB) |
 | **Benchmarks** | `benches/*.rs` | Criterion microbenchmarks (7 bench files, never in CI) |
 
 Additionally: `src/lib.rs` contains `specta_tests` for TypeScript binding verification.
@@ -37,9 +36,6 @@ cargo test -p block-notes-lib -- op_log::tests
 cargo test -p block-notes-lib -- integration_tests
 cargo test -p block-notes-lib -- command_integration_tests
 
-# Only the serializer test binary
-cargo test --test serializer_tests
-
 # Snapshot review after changes
 cargo insta test          # run tests, save pending snapshots
 cargo insta review        # interactive accept/reject
@@ -64,7 +60,7 @@ cargo bench               # all 7 benches
 ### Inline unit tests (every module)
 
 Every `src/<module>.rs` has a `#[cfg(test)] mod tests` block. Modules with inline tests:
-`cache`, `commands`, `dag`, `db`, `device`, `draft`, `error`, `fts`, `hash`, `materializer`, `merge`, `op`, `op_log`, `org_emitter`, `org_parser`, `pagination`, `recovery`, `serializer`, `snapshot`, `soft_delete`, `tag_query`, `ulid`
+`cache`, `commands`, `dag`, `db`, `device`, `draft`, `error`, `fts`, `hash`, `materializer`, `merge`, `op`, `op_log`, `pagination`, `recovery`, `snapshot`, `soft_delete`, `tag_query`, `ulid`
 
 ### Cross-module integration tests
 
@@ -72,10 +68,6 @@ Every `src/<module>.rs` has a `#[cfg(test)] mod tests` block. Modules with inlin
 - **`src/command_integration_tests.rs`** — API contract tests for every `*_inner` command function. Happy paths, error variants, edge cases, cross-cutting lifecycle (2700+ lines). Tests every Tauri command as if calling from the frontend.
 
 Both files are `#[cfg(test)] mod` includes in `lib.rs` — they compile as part of the lib crate's test binary, not as separate test binaries.
-
-### External test binary
-
-- **`tests/serializer_tests.rs`** — Separate integration test binary. Tests org-mode parser, emitter, round-trips, unicode edge cases, entity tables, config. No database needed. Pure `#[test]` (sync, no tokio).
 
 ### Benchmarks
 
@@ -360,7 +352,7 @@ criterion_main!(benches);
 
 6. **Specta bindings drift** — If you change Rust types used in Tauri commands, the `ts_bindings_up_to_date` test will fail. Regenerate: `cargo test -p block-notes-lib -- specta_tests --ignored`.
 
-7. **Integration test files are `mod` includes, not separate binaries** — `integration_tests.rs` and `command_integration_tests.rs` are `#[cfg(test)] mod` in `lib.rs`. They share the same test binary as unit tests. The only separate test binary is `tests/serializer_tests.rs`.
+7. **Integration test files are `mod` includes, not separate binaries** — `integration_tests.rs` and `command_integration_tests.rs` are `#[cfg(test)] mod` in `lib.rs`. They share the same test binary as unit tests.
 
 8. **Test helper duplication is intentional** — Each module defines its own `test_pool()`, `insert_block()`, etc. This is by design: tests are self-contained, no shared test utility crate.
 

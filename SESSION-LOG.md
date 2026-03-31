@@ -657,7 +657,7 @@
 - **Domains:** Schema+DataModel, Op Log Core, Drafts+Recovery, DAG+Snapshots, Materializer+Cache, Pagination+Tags, Merge, FTS5, Commands, Serialization
 - **Parallel execution:** 10 subagents in same worktree caused file conflicts; 5 domains required re-application via targeted subagent
 - **Critical fixes:** BlockId deserialization normalization, TOCTOU races in commands, FTS5 query injection, restore CTE bug, crash recovery content update, merge op creation on conflict, multi-device pagination
-- **New modules:** serializer.rs, org_parser.rs, org_emitter.rs (Org-mode parser/emitter with shared escape chars)
+- **New modules:** (serializer.rs, org_parser.rs, org_emitter.rs were added but later removed — org-mode syntax not used)
 
 #### [21:30] Phase 4: 2 Review subagents [REVIEWED]
 - **Review 1 (Backend Core):** Found 3 missing snapshot.rs fixes (read tx, defer_foreign_keys, BEGIN IMMEDIATE). Applied.

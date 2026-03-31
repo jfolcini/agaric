@@ -42,14 +42,6 @@ static ITALIC_RE: LazyLock<Regex> =
 static CODE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"`(.+?)`").expect("invalid code regex"));
 
-/// Matches strikethrough: `~~text~~`
-static STRIKETHROUGH_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"~~(.+?)~~").expect("invalid strikethrough regex"));
-
-/// Matches footnote references: `[fn:label]` or `[fn:label:inline def]`
-static FOOTNOTE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[fn:[^\]]*\]").expect("invalid footnote regex"));
-
 /// Matches tag references: `#[ULID]`
 static TAG_REF_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"#\[([0-9A-Z]{26})\]").expect("invalid tag ref regex"));
@@ -67,33 +59,16 @@ static PAGE_LINK_RE: LazyLock<Regex> =
 /// 1. Remove bold `**text**` → `text`
 /// 2. Remove italic `*text*` → `text` (after bold)
 /// 3. Remove inline code `` `text` `` → `text`
-/// 4. Remove strikethrough `~~text~~` → `text`
-/// 5. Remove footnote references `[fn:label]` → (empty)
-/// 6. Replace `#[ULID]` → tag name (or empty string)
-/// 7. Replace `[[ULID]]` → page title (or empty string)
-/// 8. Unescape backslash sequences: `\*` → `*`, `` \` `` → `` ` ``
-///
-/// ## Known limitations
-///
-/// The following Org-mode / markup constructs are **not** stripped and will
-/// appear as-is in the FTS index (they still tokenize correctly for search
-/// because the `unicode61` tokenizer treats most punctuation as separators):
-///
-/// - Macro invocations: `{{{macro(args)}}}`
-/// - Radio targets: `<<<target>>>`
-/// - Export snippets: `@@backend:content@@`
-/// - Inline source blocks: `src_lang{code}`
-/// - Table pipe delimiters (`|`) — cell content is indexed, pipes become
-///   token separators.
+/// 4. Replace `#[ULID]` → tag name (or empty string)
+/// 5. Replace `[[ULID]]` → page title (or empty string)
+/// 6. Unescape backslash sequences: `\*` → `*`, `` \` `` → `` ` ``
 pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, AppError> {
-    // Steps 1-5: Remove markdown / markup formatting
+    // Steps 1-3: Remove markdown formatting
     let mut result = BOLD_RE.replace_all(content, "$1").to_string();
     result = ITALIC_RE.replace_all(&result, "$1").to_string();
     result = CODE_RE.replace_all(&result, "$1").to_string();
-    result = STRIKETHROUGH_RE.replace_all(&result, "$1").to_string();
-    result = FOOTNOTE_RE.replace_all(&result, "").to_string();
 
-    // Step 6: Replace tag references
+    // Step 4: Replace tag references
     let mut tag_ids: Vec<String> = Vec::new();
     for cap in TAG_REF_RE.captures_iter(&result) {
         tag_ids.push(cap[1].to_string());
@@ -110,7 +85,7 @@ pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, A
         result = result.replace(&pattern, &replacement);
     }
 
-    // Step 7: Replace page links
+    // Step 5: Replace page links
     let mut page_ids: Vec<String> = Vec::new();
     for cap in PAGE_LINK_RE.captures_iter(&result) {
         page_ids.push(cap[1].to_string());
@@ -127,7 +102,7 @@ pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, A
         result = result.replace(&pattern, &replacement);
     }
 
-    // Step 8: Unescape backslash sequences (ADR-20: \* -> *, \` -> `)
+    // Step 6: Unescape backslash sequences (\* -> *, \` -> `)
     result = result.replace("\\*", "*").replace("\\`", "`");
 
     Ok(result)
@@ -142,14 +117,12 @@ fn strip_for_fts_with_maps(
     tag_names: &HashMap<String, String>,
     page_titles: &HashMap<String, String>,
 ) -> String {
-    // Steps 1-5: Remove markdown / markup formatting
+    // Steps 1-3: Remove markdown formatting
     let mut result = BOLD_RE.replace_all(content, "$1").to_string();
     result = ITALIC_RE.replace_all(&result, "$1").to_string();
     result = CODE_RE.replace_all(&result, "$1").to_string();
-    result = STRIKETHROUGH_RE.replace_all(&result, "$1").to_string();
-    result = FOOTNOTE_RE.replace_all(&result, "").to_string();
 
-    // Step 6: Replace tag references
+    // Step 4: Replace tag references
     result = TAG_REF_RE
         .replace_all(&result, |caps: &regex::Captures| {
             let ulid = &caps[1];
@@ -157,7 +130,7 @@ fn strip_for_fts_with_maps(
         })
         .to_string();
 
-    // Step 7: Replace page links
+    // Step 5: Replace page links
     result = PAGE_LINK_RE
         .replace_all(&result, |caps: &regex::Captures| {
             let ulid = &caps[1];
@@ -165,7 +138,7 @@ fn strip_for_fts_with_maps(
         })
         .to_string();
 
-    // Step 8: Unescape backslash sequences (ADR-20: \* -> *, \` -> `)
+    // Step 6: Unescape backslash sequences (\* -> *, \` -> `)
     result = result.replace("\\*", "*").replace("\\`", "`");
 
     result
@@ -1334,31 +1307,8 @@ mod tests {
     }
 
     // ======================================================================
-    // F11: strip_for_fts with complex Org-mode input
+    // Strip: escape sequences and edge cases
     // ======================================================================
-
-    #[tokio::test]
-    async fn strip_strikethrough() {
-        let (pool, _dir) = test_pool().await;
-        let result = strip_for_fts("~~removed~~ and kept", &pool).await.unwrap();
-        assert_eq!(result, "removed and kept");
-    }
-
-    #[tokio::test]
-    async fn strip_footnote_reference() {
-        let (pool, _dir) = test_pool().await;
-        let result = strip_for_fts("text[fn:1] here", &pool).await.unwrap();
-        assert_eq!(result, "text here");
-    }
-
-    #[tokio::test]
-    async fn strip_footnote_with_inline_definition() {
-        let (pool, _dir) = test_pool().await;
-        let result = strip_for_fts("text[fn:note:inline def] here", &pool)
-            .await
-            .unwrap();
-        assert_eq!(result, "text here");
-    }
 
     #[tokio::test]
     async fn strip_escaped_asterisk() {
@@ -1387,36 +1337,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn strip_table_content_passes_through() {
-        let (pool, _dir) = test_pool().await;
-        // Table pipe delimiters are not stripped -- they become token separators
-        let result = strip_for_fts("| col1 | col2 |", &pool).await.unwrap();
-        assert_eq!(result, "| col1 | col2 |");
-    }
-
-    #[tokio::test]
     async fn strip_mixed_formatting_and_refs() {
         let (pool, _dir) = test_pool().await;
         insert_block(&pool, TAG_ULID, "tag", "urgent", None, None).await;
 
-        let input = format!("**bold** and ~~struck~~ with #[{TAG_ULID}][fn:1]");
+        let input = format!("**bold** and `code` with #[{TAG_ULID}]");
         let result = strip_for_fts(&input, &pool).await.unwrap();
-        assert_eq!(result, "bold and struck with urgent");
+        assert_eq!(result, "bold and code with urgent");
     }
 
     #[test]
-    fn strip_with_maps_handles_new_patterns() {
+    fn strip_with_maps_handles_formatting() {
         let tag_names = HashMap::new();
         let page_titles = HashMap::new();
 
-        // Verify the sync batch path also handles strikethrough, footnotes, unescape.
+        // Verify the sync batch path handles markdown + unescape.
         // Use a single \* (unpaired) so ITALIC_RE doesn't consume it.
-        let result = strip_for_fts_with_maps(
-            r"**bold** ~~struck~~ `code`[fn:1] \*args",
-            &tag_names,
-            &page_titles,
-        );
-        assert_eq!(result, "bold struck code *args");
+        let result = strip_for_fts_with_maps(r"**bold** `code` \*args", &tag_names, &page_titles);
+        assert_eq!(result, "bold code *args");
     }
 
     // ======================================================================

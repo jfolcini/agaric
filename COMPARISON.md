@@ -41,8 +41,8 @@
 
 | Capability | Logseq | Block Notes | Gap |
 |---|---|---|---|
-| Markdown support | Full Markdown (headings, lists, tables, code blocks, etc.) | Markdown-based. Frontend uses TipTap with custom serializer (`**bold**`, `*italic*`, `` `code` ``, `[text](url)`). Backend has separate Org-mode parser/emitter for future import/export | Subset -- no tables, blockquotes, or lists yet |
-| Org-mode support | Full .org format alternative | Backend only: `org_parser.rs` / `org_emitter.rs` (`*bold*`, `/italic/`, `~code~`). Not used in main editor flow | Partial -- backend parser exists, not active in frontend |
+| Markdown support | Full Markdown (headings, lists, tables, code blocks, etc.) | Markdown-based. Frontend uses TipTap with custom serializer (`**bold**`, `*italic*`, `` `code` ``, `[text](url)`) | Subset -- no tables, blockquotes, or lists yet |
+| Org-mode support | Full .org format alternative | Not implemented. Org-mode is an inspiration for features (tags, properties, agenda), not a supported format | **Design choice** -- Markdown only |
 | **Bold** | `**bold**` | `**bold**` | None |
 | *Italic* | `*italic*` | `*italic*` | None |
 | ~~Strikethrough~~ | `~~text~~` | Not implemented | **Gap** |

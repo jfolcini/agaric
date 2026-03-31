@@ -444,13 +444,6 @@ handles them at line granularity. ULID tokens (`#[ULID]` at 29 characters, `[[UL
 space-free strings treated as atomic units within a line. A merged result is always a valid
 storage-format string.
 
-### Org-mode parser/emitter (backend only)
-
-The Rust backend includes separate `org_parser.rs` and `org_emitter.rs` modules that handle
-Org-mode syntax (`*bold*`, `/italic/`, `~code~`). These are **not** used in the main editor flow
-— the frontend serializer uses Markdown syntax exclusively. The Org-mode modules exist for future
-import/export support and have their own test suite.
-
 ---
 
 ## 7. Editor Architecture
