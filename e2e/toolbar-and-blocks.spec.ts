@@ -41,9 +41,9 @@ async function focusBlock(page: import('@playwright/test').Page, index = 0) {
   return editor
 }
 
-/** Save the current block by pressing Escape (blur → flush → static render). */
+/** Save the current block by pressing Enter (flush content → close editor → static render). */
 async function saveBlock(page: import('@playwright/test').Page) {
-  await page.keyboard.press('Escape')
+  await page.keyboard.press('Enter')
   // Wait for the editor to disappear and static block to re-render
   await expect(page.locator('.block-editor [contenteditable="true"]')).not.toBeVisible({
     timeout: 3000,
