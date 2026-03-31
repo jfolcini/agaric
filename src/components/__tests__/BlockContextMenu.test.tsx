@@ -6,8 +6,16 @@
  *  - Clicking Delete calls onDelete
  *  - Clicking Indent calls onIndent
  *  - Clicking Dedent calls onDedent
- *  - Clicking Set TODO calls onToggleTodo
- *  - Clicking Set Priority calls onTogglePriority
+ *  - Clicking Set as TODO calls onToggleTodo
+ *  - Clicking Set priority 1 calls onTogglePriority
+ *  - Clicking Move Up calls onMoveUp
+ *  - Clicking Move Down calls onMoveDown
+ *  - Clicking Collapse/Expand calls onToggleCollapse
+ *  - State-aware labels for TODO and Priority
+ *  - Keyboard navigation (ArrowDown/Up, Home, End, Enter)
+ *  - Shortcut hints rendered
+ *  - Separators between groups
+ *  - Collapse/Expand only shown when hasChildren
  *  - Clicking outside closes the menu
  *  - Pressing Escape closes the menu
  *  - Menu is rendered via portal (into document.body)
@@ -31,6 +39,13 @@ function renderMenu(overrides: Partial<BlockContextMenuProps> = {}) {
     onDedent: vi.fn(),
     onToggleTodo: vi.fn(),
     onTogglePriority: vi.fn(),
+    onToggleCollapse: vi.fn(),
+    onMoveUp: vi.fn(),
+    onMoveDown: vi.fn(),
+    hasChildren: true,
+    isCollapsed: false,
+    todoState: null,
+    priority: null,
   }
   const props = { ...defaults, ...overrides }
   const result = render(<BlockContextMenu {...props} />)
@@ -45,8 +60,11 @@ describe('BlockContextMenu', () => {
     expect(within(menu).getByText('Delete')).toBeInTheDocument()
     expect(within(menu).getByText('Indent')).toBeInTheDocument()
     expect(within(menu).getByText('Dedent')).toBeInTheDocument()
-    expect(within(menu).getByText('Set TODO')).toBeInTheDocument()
-    expect(within(menu).getByText('Set Priority')).toBeInTheDocument()
+    expect(within(menu).getByText('Move Up')).toBeInTheDocument()
+    expect(within(menu).getByText('Move Down')).toBeInTheDocument()
+    expect(within(menu).getByText('Collapse')).toBeInTheDocument()
+    expect(within(menu).getByText('Set as TODO')).toBeInTheDocument()
+    expect(within(menu).getByText('Set priority 1')).toBeInTheDocument()
   })
 
   it('clicking Delete calls onDelete with blockId and closes menu', async () => {
@@ -79,25 +97,196 @@ describe('BlockContextMenu', () => {
     expect(props.onClose).toHaveBeenCalled()
   })
 
-  it('clicking Set TODO calls onToggleTodo with blockId and closes menu', async () => {
+  it('clicking Set as TODO calls onToggleTodo with blockId and closes menu', async () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
-    await user.click(screen.getByText('Set TODO'))
+    await user.click(screen.getByText('Set as TODO'))
 
     expect(props.onToggleTodo).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
   })
 
-  it('clicking Set Priority calls onTogglePriority with blockId and closes menu', async () => {
+  it('clicking Set priority 1 calls onTogglePriority with blockId and closes menu', async () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
-    await user.click(screen.getByText('Set Priority'))
+    await user.click(screen.getByText('Set priority 1'))
 
     expect(props.onTogglePriority).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
   })
+
+  it('clicking Move Up calls onMoveUp with blockId and closes menu', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu()
+
+    await user.click(screen.getByText('Move Up'))
+
+    expect(props.onMoveUp).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('clicking Move Down calls onMoveDown with blockId and closes menu', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu()
+
+    await user.click(screen.getByText('Move Down'))
+
+    expect(props.onMoveDown).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('clicking Collapse calls onToggleCollapse with blockId and closes menu', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu({ hasChildren: true, isCollapsed: false })
+
+    await user.click(screen.getByText('Collapse'))
+
+    expect(props.onToggleCollapse).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('clicking Expand calls onToggleCollapse when isCollapsed is true', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu({ hasChildren: true, isCollapsed: true })
+
+    await user.click(screen.getByText('Expand'))
+
+    expect(props.onToggleCollapse).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  // ── State-aware labels ──────────────────────────────────────────
+
+  it('shows "TODO → DOING" when todoState is TODO', () => {
+    renderMenu({ todoState: 'TODO' })
+    expect(screen.getByText('TODO → DOING')).toBeInTheDocument()
+  })
+
+  it('shows "DOING → DONE" when todoState is DOING', () => {
+    renderMenu({ todoState: 'DOING' })
+    expect(screen.getByText('DOING → DONE')).toBeInTheDocument()
+  })
+
+  it('shows "DONE → Clear" when todoState is DONE', () => {
+    renderMenu({ todoState: 'DONE' })
+    expect(screen.getByText('DONE → Clear')).toBeInTheDocument()
+  })
+
+  it('shows "Priority 1 → 2" when priority is A', () => {
+    renderMenu({ priority: 'A' })
+    expect(screen.getByText('Priority 1 → 2')).toBeInTheDocument()
+  })
+
+  it('shows "Priority 2 → 3" when priority is B', () => {
+    renderMenu({ priority: 'B' })
+    expect(screen.getByText('Priority 2 → 3')).toBeInTheDocument()
+  })
+
+  it('shows "Priority 3 → Clear" when priority is C', () => {
+    renderMenu({ priority: 'C' })
+    expect(screen.getByText('Priority 3 → Clear')).toBeInTheDocument()
+  })
+
+  // ── Collapse/Expand visibility ─────────────────────────────────
+
+  it('does not show Collapse/Expand when hasChildren is false', () => {
+    renderMenu({ hasChildren: false })
+    expect(screen.queryByText('Collapse')).not.toBeInTheDocument()
+    expect(screen.queryByText('Expand')).not.toBeInTheDocument()
+  })
+
+  it('shows Collapse when hasChildren is true and isCollapsed is false', () => {
+    renderMenu({ hasChildren: true, isCollapsed: false })
+    expect(screen.getByText('Collapse')).toBeInTheDocument()
+  })
+
+  it('shows Expand when hasChildren is true and isCollapsed is true', () => {
+    renderMenu({ hasChildren: true, isCollapsed: true })
+    expect(screen.getByText('Expand')).toBeInTheDocument()
+  })
+
+  // ── Keyboard navigation ─────────────────────────────────────────
+
+  it('ArrowDown moves focus to next item', () => {
+    renderMenu()
+
+    const items = screen.getAllByRole('menuitem')
+    // First item should be focused initially
+    expect(items[0]).toHaveFocus()
+
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' })
+    expect(items[1]).toHaveFocus()
+  })
+
+  it('ArrowUp moves focus to previous item (wraps)', () => {
+    renderMenu()
+
+    const items = screen.getAllByRole('menuitem')
+    // First item focused, ArrowUp wraps to last
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowUp' })
+    expect(items[items.length - 1]).toHaveFocus()
+  })
+
+  it('Home moves focus to first item', () => {
+    renderMenu()
+
+    const menu = screen.getByRole('menu')
+    // Move down a couple times first
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+
+    fireEvent.keyDown(menu, { key: 'Home' })
+    const items = screen.getAllByRole('menuitem')
+    expect(items[0]).toHaveFocus()
+  })
+
+  it('End moves focus to last item', () => {
+    renderMenu()
+
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'End' })
+    const items = screen.getAllByRole('menuitem')
+    expect(items[items.length - 1]).toHaveFocus()
+  })
+
+  it('Enter activates the focused menu item', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu()
+
+    // First item (Delete) should be focused after mount
+    await user.keyboard('{Enter}')
+
+    expect(props.onDelete).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  // ── Shortcut hints ──────────────────────────────────────────────
+
+  it('renders shortcut hints for items', () => {
+    renderMenu()
+
+    const menu = screen.getByRole('menu')
+    expect(within(menu).getByText('Tab')).toBeInTheDocument()
+    expect(within(menu).getByText('Shift+Tab')).toBeInTheDocument()
+    expect(within(menu).getByText('Ctrl+Shift+↑')).toBeInTheDocument()
+    expect(within(menu).getByText('Ctrl+Shift+↓')).toBeInTheDocument()
+    expect(within(menu).getByText('Ctrl+.')).toBeInTheDocument()
+    expect(within(menu).getByText('Ctrl+Enter')).toBeInTheDocument()
+    expect(within(menu).getByText('Ctrl+Shift+1-3')).toBeInTheDocument()
+  })
+
+  // ── Separators ──────────────────────────────────────────────────
+
+  it('renders separators between groups', () => {
+    renderMenu()
+
+    const separators = screen.getAllByRole('separator')
+    // With all callbacks wired and hasChildren=true, we have 4 groups → 3 separators
+    expect(separators.length).toBe(3)
+  })
+
+  // ── Existing tests (updated) ────────────────────────────────────
 
   it('clicking outside the menu closes it', () => {
     const { props } = renderMenu()
@@ -139,6 +328,10 @@ describe('BlockContextMenu', () => {
       onDedent: undefined,
       onToggleTodo: undefined,
       onTogglePriority: undefined,
+      onToggleCollapse: undefined,
+      onMoveUp: undefined,
+      onMoveDown: undefined,
+      hasChildren: false,
     })
 
     // No action items should be shown; "No actions available" fallback
@@ -158,7 +351,8 @@ describe('BlockContextMenu', () => {
     renderMenu()
 
     const items = screen.getAllByRole('menuitem')
-    expect(items.length).toBe(5)
+    // 8 items: Delete, Indent, Dedent, Move Up, Move Down, Collapse, Set as TODO, Set priority 1
+    expect(items.length).toBe(8)
   })
 
   it('menu has aria-label', () => {

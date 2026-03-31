@@ -1,12 +1,12 @@
 /**
  * SortableBlock — drag-and-drop wrapper for blocks using @dnd-kit (p2-t9).
  *
- * Wraps EditableBlock with sortable behavior. Two-zone gutter layout:
- * - Action controls (grip, chevron, trash): visible on hover / focus only
- * - Status indicators (priority badge, checkbox): always visible when set
+ * Wraps EditableBlock with sortable behavior. Two-zone layout:
+ * - Narrow gutter (48px): grip handle + delete button (hover-gated)
+ * - Inline controls: chevron (when hasChildren), checkbox, priority badge (when set)
  *
  * Left-to-right order:
- *   [grip] [chevron] [spacer...] [trash] [priority] [checkbox] [content]
+ *   Gutter: [grip] [delete]  |  Inline: [chevron?] [checkbox] [priority?] [content]
  *
  * Mobile / right-click context menu (long-press or right-click) provides
  * touch-friendly access to block actions: delete, indent, dedent, TODO, priority.
@@ -26,13 +26,13 @@ import { EditableBlock } from './EditableBlock'
 export const INDENT_WIDTH = 24
 
 /** Fixed width for the gutter so positions never shift. */
-const GUTTER_WIDTH = 'w-[120px]'
+const GUTTER_WIDTH = 'w-[48px]'
 
 /** Display labels for stored priority values. */
 const PRIORITY_DISPLAY: Record<string, string> = { A: '1', B: '2', C: '3' }
 
 /** Minimum touch hold duration (ms) to trigger the context menu. */
-const LONG_PRESS_DELAY = 500
+const LONG_PRESS_DELAY = 400
 
 /** Max touch movement (px) before the long-press gesture is cancelled. */
 const LONG_PRESS_MOVE_THRESHOLD = 10
@@ -68,6 +68,10 @@ interface SortableBlockProps {
   priority?: string | null
   /** Callback to cycle priority: none → A → B → C → none. */
   onTogglePriority?: (blockId: string) => void
+  /** Move block up among siblings. */
+  onMoveUp?: (blockId: string) => void
+  /** Move block down among siblings. */
+  onMoveDown?: (blockId: string) => void
 }
 
 export function SortableBlock({
@@ -91,6 +95,8 @@ export function SortableBlock({
   onToggleTodo,
   priority,
   onTogglePriority,
+  onMoveUp,
+  onMoveDown,
 }: SortableBlockProps): React.ReactElement {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: blockId,
@@ -186,117 +192,107 @@ export function SortableBlock({
         />
       )}
 
-      {/* ── Fixed-width gutter ────────────────────────────────────── */}
+      {/* ── Narrow gutter — grip + delete only ─────────────────── */}
       <div className={cn(GUTTER_WIDTH, 'flex-shrink-0 flex items-start')}>
-        {/* Left zone: action controls (visible on hover / focus) */}
-        <div className="flex items-start">
-          {/* Drag handle — far left */}
-          <button
-            type="button"
-            className="drag-handle flex-shrink-0 cursor-grab p-0.5 mt-1.5 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 [.block-active_&]:opacity-100 transition-opacity"
-            title="Drag to reorder"
-            aria-label="Drag to reorder"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVertical size={16} />
-          </button>
+        {/* Drag handle — far left */}
+        <button
+          type="button"
+          className="drag-handle flex-shrink-0 cursor-grab p-0.5 mt-1.5 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+          title="Drag to reorder"
+          aria-label="Drag to reorder"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical size={16} />
+        </button>
 
-          {/* Chevron — next to grip, only if has children */}
-          {hasChildren ? (
-            <button
-              type="button"
-              className="collapse-toggle flex-shrink-0 p-0.5 mt-1.5 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 [.block-active_&]:opacity-100 transition-opacity"
-              onClick={() => onToggleCollapse?.(blockId)}
-              title={isCollapsed ? 'Expand (Ctrl+.)' : 'Collapse (Ctrl+.)'}
-              aria-label={isCollapsed ? 'Expand children' : 'Collapse children'}
-            >
-              <ChevronRight
-                size={14}
-                className={cn('transition-transform', !isCollapsed && 'rotate-90')}
-              />
-            </button>
-          ) : (
-            <span className="collapse-spacer flex-shrink-0 w-[19px] mt-1.5" />
-          )}
-        </div>
-
-        {/* Spacer pushes status indicators to the right edge of the gutter */}
         <div className="flex-1" />
 
-        {/* Right zone: trash (hover only) + status indicators (always when set) */}
-        <div className="flex items-start">
-          {/* Trash — rightmost of action group, away from chevron */}
-          {onDelete && (
-            <button
-              type="button"
-              className="delete-handle flex-shrink-0 p-0.5 mt-1.5 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10 opacity-0 group-hover:opacity-100 [.block-active_&]:opacity-100 transition-opacity"
-              title="Delete block"
-              aria-label="Delete block"
-              onClick={() => onDelete(blockId)}
-            >
-              <Trash2 size={16} />
-            </button>
-          )}
+        {/* Delete — right side of gutter */}
+        {onDelete && (
+          <button
+            type="button"
+            className="delete-handle flex-shrink-0 p-0.5 mt-1.5 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10 opacity-0 group-hover:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+            title="Delete block"
+            aria-label="Delete block"
+            onClick={() => onDelete(blockId)}
+          >
+            <Trash2 size={16} />
+          </button>
+        )}
+      </div>
 
-          {/* Priority badge — always visible when set, clickable to cycle */}
+      {/* ── Inline controls — chevron, checkbox, priority ─────── */}
+      <div className="inline-controls flex items-start flex-shrink-0 gap-0.5">
+        {/* Chevron — only when hasChildren, always visible */}
+        {hasChildren && (
+          <button
+            type="button"
+            className="collapse-toggle flex-shrink-0 p-0.5 mt-1.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+            onClick={() => onToggleCollapse?.(blockId)}
+            title={isCollapsed ? 'Expand (Ctrl+.)' : 'Collapse (Ctrl+.)'}
+            aria-label={isCollapsed ? 'Expand children' : 'Collapse children'}
+            aria-expanded={!isCollapsed}
+          >
+            <ChevronRight
+              size={14}
+              className={cn('transition-transform', !isCollapsed && 'rotate-90')}
+            />
+          </button>
+        )}
+
+        {/* Checkbox — always rendered */}
+        <button
+          type="button"
+          className="task-marker flex-shrink-0 p-0.5 mt-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+          title={
+            todoState
+              ? `${todoState} → Click or Ctrl+Enter to cycle (TODO → DOING → DONE → none)`
+              : 'Click or Ctrl+Enter to set as TODO'
+          }
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleTodo?.(blockId)
+          }}
+          aria-label={todoState ? `Task: ${todoState}. Click to cycle.` : 'Set as TODO'}
+        >
+          {todoState === 'DONE' ? (
+            <div className="task-checkbox task-checkbox-done h-4 w-4 rounded border-2 border-green-600 bg-green-600 flex items-center justify-center">
+              <Check size={12} className="text-white" />
+            </div>
+          ) : todoState === 'DOING' ? (
+            <div className="task-checkbox task-checkbox-doing h-4 w-4 rounded border-2 border-blue-500 bg-blue-500/20 flex items-center justify-center">
+              <div className="h-1.5 w-1.5 rounded-sm bg-blue-500" />
+            </div>
+          ) : todoState === 'TODO' ? (
+            <div className="task-checkbox task-checkbox-todo h-4 w-4 rounded border-2 border-muted-foreground" />
+          ) : (
+            <div className="task-checkbox task-checkbox-empty h-4 w-4 rounded border-2 border-muted-foreground/30 transition-colors" />
+          )}
+        </button>
+
+        {/* Priority badge — only when set */}
+        {priority && (
           <button
             type="button"
             className={cn(
-              'priority-badge flex-shrink-0 text-[10px] font-bold mt-1.5 w-4 h-4 rounded-full flex items-center justify-center transition-colors',
+              'priority-badge flex-shrink-0 text-[10px] font-bold mt-1.5 w-4 h-4 rounded-full flex items-center justify-center transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center',
               priority === 'A' && 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
               priority === 'B' &&
                 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
               priority === 'C' &&
                 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-              !priority && 'opacity-0 group-hover:opacity-50 [.block-active_&]:opacity-50',
             )}
-            title={
-              priority
-                ? `Priority ${PRIORITY_DISPLAY[priority]} — Click to cycle (1 → 2 → 3 → none)`
-                : 'Click to set priority 1'
-            }
-            aria-label={
-              priority ? `Priority ${PRIORITY_DISPLAY[priority]}. Click to cycle.` : 'Set priority'
-            }
+            title={`Priority ${PRIORITY_DISPLAY[priority]} — Click to cycle (1 → 2 → 3 → none)`}
+            aria-label={`Priority ${PRIORITY_DISPLAY[priority]}. Click to cycle.`}
             onClick={(e) => {
               e.stopPropagation()
               onTogglePriority?.(blockId)
             }}
           >
-            {priority ? PRIORITY_DISPLAY[priority] : '·'}
+            {PRIORITY_DISPLAY[priority]}
           </button>
-
-          {/* Checkbox — immediately left of content */}
-          <button
-            type="button"
-            className="task-marker flex-shrink-0 p-0.5 mt-1.5 transition-colors"
-            title={
-              todoState
-                ? `${todoState} → Click or Ctrl+Enter to cycle (TODO → DOING → DONE → none)`
-                : 'Click or Ctrl+Enter to set as TODO'
-            }
-            onClick={(e) => {
-              e.stopPropagation()
-              onToggleTodo?.(blockId)
-            }}
-            aria-label={todoState ? `Task: ${todoState}. Click to cycle.` : 'Set as TODO'}
-          >
-            {todoState === 'DONE' ? (
-              <div className="task-checkbox task-checkbox-done h-4 w-4 rounded border-2 border-green-600 bg-green-600 flex items-center justify-center">
-                <Check size={12} className="text-white" />
-              </div>
-            ) : todoState === 'DOING' ? (
-              <div className="task-checkbox task-checkbox-doing h-4 w-4 rounded border-2 border-blue-500 bg-blue-500/20 flex items-center justify-center">
-                <div className="h-1.5 w-1.5 rounded-sm bg-blue-500" />
-              </div>
-            ) : todoState === 'TODO' ? (
-              <div className="task-checkbox task-checkbox-todo h-4 w-4 rounded border-2 border-muted-foreground" />
-            ) : (
-              <div className="task-checkbox task-checkbox-empty h-4 w-4 rounded border-2 border-transparent group-hover:border-muted-foreground/30 transition-colors" />
-            )}
-          </button>
-        </div>
+        )}
       </div>
 
       {/* ── Block content ─────────────────────────────────────────── */}
@@ -325,6 +321,13 @@ export function SortableBlock({
           onDedent={onDedent}
           onToggleTodo={onToggleTodo}
           onTogglePriority={onTogglePriority}
+          onToggleCollapse={onToggleCollapse}
+          onMoveUp={onMoveUp}
+          onMoveDown={onMoveDown}
+          hasChildren={hasChildren}
+          isCollapsed={isCollapsed}
+          todoState={todoState}
+          priority={priority}
         />
       )}
     </div>

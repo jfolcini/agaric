@@ -88,7 +88,9 @@ export function useBlockDnD({
   // ── DnD sensors ────────────────────────────────────────────────────
   // PointerSensor with 8px activation distance so clicks still work.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8, delay: 250, tolerance: 5 },
+    }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 

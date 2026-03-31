@@ -478,7 +478,6 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       const headingMatch = item.id.match(/^h([1-6])$/)
       if (headingMatch) {
         const level = Number(headingMatch[1])
-        const prefix = `${'#'.repeat(level)} `
         // Read current content from the editor (which has the slash text already removed)
         let currentContent = ''
         if (rovingEditor.editor) {
@@ -488,7 +487,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           const block = useBlockStore.getState().blocks.find((b) => b.id === focusedBlockId)
           currentContent = block?.content ?? ''
         }
-        const newContent = prefix + currentContent
+        // Strip existing heading prefix (if any)
+        const headingRegex = /^#{1,6}\s/
+        const stripped = currentContent.replace(headingRegex, '')
+        const newContent = `${'#'.repeat(level)} ${stripped}`
         await editBlock(focusedBlockId, newContent)
         // Reload the block in the store
         useBlockStore.setState((state) => ({
@@ -821,6 +823,14 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                     onTogglePriority={handleTogglePriority}
                     onIndent={(id) => indent(id)}
                     onDedent={(id) => dedent(id)}
+                    onMoveUp={(id) => {
+                      handleFlush()
+                      moveUp(id)
+                    }}
+                    onMoveDown={(id) => {
+                      handleFlush()
+                      moveDown(id)
+                    }}
                   />
                 </div>
               )

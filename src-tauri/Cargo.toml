@@ -75,3 +75,7 @@ harness = false
 [[bench]]
 name = "draft_bench"
 harness = false
+
+[[bench]]
+name = "undo_redo"
+harness = false
