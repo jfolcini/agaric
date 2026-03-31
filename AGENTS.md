@@ -74,11 +74,11 @@ cd src-tauri && cargo test -- specta_tests --ignored
 
 ## Android
 
-- **Status:** APK builds and launches; read IPC works, write IPC (`create_block`) broken (see REVIEW-LATER.md #22)
+- **Status:** APK builds and launches. All IPC commands (read + write) confirmed working as of 2026-03-31. Block creation, editing, and persistence across restarts verified on emulator. Original write IPC failure (REVIEW-LATER.md #22) was a stale-migration issue, not a code bug.
 - **Generated project:** `src-tauri/gen/android/` — created by `cargo tauri android init`, committed to repo
 - **Min SDK:** 24, **Target SDK:** 36, **NDK:** 27 (set in `gen/android/app/build.gradle.kts`)
 - **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`
-- **DB path on Android:** `/data/data/com.blocknotes.app/files/notes.db` (via `app.path().app_data_dir()`)
+- **DB path on Android:** `/data/data/com.blocknotes.app/notes.db` (via `app.path().app_data_dir()`)
 - **Known issues:** 24 open items in REVIEW-LATER.md Tier 4 (Android) + Tier 5 (A11y/UX)
 - **ProGuard:** `isMinifyEnabled = true` for release but keep rules are empty — release APK will crash (REVIEW-LATER.md #63)
 

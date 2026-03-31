@@ -259,11 +259,11 @@ curl -s http://localhost:9222/json
 
 #### Known Limitations
 
-The Android build is functional but has open issues tracked in `REVIEW-LATER.md`:
-- Write IPC (`create_block`) fails at runtime — read-only for now
+The Android build is functional with all core IPC commands working (block creation, editing, persistence confirmed 2026-03-31). Open issues tracked in `REVIEW-LATER.md`:
 - `window.prompt()` and `window.open()` don't work in Android WebView
 - Touch targets and hover-dependent UI need mobile adaptation
 - ProGuard keep rules are missing for release builds
+- Stale databases from earlier builds will crash on launch — fix with `adb shell pm clear com.blocknotes.app`
 
 ### Linting and Formatting
 

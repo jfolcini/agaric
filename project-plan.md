@@ -159,7 +159,7 @@ These tasks block everything downstream. Ship them before moving on.
 |----|------|------|----------|--------|-------|
 | p15-t26 | Throwaway Tauri Android app | infra, testing | **YES** | Done | Built debug APK (154MB), installed and launched on Android 14 emulator (Pixel 6). Rust cross-compiled for x86_64-linux-android. Gradle + NDK 27 pipeline works. |
 | p15-t27 | Validate: IME composition + virtual keyboard | testing | **YES** | Done | Virtual keyboard appears on input focus. Text input works. IME autocomplete suggestions show. Keyboard dismiss works. No layout breakage. |
-| p15-t28 | Validate: Markdown round-trip under Android WebView | testing | **YES** | Partial | WebView renders React UI correctly. Read IPC (`list_blocks`) works. Write IPC (`create_block`) fails with runtime error — needs debugging but not a fundamental blocker. TipTap not yet integrated (Phase 2), so Markdown round-trip deferred. |
+| p15-t28 | Validate: Markdown round-trip under Android WebView | testing | **YES** | Partial | WebView renders React UI correctly. Read IPC (`list_blocks`) works. ~~Write IPC (`create_block`) fails with runtime error~~ **Update 2026-03-31:** write IPC confirmed working after `pm clear`; original failure was stale migration, not code bug. TipTap not yet integrated (Phase 2), so Markdown round-trip deferred. |
 | p15-t29 | Spike decision — proceed or mitigate | infra | **YES** | Done | **PROCEED.** Core architecture proven: Rust backend init (SQLite + WAL + recovery) completes in 9ms on Android. WebView renders correctly. IPC bridge functional for reads. Write command failure is a debugging task, not architectural. |
 
 #### Spike Details (2026-03-28)

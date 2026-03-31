@@ -408,7 +408,7 @@
 | 179 | Android layout (virtual keyboard + safe areas) | Partial | 4 | — | Manual spike validation only |
 | 180 | Android mDNS + sync UI | Planned | 4 | — | |
 | 181 | Android IME composition (CJK input) | Planned | 4 | — | |
-| 182 | Android-specific write IPC fix | Planned | 4 | — | |
+| 182 | ~~Android-specific write IPC fix~~ | Likely resolved | 4 | — | Retested 2026-03-31: all IPC works after `pm clear`. Original failure was stale migration, not code bug. |
 
 ---
 

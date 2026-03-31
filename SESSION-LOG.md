@@ -481,7 +481,7 @@
 - **Rust backend init:** SQLite + WAL + device ID + crash recovery completed in 9ms
 - **IME/keyboard:** Virtual keyboard appears, text input works, autocomplete shows
 - **IPC reads:** `list_blocks` works, date navigation works
-- **IPC writes:** `create_block` fails with `Uncaught (in promise) #<Object>` — needs debugging
+- **IPC writes:** `create_block` fails with `Uncaught (in promise) #<Object>` — ~~needs debugging~~ **Update 2026-03-31:** confirmed working after `pm clear`; original failure was stale migration data, not a code bug
 - **Spike decision:** PROCEED — core architecture proven viable on Android
 - **Commit:** `441d5ea`
 
