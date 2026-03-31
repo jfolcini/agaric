@@ -319,6 +319,21 @@ describe('BlockContextMenu', () => {
     expect(props.onClose).toHaveBeenCalled()
   })
 
+  it('restores focus to triggerRef element on Escape', () => {
+    const triggerEl = document.createElement('div')
+    triggerEl.tabIndex = -1
+    document.body.appendChild(triggerEl)
+    const triggerRef = { current: triggerEl }
+    const focusSpy = vi.spyOn(triggerEl, 'focus')
+
+    renderMenu({ triggerRef })
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(focusSpy).toHaveBeenCalled()
+    document.body.removeChild(triggerEl)
+  })
+
   it('menu is rendered via portal into document.body', () => {
     renderMenu()
 

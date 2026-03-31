@@ -403,4 +403,61 @@ describe('LinkEditPopover', () => {
       expect(await axe(container)).toHaveNoViolations()
     })
   })
+
+  // ── Rejected URL error ─────────────────────────────────────────────────
+
+  describe('rejected URL error', () => {
+    it('shows error for javascript: URLs and does not close', () => {
+      render(
+        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+      )
+
+      const input = screen.getByTestId('link-url-input')
+      fireEvent.change(input, { target: { value: 'javascript:alert(1)' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+      // Error should be visible
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'javascript: and data: URLs are not allowed',
+      )
+
+      // Should NOT close the popover
+      expect(onClose).not.toHaveBeenCalled()
+
+      // Should NOT call setLink
+      expect(mockSetLink).not.toHaveBeenCalled()
+    })
+
+    it('shows error for data: URLs', () => {
+      render(
+        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+      )
+
+      const input = screen.getByTestId('link-url-input')
+      fireEvent.change(input, { target: { value: 'data:text/html,test' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'javascript: and data: URLs are not allowed',
+      )
+      expect(onClose).not.toHaveBeenCalled()
+    })
+
+    it('clears error when user types', () => {
+      render(
+        <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
+      )
+
+      const input = screen.getByTestId('link-url-input')
+
+      // Trigger the error
+      fireEvent.change(input, { target: { value: 'javascript:void(0)' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+
+      // Type a new value — error should clear
+      fireEvent.change(input, { target: { value: 'https://safe.com' } })
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+  })
 })

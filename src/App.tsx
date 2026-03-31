@@ -11,7 +11,7 @@ import {
   Tag,
   Trash2,
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BootGate } from './components/BootGate'
 import { ConflictList } from './components/ConflictList'
 import { HistoryView } from './components/HistoryView'
@@ -87,11 +87,22 @@ function App() {
   const { currentView, pageStack, setView, navigateToPage, goBack } = useNavigationStore()
   const headerLabel = useHeaderLabel()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const mainContentRef = useRef<HTMLDivElement>(null)
 
   // Preload the resolve cache (pages + tags) once on app boot
   useEffect(() => {
     useResolveStore.getState().preload()
   }, [])
+
+  // ── Focus main content when view changes ──────────────────────────
+  // biome-ignore lint/correctness/useExhaustiveDependencies: currentView IS the trigger — we focus when the view changes
+  useEffect(() => {
+    // Small delay to let the new view render before moving focus
+    const id = requestAnimationFrame(() => {
+      mainContentRef.current?.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(id)
+  }, [currentView])
 
   // ── Op-level undo/redo shortcuts (Ctrl+Z / Ctrl+Y) ─────────────────
   useUndoShortcuts()
@@ -216,7 +227,11 @@ function App() {
               </span>
             )}
           </header>
-          <div className="flex-1 overflow-y-auto p-4 md:p-6">
+          <div
+            ref={mainContentRef}
+            tabIndex={-1}
+            className="flex-1 overflow-y-auto p-4 md:p-6 outline-none"
+          >
             {currentView === 'journal' && <JournalPage onNavigateToPage={handlePageSelect} />}
             {currentView === 'search' && <SearchPanel />}
             {currentView === 'pages' && <PageBrowser onPageSelect={handlePageSelect} />}

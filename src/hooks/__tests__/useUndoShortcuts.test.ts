@@ -5,6 +5,14 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useUndoShortcuts } from '../useUndoShortcuts'
 
+// -- Mock sonner ---------------------------------------------------------------
+
+vi.mock('sonner', () => ({ toast: vi.fn() }))
+
+import { toast } from 'sonner'
+
+const mockedToast = vi.mocked(toast)
+
 // -- Mock stores --------------------------------------------------------------
 
 const mockUndo = vi.fn().mockResolvedValue(null)
@@ -305,6 +313,66 @@ describe('error handling', () => {
     }).not.toThrow()
 
     expect(mockRedo).toHaveBeenCalledWith('PAGE_1')
+
+    unmount()
+  })
+})
+
+describe('toast feedback', () => {
+  it('shows "Undone" toast after successful undo', async () => {
+    mockUndo.mockResolvedValueOnce({ type: 'undo' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    // Wait for the promise .then() to resolve
+    await vi.waitFor(() => {
+      expect(mockedToast).toHaveBeenCalledWith('Undone', { duration: 1500 })
+    })
+
+    unmount()
+  })
+
+  it('does NOT show toast when undo returns null (nothing to undo)', async () => {
+    mockUndo.mockResolvedValueOnce(null)
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    // Give the promise time to settle
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(mockedToast).not.toHaveBeenCalled()
+
+    unmount()
+  })
+
+  it('shows "Redone" toast after successful redo', async () => {
+    mockRedo.mockResolvedValueOnce({ type: 'redo' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockedToast).toHaveBeenCalledWith('Redone', { duration: 1500 })
+    })
+
+    unmount()
+  })
+
+  it('does NOT show toast when redo returns null (nothing to redo)', async () => {
+    mockRedo.mockResolvedValueOnce(null)
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
+
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(mockedToast).not.toHaveBeenCalled()
 
     unmount()
   })

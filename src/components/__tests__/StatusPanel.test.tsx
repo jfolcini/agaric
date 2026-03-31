@@ -164,11 +164,41 @@ describe('StatusPanel', () => {
 
     render(<StatusPanel />)
 
-    // Should show loading state but not crash
+    // Should show error message
     await waitFor(() => {
-      expect(screen.getByText('Materializer Status')).toBeInTheDocument()
+      expect(screen.getByText('Failed to load status')).toBeInTheDocument()
     })
     // Metrics should not render since status is still null
     expect(screen.queryByText('Foreground Queue')).not.toBeInTheDocument()
+  })
+
+  it('shows error alongside status when poll fails after initial success', async () => {
+    vi.useFakeTimers()
+
+    mockedInvoke
+      .mockResolvedValueOnce(mockStatus) // initial load succeeds
+      .mockRejectedValueOnce(new Error('poll failed')) // second poll fails
+
+    await act(async () => {
+      render(<StatusPanel />)
+    })
+
+    // Status metrics should be visible
+    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.getByText('Foreground Queue')).toBeInTheDocument()
+
+    // No error initially
+    expect(screen.queryByText('Failed to load status')).not.toBeInTheDocument()
+
+    // Advance to trigger poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+
+    // Error should now be visible alongside the status metrics
+    expect(screen.getByText('Failed to load status')).toBeInTheDocument()
+    expect(screen.getByText('Foreground Queue')).toBeInTheDocument()
+
+    vi.useRealTimers()
   })
 })

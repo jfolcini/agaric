@@ -1,14 +1,19 @@
 import { AlertCircle, Loader2 } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useBootStore } from '../stores/boot'
 
 export function BootGate({ children }: { children: React.ReactNode }) {
   const { state, error, boot } = useBootStore()
+  const [retrying, setRetrying] = useState(false)
 
   useEffect(() => {
     boot()
   }, [boot])
+
+  useEffect(() => {
+    if (state !== 'error') setRetrying(false)
+  }, [state])
 
   if (state === 'booting') {
     return (
@@ -38,8 +43,15 @@ export function BootGate({ children }: { children: React.ReactNode }) {
           <AlertCircle className="h-8 w-8 text-destructive" />
           <h2 className="text-lg font-semibold">Failed to start</h2>
           <p className="text-sm text-muted-foreground max-w-sm text-center">{error}</p>
-          <Button variant="outline" onClick={() => boot()}>
-            Retry
+          <Button
+            variant="outline"
+            onClick={() => {
+              setRetrying(true)
+              boot()
+            }}
+            disabled={retrying}
+          >
+            {retrying ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Retry'}
           </Button>
         </div>
       </div>

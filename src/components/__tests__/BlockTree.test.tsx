@@ -55,6 +55,8 @@ vi.mock('../../editor/use-block-keyboard', () => ({
   useBlockKeyboard: vi.fn(),
 }))
 
+vi.mock('sonner', () => ({ toast: vi.fn() }))
+
 vi.mock('../../hooks/useViewportObserver', () => ({
   useViewportObserver: () => ({
     isOffscreen: () => false,
@@ -520,12 +522,19 @@ describe('BlockTree picker wiring', () => {
     })
   })
 
-  it('renders loading state', () => {
+  it('renders loading state with skeleton placeholders', () => {
     useBlockStore.setState({ loading: true })
 
     const { container } = render(<BlockTree />)
 
-    expect(container.querySelector('.block-tree-loading')).toBeInTheDocument()
+    const loadingEl = container.querySelector('.block-tree-loading')
+    expect(loadingEl).toBeInTheDocument()
+    expect(loadingEl).toHaveAttribute('aria-busy', 'true')
+    expect(loadingEl).toHaveAttribute('aria-label', 'Loading blocks')
+
+    // Should render 4 skeleton elements
+    const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons).toHaveLength(4)
   })
 
   it('renders empty state when no blocks', async () => {
@@ -1713,7 +1722,6 @@ describe('BlockTree priority slash commands', () => {
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_properties' && args?.blockId === 'A') {

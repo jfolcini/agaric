@@ -22,9 +22,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { HistoryView } from '../HistoryView'
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}))
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -159,12 +167,11 @@ describe('HistoryView', () => {
 
     await screen.findByText('item 1')
 
-    // Press ArrowDown to focus first item (from -1 to 0)
-    await user.keyboard('{ArrowDown}')
+    // First item should be auto-focused on load
     const items = screen.getAllByTestId(/^history-item-/)
     expect(items[0]).toHaveClass('ring-2')
 
-    // Press ArrowDown again to move to second item
+    // Press ArrowDown to move to second item
     await user.keyboard('{ArrowDown}')
     expect(items[0]).not.toHaveClass('ring-2')
     expect(items[1]).toHaveClass('ring-2')
@@ -517,8 +524,9 @@ describe('HistoryView', () => {
 
     render(<HistoryView />)
 
-    // Should render empty state (error silently caught), not crash
+    // Should render error banner and empty state, not crash
     await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Failed to load history')
       expect(screen.getByText('No history entries found')).toBeInTheDocument()
     })
   })
@@ -769,21 +777,22 @@ describe('HistoryView', () => {
 
     await screen.findByText('item 1')
 
-    // Navigate to focus the first item
+    // Navigate to focus the second item
+    await user.keyboard('{ArrowDown}')
     await user.keyboard('{ArrowDown}')
     const items = screen.getAllByTestId(/^history-item-/)
-    expect(items[0]).toHaveClass('ring-2')
+    expect(items[1]).toHaveClass('ring-2')
 
     // Change op type filter — this triggers a reset
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
     await user.selectOptions(select, 'edit')
 
-    // After filter change, entries reload and focus should be reset (no ring-2)
+    // After filter change, entries reload and focus resets to first item (auto-focus)
     await waitFor(() => {
       const newItems = screen.getAllByTestId(/^history-item-/)
-      for (const item of newItems) {
-        expect(item).not.toHaveClass('ring-2')
-      }
+      expect(newItems[0]).toHaveClass('ring-2')
+      // Second item should no longer have focus ring
+      expect(newItems[1]).not.toHaveClass('ring-2')
     })
   })
 
@@ -820,6 +829,60 @@ describe('HistoryView', () => {
     await user.keyboard('{ArrowDown}')
     await waitFor(() => {
       expect(screen.getByTestId('history-item-0')).toHaveClass('ring-2')
+    })
+  })
+
+  it('shows error banner when loadHistory fails and clears on retry', async () => {
+    mockedInvoke
+      .mockRejectedValueOnce(new Error('network failure')) // initial load fails
+      .mockResolvedValueOnce(emptyPage) // retry succeeds
+
+    const user = userEvent.setup()
+
+    render(<HistoryView />)
+
+    // Error banner should appear
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Failed to load history')
+
+    // Retry button should be visible
+    const retryBtn = screen.getByRole('button', { name: /Retry/ })
+    expect(retryBtn).toBeInTheDocument()
+
+    // Click retry — should clear error and reload
+    await user.click(retryBtn)
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows toast when revert fails', async () => {
+    const user = userEvent.setup()
+    const mockedToastError = vi.mocked(toast.error)
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockRejectedValueOnce(new Error('revert failed')) // revertOps throws
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select an entry
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0])
+
+    // Open dialog and confirm revert
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to revert operations')
     })
   })
 })

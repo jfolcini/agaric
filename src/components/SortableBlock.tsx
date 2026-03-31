@@ -107,6 +107,7 @@ export function SortableBlock({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const touchStartPos = useRef<{ x: number; y: number } | null>(null)
+  const blockRef = useRef<HTMLDivElement>(null)
 
   const clearLongPress = useCallback(() => {
     if (longPressTimer.current) {
@@ -174,7 +175,10 @@ export function SortableBlock({
     <TooltipProvider delayDuration={500}>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: touch handlers for long-press context menu */}
       <div
-        ref={setNodeRef}
+        ref={(node) => {
+          setNodeRef(node)
+          ;(blockRef as React.MutableRefObject<HTMLDivElement | null>).current = node
+        }}
         style={style}
         data-block-id={blockId}
         className={cn(
@@ -347,6 +351,7 @@ export function SortableBlock({
             blockId={blockId}
             position={contextMenu}
             onClose={closeContextMenu}
+            triggerRef={blockRef}
             onDelete={onDelete}
             onIndent={onIndent}
             onDedent={onDedent}

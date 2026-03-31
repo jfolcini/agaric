@@ -9,6 +9,7 @@
 import { Clock, Lock, RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -122,14 +123,16 @@ export function HistoryView(): React.ReactElement {
   const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
   const [confirmRevert, setConfirmRevert] = useState(false)
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
-  const listRef = useRef<HTMLUListElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
 
   // ── Data loading ─────────────────────────────────────────────────
   const loadHistory = useCallback(
     async (cursor?: string) => {
       setLoading(true)
       try {
+        setError(null)
         const resp = await listPageHistory({
           pageId: '__all__',
           opTypeFilter: opTypeFilter ?? undefined,
@@ -146,7 +149,7 @@ export function HistoryView(): React.ReactElement {
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
       } catch {
-        // Silently fail
+        setError('Failed to load history')
       }
       setLoading(false)
     },
@@ -163,6 +166,13 @@ export function HistoryView(): React.ReactElement {
     setLastClickedIndex(-1)
     loadHistory()
   }, [opTypeFilter, loadHistory])
+
+  // Set initial focus when entries load
+  useEffect(() => {
+    if (entries.length > 0 && focusedIndex === -1) {
+      setFocusedIndex(0)
+    }
+  }, [entries.length, focusedIndex])
 
   const loadMore = useCallback(() => {
     if (nextCursor) loadHistory(nextCursor)
@@ -247,7 +257,7 @@ export function HistoryView(): React.ReactElement {
       setHasMore(false)
       await loadHistory()
     } catch {
-      // Silently fail
+      toast.error('Failed to revert operations')
     }
     setReverting(false)
     setConfirmRevert(false)
@@ -398,6 +408,26 @@ export function HistoryView(): React.ReactElement {
         </div>
       )}
 
+      {/* Error banner */}
+      {error && (
+        <div
+          className="history-error flex items-center justify-between rounded-lg border border-destructive/50 bg-destructive/5 p-4"
+          role="alert"
+        >
+          <p className="text-sm text-destructive">{error}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setError(null)
+              loadHistory()
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+
       {/* Empty state */}
       {!loading && entries.length === 0 && (
         <EmptyState icon={Clock} message="No history entries found" />
@@ -405,10 +435,12 @@ export function HistoryView(): React.ReactElement {
 
       {/* History list */}
       {entries.length > 0 && (
-        <ul
+        <div
           ref={listRef}
-          className="history-list space-y-2 list-none p-0 m-0"
+          className="history-list space-y-2 p-0 m-0"
+          role="listbox"
           aria-label="History entries"
+          aria-multiselectable="true"
         >
           {entries.map((entry, index) => {
             const key = entryKey(entry)
@@ -418,10 +450,12 @@ export function HistoryView(): React.ReactElement {
             const preview = getPayloadPreview(entry)
 
             return (
-              <li
+              <div
                 key={key}
                 data-history-item
                 data-testid={`history-item-${index}`}
+                role="option"
+                aria-selected={isSelected}
                 className={`history-item flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors ${
                   isSelected ? 'bg-accent/50 border-accent' : 'bg-card hover:bg-accent/30'
                 } ${isFocused ? 'ring-2 ring-ring' : ''} ${isNonReversible ? 'opacity-50' : ''}`}
@@ -489,10 +523,10 @@ export function HistoryView(): React.ReactElement {
                     </Tooltip>
                   </TooltipProvider>
                 )}
-              </li>
+              </div>
             )
           })}
-        </ul>
+        </div>
       )}
 
       {/* Load more */}

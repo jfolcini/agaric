@@ -28,6 +28,8 @@ export interface BlockContextMenuProps {
   blockId: string
   position: { x: number; y: number }
   onClose: () => void
+  /** Ref to the element that triggered the menu, for focus restoration. */
+  triggerRef?: React.RefObject<HTMLElement | null>
   onDelete?: (blockId: string) => void
   onIndent?: (blockId: string) => void
   onDedent?: (blockId: string) => void
@@ -82,6 +84,7 @@ export function BlockContextMenu({
   blockId,
   position,
   onClose,
+  triggerRef,
   onDelete,
   onIndent,
   onDedent,
@@ -99,29 +102,34 @@ export function BlockContextMenu({
   const [focusedIndex, setFocusedIndex] = useState(0)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
+  const handleCloseWithFocus = useCallback(() => {
+    triggerRef?.current?.focus()
+    onClose()
+  }, [triggerRef, onClose])
+
   // ── Close on click outside ───────────────────────────────────────
   useEffect(() => {
     const handlePointerDown = (e: PointerEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        onClose()
+        handleCloseWithFocus()
       }
     }
     // Use pointerdown to catch both mouse and touch
     document.addEventListener('pointerdown', handlePointerDown, true)
     return () => document.removeEventListener('pointerdown', handlePointerDown, true)
-  }, [onClose])
+  }, [handleCloseWithFocus])
 
   // ── Close on Escape ──────────────────────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
-        onClose()
+        handleCloseWithFocus()
       }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
+  }, [handleCloseWithFocus])
 
   // ── Focus first item on mount ────────────────────────────────────
   useEffect(() => {

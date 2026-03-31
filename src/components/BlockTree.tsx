@@ -16,6 +16,7 @@ import { closestCenter, DndContext, DragOverlay, MeasuringStrategy } from '@dnd-
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { parse, serialize } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
 import type { DocNode } from '../editor/types'
@@ -42,6 +43,7 @@ import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 import { INDENT_WIDTH, SortableBlock } from './SortableBlock'
 import { Calendar } from './ui/calendar'
+import { Skeleton } from './ui/skeleton'
 
 // ── Floating date picker with Escape + viewport centering ─────────────
 
@@ -692,7 +694,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const handleEscapeCancel = useCallback(() => {
     if (!focusedBlockId) return
     // Unmount but discard the result — don't save changes
-    rovingEditor.unmount()
+    const changed = rovingEditor.unmount()
+    if (changed !== null) {
+      toast('Changes discarded', { duration: 2000 })
+    }
     setFocused(null)
   }, [focusedBlockId, rovingEditor, setFocused])
 
@@ -788,9 +793,17 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   if (loading) {
     return (
-      <output className="block-tree-loading flex items-center justify-center p-8 text-sm text-muted-foreground">
-        Loading blocks...
-      </output>
+      <div
+        className="block-tree-loading space-y-3 p-2"
+        role="status"
+        aria-busy="true"
+        aria-label="Loading blocks"
+      >
+        <Skeleton className="h-6 w-full rounded" />
+        <Skeleton className="h-6 w-5/6 rounded" />
+        <Skeleton className="h-6 w-4/6 rounded" />
+        <Skeleton className="h-6 w-full rounded" />
+      </div>
     )
   }
 

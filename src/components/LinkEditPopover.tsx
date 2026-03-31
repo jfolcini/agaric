@@ -51,14 +51,22 @@ export function LinkEditPopover({
   onClose,
 }: LinkEditPopoverProps): React.ReactElement {
   const [url, setUrl] = useState(initialUrl)
+  const [urlError, setUrlError] = useState<string | null>(null)
 
   const handleApply = useCallback(() => {
-    const normalized = normalizeUrl(url)
-    if (normalized) {
-      editor.chain().focus().setLink({ href: normalized }).run()
-    } else {
+    const trimmed = url.trim()
+    if (!trimmed) {
       editor.commands.focus()
+      onClose()
+      return
     }
+    const normalized = normalizeUrl(url)
+    if (!normalized) {
+      setUrlError('javascript: and data: URLs are not allowed')
+      return
+    }
+    setUrlError(null)
+    editor.chain().focus().setLink({ href: normalized }).run()
     onClose()
   }, [editor, url, onClose])
 
@@ -91,12 +99,20 @@ export function LinkEditPopover({
         type="url"
         placeholder="https://..."
         value={url}
-        onChange={(e) => setUrl(e.target.value)}
+        onChange={(e) => {
+          setUrl(e.target.value)
+          setUrlError(null)
+        }}
         onKeyDown={handleKeyDown}
         autoFocus
         className="h-8 text-sm"
         data-testid="link-url-input"
       />
+      {urlError && (
+        <p className="text-xs text-destructive" role="alert">
+          {urlError}
+        </p>
+      )}
       <div className="flex items-center gap-2">
         <Button
           size="xs"

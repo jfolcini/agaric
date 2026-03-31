@@ -7,6 +7,7 @@
  */
 
 import { useEffect } from 'react'
+import { toast } from 'sonner'
 import { useNavigationStore } from '@/stores/navigation'
 import { useUndoStore } from '@/stores/undo'
 
@@ -28,14 +29,26 @@ export function useUndoShortcuts(): void {
       // Skip Ctrl+Shift+Z (that's TipTap's redo, handled by the editor)
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault()
-        useUndoStore.getState().undo(pageId)
+        useUndoStore
+          .getState()
+          .undo(pageId)
+          .then((result) => {
+            if (result) toast('Undone', { duration: 1500 })
+          })
+          .catch(() => {})
         return
       }
 
       // Ctrl+Y (or Cmd+Y on Mac) — Redo
       if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
         e.preventDefault()
-        useUndoStore.getState().redo(pageId)
+        useUndoStore
+          .getState()
+          .redo(pageId)
+          .then((result) => {
+            if (result) toast('Redone', { duration: 1500 })
+          })
+          .catch(() => {})
         return
       }
     }

@@ -170,4 +170,67 @@ describe('BootGate', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  it('retry button shows spinner and is disabled while retrying', async () => {
+    const user = userEvent.setup()
+    // boot that never resolves (stays in 'error' state)
+    const pendingBoot = vi.fn(() => new Promise<void>(() => {}))
+
+    useBootStore.setState({ state: 'error', error: 'Something went wrong', boot: pendingBoot })
+
+    render(
+      <BootGate>
+        <p>App content</p>
+      </BootGate>,
+    )
+
+    const retryBtn = screen.getByRole('button', { name: /Retry/i })
+    expect(retryBtn).not.toBeDisabled()
+
+    await user.click(retryBtn)
+
+    // Button should be disabled and show a spinner
+    await waitFor(() => {
+      expect(retryBtn).toBeDisabled()
+      expect(screen.getByTestId('loader-icon')).toBeInTheDocument()
+    })
+  })
+
+  it('retry button resets disabled state when state changes from error', async () => {
+    const user = userEvent.setup()
+    let resolveBootFn: (() => void) | undefined
+    const controllableBoot = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveBootFn = resolve
+        }),
+    )
+
+    useBootStore.setState({ state: 'error', error: 'Something went wrong', boot: controllableBoot })
+
+    render(
+      <BootGate>
+        <p>App content</p>
+      </BootGate>,
+    )
+
+    const retryBtn = screen.getByRole('button', { name: /Retry/i })
+    await user.click(retryBtn)
+
+    // Button should now be disabled
+    await waitFor(() => {
+      expect(retryBtn).toBeDisabled()
+    })
+
+    // Simulate state transitioning to booting (which would happen when boot() succeeds)
+    useBootStore.setState({ state: 'booting', error: null })
+
+    // Component should now show the booting UI (not the error UI)
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Retry/i })).not.toBeInTheDocument()
+      expect(screen.getByText(/Starting Agaric/)).toBeInTheDocument()
+    })
+
+    resolveBootFn?.()
+  })
 })

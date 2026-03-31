@@ -56,9 +56,7 @@ export function StatusPanel(): React.ReactElement {
             </div>
           )}
 
-          {error && !status && (
-            <p className="status-panel-error text-sm text-destructive">{error}</p>
-          )}
+          {error && <p className="status-panel-error text-sm text-destructive">{error}</p>}
 
           {status && (
             <output className="status-panel-metrics block">
