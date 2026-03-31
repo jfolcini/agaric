@@ -1,5 +1,44 @@
 import { describe, expect, it, vi } from 'vitest'
-import { replaceDocSilently } from '../use-roving-editor'
+import { dispatchPriorityEvent, replaceDocSilently } from '../use-roving-editor'
+
+// -- dispatchPriorityEvent ----------------------------------------------------
+
+describe('dispatchPriorityEvent', () => {
+  it('dispatches set-priority-1 on document for level 1', () => {
+    const spy = vi.fn()
+    document.addEventListener('set-priority-1', spy)
+    dispatchPriorityEvent(1)
+    expect(spy).toHaveBeenCalledOnce()
+    document.removeEventListener('set-priority-1', spy)
+  })
+
+  it('dispatches set-priority-2 on document for level 2', () => {
+    const spy = vi.fn()
+    document.addEventListener('set-priority-2', spy)
+    dispatchPriorityEvent(2)
+    expect(spy).toHaveBeenCalledOnce()
+    document.removeEventListener('set-priority-2', spy)
+  })
+
+  it('dispatches set-priority-3 on document for level 3', () => {
+    const spy = vi.fn()
+    document.addEventListener('set-priority-3', spy)
+    dispatchPriorityEvent(3)
+    expect(spy).toHaveBeenCalledOnce()
+    document.removeEventListener('set-priority-3', spy)
+  })
+
+  it('dispatches a CustomEvent instance', () => {
+    let receivedEvent: Event | null = null
+    const handler = (e: Event) => {
+      receivedEvent = e
+    }
+    document.addEventListener('set-priority-1', handler)
+    dispatchPriorityEvent(1)
+    expect(receivedEvent).toBeInstanceOf(CustomEvent)
+    document.removeEventListener('set-priority-1', handler)
+  })
+})
 
 // -- replaceDocSilently -------------------------------------------------------
 

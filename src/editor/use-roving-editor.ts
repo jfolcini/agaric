@@ -45,21 +45,26 @@ const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   },
 })
 
+/** Dispatch a priority custom event on document. Exported for testing. */
+export function dispatchPriorityEvent(level: 1 | 2 | 3): void {
+  document.dispatchEvent(new CustomEvent(`set-priority-${level}`))
+}
+
 /** Custom extension dispatching priority shortcut events. */
 const PriorityShortcuts = Extension.create({
   name: 'priorityShortcuts',
   addKeyboardShortcuts() {
     return {
       'Mod-Shift-1': () => {
-        document.dispatchEvent(new CustomEvent('set-priority-1'))
+        dispatchPriorityEvent(1)
         return true
       },
       'Mod-Shift-2': () => {
-        document.dispatchEvent(new CustomEvent('set-priority-2'))
+        dispatchPriorityEvent(2)
         return true
       },
       'Mod-Shift-3': () => {
-        document.dispatchEvent(new CustomEvent('set-priority-3'))
+        dispatchPriorityEvent(3)
         return true
       },
     }
