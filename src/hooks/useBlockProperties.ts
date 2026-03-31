@@ -18,9 +18,13 @@ import { deleteProperty, setProperty } from '../lib/tauri'
 /** Task state cycle: none -> TODO -> DOING -> DONE -> none. */
 const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE']
 
+/** Priority cycle: none -> A -> B -> C -> none. */
+const PRIORITY_CYCLE: readonly (string | null)[] = [null, 'A', 'B', 'C']
+
 export interface UseBlockPropertiesReturn {
   getTodoState: (blockId: string) => string | null
   handleToggleTodo: (blockId: string) => Promise<void>
+  handleTogglePriority: (blockId: string) => Promise<void>
   blockProperties: Map<string, PropertyRow[]>
   setBlockProperties: React.Dispatch<React.SetStateAction<Map<string, PropertyRow[]>>>
 }
@@ -76,9 +80,49 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
     [getTodoState],
   )
 
+  /** Cycle through priority levels: none -> A -> B -> C -> none. */
+  const handleTogglePriority = useCallback(
+    async (blockId: string) => {
+      const props = blockProperties.get(blockId)
+      const current = props?.find((p) => p.key === 'priority')?.value_text ?? null
+      const currentIdx = PRIORITY_CYCLE.indexOf(current)
+      const nextIdx = (currentIdx + 1) % PRIORITY_CYCLE.length
+      const nextState = PRIORITY_CYCLE[nextIdx]
+
+      if (nextState === null) {
+        await deleteProperty(blockId, 'priority')
+      } else {
+        await setProperty({ blockId, key: 'priority', valueText: nextState })
+      }
+
+      // Update local cache
+      setBlockProperties((prev) => {
+        const next = new Map(prev)
+        if (nextState === null) {
+          const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'priority')
+          if (props.length === 0) next.delete(blockId)
+          else next.set(blockId, props)
+        } else {
+          const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'priority')
+          props.push({
+            key: 'priority',
+            value_text: nextState,
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+          })
+          next.set(blockId, props)
+        }
+        return next
+      })
+    },
+    [blockProperties],
+  )
+
   return {
     getTodoState,
     handleToggleTodo,
+    handleTogglePriority,
     blockProperties,
     setBlockProperties,
   }

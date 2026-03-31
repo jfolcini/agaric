@@ -802,3 +802,373 @@ describe('gutter alignment', () => {
     expect(deleteBtn.className).toContain('p-0.5')
   })
 })
+
+// =========================================================================
+// Priority badge tests
+// =========================================================================
+
+describe('SortableBlock priority badge', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('displays "1" for priority A', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="A"
+      />,
+    )
+
+    const badge = screen.getByRole('button', { name: /priority 1/i })
+    expect(badge).toHaveTextContent('1')
+  })
+
+  it('displays "2" for priority B', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="B"
+      />,
+    )
+
+    const badge = screen.getByRole('button', { name: /priority 2/i })
+    expect(badge).toHaveTextContent('2')
+  })
+
+  it('displays "3" for priority C', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="C"
+      />,
+    )
+
+    const badge = screen.getByRole('button', { name: /priority 3/i })
+    expect(badge).toHaveTextContent('3')
+  })
+
+  it('displays "·" (middle dot) when no priority is set', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority={null}
+      />,
+    )
+
+    const badge = screen.getByRole('button', { name: /set priority/i })
+    expect(badge).toHaveTextContent('·')
+  })
+
+  it('calls onTogglePriority with blockId when clicked', async () => {
+    const user = userEvent.setup()
+    const onTogglePriority = vi.fn()
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_42"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="A"
+        onTogglePriority={onTogglePriority}
+      />,
+    )
+
+    const badge = screen.getByRole('button', { name: /priority 1/i })
+    await user.click(badge)
+
+    expect(onTogglePriority).toHaveBeenCalledOnce()
+    expect(onTogglePriority).toHaveBeenCalledWith('BLOCK_42')
+  })
+
+  it('does not crash when onTogglePriority is not provided', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="A"
+      />,
+    )
+
+    const badge = screen.getByRole('button', { name: /priority 1/i })
+    // Should not throw
+    await user.click(badge)
+  })
+
+  it('applies red styling for priority A', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="A"
+      />,
+    )
+
+    const badge = container.querySelector('.priority-badge')
+    expect(badge?.className).toContain('bg-red-100')
+    expect(badge?.className).toContain('text-red-700')
+  })
+
+  it('applies yellow styling for priority B', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="B"
+      />,
+    )
+
+    const badge = container.querySelector('.priority-badge')
+    expect(badge?.className).toContain('bg-yellow-100')
+    expect(badge?.className).toContain('text-yellow-700')
+  })
+
+  it('applies blue styling for priority C', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="C"
+      />,
+    )
+
+    const badge = container.querySelector('.priority-badge')
+    expect(badge?.className).toContain('bg-blue-100')
+    expect(badge?.className).toContain('text-blue-700')
+  })
+
+  it('has opacity-0 class when no priority is set (hidden by default)', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority={null}
+      />,
+    )
+
+    const badge = container.querySelector('.priority-badge')
+    expect(badge?.className).toContain('opacity-0')
+  })
+
+  it('does not have opacity-0 class when priority is set', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="B"
+      />,
+    )
+
+    const badge = container.querySelector('.priority-badge')
+    expect(badge?.className).not.toContain('opacity-0')
+  })
+
+  it('has proper aria-label with priority level when set', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="B"
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Priority 2. Click to cycle.' })).toBeInTheDocument()
+  })
+
+  it('has "Set priority" aria-label when no priority', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority={null}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Set priority' })).toBeInTheDocument()
+  })
+
+  it('priority badge has mt-1.5 for first-line alignment', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="A"
+      />,
+    )
+
+    const badge = container.querySelector('.priority-badge')
+    expect(badge?.className).toContain('mt-1.5')
+  })
+})
+
+// =========================================================================
+// Visibility / hover / focus tests
+// =========================================================================
+
+describe('SortableBlock visibility controls', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('applies block-active class when isFocused is true', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={true}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    expect(container.firstElementChild?.className).toContain('block-active')
+  })
+
+  it('does not apply block-active class when isFocused is false', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    expect(container.firstElementChild?.className).not.toContain('block-active')
+  })
+
+  it('drag handle has opacity-0 class (hidden by default)', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const handle = screen.getByRole('button', { name: /drag to reorder/i })
+    expect(handle.className).toContain('opacity-0')
+  })
+
+  it('drag handle has group-hover:opacity-100 class for hover reveal', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const handle = screen.getByRole('button', { name: /drag to reorder/i })
+    expect(handle.className).toContain('group-hover:opacity-100')
+  })
+
+  it('drag handle has [.block-active_&]:opacity-100 class for focus reveal', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const handle = screen.getByRole('button', { name: /drag to reorder/i })
+    expect(handle.className).toContain('[.block-active_&]:opacity-100')
+  })
+
+  it('delete handle has opacity-0 class (hidden by default)', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    expect(deleteBtn.className).toContain('opacity-0')
+  })
+
+  it('collapse toggle has opacity-0 class (hidden by default)', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+      />,
+    )
+
+    const collapseBtn = screen.getByRole('button', { name: /collapse children/i })
+    expect(collapseBtn.className).toContain('opacity-0')
+  })
+
+  it('empty priority badge has opacity-0 class (hidden by default)', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority={null}
+      />,
+    )
+
+    const badge = container.querySelector('.priority-badge')
+    expect(badge?.className).toContain('opacity-0')
+    expect(badge?.className).toContain('group-hover:opacity-50')
+  })
+
+  it('wrapper has group class for group-hover to work', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    expect(container.firstElementChild?.className).toContain('group')
+  })
+})

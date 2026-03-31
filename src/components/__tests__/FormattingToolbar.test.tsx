@@ -2,16 +2,19 @@
  * Tests for FormattingToolbar component.
  *
  * Validates:
- *  - Renders all five buttons (Bold, Italic, Code, Undo, Redo)
+ *  - Renders all seven buttons (Bold, Italic, Code, External link, Code block, Undo, Redo)
  *  - Active marks get aria-pressed=true + bg-accent
  *  - Undo/Redo disabled state reflects editor.can()
  *  - Clicking buttons calls the correct editor chain commands
  *  - Uses onMouseDown (not onClick) with preventDefault
  *  - Separator between formatting and history groups
+ *  - External link button toggles LinkEditPopover inside a Popover
+ *  - Ctrl+K custom event opens the link popover
  *  - a11y: role=toolbar, aria-labels, axe audit
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { FormattingToolbar } from '../FormattingToolbar'
@@ -42,6 +45,54 @@ vi.mock('../ui/separator', () => ({
   ),
 }))
 
+// Mock Popover components — render children inline for testing
+vi.mock('../ui/popover', () => ({
+  Popover: ({
+    children,
+    open,
+  }: {
+    children: React.ReactNode
+    open?: boolean
+    onOpenChange?: (open: boolean) => void
+  }) => (
+    <div data-testid="link-popover" data-open={String(!!open)}>
+      {children}
+    </div>
+  ),
+  PopoverAnchor: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  PopoverContent: ({
+    children,
+  }: {
+    children: React.ReactNode
+    align?: string
+    className?: string
+  }) => <div data-testid="popover-content">{children}</div>,
+}))
+
+// Mock LinkEditPopover — render a simple stub with data attributes for props
+vi.mock('../LinkEditPopover', () => ({
+  LinkEditPopover: ({
+    isEditing,
+    initialUrl,
+    onClose,
+  }: {
+    editor: unknown
+    isEditing: boolean
+    initialUrl: string
+    onClose: () => void
+  }) => (
+    <div
+      data-testid="link-edit-popover-mock"
+      data-is-editing={String(!!isEditing)}
+      data-initial-url={initialUrl}
+    >
+      <button type="button" onClick={onClose} data-testid="close-popover">
+        Close
+      </button>
+    </div>
+  ),
+}))
+
 // ── Editor mock helpers ──────────────────────────────────────────────────
 
 const mockRun = vi.fn()
@@ -66,9 +117,17 @@ const mockFocus = vi.fn(() => ({
 const mockChain = vi.fn(() => ({
   focus: mockFocus,
 }))
+const mockGetAttributes = vi.fn(() => ({}))
+
+/** Shared editor DOM element so Ctrl+K event listener can be tested. */
+const mockEditorDom = document.createElement('div')
 
 function makeEditor() {
-  return { chain: mockChain } as never
+  return {
+    chain: mockChain,
+    getAttributes: mockGetAttributes,
+    view: { dom: mockEditorDom },
+  } as never
 }
 
 describe('FormattingToolbar', () => {
@@ -81,6 +140,7 @@ describe('FormattingToolbar', () => {
     mockEditorState.codeBlock = false
     mockEditorState.canUndo = false
     mockEditorState.canRedo = false
+    mockGetAttributes.mockReturnValue({})
   })
 
   // ── Rendering ────────────────────────────────────────────────────────
@@ -237,25 +297,72 @@ describe('FormattingToolbar', () => {
     })
   })
 
-  // ── New button actions ───────────────────────────────────────────────
+  // ── Link popover actions ─────────────────────────────────────────────
 
-  describe('new button actions', () => {
-    it('toggles external link — prompts for URL when not active', () => {
-      const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('https://example.com')
+  describe('link popover', () => {
+    it('opens link popover when clicking External link button', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
+
+      const popover = screen.getByTestId('link-popover')
+      expect(popover).toHaveAttribute('data-open', 'false')
+
       fireEvent.mouseDown(screen.getByRole('button', { name: 'External link' }))
 
-      expect(promptSpy).toHaveBeenCalledWith('URL:')
-      expect(mockSetLink).toHaveBeenCalledWith({ href: 'https://example.com' })
-      promptSpy.mockRestore()
+      expect(popover).toHaveAttribute('data-open', 'true')
     })
 
-    it('unsets link when link is active', () => {
-      mockEditorState.link = true
+    it('passes isEditing=false and empty initialUrl when no link is active', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'External link' }))
 
-      expect(mockUnsetLink).toHaveBeenCalled()
+      const mock = screen.getByTestId('link-edit-popover-mock')
+      expect(mock).toHaveAttribute('data-is-editing', 'false')
+      expect(mock).toHaveAttribute('data-initial-url', '')
+    })
+
+    it('passes isEditing=true and pre-filled URL when link is active', () => {
+      mockEditorState.link = true
+      mockGetAttributes.mockReturnValue({ href: 'https://example.com' })
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      const mock = screen.getByTestId('link-edit-popover-mock')
+      expect(mock).toHaveAttribute('data-is-editing', 'true')
+      expect(mock).toHaveAttribute('data-initial-url', 'https://example.com')
+    })
+
+    it('closes popover when LinkEditPopover calls onClose', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      // Open the popover first
+      fireEvent.mouseDown(screen.getByRole('button', { name: 'External link' }))
+      const popover = screen.getByTestId('link-popover')
+      expect(popover).toHaveAttribute('data-open', 'true')
+
+      // Click the close button in the mocked LinkEditPopover
+      fireEvent.click(screen.getByTestId('close-popover'))
+      expect(popover).toHaveAttribute('data-open', 'false')
+    })
+
+    it('opens popover on Ctrl+K custom event from editor DOM', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+
+      const popover = screen.getByTestId('link-popover')
+      expect(popover).toHaveAttribute('data-open', 'false')
+
+      // Simulate the custom event dispatched by the ExternalLink extension
+      act(() => {
+        mockEditorDom.dispatchEvent(new CustomEvent('open-link-popover'))
+      })
+
+      expect(popover).toHaveAttribute('data-open', 'true')
+    })
+
+    it('shows External link as pressed when link is active', () => {
+      mockEditorState.link = true
+      mockGetAttributes.mockReturnValue({ href: 'https://example.com' })
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'External link' })
+      expect(btn).toHaveAttribute('aria-pressed', 'true')
+      expect(btn.className).toContain('bg-accent')
     })
 
     it('toggles code block via editor chain', () => {
@@ -264,14 +371,6 @@ describe('FormattingToolbar', () => {
 
       expect(mockToggleCodeBlock).toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalled()
-    })
-
-    it('shows External link as pressed when link is active', () => {
-      mockEditorState.link = true
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'External link' })
-      expect(btn).toHaveAttribute('aria-pressed', 'true')
-      expect(btn.className).toContain('bg-accent')
     })
 
     it('shows Code block as pressed when active', () => {

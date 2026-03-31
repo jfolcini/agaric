@@ -94,7 +94,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   // ── Extracted hooks ────────────────────────────────────────────────
   const resolve = useBlockResolve()
   const properties = useBlockProperties()
-  const { getTodoState, handleToggleTodo, setBlockProperties } = properties
+  const { getTodoState, handleToggleTodo, handleTogglePriority, setBlockProperties } = properties
 
   /** Get the priority value for a block from the properties cache. */
   const getPriority = useCallback(
@@ -155,9 +155,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   /** Priority commands — shown only when query matches (progressive disclosure). */
   const PRIORITY_COMMANDS: PickerItem[] = useMemo(
     () => [
-      { id: 'priority-high', label: 'PRIORITY HIGH — Set high priority [A]' },
-      { id: 'priority-medium', label: 'PRIORITY MEDIUM — Set medium priority [B]' },
-      { id: 'priority-low', label: 'PRIORITY LOW — Set low priority [C]' },
+      { id: 'priority-high', label: 'PRIORITY 1 — Set high priority' },
+      { id: 'priority-medium', label: 'PRIORITY 2 — Set medium priority' },
+      { id: 'priority-low', label: 'PRIORITY 3 — Set low priority' },
     ],
     [],
   )
@@ -726,6 +726,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                     todoState={getTodoState(block.id)}
                     onToggleTodo={handleToggleTodo}
                     priority={getPriority(block.id)}
+                    onTogglePriority={handleTogglePriority}
                   />
                 </div>
               )

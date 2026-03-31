@@ -72,12 +72,15 @@ vi.mock('../SortableBlock', () => ({
     onToggleCollapse?: (id: string) => void
     todoState?: string | null
     onToggleTodo?: (id: string) => void
+    priority?: string | null
+    onTogglePriority?: (id: string) => void
   }) => (
     <div
       data-testid={`sortable-block-${props.blockId}`}
       data-has-children={props.hasChildren ?? false}
       data-is-collapsed={props.isCollapsed ?? false}
       data-todo-state={props.todoState ?? ''}
+      data-priority={props.priority ?? ''}
     >
       {props.hasChildren && props.onToggleCollapse && (
         <button
@@ -95,6 +98,15 @@ vi.mock('../SortableBlock', () => ({
           type="button"
         >
           Todo
+        </button>
+      )}
+      {props.onTogglePriority && (
+        <button
+          data-testid={`priority-toggle-${props.blockId}`}
+          onClick={() => props.onTogglePriority?.(props.blockId)}
+          type="button"
+        >
+          Priority
         </button>
       )}
       SortableBlock
@@ -856,6 +868,7 @@ describe('BlockTree task cycling', () => {
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
     // Mock get_properties to return a TODO property for block A
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_properties' && args?.blockId === 'A') {
         return [
@@ -932,6 +945,7 @@ describe('BlockTree task cycling', () => {
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
     // Block A starts with TODO property
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_properties' && args?.blockId === 'A') {
         return [
@@ -975,6 +989,7 @@ describe('BlockTree task cycling', () => {
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
     // Block A starts with DONE property
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_properties' && args?.blockId === 'A') {
         return [
@@ -1442,7 +1457,6 @@ describe('BlockTree handleNavigate', () => {
   it('handles missing/deleted block without crashing', async () => {
     const onNav = vi.fn()
 
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_block') throw new Error('Block not found')
       if (cmd === 'get_properties') return []
@@ -1544,5 +1558,229 @@ describe('BlockTree searchPages caching', () => {
     const results = await capturedSearchPages?.('freshly')
     const ids = results?.map((r) => r.id) ?? []
     expect(ids).toContain('NEW_PAGE_ID')
+  })
+})
+
+// =========================================================================
+// Priority slash commands tests
+// =========================================================================
+
+describe('BlockTree priority slash commands', () => {
+  it('searchSlashCommands returns priority commands when query matches "priority"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('priority')
+
+    expect(results).toBeDefined()
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).toContain('priority-high')
+    expect(ids).toContain('priority-medium')
+    expect(ids).toContain('priority-low')
+  })
+
+  it('priority commands have "PRIORITY 1/2/3" labels', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('priority')
+
+    const labels = results?.map((r) => r.label) ?? []
+    expect(labels).toContain('PRIORITY 1 — Set high priority')
+    expect(labels).toContain('PRIORITY 2 — Set medium priority')
+    expect(labels).toContain('PRIORITY 3 — Set low priority')
+  })
+
+  it('priority commands are not shown for empty query', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('')
+
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).not.toContain('priority-high')
+    expect(ids).not.toContain('priority-medium')
+    expect(ids).not.toContain('priority-low')
+  })
+
+  it('onSlashCommand sets priority A for priority-high', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'priority-high', label: 'PRIORITY 1 — Set high priority' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'priority',
+        valueText: 'A',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('onSlashCommand sets priority B for priority-medium', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'priority-medium', label: 'PRIORITY 2 — Set medium priority' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'priority',
+        valueText: 'B',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('onSlashCommand sets priority C for priority-low', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'priority-low', label: 'PRIORITY 3 — Set low priority' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'priority',
+        valueText: 'C',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('passes priority prop to SortableBlock based on fetched properties', async () => {
+    const tree = [makeBlock('A', null, 0, 'Priority block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_properties' && args?.blockId === 'A') {
+        return [
+          { key: 'priority', value_text: 'B', value_num: null, value_date: null, value_ref: null },
+        ]
+      }
+      return []
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', 'B')
+    })
+  })
+
+  it('renders priority toggle button for each block', async () => {
+    const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('priority-toggle-A')).toBeInTheDocument()
+      expect(screen.getByTestId('priority-toggle-B')).toBeInTheDocument()
+    })
+  })
+
+  it('priority toggle cycles priority via handleTogglePriority', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    // Initially no properties
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('priority-toggle-A')).toBeInTheDocument()
+    })
+
+    // Now mock set_property for the cycling call
+    mockedInvoke.mockResolvedValue(null)
+
+    await user.click(screen.getByTestId('priority-toggle-A'))
+
+    // Should have called set_property with priority A (cycling from none)
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'priority',
+        valueText: 'A',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+
+    // State should update to A
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', 'A')
+    })
   })
 })

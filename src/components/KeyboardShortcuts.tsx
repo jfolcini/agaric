@@ -41,6 +41,7 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
         keys: 'Ctrl + Enter',
         description: 'Cycle task state (TODO → DOING → DONE → none)',
       },
+      { keys: 'Ctrl + K', description: 'Insert or edit external link' },
     ],
   },
   {
