@@ -6400,4 +6400,1252 @@ mod tests {
             "redo should produce original edit result"
         );
     }
+
+    // ======================================================================
+    // Extended Undo/Redo integration tests — Groups 1-4 (19 tests)
+    // ======================================================================
+
+    // -- Group 1: apply_reverse_in_tx — all variants (9 tests) --
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_create_block_soft_deletes() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let created = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "ephemeral".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Get the create_block op
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let create_op = ops.iter().find(|o| o.op_type == "create_block").unwrap();
+
+        // Revert the create (reverse = DeleteBlock → soft-deletes the block)
+        let results = revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![OpRef {
+                device_id: DEV.into(),
+                seq: create_op.seq,
+            }],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].new_op_type, "delete_block");
+
+        // Verify the block is now soft-deleted
+        let block = get_block_inner(&pool, created.id).await.unwrap();
+        assert!(
+            block.deleted_at.is_some(),
+            "block should be soft-deleted after reverting create"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_delete_block_restores_with_descendants() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create parent + child
+        let parent = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Parent".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Child".into(),
+            Some(parent.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Use a controlled timestamp so blocks.deleted_at matches the op's created_at.
+        // delete_block_inner uses two separate now_rfc3339() calls (one for op_log,
+        // one for blocks), causing a mismatch. We do it manually with one timestamp.
+        let delete_ts = "2025-06-15T12:00:00+00:00";
+
+        // Manually soft-delete both blocks with the controlled timestamp
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ? OR id = ?")
+            .bind(delete_ts)
+            .bind(&parent.id)
+            .bind(&child.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Append delete_block op with the same timestamp
+        op_log::append_local_op_at(
+            &pool,
+            DEV,
+            OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: parent.id.clone(),
+            }),
+            delete_ts.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Verify both are deleted
+        let p_row = get_block_inner(&pool, parent.id.clone()).await.unwrap();
+        assert!(p_row.deleted_at.is_some(), "parent should be deleted");
+
+        // Get the delete_block op
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let delete_op = ops.iter().find(|o| o.op_type == "delete_block").unwrap();
+
+        // Revert the delete (reverse = RestoreBlock)
+        let results = revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![OpRef {
+                device_id: DEV.into(),
+                seq: delete_op.seq,
+            }],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].new_op_type, "restore_block");
+
+        // Verify both are restored
+        let p_after = get_block_inner(&pool, parent.id.clone()).await.unwrap();
+        assert!(
+            p_after.deleted_at.is_none(),
+            "parent should be restored after revert"
+        );
+
+        let c_after = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert!(
+            c_after.deleted_at.is_none(),
+            "child should be restored after revert"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_move_block_restores_original_position() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create two parent pages
+        let p1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page One".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let p2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Page Two".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Create child under P1 at position 3
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "movable".into(),
+            Some(p1.id.clone()),
+            Some(3),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Move child to P2 at position 7
+        move_block_inner(&pool, DEV, &mat, child.id.clone(), Some(p2.id.clone()), 7)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify it's at P2, pos 7
+        let before = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert_eq!(before.parent_id.as_deref(), Some(p2.id.as_str()));
+        assert_eq!(before.position, Some(7));
+
+        // Get the move_block op
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let move_op = ops.iter().find(|o| o.op_type == "move_block").unwrap();
+
+        // Revert the move
+        revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![OpRef {
+                device_id: DEV.into(),
+                seq: move_op.seq,
+            }],
+        )
+        .await
+        .unwrap();
+
+        // Verify it's back at P1, pos 3
+        let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert_eq!(
+            after.parent_id.as_deref(),
+            Some(p1.id.as_str()),
+            "parent should be restored to P1"
+        );
+        assert_eq!(after.position, Some(3), "position should be restored to 3");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_add_tag_removes_association() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a tag block and a content block
+        let tag = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "tag".into(),
+            "my-tag".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let content = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "some text".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Add the tag
+        add_tag_inner(&pool, DEV, &mat, content.id.clone(), tag.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify the tag is applied
+        let before = sqlx::query("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            .bind(&content.id)
+            .bind(&tag.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(before.is_some(), "tag should be applied");
+
+        // Get the add_tag op
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let add_tag_op = ops.iter().find(|o| o.op_type == "add_tag").unwrap();
+
+        // Revert the add_tag (reverse = RemoveTag)
+        revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![OpRef {
+                device_id: DEV.into(),
+                seq: add_tag_op.seq,
+            }],
+        )
+        .await
+        .unwrap();
+
+        // Verify the tag is removed
+        let after = sqlx::query("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            .bind(&content.id)
+            .bind(&tag.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(after.is_none(), "tag should be removed after revert");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_remove_tag_restores_association() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create tag + content
+        let tag = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "tag".into(),
+            "my-tag".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let content = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "some text".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Add tag, then remove tag
+        add_tag_inner(&pool, DEV, &mat, content.id.clone(), tag.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        remove_tag_inner(&pool, DEV, &mat, content.id.clone(), tag.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify tag is removed
+        let before = sqlx::query("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            .bind(&content.id)
+            .bind(&tag.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(before.is_none(), "tag should be removed");
+
+        // Get the remove_tag op
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let remove_tag_op = ops.iter().find(|o| o.op_type == "remove_tag").unwrap();
+
+        // Revert the remove_tag (reverse = AddTag)
+        revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![OpRef {
+                device_id: DEV.into(),
+                seq: remove_tag_op.seq,
+            }],
+        )
+        .await
+        .unwrap();
+
+        // Verify the tag is restored
+        let after = sqlx::query("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            .bind(&content.id)
+            .bind(&tag.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(after.is_some(), "tag should be restored after revert");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_set_property_restores_prior_value() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "test".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set property to "high"
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "priority".into(),
+            Some("high".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set property to "low"
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "priority".into(),
+            Some("low".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify it's "low"
+        let props_before = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+        let p_before = props_before.iter().find(|p| p.key == "priority").unwrap();
+        assert_eq!(p_before.value_text.as_deref(), Some("low"));
+
+        // Get the second set_property op (the one that set "low")
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let set_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_property").collect();
+        let second_set = set_ops.last().unwrap();
+
+        // Revert the second set (should restore "high")
+        revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![OpRef {
+                device_id: DEV.into(),
+                seq: second_set.seq,
+            }],
+        )
+        .await
+        .unwrap();
+
+        // Verify it's back to "high"
+        let props_after = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+        let p_after = props_after.iter().find(|p| p.key == "priority").unwrap();
+        assert_eq!(
+            p_after.value_text.as_deref(),
+            Some("high"),
+            "value should be restored to 'high' after reverting second set"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_set_property_first_produces_delete() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "test".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set property "color" = "red" (first set, no prior)
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "color".into(),
+            Some("red".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Get the set_property op
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let set_op = ops.iter().find(|o| o.op_type == "set_property").unwrap();
+
+        // Revert the first set (no prior → reverse = DeleteProperty)
+        revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![OpRef {
+                device_id: DEV.into(),
+                seq: set_op.seq,
+            }],
+        )
+        .await
+        .unwrap();
+
+        // Verify the property row no longer exists
+        let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+        assert!(
+            props.iter().all(|p| p.key != "color"),
+            "property 'color' should be deleted after reverting first set"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_delete_property_restores_value() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "test".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set property "due" with value_date
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "due".into(),
+            None,
+            None,
+            Some("2025-06-15".into()),
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Delete the property
+        delete_property_inner(&pool, DEV, &mat, block.id.clone(), "due".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify property is gone
+        let props_before = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+        assert!(
+            props_before.iter().all(|p| p.key != "due"),
+            "property 'due' should be deleted"
+        );
+
+        // Get the delete_property op
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let del_op = ops.iter().find(|o| o.op_type == "delete_property").unwrap();
+
+        // Revert the delete (reverse = SetProperty with prior value)
+        revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![OpRef {
+                device_id: DEV.into(),
+                seq: del_op.seq,
+            }],
+        )
+        .await
+        .unwrap();
+
+        // Verify the property is restored with value_date="2025-06-15"
+        let props_after = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+        let due = props_after
+            .iter()
+            .find(|p| p.key == "due")
+            .expect("property 'due' should be restored after reverting delete");
+        assert_eq!(
+            due.value_date.as_deref(),
+            Some("2025-06-15"),
+            "value_date should be restored to '2025-06-15'"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_add_attachment_soft_deletes() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block (needed for FK)
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "test".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Manually insert an attachment row
+        let att_id = "ATT_TEST_001";
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(att_id)
+        .bind(&block.id)
+        .bind("image/png")
+        .bind("photo.png")
+        .bind(1024_i64)
+        .bind("/tmp/photo.png")
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Append add_attachment op via op_log
+        op_log::append_local_op_at(
+            &pool,
+            DEV,
+            OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+                attachment_id: att_id.into(),
+                block_id: block.id.clone(),
+                mime_type: "image/png".into(),
+                filename: "photo.png".into(),
+                size_bytes: 1024,
+                fs_path: "/tmp/photo.png".into(),
+            }),
+            FIXED_TS.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Get the add_attachment op
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let add_att_op = ops.iter().find(|o| o.op_type == "add_attachment").unwrap();
+
+        // Revert the add_attachment (reverse = DeleteAttachment → soft-delete)
+        revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![OpRef {
+                device_id: DEV.into(),
+                seq: add_att_op.seq,
+            }],
+        )
+        .await
+        .unwrap();
+
+        // Verify attachment is soft-deleted
+        let row = sqlx::query("SELECT deleted_at FROM attachments WHERE id = ?")
+            .bind(att_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let deleted_at: Option<String> = row.get("deleted_at");
+        assert!(
+            deleted_at.is_some(),
+            "attachment should be soft-deleted after reverting add"
+        );
+    }
+
+    // -- Group 2: Error paths (5 tests) --
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_nonexistent_page_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = undo_page_op_inner(&pool, DEV, &mat, "NONEXISTENT_PAGE".into(), 0).await;
+
+        assert!(result.is_err(), "undo on nonexistent page should fail");
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "should return NotFound, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_depth_exceeds_ops_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let (page_id, _child_ids) = create_page_with_children(&pool, &mat).await;
+
+        // Page has 3 ops: create page, create child1, create child2.
+        // Undo with depth=10 should exceed available ops.
+        let result = undo_page_op_inner(&pool, DEV, &mat, page_id, 10).await;
+
+        assert!(result.is_err(), "undo with depth exceeding ops should fail");
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "should return NotFound, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn redo_nonexistent_undo_op_returns_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = redo_page_op_inner(&pool, DEV, &mat, "FAKE".into(), 9999).await;
+
+        assert!(result.is_err(), "redo with nonexistent op should fail");
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "should return NotFound, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_ops_empty_list_returns_empty() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let results = revert_ops_inner(&pool, DEV, &mat, vec![]).await.unwrap();
+
+        assert!(
+            results.is_empty(),
+            "reverting empty list should return empty vec"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_ops_mixed_reversible_non_reversible_rejects_all() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block and edit it (reversible op)
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "start".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        edit_block_inner(&pool, DEV, &mat, block.id.clone(), "edited".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Create another block, delete it, purge it (non-reversible)
+        let doomed = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "doomed".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        delete_block_inner(&pool, DEV, &mat, doomed.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        purge_block_inner(&pool, DEV, &mat, doomed.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Gather op refs
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let edit_op = ops.iter().find(|o| o.op_type == "edit_block").unwrap();
+        let purge_op = ops.iter().find(|o| o.op_type == "purge_block").unwrap();
+
+        // Record op_log count before attempt
+        let count_before = ops.len();
+
+        // Try to revert both — should fail because purge is non-reversible
+        let result = revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![
+                OpRef {
+                    device_id: DEV.into(),
+                    seq: edit_op.seq,
+                },
+                OpRef {
+                    device_id: DEV.into(),
+                    seq: purge_op.seq,
+                },
+            ],
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::NonReversible { .. })),
+            "should fail with NonReversible, got: {result:?}"
+        );
+
+        // Verify the edit was NOT reversed (block content unchanged)
+        let after = get_block_inner(&pool, block.id).await.unwrap();
+        assert_eq!(
+            after.content,
+            Some("edited".into()),
+            "edit should NOT be reversed when batch is rejected"
+        );
+
+        // Verify op_log count unchanged
+        let ops_after = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        assert_eq!(
+            count_before,
+            ops_after.len(),
+            "no new ops should be appended when batch is rejected"
+        );
+    }
+
+    // -- Group 3: list_page_history edge cases (3 tests) --
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_history_deep_nesting_includes_grandchildren() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create: page → child → grandchild → great-grandchild
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Root".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "child".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let grandchild = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "grandchild".into(),
+            Some(child.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let great_grandchild = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "great-grandchild".into(),
+            Some(grandchild.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Edit each to add more ops
+        edit_block_inner(&pool, DEV, &mat, child.id.clone(), "child-edited".into())
+            .await
+            .unwrap();
+        edit_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            grandchild.id.clone(),
+            "grandchild-edited".into(),
+        )
+        .await
+        .unwrap();
+        edit_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            great_grandchild.id.clone(),
+            "gg-edited".into(),
+        )
+        .await
+        .unwrap();
+
+        let result = list_page_history_inner(&pool, page.id.clone(), None, None, None)
+            .await
+            .unwrap();
+
+        // 4 creates + 3 edits = 7 ops
+        assert_eq!(
+            result.items.len(),
+            7,
+            "should include ops for all 4 levels of nesting"
+        );
+
+        // Verify all block IDs are from the page tree
+        let valid_ids = vec![
+            page.id.clone(),
+            child.id.clone(),
+            grandchild.id.clone(),
+            great_grandchild.id.clone(),
+        ];
+        for entry in &result.items {
+            let payload: serde_json::Value = serde_json::from_str(&entry.payload).unwrap();
+            let block_id = payload["block_id"].as_str().unwrap();
+            assert!(
+                valid_ids.contains(&block_id.to_string()),
+                "op should be for a block in the page tree, got: {block_id}"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_history_includes_ops_for_deleted_blocks() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create page + child
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "My Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "child".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Edit child
+        edit_block_inner(&pool, DEV, &mat, child.id.clone(), "edited-child".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Delete child
+        delete_block_inner(&pool, DEV, &mat, child.id.clone())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let result = list_page_history_inner(&pool, page.id.clone(), None, None, None)
+            .await
+            .unwrap();
+
+        // Ops: create page + create child + edit child + delete child = 4
+        assert_eq!(
+            result.items.len(),
+            4,
+            "should include ops for deleted blocks too"
+        );
+
+        let op_types: Vec<&str> = result.items.iter().map(|e| e.op_type.as_str()).collect();
+        assert!(
+            op_types.contains(&"create_block"),
+            "should include create_block ops"
+        );
+        assert!(
+            op_types.contains(&"edit_block"),
+            "should include edit_block ops"
+        );
+        assert!(
+            op_types.contains(&"delete_block"),
+            "should include delete_block ops"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_history_empty_page_returns_only_create() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Empty Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let result = list_page_history_inner(&pool, page.id.clone(), None, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.items.len(),
+            1,
+            "empty page should have exactly 1 op (the create_block)"
+        );
+        assert_eq!(result.items[0].op_type, "create_block");
+    }
+
+    // -- Group 4: Multi-step cycles (2 tests) --
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_redo_undo_redo_full_cycle_multiple_edits() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create page + child
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "My Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "original".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Edit to "v1", then "v2"
+        edit_block_inner(&pool, DEV, &mat, child.id.clone(), "v1".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        edit_block_inner(&pool, DEV, &mat, child.id.clone(), "v2".into())
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // 1) undo(depth=0) → reverses edit "v2" → content="v1"
+        let undo1 = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+            .await
+            .unwrap();
+        let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert_eq!(
+            after.content,
+            Some("v1".into()),
+            "after first undo, content should be v1"
+        );
+
+        // 2) undo(depth=2) → reverses edit "v1"
+        //    History after step 1: [undo_edit(seq5), edit_v2(seq4), edit_v1(seq3), ...]
+        //    depth=2 picks seq3 (edit "v1"), whose prior text is "original"
+        let undo2 = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 2)
+            .await
+            .unwrap();
+        let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert_eq!(
+            after.content,
+            Some("original".into()),
+            "after second undo, content should be original"
+        );
+
+        // 3) redo the second undo → reverses the undo2 op → content="v1"
+        let _redo1 = redo_page_op_inner(
+            &pool,
+            DEV,
+            &mat,
+            undo2.new_op_ref.device_id.clone(),
+            undo2.new_op_ref.seq,
+        )
+        .await
+        .unwrap();
+        let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert_eq!(
+            after.content,
+            Some("v1".into()),
+            "after first redo, content should be v1"
+        );
+
+        // 4) redo the first undo → reverses the undo1 op → content="v2"
+        let _redo2 = redo_page_op_inner(
+            &pool,
+            DEV,
+            &mat,
+            undo1.new_op_ref.device_id.clone(),
+            undo1.new_op_ref.seq,
+        )
+        .await
+        .unwrap();
+        let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
+        assert_eq!(
+            after.content,
+            Some("v2".into()),
+            "after second redo, content should be v2"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revert_ops_from_different_devices() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block with DEV
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "original".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Manually append an edit_block op from "device-B".
+        // Use a far-future timestamp so it sorts AFTER the create_block op
+        // from DEV (whose created_at is now_rfc3339()). The reverse lookup
+        // needs to find the create op *before* this edit in temporal order.
+        let edit_payload = OpPayload::EditBlock(EditBlockPayload {
+            block_id: block.id.clone(),
+            to_text: "from-device-B".into(),
+            prev_edit: None,
+        });
+        let device_b_op = op_log::append_local_op_at(
+            &pool,
+            "device-B",
+            edit_payload,
+            "2099-01-01T00:00:00+00:00".to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Manually apply the edit to the blocks table (op_log doesn't do this)
+        sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+            .bind("from-device-B")
+            .bind(&block.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Verify content is "from-device-B"
+        let before = get_block_inner(&pool, block.id.clone()).await.unwrap();
+        assert_eq!(before.content, Some("from-device-B".into()));
+
+        // Get the create_block op from DEV
+        let dev_ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let create_op = dev_ops
+            .iter()
+            .find(|o| o.op_type == "create_block")
+            .unwrap();
+
+        // Revert both ops: edit from device-B and create from DEV
+        // revert_ops_inner sorts newest-first: device-B edit (newer) then DEV create
+        let results = revert_ops_inner(
+            &pool,
+            DEV,
+            &mat,
+            vec![
+                OpRef {
+                    device_id: "device-B".into(),
+                    seq: device_b_op.seq,
+                },
+                OpRef {
+                    device_id: DEV.into(),
+                    seq: create_op.seq,
+                },
+            ],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(results.len(), 2, "should have two results");
+
+        // After reverting device-B's edit: content should be "original"
+        // After reverting DEV's create: block should be soft-deleted
+        let after = get_block_inner(&pool, block.id.clone()).await.unwrap();
+        assert!(
+            after.deleted_at.is_some(),
+            "block should be soft-deleted after reverting create"
+        );
+    }
 }
