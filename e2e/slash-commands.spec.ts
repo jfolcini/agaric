@@ -133,21 +133,27 @@ test.describe('Task commands', () => {
     await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible({ timeout: 3000 })
   })
 
-  test('/doing sets block as DOING', async ({ page }) => {
+  test('/doing sets block as DOING and persists after save', async ({ page }) => {
     await focusBlock(page)
     await typeSlashCommand(page, 'doing')
     await page.keyboard.press('Enter')
 
     const firstBlock = page.locator('.sortable-block').first()
     await expect(firstBlock.locator('.task-checkbox-doing')).toBeVisible({ timeout: 3000 })
+
+    await saveBlock(page)
+    await expect(firstBlock.locator('.task-checkbox-doing')).toBeVisible({ timeout: 3000 })
   })
 
-  test('/done sets block as DONE', async ({ page }) => {
+  test('/done sets block as DONE and persists after save', async ({ page }) => {
     await focusBlock(page)
     await typeSlashCommand(page, 'done')
     await page.keyboard.press('Enter')
 
     const firstBlock = page.locator('.sortable-block').first()
+    await expect(firstBlock.locator('.task-checkbox-done')).toBeVisible({ timeout: 3000 })
+
+    await saveBlock(page)
     await expect(firstBlock.locator('.task-checkbox-done')).toBeVisible({ timeout: 3000 })
   })
 })
@@ -173,20 +179,54 @@ test.describe('Priority commands', () => {
 
   test('/priority 1 sets high priority and persists after save', async ({ page }) => {
     await focusBlock(page)
-    // Type /priority -- first match is PRIORITY 1
     const list = await typeSlashCommand(page, 'priority')
-    await expect(list.locator('.suggestion-item', { hasText: 'PRIORITY 1' })).toBeVisible()
-    await page.keyboard.press('Enter')
+    const item = list.locator('.suggestion-item', { hasText: 'PRIORITY 1' })
+    await expect(item).toBeVisible()
+    await item.click()
 
     const firstBlock = page.locator('.sortable-block').first()
     const badge = firstBlock.locator('.priority-badge')
     await expect(badge).toBeVisible({ timeout: 3000 })
     await expect(badge).toContainText('1')
 
-    // Save the block and verify priority badge persists in static view
+    // Save and verify persists
     await saveBlock(page)
     await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
     await expect(firstBlock.locator('.priority-badge')).toContainText('1')
+  })
+
+  test('/priority 2 sets medium priority and persists after save', async ({ page }) => {
+    await focusBlock(page)
+    const list = await typeSlashCommand(page, 'priority')
+    const item = list.locator('.suggestion-item', { hasText: 'PRIORITY 2' })
+    await expect(item).toBeVisible()
+    await item.click()
+
+    const firstBlock = page.locator('.sortable-block').first()
+    const badge = firstBlock.locator('.priority-badge')
+    await expect(badge).toBeVisible({ timeout: 3000 })
+    await expect(badge).toContainText('2')
+
+    await saveBlock(page)
+    await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.priority-badge')).toContainText('2')
+  })
+
+  test('/priority 3 sets low priority and persists after save', async ({ page }) => {
+    await focusBlock(page)
+    const list = await typeSlashCommand(page, 'priority')
+    const item = list.locator('.suggestion-item', { hasText: 'PRIORITY 3' })
+    await expect(item).toBeVisible()
+    await item.click()
+
+    const firstBlock = page.locator('.sortable-block').first()
+    const badge = firstBlock.locator('.priority-badge')
+    await expect(badge).toBeVisible({ timeout: 3000 })
+    await expect(badge).toContainText('3')
+
+    await saveBlock(page)
+    await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.priority-badge')).toContainText('3')
   })
 })
 
