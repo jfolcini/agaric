@@ -171,7 +171,7 @@ limited to PRAGMAs, FTS5 operations, and dynamic SQL (~11 queries).
 
 ### Schema
 
-13 tables + 1 FTS5 virtual table, 11 indexes across 2 migrations.
+12 tables + 1 FTS5 virtual table, 9 indexes across 2 migrations.
 
 **Core tables:**
 
