@@ -30,6 +30,7 @@ use crate::op::{
 };
 use crate::op_log;
 use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
+use crate::peer_refs::{self, PeerRef};
 #[cfg(test)]
 use crate::soft_delete;
 use crate::tag_query::{self, TagCacheRow, TagExpr};
@@ -2091,6 +2092,37 @@ pub async fn redo_page_op_inner(
 }
 
 // ---------------------------------------------------------------------------
+// Sync — inner functions (peer_refs CRUD + device identity)
+// ---------------------------------------------------------------------------
+
+/// List all known sync peers, ordered by most-recently-synced first.
+pub async fn list_peer_refs_inner(pool: &SqlitePool) -> Result<Vec<PeerRef>, AppError> {
+    peer_refs::list_peer_refs(pool).await
+}
+
+/// Fetch a single sync peer by its `peer_id`.
+///
+/// Returns `None` if the peer does not exist (not an error).
+pub async fn get_peer_ref_inner(
+    pool: &SqlitePool,
+    peer_id: String,
+) -> Result<Option<PeerRef>, AppError> {
+    peer_refs::get_peer_ref(pool, &peer_id).await
+}
+
+/// Delete (unpair) a sync peer by its `peer_id`.
+///
+/// Returns [`AppError::NotFound`] if the peer does not exist.
+pub async fn delete_peer_ref_inner(pool: &SqlitePool, peer_id: String) -> Result<(), AppError> {
+    peer_refs::delete_peer_ref(pool, &peer_id).await
+}
+
+/// Return the local device's persistent UUID.
+pub fn get_device_id_inner(device_id: &DeviceId) -> String {
+    device_id.as_str().to_string()
+}
+
+// ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
@@ -2616,6 +2648,51 @@ pub async fn redo_page_op(
     )
     .await
     .map_err(sanitize_internal_error)
+}
+
+// ---------------------------------------------------------------------------
+// Sync — Tauri command wrappers
+// ---------------------------------------------------------------------------
+
+/// Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_peer_refs(pool: State<'_, ReadPool>) -> Result<Vec<PeerRef>, AppError> {
+    list_peer_refs_inner(&pool.0)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: get a single sync peer by ID. Delegates to [`get_peer_ref_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_peer_ref(
+    pool: State<'_, ReadPool>,
+    peer_id: String,
+) -> Result<Option<PeerRef>, AppError> {
+    get_peer_ref_inner(&pool.0, peer_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_peer_ref(pool: State<'_, WritePool>, peer_id: String) -> Result<(), AppError> {
+    delete_peer_ref_inner(&pool.0, peer_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: return the local device's persistent UUID.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_device_id(device_id: State<'_, DeviceId>) -> Result<String, AppError> {
+    Ok(get_device_id_inner(&device_id))
 }
 
 // ---------------------------------------------------------------------------
@@ -8487,5 +8564,114 @@ mod tests {
             matches!(err, AppError::Validation(_)),
             "error should be Validation variant, got: {err:?}"
         );
+    }
+
+    // ======================================================================
+    // Sync — list_peer_refs
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sync_list_peer_refs_returns_empty_vec_initially() {
+        let (pool, _dir) = test_pool().await;
+
+        let peers = list_peer_refs_inner(&pool).await.unwrap();
+        assert!(
+            peers.is_empty(),
+            "list_peer_refs must return empty vec on fresh DB"
+        );
+    }
+
+    // ======================================================================
+    // Sync — get_peer_ref
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sync_get_peer_ref_returns_none_for_nonexistent() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = get_peer_ref_inner(&pool, "nonexistent-peer".into())
+            .await
+            .unwrap();
+        assert!(
+            result.is_none(),
+            "get_peer_ref must return None for nonexistent peer"
+        );
+    }
+
+    // ======================================================================
+    // Sync — delete_peer_ref
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sync_delete_peer_ref_nonexistent_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = delete_peer_ref_inner(&pool, "ghost-peer".into()).await;
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "delete_peer_ref on nonexistent peer must return NotFound"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sync_delete_peer_ref_removes_existing_peer() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert a peer directly
+        peer_refs::upsert_peer_ref(&pool, "peer-to-delete")
+            .await
+            .unwrap();
+
+        // Verify it exists
+        let before = get_peer_ref_inner(&pool, "peer-to-delete".into())
+            .await
+            .unwrap();
+        assert!(before.is_some(), "peer must exist before delete");
+
+        // Delete it
+        delete_peer_ref_inner(&pool, "peer-to-delete".into())
+            .await
+            .unwrap();
+
+        // Verify it's gone
+        let after = get_peer_ref_inner(&pool, "peer-to-delete".into())
+            .await
+            .unwrap();
+        assert!(after.is_none(), "peer must be gone after delete");
+    }
+
+    // ======================================================================
+    // Sync — get_device_id
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sync_get_device_id_returns_non_empty_string() {
+        let device_id = crate::device::DeviceId::new("test-device-uuid-1234".to_string());
+
+        let result = get_device_id_inner(&device_id);
+        assert!(
+            !result.is_empty(),
+            "get_device_id must return a non-empty string"
+        );
+        assert_eq!(
+            result, "test-device-uuid-1234",
+            "get_device_id must return the exact device ID"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sync_list_peer_refs_returns_inserted_peers() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert some peers
+        peer_refs::upsert_peer_ref(&pool, "peer-A").await.unwrap();
+        peer_refs::upsert_peer_ref(&pool, "peer-B").await.unwrap();
+
+        let peers = list_peer_refs_inner(&pool).await.unwrap();
+        assert_eq!(peers.len(), 2, "must return all 2 inserted peers");
+
+        let ids: Vec<&str> = peers.iter().map(|p| p.peer_id.as_str()).collect();
+        assert!(ids.contains(&"peer-A"), "must contain peer-A");
+        assert!(ids.contains(&"peer-B"), "must contain peer-B");
     }
 }

@@ -734,6 +734,18 @@ export function setupMock(): void {
         return [...keys].sort()
       }
 
+      // -----------------------------------------------------------------------
+      // Sync / Peer-ref commands
+      // -----------------------------------------------------------------------
+
+      case 'list_peer_refs': {
+        return []
+      }
+
+      case 'get_peer_ref': {
+        return null
+      }
+
       default:
         return null
     }

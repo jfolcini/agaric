@@ -13,6 +13,7 @@ pub mod merge;
 pub mod op;
 pub mod op_log;
 pub mod pagination;
+pub mod peer_refs;
 pub mod recovery;
 pub mod reverse;
 pub mod snapshot;
@@ -75,6 +76,11 @@ mod specta_tests {
             crate::commands::redo_page_op,
             crate::commands::query_backlinks_filtered,
             crate::commands::list_property_keys,
+            // Sync
+            crate::commands::list_peer_refs,
+            crate::commands::get_peer_ref,
+            crate::commands::delete_peer_ref,
+            crate::commands::get_device_id,
         ])
     }
 
@@ -196,6 +202,11 @@ pub fn run() {
         commands::redo_page_op,
         commands::query_backlinks_filtered,
         commands::list_property_keys,
+        // Sync
+        commands::list_peer_refs,
+        commands::get_peer_ref,
+        commands::delete_peer_ref,
+        commands::get_device_id,
     ]);
 
     tauri::Builder::default()

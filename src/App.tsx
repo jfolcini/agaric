@@ -47,6 +47,7 @@ import { createBlock, getConflicts } from './lib/tauri'
 import { useJournalStore } from './stores/journal'
 import { useNavigationStore, type View } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
+import { useSyncStore } from './stores/sync'
 
 /** Sidebar nav items — page-editor is not listed here (it's navigated to programmatically). */
 const NAV_ITEMS: { id: Exclude<View, 'page-editor'>; icon: React.ElementType; label: string }[] = [
@@ -84,6 +85,23 @@ function useHeaderLabel(): string {
   return NAV_ITEMS.find((item) => item.id === currentView)?.label ?? ''
 }
 
+/** Compute the CSS class for the sync status dot colour. */
+function syncDotClass(syncState: string, hasPeers: boolean): string {
+  if (!hasPeers) return 'bg-muted-foreground'
+  switch (syncState) {
+    case 'idle':
+      return 'bg-emerald-500'
+    case 'syncing':
+    case 'discovering':
+    case 'pairing':
+      return 'bg-amber-500'
+    case 'error':
+      return 'bg-destructive'
+    default:
+      return 'bg-muted-foreground'
+  }
+}
+
 /** Returns true when at least one unresolved conflict exists. Polls every 30 s. */
 function useHasConflicts(): boolean {
   const [hasConflicts, setHasConflicts] = useState(false)
@@ -117,6 +135,8 @@ function App() {
   const { currentView, pageStack, setView, navigateToPage, goBack } = useNavigationStore()
   const headerLabel = useHeaderLabel()
   const hasConflicts = useHasConflicts()
+  const syncState = useSyncStore((s) => s.state)
+  const syncPeers = useSyncStore((s) => s.peers)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const mainContentRef = useRef<HTMLDivElement>(null)
 
@@ -241,6 +261,13 @@ function App() {
                             role="status"
                             className="ml-auto h-2 w-2 rounded-full bg-destructive"
                             aria-label="Has unresolved conflicts"
+                          />
+                        )}
+                        {item.id === 'status' && (
+                          <span
+                            role="status"
+                            className={`ml-auto h-2 w-2 rounded-full ${syncDotClass(syncState, syncPeers.length > 0)}`}
+                            aria-label={`Sync: ${syncPeers.length > 0 ? syncState : 'no peers'}`}
                           />
                         )}
                       </SidebarMenuButton>

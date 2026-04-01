@@ -23,10 +23,12 @@ import {
   getBlock,
   getBlockHistory,
   getConflicts,
+  getPeerRef,
   getProperties,
   getStatus,
   listBlocks,
   listPageHistory,
+  listPeerRefs,
   listTagsByPrefix,
   listTagsForBlock,
   moveBlock,
@@ -1044,6 +1046,83 @@ describe('redoPageOp', () => {
 })
 
 // ---------------------------------------------------------------------------
+// listPeerRefs
+// ---------------------------------------------------------------------------
+
+describe('listPeerRefs', () => {
+  it('invokes list_peer_refs with no arguments', async () => {
+    const expected = [
+      {
+        peer_id: 'peer-1',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: '2025-01-15T00:00:00Z',
+        reset_count: 0,
+        last_reset_at: null,
+      },
+    ]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listPeerRefs()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_peer_refs')
+    expect(result).toEqual(expected)
+  })
+
+  it('returns empty array when no peers', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    const result = await listPeerRefs()
+
+    expect(result).toEqual([])
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
+    await expect(listPeerRefs()).rejects.toThrow('db error')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getPeerRef
+// ---------------------------------------------------------------------------
+
+describe('getPeerRef', () => {
+  it('invokes get_peer_ref with peerId', async () => {
+    const expected = {
+      peer_id: 'peer-1',
+      last_hash: null,
+      last_sent_hash: null,
+      synced_at: '2025-01-15T00:00:00Z',
+      reset_count: 0,
+      last_reset_at: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await getPeerRef('peer-1')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_peer_ref', { peerId: 'peer-1' })
+    expect(result).toEqual(expected)
+  })
+
+  it('returns null when peer not found', async () => {
+    mockedInvoke.mockResolvedValueOnce(null)
+
+    const result = await getPeerRef('nonexistent')
+
+    expect(mockedInvoke).toHaveBeenCalledWith('get_peer_ref', { peerId: 'nonexistent' })
+    expect(result).toBeNull()
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
+    await expect(getPeerRef('peer-1')).rejects.toThrow('db error')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Cross-cutting concerns
 // ---------------------------------------------------------------------------
 
@@ -1079,6 +1158,8 @@ describe('cross-cutting', () => {
     await queryByProperty({ key: 'k' })
     await undoPageOp({ pageId: 'id', undoDepth: 1 })
     await redoPageOp({ undoDeviceId: 'd', undoSeq: 1 })
+    await listPeerRefs()
+    await getPeerRef('peer-1')
 
     const commandNames = mockedInvoke.mock.calls.map((call) => call[0])
     expect(commandNames).toEqual([
@@ -1110,6 +1191,8 @@ describe('cross-cutting', () => {
       'query_by_property',
       'undo_page_op',
       'redo_page_op',
+      'list_peer_refs',
+      'get_peer_ref',
     ])
   })
 })

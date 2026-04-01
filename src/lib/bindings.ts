@@ -335,6 +335,50 @@ async listPropertyKeys() : Promise<Result<string[], { kind: string; message: str
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`].
+ */
+async listPeerRefs() : Promise<Result<PeerRef[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_peer_refs") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: get a single sync peer by ID. Delegates to [`get_peer_ref_inner`].
+ */
+async getPeerRef(peerId: string) : Promise<Result<PeerRef | null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_peer_ref", { peerId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`].
+ */
+async deletePeerRef(peerId: string) : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_peer_ref", { peerId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: return the local device's persistent UUID.
+ */
+async getDeviceId() : Promise<Result<string, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_device_id") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -387,6 +431,10 @@ export type OpRef = { device_id: string; seq: number }
  * `total_count` is intentionally omitted — see module docs.
  */
 export type PageResponse<T> = { items: T[]; next_cursor: string | null; has_more: boolean }
+/**
+ * A row from the `peer_refs` table representing a remote sync peer.
+ */
+export type PeerRef = { peer_id: string; last_hash: string | null; last_sent_hash: string | null; synced_at: string | null; reset_count: number; last_reset_at: string | null }
 export type PropertyRow = { key: string; value_text: string | null; value_num: number | null; value_date: string | null; value_ref: string | null }
 export type PurgeResponse = { block_id: string; purged_count: number }
 /**

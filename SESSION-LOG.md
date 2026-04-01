@@ -1,5 +1,85 @@
 # Session Log
 
+## Session 31 — 2026-04-01 — Sync infrastructure (Phase 4 foundations)
+
+Resolved 10 sync-related REVIEW-LATER.md items (#207-#209, #212-#213, #216, #218, #221-#223, #225-#226).
+4 build subagents + 2 review subagents. 17 files changed (~2100 insertions).
+
+### Phase A — Backend hardening & infrastructure
+
+**merge.rs (#207, #208):**
+- Fixed `merge_text` fallback: `found_create` flag returns `AppError::InvalidOperation` on broken prev_edit chains instead of silently using empty string ancestor
+- Added `debug_assert!` in `resolve_property_conflict` ensuring timestamps end with 'Z'
+- 2 new tests (47/47 passing)
+
+**recovery.rs (#209):**
+- Reworked `find_prev_edit()` from `ORDER BY created_at DESC` to DAG-based `get_block_edit_heads()`
+- Three-branch logic: 0 heads (fallback to create_block), 1 head (direct), multi-head (prefer local device + warn)
+- Added `device_id` parameter, updated all call sites
+- 3 new tests, 1 replaced (29/29 passing)
+
+**peer_refs.rs (#212) — NEW MODULE:**
+- CRUD for peer_refs table: `get_peer_ref`, `list_peer_refs`, `upsert_peer_ref`, `update_on_sync`, `increment_reset_count`, `delete_peer_ref`
+- PeerRef struct with Serialize + specta::Type derives
+- 11 tests (all passing)
+
+**materializer.rs (#216):**
+- Implemented `apply_op()` for all 12 op types (was Phase 4 TODO stub)
+- Idempotent SQL patterns (INSERT OR IGNORE for remote op replay)
+- Review fix: PurgeBlock wrapped in explicit transaction
+- 19 new tests covering all 12 op types (68→81 total, all passing)
+
+**commands.rs + lib.rs (#213):**
+- 4 new Tauri commands: `list_peer_refs`, `get_peer_ref`, `delete_peer_ref`, `get_device_id`
+- Inner/wrapper split following existing patterns
+- 6 new integration tests
+
+**Cargo.toml (#226):**
+- Added 9 sync dependencies: tokio-tungstenite, rustls, rcgen, mdns-sd, qrcode, hkdf, sha2, chacha20poly1305, rand
+
+### Phase B — Frontend sync infrastructure
+
+**stores/sync.ts (#218) — NEW:**
+- Zustand sync state store: idle/discovering/pairing/syncing/error states
+- PeerInfo tracking, ops metrics, last sync timestamp
+- 17 tests
+
+**lib/tauri.ts (#221):**
+- `listPeerRefs()` and `getPeerRef()` IPC wrappers with PeerRefRow type
+- Mock handlers in tauri-mock.ts
+- 6 new tests
+
+**StatusPanel.tsx (#222):**
+- Added Sync Status card: state dot, peer count, last sync time, ops metrics
+
+**HistoryView.tsx (#223):**
+- Added `sync_merge` and `sync_receive` to OP_TYPES
+
+**App.tsx (#225):**
+- Sync status indicator dot in sidebar (gray/green/yellow/red by state)
+
+**bindings.ts:**
+- Auto-regenerated from Rust types via specta
+
+### Review findings
+- Phase A review: PurgeBlock missing transaction wrapper (fixed), 13 additional tests
+- Phase B+C review: PeerRefRow type mismatch `last_synced_at` vs `synced_at` (fixed)
+
+### Test results
+- Rust: 1060 tests passed, 1 skipped
+- Frontend: 1726 tests passed across 61 files
+- Total: 2786 tests passing
+
+### Remaining sync items (21 open)
+- #210-#211: Networking layer + pairing (blocked on implementation)
+- #214-#215: Protocol + RESET detection
+- #217: Property conflict integration (needs sync orchestrator)
+- #219-#220: Pairing UI + QR scanning
+- #224: ConflictList enhancement
+- #227: Frontend QR libraries
+- #228-#232: Sync tests (need protocol)
+- #233-#237: Platform-specific (Android mDNS, background sync, Linux firewall)
+
 ## Session 30 — 2026-04-01 — Server-side backlink filter expression system
 
 Replaced incomplete client-side backlink filtering with a composable server-side filter expression system.

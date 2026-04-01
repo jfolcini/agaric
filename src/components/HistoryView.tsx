@@ -43,6 +43,8 @@ const OP_TYPES = [
   'attachment',
   'restore',
   'purge',
+  'sync_merge',
+  'sync_receive',
 ] as const
 
 /** Op types that cannot be reversed. */

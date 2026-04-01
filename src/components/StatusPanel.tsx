@@ -6,7 +6,7 @@
  * total ops dispatched, total background dispatched.
  */
 
-import { Activity, AlertTriangle } from 'lucide-react'
+import { Activity, AlertTriangle, RefreshCw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,6 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { StatusInfo } from '../lib/tauri'
 import { getStatus } from '../lib/tauri'
+import { useSyncStore } from '../stores/sync'
 
 const TOOLTIP_TEXT: Record<string, string> = {
   'Foreground Queue': 'Operations waiting to be applied to the database. Should stay near zero.',
@@ -39,6 +40,38 @@ function MetricLabel({ label }: { label: string }): React.ReactElement {
       </Tooltip>
     </dt>
   )
+}
+
+function syncStateLabel(state: string): string {
+  switch (state) {
+    case 'idle':
+      return 'Idle'
+    case 'discovering':
+      return 'Discovering...'
+    case 'pairing':
+      return 'Pairing...'
+    case 'syncing':
+      return 'Syncing...'
+    case 'error':
+      return 'Error'
+    default:
+      return state
+  }
+}
+
+function syncStateDotClasses(state: string): string {
+  switch (state) {
+    case 'idle':
+      return 'bg-emerald-500'
+    case 'syncing':
+    case 'discovering':
+    case 'pairing':
+      return 'bg-amber-500'
+    case 'error':
+      return 'bg-destructive'
+    default:
+      return 'bg-muted-foreground'
+  }
 }
 
 export function StatusPanel(): React.ReactElement {
@@ -69,6 +102,13 @@ export function StatusPanel(): React.ReactElement {
   const fgPanics = status?.fg_panics ?? 0
   const bgPanics = status?.bg_panics ?? 0
   const hasErrors = fgErrors > 0 || bgErrors > 0 || fgPanics > 0 || bgPanics > 0
+
+  const syncState = useSyncStore((s) => s.state)
+  const syncError = useSyncStore((s) => s.error)
+  const syncPeers = useSyncStore((s) => s.peers)
+  const syncLastSynced = useSyncStore((s) => s.lastSyncedAt)
+  const syncOpsReceived = useSyncStore((s) => s.opsReceived)
+  const syncOpsSent = useSyncStore((s) => s.opsSent)
 
   return (
     <TooltipProvider>
@@ -150,6 +190,65 @@ export function StatusPanel(): React.ReactElement {
                   </div>
                 )}
               </output>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="sync-panel-title flex items-center gap-2 text-base">
+              <RefreshCw className="h-4 w-4" />
+              Sync Status
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {syncPeers.length === 0 ? (
+              <p className="sync-panel-not-configured text-sm text-muted-foreground">
+                Not configured
+              </p>
+            ) : (
+              <div className="sync-panel-details space-y-3">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`sync-state-dot h-2 w-2 rounded-full ${syncStateDotClasses(syncState)}`}
+                    role="status"
+                    aria-label={`Sync state: ${syncStateLabel(syncState)}`}
+                  />
+                  <span className="sync-state-label text-sm font-medium">
+                    {syncStateLabel(syncState)}
+                  </span>
+                </div>
+
+                {syncError && (
+                  <p className="sync-panel-error text-sm text-destructive">{syncError}</p>
+                )}
+
+                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="rounded-lg border bg-muted/30 p-4 text-center">
+                    <dd className="sync-peer-count text-2xl font-bold">{syncPeers.length}</dd>
+                    <dt className="text-sm text-muted-foreground">
+                      Peer{syncPeers.length !== 1 ? 's' : ''}
+                    </dt>
+                  </div>
+
+                  <div className="rounded-lg border bg-muted/30 p-4 text-center">
+                    <dd className="sync-last-synced text-2xl font-bold">
+                      {syncLastSynced ?? '--'}
+                    </dd>
+                    <dt className="text-sm text-muted-foreground">Last Synced</dt>
+                  </div>
+
+                  <div className="rounded-lg border bg-muted/30 p-4 text-center">
+                    <dd className="sync-ops-received text-2xl font-bold">{syncOpsReceived}</dd>
+                    <dt className="text-sm text-muted-foreground">Ops Received</dt>
+                  </div>
+
+                  <div className="rounded-lg border bg-muted/30 p-4 text-center">
+                    <dd className="sync-ops-sent text-2xl font-bold">{syncOpsSent}</dd>
+                    <dt className="text-sm text-muted-foreground">Ops Sent</dt>
+                  </div>
+                </dl>
+              </div>
             )}
           </CardContent>
         </Card>

@@ -365,3 +365,31 @@ export async function queryBacklinksFiltered(params: {
 export async function listPropertyKeys(): Promise<string[]> {
   return invoke('list_property_keys')
 }
+
+// ---------------------------------------------------------------------------
+// Sync / Peer-ref commands
+// ---------------------------------------------------------------------------
+// NOTE: Only peer_refs CRUD exists on the backend so far. Full sync protocol
+// commands (startPairing, startSync, etc.) will be added when the backend
+// implements them.
+
+/** Peer reference row returned by `list_peer_refs` / `get_peer_ref`.
+ *  Fields match the Rust `PeerRef` struct (see src-tauri/src/peer_refs.rs). */
+export interface PeerRefRow {
+  peer_id: string
+  last_hash: string | null
+  last_sent_hash: string | null
+  synced_at: string | null
+  reset_count: number
+  last_reset_at: string | null
+}
+
+/** List all known peer references. */
+export async function listPeerRefs(): Promise<PeerRefRow[]> {
+  return invoke('list_peer_refs')
+}
+
+/** Fetch a single peer reference by ID, or null if not found. */
+export async function getPeerRef(peerId: string): Promise<PeerRefRow | null> {
+  return invoke('get_peer_ref', { peerId })
+}

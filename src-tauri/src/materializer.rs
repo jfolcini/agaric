@@ -42,6 +42,11 @@ use tokio::sync::mpsc;
 
 use crate::cache;
 use crate::error::AppError;
+use crate::op::{
+    AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
+    DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpType,
+    PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload,
+};
 use crate::op_log::OpRecord;
 
 // ---------------------------------------------------------------------------
@@ -824,25 +829,22 @@ fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
 // Task handlers (stubs — filled in by later implementation batches)
 // ---------------------------------------------------------------------------
 
-async fn handle_foreground_task(
-    _pool: &SqlitePool,
-    task: &MaterializeTask,
-) -> Result<(), AppError> {
+async fn handle_foreground_task(pool: &SqlitePool, task: &MaterializeTask) -> Result<(), AppError> {
     match task {
         MaterializeTask::ApplyOp(record) => {
-            // Phase 1: local ops are applied directly by command handlers
-            // (create_block_inner, edit_block_inner, etc.) within the same
-            // transaction that appends the op to the log.  This handler is
-            // therefore a no-op for local operations.
-            //
-            // Phase 4 TODO: when sync delivers remote ops, this handler must
-            // apply them to the blocks table — remote ops arrive as raw op_log
-            // entries without going through the command layer.
-            tracing::debug!(
-                op_type = %record.op_type,
-                seq = record.seq,
-                "foreground ApplyOp no-op (Phase 1: command handler already applied)"
-            );
+            // Phase 4: apply remote ops to the blocks table.
+            // Remote ops arrive as raw op_log entries without going through
+            // the command layer, so the materializer must apply them.
+            // Uses INSERT OR IGNORE / idempotent patterns so local ops that
+            // were already applied by command handlers are harmless no-ops.
+            if let Err(e) = apply_op(pool, record).await {
+                tracing::warn!(
+                    op_type = %record.op_type,
+                    seq = record.seq,
+                    error = %e,
+                    "failed to apply remote op (continuing)"
+                );
+            }
             Ok(())
         }
         MaterializeTask::Barrier(ref notify) => {
@@ -855,6 +857,298 @@ async fn handle_foreground_task(
             Ok(())
         }
     }
+}
+
+/// Apply a single op record to the materialized tables (blocks, block_tags,
+/// block_properties, attachments).
+///
+/// Parses the `op_type` string to [`OpType`], deserializes the JSON `payload`
+/// to the matching payload struct, then executes the appropriate SQL.
+///
+/// Uses idempotent patterns (`INSERT OR IGNORE`, `deleted_at IS NULL` guards)
+/// so that re-applying an op that was already materialized by the local
+/// command handler is a harmless no-op.
+async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> {
+    use std::str::FromStr;
+
+    let op_type = OpType::from_str(&record.op_type).map_err(|e| {
+        AppError::Validation(format!("unknown op_type '{}': {}", record.op_type, e))
+    })?;
+
+    match op_type {
+        OpType::CreateBlock => {
+            let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
+            let parent_id_str = p.parent_id.as_ref().map(|id| id.as_str().to_owned());
+            sqlx::query(
+                "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, is_conflict) \
+                 VALUES (?, ?, ?, ?, ?, 0)",
+            )
+            .bind(p.block_id.as_str())
+            .bind(&p.block_type)
+            .bind(&p.content)
+            .bind(parent_id_str.as_deref())
+            .bind(p.position)
+            .execute(pool)
+            .await?;
+        }
+        OpType::EditBlock => {
+            let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
+            sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
+                .bind(&p.to_text)
+                .bind(p.block_id.as_str())
+                .execute(pool)
+                .await?;
+        }
+        OpType::DeleteBlock => {
+            let p: DeleteBlockPayload = serde_json::from_str(&record.payload)?;
+            let now = &record.created_at;
+            sqlx::query(
+                "WITH RECURSIVE descendants(id) AS ( \
+                     SELECT id FROM blocks WHERE id = ? \
+                     UNION ALL \
+                     SELECT b.id FROM blocks b \
+                     INNER JOIN descendants d ON b.parent_id = d.id \
+                     WHERE b.deleted_at IS NULL \
+                 ) \
+                 UPDATE blocks SET deleted_at = ? \
+                 WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
+            )
+            .bind(p.block_id.as_str())
+            .bind(now)
+            .execute(pool)
+            .await?;
+        }
+        OpType::RestoreBlock => {
+            let p: RestoreBlockPayload = serde_json::from_str(&record.payload)?;
+            sqlx::query(
+                "WITH RECURSIVE descendants(id) AS ( \
+                     SELECT id FROM blocks WHERE id = ? \
+                     UNION ALL \
+                     SELECT b.id FROM blocks b \
+                     INNER JOIN descendants d ON b.parent_id = d.id \
+                 ) \
+                 UPDATE blocks SET deleted_at = NULL \
+                 WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
+            )
+            .bind(p.block_id.as_str())
+            .bind(&p.deleted_at_ref)
+            .execute(pool)
+            .await?;
+        }
+        OpType::PurgeBlock => {
+            let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
+            let block_id = p.block_id.as_str();
+
+            // Wrap the entire cascade in a transaction for atomicity.
+            // Without this, a mid-cascade failure would leave partially-purged
+            // data. Mirrors the IMMEDIATE transaction in commands::purge_block_inner.
+            let mut tx = pool.begin().await?;
+
+            // Defer FK checks until commit — the entire subtree will be gone.
+            sqlx::query("PRAGMA defer_foreign_keys = ON")
+                .execute(&mut *tx)
+                .await?;
+
+            const DESC_CTE: &str = "WITH RECURSIVE descendants(id) AS ( \
+                SELECT id FROM blocks WHERE id = ? \
+                UNION ALL \
+                SELECT b.id FROM blocks b \
+                INNER JOIN descendants d ON b.parent_id = d.id \
+            )";
+
+            // block_tags
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM block_tags \
+                 WHERE block_id IN (SELECT id FROM descendants) \
+                    OR tag_id IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // block_properties
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM block_properties \
+                 WHERE block_id IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // block_properties: value_ref pointing into subtree
+            sqlx::query(&format!(
+                "{DESC_CTE} UPDATE block_properties SET value_ref = NULL \
+                 WHERE value_ref IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // block_links
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM block_links \
+                 WHERE source_id IN (SELECT id FROM descendants) \
+                    OR target_id IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // agenda_cache
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM agenda_cache \
+                 WHERE block_id IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // tags_cache
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM tags_cache \
+                 WHERE tag_id IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // pages_cache
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM pages_cache \
+                 WHERE page_id IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // attachments
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM attachments \
+                 WHERE block_id IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // block_drafts
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM block_drafts \
+                 WHERE block_id IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // Nullify conflict_source refs
+            sqlx::query(&format!(
+                "{DESC_CTE} UPDATE blocks SET conflict_source = NULL \
+                 WHERE conflict_source IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // FTS
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM fts_blocks \
+                 WHERE block_id IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            // Finally delete blocks
+            sqlx::query(&format!(
+                "{DESC_CTE} DELETE FROM blocks \
+                 WHERE id IN (SELECT id FROM descendants)"
+            ))
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+        }
+        OpType::MoveBlock => {
+            let p: MoveBlockPayload = serde_json::from_str(&record.payload)?;
+            let new_parent_str = p.new_parent_id.as_ref().map(|id| id.as_str().to_owned());
+            sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
+                .bind(new_parent_str.as_deref())
+                .bind(p.new_position)
+                .bind(p.block_id.as_str())
+                .execute(pool)
+                .await?;
+        }
+        OpType::AddTag => {
+            let p: AddTagPayload = serde_json::from_str(&record.payload)?;
+            sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+                .bind(p.block_id.as_str())
+                .bind(p.tag_id.as_str())
+                .execute(pool)
+                .await?;
+        }
+        OpType::RemoveTag => {
+            let p: RemoveTagPayload = serde_json::from_str(&record.payload)?;
+            sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(p.block_id.as_str())
+                .bind(p.tag_id.as_str())
+                .execute(pool)
+                .await?;
+        }
+        OpType::SetProperty => {
+            let p: SetPropertyPayload = serde_json::from_str(&record.payload)?;
+            sqlx::query(
+                "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(p.block_id.as_str())
+            .bind(&p.key)
+            .bind(&p.value_text)
+            .bind(p.value_num)
+            .bind(&p.value_date)
+            .bind(&p.value_ref)
+            .execute(pool)
+            .await?;
+        }
+        OpType::DeleteProperty => {
+            let p: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
+            sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+                .bind(p.block_id.as_str())
+                .bind(&p.key)
+                .execute(pool)
+                .await?;
+        }
+        OpType::AddAttachment => {
+            let p: AddAttachmentPayload = serde_json::from_str(&record.payload)?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO attachments (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&p.attachment_id)
+            .bind(p.block_id.as_str())
+            .bind(&p.filename)
+            .bind(&p.fs_path)
+            .bind(&p.mime_type)
+            .bind(p.size_bytes)
+            .bind(&record.created_at)
+            .execute(pool)
+            .await?;
+        }
+        OpType::DeleteAttachment => {
+            let p: DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
+            sqlx::query("DELETE FROM attachments WHERE id = ?")
+                .bind(&p.attachment_id)
+                .execute(pool)
+                .await?;
+        }
+    }
+
+    tracing::debug!(
+        op_type = %record.op_type,
+        seq = record.seq,
+        "applied op to materialized tables"
+    );
+
+    Ok(())
 }
 
 async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Result<(), AppError> {
@@ -1810,10 +2104,10 @@ mod tests {
     // ======================================================================
 
     #[tokio::test]
-    async fn handle_foreground_task_apply_op_is_noop_in_phase_1() {
+    async fn handle_foreground_task_apply_op_applies_edit() {
         let (pool, _dir) = test_pool().await;
 
-        // Insert a block directly so we can verify it is NOT modified by ApplyOp
+        // Insert a block directly so we can verify it IS modified by ApplyOp
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('NOOP_BLK', 'content', 'original')")
             .execute(&pool)
             .await
@@ -1827,12 +2121,9 @@ mod tests {
 
         let task = MaterializeTask::ApplyOp(record);
         let result = handle_foreground_task(&pool, &task).await;
-        assert!(
-            result.is_ok(),
-            "ApplyOp should return Ok in Phase 1 (no-op)"
-        );
+        assert!(result.is_ok(), "ApplyOp should return Ok after applying");
 
-        // Verify the block content was NOT modified — Phase 1 is a no-op
+        // Verify the block content WAS modified — Phase 4 applies remote ops
         let content: Option<String> =
             sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'NOOP_BLK'")
                 .fetch_one(&pool)
@@ -1840,8 +2131,8 @@ mod tests {
                 .unwrap();
         assert_eq!(
             content.as_deref(),
-            Some("original"),
-            "ApplyOp should not modify DB state in Phase 1"
+            Some("modified"),
+            "ApplyOp should update block content"
         );
     }
 
@@ -2208,8 +2499,8 @@ mod tests {
 
     /// Insert a block row directly into the blocks table (bypasses op log).
     ///
-    /// The foreground `ApplyOp` handler is currently a stub, so blocks must
-    /// be inserted directly for cache-rebuild tests to find them.
+    /// Used by cache-rebuild tests to pre-populate blocks without going
+    /// through the op log and materializer pipeline.
     async fn insert_block_direct(pool: &SqlitePool, id: &str, block_type: &str, content: &str) {
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)")
             .bind(id)
@@ -2510,5 +2801,591 @@ mod tests {
         let row = row.unwrap();
         assert_eq!(row.get::<String, _>("date"), "2025-03-15");
         assert_eq!(row.get::<String, _>("source"), "property:due");
+    }
+
+    // ======================================================================
+    // ApplyOp handler tests (#216: Materializer ApplyOp for remote ops)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn apply_op_create_block_inserts_row() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_CREATE_1";
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(block_id),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "hello from remote".into(),
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let row = sqlx::query("SELECT id, block_type, content, position FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+
+        assert!(
+            row.is_some(),
+            "block should exist after ApplyOp CreateBlock"
+        );
+        let row = row.unwrap();
+        assert_eq!(row.get::<String, _>("block_type"), "content");
+        assert_eq!(
+            row.get::<Option<String>, _>("content").as_deref(),
+            Some("hello from remote")
+        );
+        assert_eq!(row.get::<Option<i64>, _>("position"), Some(1));
+    }
+
+    #[tokio::test]
+    async fn apply_op_create_block_idempotent() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_IDEM_1";
+        // Pre-insert the block (simulating local command handler)
+        insert_block_direct(&pool, block_id, "content", "original").await;
+
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(block_id),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "from remote".into(),
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        // Content should remain "original" since INSERT OR IGNORE skips duplicates
+        let row = sqlx::query("SELECT content FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            row.get::<Option<String>, _>("content").as_deref(),
+            Some("original"),
+            "INSERT OR IGNORE should not overwrite existing block"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_op_edit_block_updates_content() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_EDIT_1";
+        insert_block_direct(&pool, block_id, "content", "before edit").await;
+
+        let payload = OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id(block_id),
+            to_text: "after edit".into(),
+            prev_edit: None,
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let row = sqlx::query("SELECT content FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            row.get::<Option<String>, _>("content").as_deref(),
+            Some("after edit")
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_op_delete_block_soft_deletes() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_DEL_1";
+        insert_block_direct(&pool, block_id, "content", "to delete").await;
+
+        let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id(block_id),
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let row = sqlx::query("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            row.get::<Option<String>, _>("deleted_at").is_some(),
+            "block should be soft-deleted after ApplyOp DeleteBlock"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_op_invalid_payload_returns_ok() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Build a record with valid op_type but invalid JSON payload
+        let record = fake_op_record("create_block", r#"{"not_valid": true}"#);
+
+        mat.enqueue_foreground(MaterializeTask::ApplyOp(record))
+            .await
+            .unwrap();
+        mat.flush_foreground().await.unwrap();
+
+        // Should not panic — the handler logs a warning and returns Ok(())
+        // If we get here without panic, the test passes.
+    }
+
+    #[tokio::test]
+    async fn apply_op_unknown_op_type_returns_ok() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let record = fake_op_record("unknown_op", r#"{}"#);
+
+        mat.enqueue_foreground(MaterializeTask::ApplyOp(record))
+            .await
+            .unwrap();
+        mat.flush_foreground().await.unwrap();
+
+        // Should not panic — unknown op_type is logged and skipped
+    }
+
+    // ======================================================================
+    // ApplyOp: remaining op type coverage (review #216)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn apply_op_restore_block_clears_deleted_at() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_RESTORE_1";
+        insert_block_direct(&pool, block_id, "content", "to restore").await;
+        soft_delete_block_direct(&pool, block_id).await;
+
+        // Verify block is soft-deleted
+        let row = sqlx::query("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            row.get::<Option<String>, _>("deleted_at").is_some(),
+            "block must be soft-deleted before restore"
+        );
+
+        let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id(block_id),
+            deleted_at_ref: FIXED_TS.into(),
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let row = sqlx::query("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            row.get::<Option<String>, _>("deleted_at").is_none(),
+            "deleted_at should be NULL after ApplyOp RestoreBlock"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_op_purge_block_physically_deletes() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_PURGE_1";
+        insert_block_direct(&pool, block_id, "content", "to purge").await;
+        soft_delete_block_direct(&pool, block_id).await;
+
+        let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: BlockId::test_id(block_id),
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let row = sqlx::query("SELECT id FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(
+            row.is_none(),
+            "block should be physically deleted after ApplyOp PurgeBlock"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_op_move_block_updates_parent_and_position() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_MOVE_1";
+        let parent_id = "APPLY_MOVE_PARENT";
+        insert_block_direct(&pool, parent_id, "page", "parent").await;
+        insert_block_direct(&pool, block_id, "content", "movable").await;
+
+        let payload = OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::test_id(block_id),
+            new_parent_id: Some(BlockId::test_id(parent_id)),
+            new_position: 5,
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let row = sqlx::query("SELECT parent_id, position FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            row.get::<Option<String>, _>("parent_id").as_deref(),
+            Some(parent_id)
+        );
+        assert_eq!(row.get::<Option<i64>, _>("position"), Some(5));
+    }
+
+    #[tokio::test]
+    async fn apply_op_add_tag_inserts_block_tag() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_ADDTAG_BLK";
+        let tag_id = "APPLY_ADDTAG_TAG";
+        insert_block_direct(&pool, block_id, "content", "note").await;
+        insert_block_direct(&pool, tag_id, "tag", "urgent").await;
+
+        let payload = OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::test_id(block_id),
+            tag_id: BlockId::test_id(tag_id),
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?",
+            block_id,
+            tag_id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1, "block_tags row should exist after ApplyOp AddTag");
+    }
+
+    #[tokio::test]
+    async fn apply_op_add_tag_idempotent() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_ADDTAG_IDEM_BLK";
+        let tag_id = "APPLY_ADDTAG_IDEM_TAG";
+        insert_block_direct(&pool, block_id, "content", "note").await;
+        insert_block_direct(&pool, tag_id, "tag", "urgent").await;
+
+        // Pre-insert the tag association
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(block_id)
+            .bind(tag_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let payload = OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::test_id(block_id),
+            tag_id: BlockId::test_id(tag_id),
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        // Should not fail — INSERT OR IGNORE handles the duplicate
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?",
+            block_id,
+            tag_id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1, "idempotent add_tag should not create duplicates");
+    }
+
+    #[tokio::test]
+    async fn apply_op_remove_tag_deletes_block_tag() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_RMTAG_BLK";
+        let tag_id = "APPLY_RMTAG_TAG";
+        insert_block_direct(&pool, block_id, "content", "note").await;
+        insert_block_direct(&pool, tag_id, "tag", "stale").await;
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(block_id)
+            .bind(tag_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let payload = OpPayload::RemoveTag(crate::op::RemoveTagPayload {
+            block_id: BlockId::test_id(block_id),
+            tag_id: BlockId::test_id(tag_id),
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?",
+            block_id,
+            tag_id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            count, 0,
+            "block_tags row should be gone after ApplyOp RemoveTag"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_op_set_property_upserts_row() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_SETPROP_1";
+        insert_block_direct(&pool, block_id, "content", "note").await;
+
+        let payload = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id(block_id),
+            key: "priority".into(),
+            value_text: Some("high".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let row =
+            sqlx::query("SELECT value_text FROM block_properties WHERE block_id = ? AND key = ?")
+                .bind(block_id)
+                .bind("priority")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert!(row.is_some(), "property row should exist after SetProperty");
+        assert_eq!(
+            row.unwrap()
+                .get::<Option<String>, _>("value_text")
+                .as_deref(),
+            Some("high")
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_op_set_property_replaces_existing() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_SETPROP_REPL";
+        insert_block_direct(&pool, block_id, "content", "note").await;
+
+        // Pre-insert a property
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
+            .bind(block_id)
+            .bind("priority")
+            .bind("low")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let payload = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id(block_id),
+            key: "priority".into(),
+            value_text: Some("critical".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let row =
+            sqlx::query("SELECT value_text FROM block_properties WHERE block_id = ? AND key = ?")
+                .bind(block_id)
+                .bind("priority")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            row.get::<Option<String>, _>("value_text").as_deref(),
+            Some("critical"),
+            "INSERT OR REPLACE should overwrite existing property"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_op_delete_property_removes_row() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_DELPROP_1";
+        insert_block_direct(&pool, block_id, "content", "note").await;
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
+            .bind(block_id)
+            .bind("status")
+            .bind("done")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: BlockId::test_id(block_id),
+            key: "status".into(),
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = ?",
+            block_id,
+            "status"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 0, "property row should be gone after DeleteProperty");
+    }
+
+    #[tokio::test]
+    async fn apply_op_add_attachment_inserts_row() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_ADDATT_BLK";
+        let att_id = "APPLY_ATT_1";
+        insert_block_direct(&pool, block_id, "content", "note with file").await;
+
+        let payload = OpPayload::AddAttachment(AddAttachmentPayload {
+            attachment_id: att_id.into(),
+            block_id: BlockId::test_id(block_id),
+            mime_type: "application/pdf".into(),
+            filename: "doc.pdf".into(),
+            size_bytes: 2048,
+            fs_path: "/tmp/doc.pdf".into(),
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let row =
+            sqlx::query("SELECT id, filename, mime_type, size_bytes FROM attachments WHERE id = ?")
+                .bind(att_id)
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert!(row.is_some(), "attachment should exist after AddAttachment");
+        let row = row.unwrap();
+        assert_eq!(row.get::<String, _>("filename"), "doc.pdf");
+        assert_eq!(row.get::<String, _>("mime_type"), "application/pdf");
+        assert_eq!(row.get::<i64, _>("size_bytes"), 2048);
+    }
+
+    #[tokio::test]
+    async fn apply_op_delete_attachment_removes_row() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "APPLY_DELATT_BLK";
+        let att_id = "APPLY_DELATT_1";
+        insert_block_direct(&pool, block_id, "content", "note").await;
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(att_id)
+        .bind(block_id)
+        .bind("text/plain")
+        .bind("notes.txt")
+        .bind(512_i64)
+        .bind("/tmp/notes.txt")
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let payload = OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+            attachment_id: att_id.into(),
+        });
+        let record = make_op_record(&pool, payload).await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let row = sqlx::query("SELECT id FROM attachments WHERE id = ?")
+            .bind(att_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(
+            row.is_none(),
+            "attachment should be gone after DeleteAttachment"
+        );
     }
 }

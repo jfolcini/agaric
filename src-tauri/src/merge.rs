@@ -98,6 +98,7 @@ pub async fn merge_text(
             // Walk back from op_ours to find the root create_block.
             let mut current: Option<(String, i64)> = Some(op_ours.clone());
             let mut root_text = String::new();
+            let mut found_create = false;
             let mut iterations = 0usize;
             let mut visited_walk: HashSet<(String, i64)> = HashSet::new();
             while let Some(key) = current.take() {
@@ -120,6 +121,7 @@ pub async fn merge_text(
                     "create_block" => {
                         let payload: CreateBlockPayload = serde_json::from_str(&record.payload)?;
                         root_text = payload.content;
+                        found_create = true;
                         break;
                     }
                     "edit_block" => {
@@ -133,6 +135,13 @@ pub async fn merge_text(
                         )));
                     }
                 }
+            }
+            if !found_create {
+                return Err(AppError::InvalidOperation(format!(
+                    "prev_edit chain for block '{}' ended without reaching a \
+                     create_block — broken chain (possible op log compaction)",
+                    block_id,
+                )));
             }
             root_text
         }
@@ -262,7 +271,19 @@ pub fn resolve_property_conflict(
     let payload_b: SetPropertyPayload = serde_json::from_str(&op_b.payload)?;
 
     // Compare timestamps (ISO 8601 sorts lexicographically)
-    let winner_is_b = match op_a.created_at.cmp(&op_b.created_at) {
+    let ts_ours = &op_a.created_at;
+    let ts_theirs = &op_b.created_at;
+    debug_assert!(
+        ts_ours.ends_with('Z'),
+        "Timestamp must be UTC Z format: {}",
+        ts_ours
+    );
+    debug_assert!(
+        ts_theirs.ends_with('Z'),
+        "Timestamp must be UTC Z format: {}",
+        ts_theirs
+    );
+    let winner_is_b = match ts_ours.cmp(ts_theirs) {
         std::cmp::Ordering::Less => true,     // B is later
         std::cmp::Ordering::Greater => false, // A is later
         std::cmp::Ordering::Equal => {
@@ -381,8 +402,8 @@ mod tests {
 
     // -- Test fixture constants --
 
-    const FIXED_TS: &str = "2025-01-15T12:00:00+00:00";
-    const FIXED_TS_LATER: &str = "2025-01-15T13:00:00+00:00";
+    const FIXED_TS: &str = "2025-01-15T12:00:00Z";
+    const FIXED_TS_LATER: &str = "2025-01-15T13:00:00Z";
     const DEV_A: &str = "device-A";
     const DEV_B: &str = "device-B";
 
@@ -2063,6 +2084,74 @@ mod tests {
         assert_eq!(
             original_text, "my local text",
             "original block's merge op to_text must be ours (local), not ancestor or theirs"
+        );
+    }
+
+    // =====================================================================
+    // 15. #207: broken prev_edit chain returns error, not empty ancestor
+    // =====================================================================
+
+    /// When find_lca returns None and the prev_edit chain is broken
+    /// (edit_block with prev_edit=null and no create_block found),
+    /// merge_text must return an InvalidOperation error instead of
+    /// silently using an empty string as the merge ancestor.
+    #[tokio::test]
+    async fn merge_text_broken_chain_no_create_block_returns_error() {
+        let (pool, _dir) = test_pool().await;
+
+        // Device A: edit_block with prev_edit=null (no create_block in chain).
+        // This simulates a broken chain after op log compaction.
+        let a_payload = r#"{"block_id":"B1","to_text":"orphan edit","prev_edit":null}"#;
+        let a_record = make_remote_record(DEV_A, 1, None, "edit_block", a_payload);
+        crate::dag::insert_remote_op(&pool, &a_record)
+            .await
+            .unwrap();
+
+        // Device B: another edit_block with prev_edit=null (disjoint chain).
+        // This ensures find_lca returns None.
+        let b_payload = r#"{"block_id":"B1","to_text":"other edit","prev_edit":null}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        crate::dag::insert_remote_op(&pool, &b_record)
+            .await
+            .unwrap();
+
+        // merge_text: find_lca returns None → fallback walk from (A,1)
+        // The chain is (A,1) edit_block with prev_edit=null → no create_block found
+        let result = merge_text(&pool, "B1", &(DEV_A.into(), 1), &(DEV_B.into(), 1)).await;
+
+        assert!(
+            result.is_err(),
+            "merge_text should return error when prev_edit chain is broken, got: {result:?}"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::InvalidOperation(_)),
+            "error should be InvalidOperation, got: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("broken chain") || msg.contains("create_block"),
+            "error should mention broken chain or create_block, got: {msg}"
+        );
+    }
+
+    // =====================================================================
+    // 16. #208: debug_assert fires on non-Z timestamps (implicit test)
+    // =====================================================================
+
+    /// The debug_assert! in resolve_property_conflict verifies timestamps
+    /// end with 'Z'. This test confirms valid Z-suffix timestamps pass
+    /// without panicking, serving as a smoke test for the assertion.
+    #[test]
+    fn resolve_property_conflict_z_timestamps_pass_debug_assert() {
+        let op_a = make_prop_record(DEV_A, 1, "2025-06-01T10:00:00Z", "B1", "key", "val_a");
+        let op_b = make_prop_record(DEV_B, 1, "2025-06-01T11:00:00Z", "B1", "key", "val_b");
+
+        // Should not panic — both timestamps end with 'Z'
+        let result = resolve_property_conflict(&op_a, &op_b).unwrap();
+        assert_eq!(
+            result.winner_device, DEV_B,
+            "later Z-suffix timestamp should win"
         );
     }
 }
