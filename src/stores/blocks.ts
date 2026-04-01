@@ -72,18 +72,25 @@ function notifyUndoNewAction(rootParentId: string | null): void {
   if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
 }
 
+const MAX_SUBTREE_BLOCKS = 2000
+
 async function loadSubtree(
   parentId: string | undefined,
   maxDepth = 10,
   currentDepth = 0,
+  loaded: { count: number } = { count: 0 },
 ): Promise<BlockRow[]> {
   if (currentDepth >= maxDepth) return []
+  if (loaded.count >= MAX_SUBTREE_BLOCKS) return []
   const resp: PageResponse<BlockRow> = await listBlocks({ parentId, limit: 500 })
   const blocks = resp.items
   if (blocks.length === 0) return blocks
 
+  loaded.count += blocks.length
+  if (loaded.count >= MAX_SUBTREE_BLOCKS) return blocks
+
   const childArrays = await Promise.all(
-    blocks.map((b) => loadSubtree(b.id, maxDepth, currentDepth + 1)),
+    blocks.map((b) => loadSubtree(b.id, maxDepth, currentDepth + 1, loaded)),
   )
 
   return [...blocks, ...childArrays.flat()]
@@ -158,6 +165,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        conflict_type: null,
         depth: afterBlock.depth,
       }
       const newBlocks = [...blocks]

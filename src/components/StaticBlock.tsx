@@ -11,6 +11,7 @@
 import { toHtml } from 'hast-util-to-html'
 import { common, createLowlight } from 'lowlight'
 import type React from 'react'
+import { memo, useMemo } from 'react'
 import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
 import { openUrl } from '../lib/open-url'
@@ -209,7 +210,7 @@ export function renderRichContent(
   return <>{elements}</>
 }
 
-export function StaticBlock({
+function StaticBlockInner({
   blockId,
   content,
   onFocus,
@@ -219,6 +220,20 @@ export function StaticBlock({
   resolveBlockStatus,
   resolveTagStatus,
 }: StaticBlockProps): React.ReactElement {
+  const richContent = useMemo(
+    () =>
+      content
+        ? renderRichContent(content, {
+            onNavigate,
+            resolveBlockTitle,
+            resolveTagName,
+            resolveBlockStatus,
+            resolveTagStatus,
+          })
+        : null,
+    [content, onNavigate, resolveBlockTitle, resolveTagName, resolveBlockStatus, resolveTagStatus],
+  )
+
   return (
     <button
       type="button"
@@ -227,17 +242,12 @@ export function StaticBlock({
       aria-label="Edit block"
       onClick={() => onFocus(blockId)}
     >
-      {content ? (
-        renderRichContent(content, {
-          onNavigate,
-          resolveBlockTitle,
-          resolveTagName,
-          resolveBlockStatus,
-          resolveTagStatus,
-        })
-      ) : (
+      {richContent ?? (
         <span className="block-placeholder text-muted-foreground italic">Empty block</span>
       )}
     </button>
   )
 }
+
+export const StaticBlock = memo(StaticBlockInner)
+StaticBlock.displayName = 'StaticBlock'
