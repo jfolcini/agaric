@@ -55,6 +55,26 @@ Confirmed issues added to REVIEW-LATER.md as #238–#251:
 
 Commit: `576d09f`
 
+### Phase D — UX review (8 subagents)
+
+Thorough UX review of backlink filter components (BacklinkFilterBuilder + BacklinksPanel). 5 parallel discovery subagents (accessibility & keyboard, interaction flows & state, visual design & layout, information architecture, error handling & edge cases) produced ~81 raw findings. 3 parallel verification subagents confirmed findings against actual code. Final result: 23 new confirmed issues, 4 duplicates of existing items excluded (#239, #242, #245, #246), 2 false positives eliminated.
+
+| ID | Role | Result |
+|----|------|--------|
+| `332b3a97` | Accessibility & keyboard review | 9 issues (UX-A11Y-1 through UX-A11Y-9) |
+| `47a3f39f` | Interaction flows & state review | 25 issues (UX-FLOW-1 through UX-FLOW-25) |
+| `9cee26f4` | Visual design & layout review | 15 issues (UX-VIS-1 through UX-VIS-15) |
+| `29ee6be3` | Information architecture review | 20 issues (UX-IA-1 through UX-IA-20) |
+| `0a2b00d7` | Error handling & edge cases review | 12 issues (UX-ERR-1 through UX-ERR-12) |
+| `31a736e1` | Verification: interaction flows (F1-F7) | 5 confirmed, 1 partial, 1 false positive |
+| `eca4ae94` | Verification: a11y & visual (F8-F17) | 9 confirmed, 1 partial |
+| `dfab8424` | Verification: info arch & errors (F18-F27) | 9 confirmed, 1 false positive |
+
+New issues added to REVIEW-LATER.md as #252–#274:
+- **HIGH (7):** Filters persist across blockId (#252), React key collision (#253), toolbar a11y (#254), no Escape key (#255), max-h-60 visibility (#256), missing filter types (#257), PropertyText hardcoded (#258)
+- **MEDIUM (11):** Empty validation feedback (#259), no dedup prevention (#260), focus management (#261), pill a11y (#262), aria-live count (#263), loading announcement (#264), semantic list (#265), touch targets (#266), pagination dedup (#267), empty state UX (#268), silent error (#269)
+- **LOW (5):** Dead code (#270), redundant resets (#271), button heights (#272), sort label (#273), ULID in pills (#274)
+
 ## Session 29 — 2026-04-01 — Test coverage audit + 20 new tests + flaky fix
 
 Systematic coverage audit of all 16 Rust files changed by sync blockers (commit `a3a38a5`).
