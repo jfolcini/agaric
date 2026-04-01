@@ -1052,3 +1052,32 @@ All 8 bench binaries compile and run cleanly:
 ### Stats
 - 29 new tests, 53 test files, 1472 total tests
 - 4 build subagents + 4 review subagents (all passed)
+
+## Session 20 — Tier 5 A11y & UX (batch 3)
+
+**Date:** 2026-03-31
+**Commit:** `029ff2e`
+**Items resolved:** #116, #167, #178, #180, #182, #196, #203, #204
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `src/components/SortableBlock.tsx` | isDraggingRef + useEffect cancels long-press on drag start |
+| `src/components/__tests__/SortableBlock.test.tsx` | 3 new tests (drag cancels long-press, guard, regression) |
+| `src/components/ui/sidebar.tsx` | `data-[active=true]:dark:border-l-4` for dark mode contrast |
+| `src/components/ui/alert-dialog.tsx` | `dark:bg-black/60` overlay |
+| `src/components/ui/sheet.tsx` | `dark:bg-black/60` overlay |
+| `src/index.css` | `@supports not (container-type)` fallback for card header |
+| `src/App.tsx` | announce() on keyboard shortcuts (Alt+Arrow/T, Ctrl+F/N) |
+| `src/components/__tests__/App.test.tsx` | 2 new tests (Ctrl+F/N announce) |
+| `src/components/PropertiesPanel.tsx` | fieldset + onKeyDown + keyboard hint text |
+| `src/components/TagPanel.tsx` | fieldset + onKeyDown + keyboard hint text |
+| `src/components/__tests__/PropertiesPanel.test.tsx` | 3 new tests (hint, Enter, Escape) |
+| `src/components/__tests__/TagPanel.test.tsx` | 3 new tests (hint, Enter, Escape) |
+| `src/components/JournalPage.tsx` | visualViewport + horizontal overflow + MIN/MAX date boundaries |
+| `src/components/__tests__/JournalPage.test.tsx` | 8 new tests (positioning + boundaries) |
+
+### Stats
+- 19 new tests, 53 test files, 1491 total tests
+- 4 build subagents + 4 review subagents (all passed)
