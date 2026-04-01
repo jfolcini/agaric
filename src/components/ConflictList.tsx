@@ -4,6 +4,14 @@
  * Standalone view similar to TrashView. Paginated list of conflict blocks.
  * Supports "Keep" (edit original + delete conflict) and "Discard" (delete conflict)
  * with two-click confirmation on both Keep and Discard.
+ *
+ * Enhanced with:
+ *  - Conflict type badge (Text / Property / Move)
+ *  - Metadata display: conflict source block ID, created timestamp
+ *
+ * NOTE: The backend currently does not distinguish conflict types in the DB.
+ * "Text conflict" is shown as default. Property and Move conflict types will
+ * be supported when the backend exposes them via a conflict_type field.
  */
 
 import { Check, GitMerge, X } from 'lucide-react'
@@ -26,6 +34,64 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { deleteBlock, editBlock, getBlock, getConflicts } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
+
+/**
+ * Infer the conflict type from block data.
+ *
+ * Currently the backend does not expose a `conflict_type` field, so we default
+ * to "Text". When the backend adds conflict type metadata, this function should
+ * be updated to use it.
+ *
+ * Future types:
+ *  - "Property" — when block has is_conflict = 1 and properties differ
+ *  - "Move" — when block parents differ (requires parent tracking in conflict data)
+ */
+function inferConflictType(_block: BlockRow, _original?: BlockRow): 'Text' | 'Property' | 'Move' {
+  // TODO: When the backend exposes conflict_type, use it here.
+  // For now, all conflicts are treated as text conflicts.
+  return 'Text'
+}
+
+/** Badge color class by conflict type. */
+function conflictTypeBadgeClass(type: 'Text' | 'Property' | 'Move'): string {
+  switch (type) {
+    case 'Text':
+      return 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800'
+    case 'Property':
+      return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800'
+    case 'Move':
+      return 'bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800'
+  }
+}
+
+/** Format a timestamp string to a human-readable relative or absolute format. */
+function formatTimestamp(ts: string | null | undefined): string {
+  if (!ts) return 'Unknown'
+  try {
+    const date = new Date(ts)
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffMin = Math.floor(diffMs / 60000)
+    if (diffMin < 1) return 'Just now'
+    if (diffMin < 60) return `${diffMin} min ago`
+    const diffHours = Math.floor(diffMin / 60)
+    if (diffHours < 24) return `${diffHours}h ago`
+    return date.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return ts
+  }
+}
+
+/** Truncate a block ID for display. */
+function truncateId(id: string, len = 12): string {
+  if (id.length <= len) return id
+  return `${id.slice(0, len)}...`
+}
 
 export function ConflictList(): React.ReactElement {
   const [blocks, setBlocks] = useState<BlockRow[]>([])
@@ -122,15 +188,32 @@ export function ConflictList(): React.ReactElement {
       <div className="conflict-items space-y-2">
         {blocks.map((block) => {
           const original = block.parent_id ? originals.get(block.parent_id) : undefined
+          const conflictType = inferConflictType(block, original)
           return (
             <div
               key={block.id}
               className="conflict-item flex items-center justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
             >
               <div className="conflict-item-content flex min-w-0 flex-col gap-1">
-                <Badge variant="secondary" className="conflict-item-type shrink-0">
-                  {block.block_type}
-                </Badge>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="secondary" className="conflict-item-type shrink-0">
+                    {block.block_type}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className={`conflict-type-badge shrink-0 ${conflictTypeBadgeClass(conflictType)}`}
+                  >
+                    {conflictType}
+                  </Badge>
+                </div>
+                <div className="conflict-metadata flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="conflict-source-id font-mono" title={block.id}>
+                    ID: {truncateId(block.id)}
+                  </span>
+                  <span className="conflict-timestamp">
+                    {formatTimestamp(block.deleted_at ?? block.archived_at)}
+                  </span>
+                </div>
                 <div className="conflict-original text-sm text-muted-foreground truncate">
                   <span className="font-medium">Current:</span>{' '}
                   {original ? (original.content ?? '(empty)') : '(original not available)'}
@@ -144,7 +227,7 @@ export function ConflictList(): React.ReactElement {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="conflict-keep-btn [@media(pointer:coarse)]:h-10"
+                  className="conflict-keep-btn [@media(pointer:coarse)]:min-h-[44px]"
                   onClick={() => setConfirmKeepBlock(block)}
                 >
                   <Check className="h-3.5 w-3.5" />
@@ -153,7 +236,7 @@ export function ConflictList(): React.ReactElement {
                 <Button
                   variant="destructive"
                   size="sm"
-                  className="conflict-discard-btn [@media(pointer:coarse)]:h-10"
+                  className="conflict-discard-btn [@media(pointer:coarse)]:min-h-[44px]"
                   onClick={() => setConfirmDiscardId(block.id)}
                 >
                   <X className="h-3.5 w-3.5" />

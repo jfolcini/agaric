@@ -393,3 +393,60 @@ export async function listPeerRefs(): Promise<PeerRefRow[]> {
 export async function getPeerRef(peerId: string): Promise<PeerRefRow | null> {
   return invoke('get_peer_ref', { peerId })
 }
+
+/** Delete a peer reference by ID. */
+export async function deletePeerRef(peerId: string): Promise<void> {
+  return invoke('delete_peer_ref', { peerId })
+}
+
+/** Get the local device ID. */
+export async function getDeviceId(): Promise<string> {
+  return invoke('get_device_id')
+}
+
+// ---------------------------------------------------------------------------
+// Sync protocol commands
+// ---------------------------------------------------------------------------
+
+export interface DeviceHead {
+  device_id: string
+  seq: number
+  hash: string
+}
+
+export interface SyncSessionInfo {
+  state: string
+  local_device_id: string
+  remote_device_id: string
+  ops_received: number
+  ops_sent: number
+}
+
+/** Start the pairing flow — returns a passphrase, QR SVG, and listener port. */
+export async function startPairing(): Promise<{
+  passphrase: string
+  qr_svg: string
+  port: number
+}> {
+  return invoke('start_pairing')
+}
+
+/** Confirm a pairing with the given passphrase and remote device ID. */
+export async function confirmPairing(passphrase: string, remoteDeviceId: string): Promise<void> {
+  return invoke('confirm_pairing', { passphrase, remoteDeviceId })
+}
+
+/** Cancel an in-progress pairing. */
+export async function cancelPairing(): Promise<void> {
+  return invoke('cancel_pairing')
+}
+
+/** Start a sync session with a known peer. */
+export async function startSync(peerId: string): Promise<SyncSessionInfo> {
+  return invoke('start_sync', { peerId })
+}
+
+/** Cancel an in-progress sync session. */
+export async function cancelSync(): Promise<void> {
+  return invoke('cancel_sync')
+}

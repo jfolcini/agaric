@@ -14,8 +14,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   addTag,
   batchResolve,
+  cancelPairing,
+  cancelSync,
+  confirmPairing,
   createBlock,
   deleteBlock,
+  deletePeerRef,
   deleteProperty,
   editBlock,
   getBacklinks,
@@ -23,6 +27,7 @@ import {
   getBlock,
   getBlockHistory,
   getConflicts,
+  getDeviceId,
   getPeerRef,
   getProperties,
   getStatus,
@@ -41,6 +46,8 @@ import {
   revertOps,
   searchBlocks,
   setProperty,
+  startPairing,
+  startSync,
   undoPageOp,
 } from '../tauri'
 
@@ -1123,6 +1130,118 @@ describe('getPeerRef', () => {
 })
 
 // ---------------------------------------------------------------------------
+// deletePeerRef
+// ---------------------------------------------------------------------------
+
+describe('deletePeerRef', () => {
+  it('invokes delete_peer_ref with peerId', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+    await deletePeerRef('peer-to-delete')
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_peer_ref', { peerId: 'peer-to-delete' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getDeviceId
+// ---------------------------------------------------------------------------
+
+describe('getDeviceId', () => {
+  it('invokes get_device_id with no arguments', async () => {
+    mockedInvoke.mockResolvedValueOnce('my-device-uuid')
+    const result = await getDeviceId()
+    expect(result).toBe('my-device-uuid')
+    expect(mockedInvoke).toHaveBeenCalledWith('get_device_id')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// startPairing
+// ---------------------------------------------------------------------------
+
+describe('startPairing', () => {
+  it('invokes start_pairing and returns pairing info', async () => {
+    const expected = {
+      passphrase: 'alpha bravo charlie delta',
+      qr_svg: '<svg>...</svg>',
+      port: 8765,
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+    const result = await startPairing()
+    expect(result).toEqual(expected)
+    expect(mockedInvoke).toHaveBeenCalledWith('start_pairing')
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('pairing unavailable'))
+    await expect(startPairing()).rejects.toThrow('pairing unavailable')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// confirmPairing
+// ---------------------------------------------------------------------------
+
+describe('confirmPairing', () => {
+  it('invokes confirm_pairing with passphrase and remoteDeviceId', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+    await confirmPairing('alpha bravo charlie delta', 'remote-device-id')
+    expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
+      passphrase: 'alpha bravo charlie delta',
+      remoteDeviceId: 'remote-device-id',
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// cancelPairing
+// ---------------------------------------------------------------------------
+
+describe('cancelPairing', () => {
+  it('invokes cancel_pairing with no arguments', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+    await cancelPairing()
+    expect(mockedInvoke).toHaveBeenCalledWith('cancel_pairing')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// startSync
+// ---------------------------------------------------------------------------
+
+describe('startSync', () => {
+  it('invokes start_sync with peerId', async () => {
+    const expected = {
+      state: 'syncing',
+      local_device_id: 'local',
+      remote_device_id: 'peer-1',
+      ops_received: 0,
+      ops_sent: 0,
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+    const result = await startSync('peer-1')
+    expect(result).toEqual(expected)
+    expect(mockedInvoke).toHaveBeenCalledWith('start_sync', { peerId: 'peer-1' })
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('peer unreachable'))
+    await expect(startSync('peer-1')).rejects.toThrow('peer unreachable')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// cancelSync
+// ---------------------------------------------------------------------------
+
+describe('cancelSync', () => {
+  it('invokes cancel_sync with no arguments', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+    await cancelSync()
+    expect(mockedInvoke).toHaveBeenCalledWith('cancel_sync')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Cross-cutting concerns
 // ---------------------------------------------------------------------------
 
@@ -1160,6 +1279,13 @@ describe('cross-cutting', () => {
     await redoPageOp({ undoDeviceId: 'd', undoSeq: 1 })
     await listPeerRefs()
     await getPeerRef('peer-1')
+    await deletePeerRef('peer-1')
+    await getDeviceId()
+    await startPairing()
+    await confirmPairing('passphrase', 'remote-id')
+    await cancelPairing()
+    await startSync('peer-1')
+    await cancelSync()
 
     const commandNames = mockedInvoke.mock.calls.map((call) => call[0])
     expect(commandNames).toEqual([
@@ -1193,6 +1319,13 @@ describe('cross-cutting', () => {
       'redo_page_op',
       'list_peer_refs',
       'get_peer_ref',
+      'delete_peer_ref',
+      'get_device_id',
+      'start_pairing',
+      'confirm_pairing',
+      'cancel_pairing',
+      'start_sync',
+      'cancel_sync',
     ])
   })
 })

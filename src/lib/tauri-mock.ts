@@ -746,6 +746,41 @@ export function setupMock(): void {
         return null
       }
 
+      case 'delete_peer_ref': {
+        return undefined
+      }
+
+      case 'get_device_id': {
+        return 'mock-device-id-0000'
+      }
+
+      case 'start_pairing': {
+        return { passphrase: 'alpha bravo charlie delta', qr_svg: '<svg></svg>', port: 8765 }
+      }
+
+      case 'confirm_pairing': {
+        return undefined
+      }
+
+      case 'cancel_pairing': {
+        return undefined
+      }
+
+      case 'start_sync': {
+        const a = args as Record<string, unknown>
+        return {
+          state: 'syncing',
+          local_device_id: 'mock-device-id-0000',
+          remote_device_id: a.peerId,
+          ops_received: 0,
+          ops_sent: 0,
+        }
+      }
+
+      case 'cancel_sync': {
+        return undefined
+      }
+
       default:
         return null
     }

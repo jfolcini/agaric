@@ -13,11 +13,14 @@ pub mod merge;
 pub mod op;
 pub mod op_log;
 pub mod pagination;
+pub mod pairing;
 pub mod peer_refs;
 pub mod recovery;
 pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;
+pub mod sync_net;
+pub mod sync_protocol;
 pub mod tag_query;
 pub mod ulid;
 
@@ -35,6 +38,8 @@ pub fn now_rfc3339() -> String {
 mod command_integration_tests;
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+mod sync_integration_tests;
 
 #[cfg(test)]
 mod specta_tests {

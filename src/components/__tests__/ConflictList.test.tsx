@@ -740,4 +740,151 @@ describe('ConflictList', () => {
     // Conflict is still in the list
     expect(screen.getByText('conflict text')).toBeInTheDocument()
   })
+
+  // --- Tests for conflict type badges and metadata (#224) ---
+
+  it('renders conflict type badge with "Text" for each conflict', async () => {
+    const page = {
+      items: [makeConflict('C1', 'conflict content 1'), makeConflict('C2', 'conflict content 2')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    const { container } = render(<ConflictList />)
+
+    await screen.findByText('conflict content 1')
+
+    // Each conflict item should have a "Text" conflict type badge
+    const typeBadges = container.querySelectorAll('.conflict-type-badge')
+    expect(typeBadges).toHaveLength(2)
+    expect(typeBadges[0].textContent).toBe('Text')
+    expect(typeBadges[1].textContent).toBe('Text')
+  })
+
+  it('displays conflict metadata: source block ID (truncated)', async () => {
+    const conflict = makeConflict('CONFLICT-ID-VERY-LONG-1234', 'conflict text')
+    const page = {
+      items: [conflict],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    const { container } = render(<ConflictList />)
+
+    await screen.findByText('conflict text')
+
+    // Source ID should be truncated and shown
+    const sourceId = container.querySelector('.conflict-source-id')
+    expect(sourceId).toBeTruthy()
+    expect(sourceId?.textContent).toContain('ID:')
+    expect(sourceId?.textContent).toContain('CONFLICT-ID-...')
+  })
+
+  it('displays conflict metadata: timestamp', async () => {
+    const conflict = {
+      id: 'C1',
+      block_type: 'content',
+      content: 'conflict text',
+      parent_id: 'ORIG001',
+      position: null,
+      deleted_at: '2025-06-15T10:30:00Z',
+      archived_at: null,
+      is_conflict: true,
+    }
+    const page = {
+      items: [conflict],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    const { container } = render(<ConflictList />)
+
+    await screen.findByText('conflict text')
+
+    // Timestamp should be displayed in the metadata area
+    const timestamp = container.querySelector('.conflict-timestamp')
+    expect(timestamp).toBeTruthy()
+    // The timestamp should contain some formatted date text (not "Unknown")
+    expect(timestamp?.textContent).not.toBe('')
+    expect(timestamp?.textContent).not.toBe('Unknown')
+  })
+
+  it('shows "Unknown" timestamp when deleted_at and archived_at are null', async () => {
+    const conflict = makeConflict('C1', 'conflict text')
+    const page = {
+      items: [conflict],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    const { container } = render(<ConflictList />)
+
+    await screen.findByText('conflict text')
+
+    const timestamp = container.querySelector('.conflict-timestamp')
+    expect(timestamp).toBeTruthy()
+    expect(timestamp?.textContent).toBe('Unknown')
+  })
+
+  it('conflict type badge has amber styling for Text type', async () => {
+    const page = {
+      items: [makeConflict('C1', 'conflict content')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    const { container } = render(<ConflictList />)
+
+    await screen.findByText('conflict content')
+
+    const typeBadge = container.querySelector('.conflict-type-badge')
+    expect(typeBadge).toBeTruthy()
+    expect(typeBadge?.className).toContain('bg-amber-100')
+    expect(typeBadge?.className).toContain('text-amber-800')
+  })
+
+  it('Keep/Discard flow still works with badges and metadata present', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'conflict with badge', 'ORIG001')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+      edit_block: { id: 'ORIG001', block_type: 'content', content: 'conflict with badge' },
+      delete_block: {
+        block_id: 'C1',
+        deleted_at: '2025-01-15T00:00:00Z',
+        descendants_affected: 0,
+      },
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict with badge')
+
+    // Verify badge is present
+    expect(screen.getByText('Text')).toBeInTheDocument()
+
+    // Keep still works
+    const keepBtn = screen.getByRole('button', { name: /Keep/i })
+    await user.click(keepBtn)
+
+    const yesKeepBtn = screen.getByRole('button', { name: /Yes, keep/i })
+    await user.click(yesKeepBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'ORIG001',
+        toText: 'conflict with badge',
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText('conflict with badge')).not.toBeInTheDocument()
+    })
+  })
 })

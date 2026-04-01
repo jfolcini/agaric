@@ -1,5 +1,110 @@
 # Session Log
 
+## Session 32 — 2026-04-01 — Full sync protocol implementation
+
+Resolved 18 sync REVIEW-LATER.md items (#210-#211, #214-#215, #217, #219-#220, #224, #227-#237).
+3 build subagents (parallel) + 1 review subagent for backend. 2 build + 1 review for frontend. 1 docs subagent.
+27 files changed (~5500 insertions).
+
+### Phase A — Backend sync protocol (3 new modules)
+
+**pairing.rs (#211) — NEW MODULE:**
+- EFF 7776-word list (`eff_wordlist.txt`, include_str!)
+- `generate_passphrase()` — 4 random words (~51 bits entropy)
+- `derive_session_key()` — HKDF-SHA256 with order-independent salt
+- `encrypt_message()` / `decrypt_message()` — ChaCha20-Poly1305 with random nonce
+- `pairing_qr_payload()` + `generate_qr_svg()` — QR code generation
+- `PairingSession` — 5-minute timeout, key derivation
+- 16 tests (12 build + 4 review)
+
+**sync_net.rs (#210) — NEW MODULE:**
+- `SyncCert` + `generate_self_signed_cert()` — rcgen ECDSA P-256, SHA-256 cert pinning
+- `MdnsService` — announce/browse via mdns-sd, `DiscoveredPeer` struct
+- `SyncServer` — TLS + WebSocket server on random port
+- `connect_to_peer()` — TLS client with `PinningCertVerifier` (first-connect or pin)
+- `SyncConnection` — abstraction over server/client streams (send_json, recv_json, send_binary)
+- `SyncMessage` — 8-variant tagged enum for protocol messages
+- 12 tests (9 build + 3 review)
+
+**sync_protocol.rs (#214, #215, #217) — NEW MODULE:**
+- `get_local_heads()` — latest (device_id, seq, hash) per device
+- `compute_ops_to_send()` — delta computation against remote heads
+- `check_reset_required()` — compaction detection for RESET_REQUIRED
+- `apply_remote_ops()` — INSERT OR IGNORE + materializer enqueue
+- `merge_diverged_blocks()` — find divergent blocks, call merge_block
+- `complete_sync()` — atomic peer_refs update
+- `SyncOrchestrator` — message-driven state machine (HeadExchange→OpBatch→merge→Complete)
+- 16 tests (12 build + 4 review)
+
+**Review A findings:**
+- Bug fix: pairing.rs ciphertext length check `< 12` → `< 28` (must include 16-byte auth tag)
+- Documented TODOs: merge_diverged_blocks covers edit_block only (property/move/delete+edit pending)
+- 11 additional tests across all 3 modules
+
+**Cargo.toml:**
+- Added `tokio-rustls = "0.26"`, `futures-util = "0.3"` (for server TLS + WebSocket stream traits)
+- Extended tokio features: `macros`, `rt`, `net`
+
+### Phase B — Sync integration tests (#228, #230, #231, #232)
+
+**sync_integration_tests.rs — NEW (21 tests):**
+- Two-device pipeline: create+sync, concurrent edit+merge, peer_refs update, bidirectional
+- Idempotency: duplicate delivery, out-of-order, gaps, hash mismatch rejection
+- Snapshot: compaction→reset_required, resume from last_hash
+- Stress: 5000-op full sync, 5000+100 incremental sync
+- Edge cases: empty DBs, orchestrator full flow (initiator + receiver), error/reset handling
+
+### Phase C — Frontend sync UI
+
+**IPC wrappers (#227):**
+- npm add react-qr-code + html5-qrcode
+- 7 new tauri.ts wrappers: deletePeerRef, getDeviceId, startPairing, confirmPairing, cancelPairing, startSync, cancelSync
+- Mock handlers + 8 tests (+ 2 review error-path tests)
+
+**PairingDialog.tsx (#219) — NEW:**
+- QR code display (react-qr-code), 4-word passphrase entry, paired devices list
+- Unpair with AlertDialog confirmation, cancel pairing, loading/error states
+- Focus trap, Escape key, aria-labelledby, aria-live, 44px touch targets
+- 18 tests (14 build + 4 review)
+
+**DeviceManagement.tsx (#219) — NEW:**
+- Local device ID, peer list with sync/unpair, "Pair New Device" button
+- dl/dt/dd layout, aria-live errors, touch targets
+- 13 tests (10 build + 3 review)
+
+**ConflictList.tsx (#224) — ENHANCED:**
+- Conflict type badge ("Text" in amber), truncated source block ID, formatted timestamp
+- 44px touch targets on Keep/Discard buttons
+- 31 tests total (25 existing + 6 new)
+
+**QrScanner.tsx (#220) — NEW STUB:**
+- Dynamic html5-qrcode import, camera scanning, error handling, scanner cleanup on unmount
+- aria-label, aria-live, 44px touch targets
+- 6 tests (3 build + 3 review)
+
+### Phase D — Platform documentation
+
+**docs/SYNC-PLATFORM-NOTES.md — NEW (#233-#237, #220):**
+- mDNS on Android: multicast lock, 5s timeout, manual IP fallback
+- WebSocket Android: runs in Rust (not WebView), reconnection backoff
+- Doze mode: foreground-only sync (v1), WorkManager future plan
+- Linux firewall: UFW/firewalld/iptables commands
+- Linux mDNS: mdns-sd is pure Rust, no Avahi dependency
+- QR scanning: camera permissions, implementation plan
+
+### Test results
+- Rust: 1125 tests passed, 1 skipped (was 1093)
+- Frontend: 1778 tests passed across 64 files (was 1733)
+- Total: 2903 tests passing
+
+### Items resolved this session (18)
+#210, #211, #214, #215, #217, #219, #220, #224, #227, #228, #230, #231, #232, #233, #234, #235, #236, #237
+
+### Remaining sync items (3 open)
+- #229: E2E sync tests (Playwright multi-context) — needs full protocol working end-to-end
+
+### Total remaining REVIEW-LATER items: 44 open
+
 ## Session 31 — 2026-04-01 — Sync infrastructure (Phase 4 foundations)
 
 Resolved 10 sync-related REVIEW-LATER.md items (#207-#209, #212-#213, #216, #218, #221-#223, #225-#226).
