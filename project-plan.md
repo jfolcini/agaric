@@ -287,6 +287,7 @@ These tasks block everything downstream. Ship them before moving on.
 |----|------|------|----------|-------|
 | p4-t1 | TanStack Query — server state layer | frontend, dx | | [ADR-02] Replace manual Tauri invoke + useState patterns. Invalidated by Tauri events. Enables stale-while-revalidate in frontend. |
 | p4-t2 | XState — sync state machine only | frontend, backend | | Scope: sync lifecycle states only. Not the whole app. States: idle → discovering → pairing → streaming → merging → done \| error \| [ADR-02] reset_required. |
+| p4-t2a | Sync event emission infrastructure | backend, frontend | | Done (`b988164`) — SyncOrchestrator emits Progress/Complete/Error via SyncEventSink trait. Frontend useSyncEvents hook listens + updates Zustand store. Prerequisite for p4-t2. |
 
 ### DAG Op Log
 

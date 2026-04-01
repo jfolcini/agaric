@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 40 — 2026-04-01 — Sync Event Emission Infrastructure
+
+Added Tauri event emission to SyncOrchestrator and frontend event listeners. Resolves #277, #276, #386, #378.
+
+### Backend (Rust) — commit `b988164`
+- **New `sync_events.rs` module:** `SyncEvent` enum (Progress/Complete/Error), `SyncEventSink` trait, `TauriEventSink` for production (wraps `AppHandle`), `RecordingEventSink` for tests, `sync_state_label()` helper
+- **SyncOrchestrator modified:** Optional `event_sink` field (backward-compatible), `with_event_sink()` builder, `emit()` at all 12 state transitions in `start()` + `handle_message()`
+- **10 new tests:** 5 unit (serde, label mapping, recording sink) + 5 integration (event order, error events, reset_required, protocol violations)
+
+### Frontend (React) — commit `b988164`
+- **New `useSyncEvents()` hook:** Listens to `sync:progress`/`sync:complete`/`sync:error` Tauri events, updates Zustand sync store, shows toasts on completion/error, reloads block store when ops received
+- **`mapBackendState()`:** Maps 8 backend state strings to 3 frontend states (idle/syncing/error)
+- **Sync store expanded:** Added `setOpsReceived`/`setOpsSent` absolute-value actions
+- **Wired into `App.tsx`** at boot
+- **26 new tests:** 22 hook tests + 4 store tests
+
+### Prior commit in session — `5ef6d6d`
+- Resolved 22 REVIEW-LATER sync UI items (#279-#305) across PairingDialog, DeviceManagement, StatusPanel, ConflictList, App.tsx
+- Shared utilities: `formatLastSynced`, `truncateId`, `ulidToDate` in format.ts; `UnpairConfirmDialog` component
+
+### Subagents
+| # | Role | Domain | Result |
+|---|------|--------|--------|
+| 1 | Build | Rust sync_events + SyncOrchestrator | 10 new tests, 78 sync tests pass |
+| 2 | Build | Frontend useSyncEvents + store | 26 new tests, 1897 total pass |
+| 3 | Review | Rust | Fixed clippy warning, added reset_required test |
+| 4 | Review | Frontend | Added 4 store tests for setOpsReceived/setOpsSent |
+
 ## Session 39 — 2026-04-01 — Test Suite Performance Optimization
 
 Optimized slowest tests in both Rust and frontend suites. Commit `10faf36`.
