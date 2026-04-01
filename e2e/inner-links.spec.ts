@@ -252,10 +252,11 @@ test.describe('Inner links — [[ picker', () => {
 
     // Type a non-matching query
     await page.keyboard.type('zzz_nonexistent', { delay: 20 })
-    await page.waitForTimeout(200)
 
-    // Should show create option
-    await expect(list.locator('.suggestion-item', { hasText: 'Create' })).toBeVisible()
+    // Should show create option (wait for suggestion list to update)
+    await expect(list.locator('.suggestion-item', { hasText: 'Create' })).toBeVisible({
+      timeout: 3000,
+    })
   })
 
   test('Escape dismisses the picker without inserting', async ({ page }) => {

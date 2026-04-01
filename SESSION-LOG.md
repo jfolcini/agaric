@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 42 — 2026-04-01 — Frontend Test Coverage Audit (#365-#370)
+
+Resolved all 6 frontend test coverage audit items from REVIEW-LATER.md. 5 fixed, 1 skipped (#365 — jsdom can't render TipTap plugins).
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `src/components/__tests__/BacklinkFilterBuilder.test.tsx` | #366: 10 new tests — PropertyNum, PropertyDate, PropertyIsSet, PropertyIsEmpty, HasTagPrefix happy-path + 5 validation error tests |
+| `src/components/__tests__/QrScanner.test.tsx` | #367: 5 new success-path tests — onScan callback, JSON parsing, raw text passthrough, scanner stop, cleanup on unmount. Restructured mock with configurable behavior modes |
+| `src/components/__tests__/JournalPage.test.tsx` | #368: 5 new calendar dropdown tests — open, close via backdrop, close via Escape, Today button in weekly/monthly modes. Added `scrollIntoView` jsdom stub |
+| `src/lib/tauri-mock.ts` | #369: Added `query_by_property` handler (between get_status and query_by_tags) |
+| `src/lib/__tests__/tauri-mock.test.ts` | #369: 5 new tests — exact match, comparison operators, missing property, cursor pagination, empty result |
+| `e2e/history-revert.spec.ts` | #370: Replaced `waitForTimeout(200)` with `expect(locator).toBeVisible()` |
+| `e2e/undo-redo-blocks.spec.ts` | #370: Replaced 2 `waitForTimeout` calls with `isContentEditable` assertions. Fixed `hasAttribute('contenteditable')` → `isContentEditable` bug |
+| `e2e/inner-links.spec.ts` | #370: Replaced `waitForTimeout(350)` with `expect(locator).toBeVisible()` |
+
+### Notes
+- #365 (picker extensions): Skipped — TipTap suggestion plugins don't render in jsdom. No fix without switching to Playwright for unit tests.
+- #370: Left 3 drag-and-drop `waitForTimeout` calls in `toolbar-and-blocks.spec.ts` — required by dnd-kit for drop settlement.
+- All 1954 vitest tests pass (66 test files). prek passes.
+
+### Stats
+- 25 new tests, 1954 total vitest tests
+- 8 files modified
+
+---
+
 ## Session 41 — 2026-04-01 — Tier 8 Backlinks Filter Polish (#329-#345)
 
 Resolved all 17 Tier 8 "Backlinks Filter Minor / Polish" items from REVIEW-LATER.md.

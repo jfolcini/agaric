@@ -1,28 +1,53 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { QrScanner } from '../QrScanner'
 
-// Mock html5-qrcode module so dynamic import resolves without camera
+// Configurable mock for html5-qrcode module
+let mockStartBehavior: 'error' | 'scan' | 'pending' = 'error'
+let mockScanData = ''
+
+const mockStop = vi.fn().mockResolvedValue(undefined)
+
 vi.mock('html5-qrcode', () => ({
   Html5Qrcode: class MockHtml5Qrcode {
-    async start() {
-      throw new Error('Camera access denied')
+    async start(
+      _cameraConfig: unknown,
+      _scanConfig: unknown,
+      onSuccess?: (text: string) => void,
+      _onFailure?: () => void,
+    ) {
+      if (mockStartBehavior === 'error') {
+        throw new Error('Camera access denied')
+      }
+      // Simulate successful scan after a microtask
+      if (mockStartBehavior === 'scan' && onSuccess) {
+        queueMicrotask(() => onSuccess(mockScanData))
+      }
+      // 'pending': started but no scan result yet — scanner stays running
     }
-    async stop() {}
+    async stop() {
+      return mockStop()
+    }
   },
 }))
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockStartBehavior = 'error'
+  mockScanData = ''
+})
 
 describe('QrScanner', () => {
   it('renders without crashing', () => {
     render(<QrScanner onScan={vi.fn()} />)
-    expect(screen.getByText('Camera preview')).toBeDefined()
+    expect(screen.getByText('Camera preview')).toBeInTheDocument()
   })
 
   it('shows scan button', () => {
     render(<QrScanner onScan={vi.fn()} />)
-    expect(screen.getByRole('button', { name: /scan qr code/i })).toBeDefined()
+    expect(screen.getByRole('button', { name: /scan qr code/i })).toBeInTheDocument()
   })
 
   it('passes accessibility audit', async () => {
@@ -50,7 +75,7 @@ describe('QrScanner', () => {
     await user.click(scanBtn)
 
     // Should show error and call onError callback
-    expect(await screen.findByText('Camera access denied')).toBeDefined()
+    expect(await screen.findByText('Camera access denied')).toBeInTheDocument()
     expect(onError).toHaveBeenCalledWith('Camera access denied')
     expect(onScan).not.toHaveBeenCalled()
   })
@@ -63,6 +88,101 @@ describe('QrScanner', () => {
     await user.click(scanBtn)
 
     // After error, button text should change to "Retry Camera"
-    expect(await screen.findByRole('button', { name: /retry camera/i })).toBeDefined()
+    expect(await screen.findByRole('button', { name: /retry camera/i })).toBeInTheDocument()
+  })
+
+  it('success: calls onScan with decoded text', async () => {
+    mockStartBehavior = 'scan'
+    mockScanData = 'hello-world'
+
+    const user = userEvent.setup()
+    const onScan = vi.fn()
+
+    render(<QrScanner onScan={onScan} />)
+
+    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
+    await user.click(scanBtn)
+
+    await waitFor(() => {
+      expect(onScan).toHaveBeenCalledWith('hello-world')
+    })
+  })
+
+  it('success: parses JSON QR data', async () => {
+    mockStartBehavior = 'scan'
+    mockScanData = JSON.stringify('passphrase-data')
+
+    const user = userEvent.setup()
+    const onScan = vi.fn()
+
+    render(<QrScanner onScan={onScan} />)
+
+    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
+    await user.click(scanBtn)
+
+    await waitFor(() => {
+      expect(onScan).toHaveBeenCalledWith('passphrase-data')
+    })
+  })
+
+  it('success: passes through non-JSON data as raw text', async () => {
+    mockStartBehavior = 'scan'
+    mockScanData = 'raw-passphrase'
+
+    const user = userEvent.setup()
+    const onScan = vi.fn()
+
+    render(<QrScanner onScan={onScan} />)
+
+    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
+    await user.click(scanBtn)
+
+    await waitFor(() => {
+      expect(onScan).toHaveBeenCalledWith('raw-passphrase')
+    })
+  })
+
+  it('success: scanner stops after scan (button reappears)', async () => {
+    mockStartBehavior = 'scan'
+    mockScanData = 'some-data'
+
+    const user = userEvent.setup()
+    const onScan = vi.fn()
+
+    render(<QrScanner onScan={onScan} />)
+
+    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
+    await user.click(scanBtn)
+
+    // After successful scan, scanning stops and button should reappear
+    await waitFor(() => {
+      expect(onScan).toHaveBeenCalled()
+    })
+
+    // Button should be visible again (not "Scanning..." text)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /scan qr code/i })).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Scanning...')).not.toBeInTheDocument()
+  })
+
+  it('cleanup: stops scanner on unmount', async () => {
+    // Use 'pending' mode so scanner starts but onSuccess never fires —
+    // scannerInstanceRef stays set and the cleanup effect is what calls stop().
+    mockStartBehavior = 'pending'
+
+    const user = userEvent.setup()
+    const onScan = vi.fn()
+
+    const { unmount } = render(<QrScanner onScan={onScan} />)
+
+    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
+    await user.click(scanBtn)
+
+    // Unmount while scanner is running (no scan result yet)
+    unmount()
+
+    // The cleanup effect should have called stop()
+    expect(mockStop).toHaveBeenCalled()
   })
 })

@@ -165,8 +165,9 @@ test.describe('HistoryView batch revert', () => {
 
   test('cancel in confirmation dialog does not revert', async ({ page }) => {
     await openPage(page, 'Getting Started')
+    const blocksBefore = await page.locator('.sortable-block').count()
     await page.getByRole('button', { name: 'Add block' }).click()
-    await page.waitForTimeout(300)
+    await expect(page.locator('.sortable-block')).toHaveCount(blocksBefore + 1, { timeout: 3000 })
 
     // Navigate to History and select
     await page.getByRole('button', { name: 'History' }).click()

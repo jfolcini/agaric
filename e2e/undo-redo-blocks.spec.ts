@@ -41,14 +41,24 @@ async function reopenPage(page: import('@playwright/test').Page, title: string) 
  */
 async function blurEditors(page: import('@playwright/test').Page) {
   await page.keyboard.press('Escape')
-  await page.waitForTimeout(150)
   // Programmatically blur the active element so focus is on document.body
   await page.evaluate(() => {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur()
     }
   })
-  await page.waitForTimeout(100)
+  // Wait until no contenteditable or input is focused
+  await page.waitForFunction(
+    () => {
+      const el = document.activeElement
+      return (
+        !el ||
+        el === document.body ||
+        (!el.isContentEditable && el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')
+      )
+    },
+    { timeout: 2000 },
+  )
 }
 
 // ---------------------------------------------------------------------------

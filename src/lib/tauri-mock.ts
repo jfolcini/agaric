@@ -505,6 +505,22 @@ export function setupMock(): void {
         }
       }
 
+      case 'query_by_property': {
+        const a = args as Record<string, unknown>
+        const key = a.key as string
+        const valueText = (a.valueText as string | null) ?? null
+        const items = [...blocks.values()].filter((b) => {
+          if (b.deleted_at) return false
+          const blockProps = properties.get(b.id as string)
+          if (!blockProps) return false
+          const prop = blockProps.get(key)
+          if (!prop) return false
+          if (valueText !== null) return prop.value_text === valueText
+          return true
+        })
+        return { items, next_cursor: null, has_more: false }
+      }
+
       case 'query_by_tags': {
         const a = args as Record<string, unknown>
         const tagIds = a.tagIds as string[]

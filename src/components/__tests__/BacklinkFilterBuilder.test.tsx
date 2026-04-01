@@ -212,6 +212,149 @@ describe('BacklinkFilterBuilder', () => {
       expect(onFiltersChange).not.toHaveBeenCalled()
     })
 
+    it('adds a PropertyNum filter', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
+      // Change property type to Number
+      await user.selectOptions(screen.getByLabelText('Property type'), 'num')
+      await user.type(screen.getByLabelText('Property value'), '42')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        { type: 'PropertyNum', key: 'todo', op: 'Eq', value: 42 },
+      ])
+    })
+
+    it('adds a PropertyDate filter', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
+      // Change property type to Date
+      await user.selectOptions(screen.getByLabelText('Property type'), 'date')
+      await user.type(screen.getByLabelText('Property value'), '2024-06-15')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        { type: 'PropertyDate', key: 'todo', op: 'Eq', value: '2024-06-15' },
+      ])
+    })
+
+    it('adds a PropertyIsSet filter', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property-set')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'PropertyIsSet', key: 'todo' }])
+    })
+
+    it('adds a PropertyIsEmpty filter', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property-empty')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'PropertyIsEmpty', key: 'todo' }])
+    })
+
+    it('adds a HasTagPrefix filter', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'tag-prefix')
+      await user.type(screen.getByLabelText('Tag prefix'), 'work')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'HasTagPrefix', prefix: 'work' }])
+    })
+
+    it('shows toast error when PropertyNum has invalid number', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
+      await user.selectOptions(screen.getByLabelText('Property type'), 'num')
+      await user.type(screen.getByLabelText('Property value'), 'abc')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(toast.error).toHaveBeenCalledWith('Invalid number')
+      expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+
+    it('shows toast error when PropertyDate has empty value', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
+      await user.selectOptions(screen.getByLabelText('Property type'), 'date')
+      // Leave value empty, just click Apply
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(toast.error).toHaveBeenCalledWith('Date value is required')
+      expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+
+    it('shows toast error when PropertyIsSet has empty key', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange, propertyKeys: [] })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property-set')
+      // Leave key empty, just click Apply
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(toast.error).toHaveBeenCalledWith('Property key is required')
+      expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+
+    it('shows toast error when PropertyIsEmpty has empty key', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange, propertyKeys: [] })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property-empty')
+      // Leave key empty, just click Apply
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(toast.error).toHaveBeenCalledWith('Property key is required')
+      expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+
+    it('shows toast error when HasTagPrefix has empty prefix', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'tag-prefix')
+      // Leave prefix empty, just click Apply
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(toast.error).toHaveBeenCalledWith('Tag prefix is required')
+      expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+
     it('cancels adding a filter', async () => {
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()

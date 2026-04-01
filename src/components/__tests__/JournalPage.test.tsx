@@ -67,6 +67,11 @@ function makeDailyPage(id: string, dateStr: string) {
   }
 }
 
+// jsdom does not implement scrollIntoView — stub it globally
+if (!HTMLElement.prototype.scrollIntoView) {
+  HTMLElement.prototype.scrollIntoView = vi.fn()
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   useBlockStore.setState({
@@ -841,6 +846,144 @@ describe('JournalPage', () => {
 
       // Cleanup
       Element.prototype.getBoundingClientRect = originalGBCR
+    })
+  })
+
+  // ── Calendar dropdown interactions ───────────────────────────────────
+
+  describe('calendar dropdown interactions', () => {
+    it('opens calendar when calendar button is clicked', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const calButton = screen.getByRole('button', { name: /open calendar picker/i })
+      await user.click(calButton)
+
+      await waitFor(() => {
+        expect(screen.getByRole('grid')).toBeInTheDocument()
+      })
+    })
+
+    it('closes calendar when clicking backdrop', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Open calendar
+      const calButton = screen.getByRole('button', { name: /open calendar picker/i })
+      await user.click(calButton)
+
+      await waitFor(() => {
+        expect(screen.getByRole('grid')).toBeInTheDocument()
+      })
+
+      // Click the backdrop (fixed inset-0 overlay)
+      const backdrop = document.querySelector('.fixed.inset-0') as HTMLElement
+      expect(backdrop).not.toBeNull()
+      await user.click(backdrop)
+
+      await waitFor(() => {
+        expect(screen.queryByRole('grid')).not.toBeInTheDocument()
+      })
+    })
+
+    it('closes calendar on Escape key', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Open calendar
+      const calButton = screen.getByRole('button', { name: /open calendar picker/i })
+      await user.click(calButton)
+
+      await waitFor(() => {
+        expect(screen.getByRole('grid')).toBeInTheDocument()
+      })
+
+      // Press Escape
+      await user.keyboard('{Escape}')
+
+      await waitFor(() => {
+        expect(screen.queryByRole('grid')).not.toBeInTheDocument()
+      })
+    })
+
+    it('Today button navigates to today in weekly mode', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Switch to weekly mode
+      const weekTab = screen.getByRole('tab', { name: /weekly view/i })
+      await user.click(weekTab)
+
+      // Navigate away from today's week
+      const prevBtn = screen.getByRole('button', { name: /previous week/i })
+      await user.click(prevBtn)
+
+      // Click "Go to today"
+      const todayBtn = screen.getByRole('button', { name: /go to today/i })
+      await user.click(todayBtn)
+
+      // Verify the date display shows today's week range
+      const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 })
+      const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 })
+      const expectedRange = `${format(weekStart, 'MMM d')} - ${format(weekEnd, 'MMM d, yyyy')}`
+
+      await waitFor(() => {
+        expect(screen.getByTestId('date-display')).toHaveTextContent(expectedRange)
+      })
+    })
+
+    it('Today button navigates to today in monthly mode', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Switch to monthly mode
+      const monthTab = screen.getByRole('tab', { name: /monthly view/i })
+      await user.click(monthTab)
+
+      // Navigate away from current month
+      const prevBtn = screen.getByRole('button', { name: /previous month/i })
+      await user.click(prevBtn)
+
+      // Click "Go to today"
+      const todayBtn = screen.getByRole('button', { name: /go to today/i })
+      await user.click(todayBtn)
+
+      // Verify the date display shows the current month
+      const expectedMonth = format(new Date(), 'MMMM yyyy')
+
+      await waitFor(() => {
+        expect(screen.getByTestId('date-display')).toHaveTextContent(expectedMonth)
+      })
     })
   })
 

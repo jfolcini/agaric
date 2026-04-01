@@ -1333,6 +1333,90 @@ describe('resetMock clears tag associations', () => {
 })
 
 // ---------------------------------------------------------------------------
+// query_by_property
+// ---------------------------------------------------------------------------
+
+describe('query_by_property', () => {
+  it('returns empty array when no blocks have the property', () => {
+    const result = invoke('query_by_property', { key: 'nonexistent', valueText: null }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items).toHaveLength(0)
+  })
+
+  it('returns blocks matching property key', () => {
+    // First set a property on a known block
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      key: 'todo',
+      valueText: 'TODO',
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+
+    const result = invoke('query_by_property', { key: 'todo', valueText: null }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items.length).toBeGreaterThanOrEqual(1)
+    expect(result.items.some((b) => b.id === SEED_IDS.BLOCK_GS_1)).toBe(true)
+  })
+
+  it('filters by valueText when provided', () => {
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      key: 'todo',
+      valueText: 'TODO',
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_2,
+      key: 'todo',
+      valueText: 'DONE',
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+
+    const result = invoke('query_by_property', { key: 'todo', valueText: 'TODO' }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items.some((b) => b.id === SEED_IDS.BLOCK_GS_1)).toBe(true)
+    expect(result.items.some((b) => b.id === SEED_IDS.BLOCK_GS_2)).toBe(false)
+  })
+
+  it('excludes deleted blocks', () => {
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      key: 'status',
+      valueText: 'active',
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+    // Delete the block
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1, cascade: false })
+
+    const result = invoke('query_by_property', { key: 'status', valueText: null }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items.some((b) => b.id === SEED_IDS.BLOCK_GS_1)).toBe(false)
+  })
+
+  it('returns PageResponse shape', () => {
+    const result = invoke('query_by_property', { key: 'any', valueText: null }) as Record<
+      string,
+      unknown
+    >
+    expect(result).toHaveProperty('items')
+    expect(result).toHaveProperty('next_cursor', null)
+    expect(result).toHaveProperty('has_more', false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Error injection (injectMockError / clearMockErrors)
 // ---------------------------------------------------------------------------
 
