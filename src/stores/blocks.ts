@@ -98,12 +98,25 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   loading: false,
 
   load: async (parentId?: string) => {
-    set({ loading: true, rootParentId: parentId ?? null })
+    const newRoot = parentId ?? null
+    const prevRoot = get().rootParentId
+    // When switching to a different parent, clear stale blocks immediately
+    // so components never see data from a previous view.
+    // When reloading the same parent, keep blocks to avoid a flash of empty content.
+    set({
+      loading: true,
+      rootParentId: newRoot,
+      ...(newRoot !== prevRoot ? { blocks: [], focusedBlockId: null } : {}),
+    })
     try {
       const allBlocks = await loadSubtree(parentId)
-      const flatTree = buildFlatTree(allBlocks, parentId ?? null)
+      const flatTree = buildFlatTree(allBlocks, newRoot)
+      // Discard results if rootParentId changed while we were loading
+      // (e.g. a newer load() was called for a different parent).
+      if (get().rootParentId !== newRoot) return
       set({ blocks: flatTree, loading: false })
     } catch {
+      if (get().rootParentId !== newRoot) return
       set({ loading: false })
       toast.error('Failed to load blocks')
     }

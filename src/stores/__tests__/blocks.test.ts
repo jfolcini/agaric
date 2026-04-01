@@ -122,6 +122,103 @@ describe('useBlockStore', () => {
         expect.objectContaining({ parentId: 'PARENT_42' }),
       )
     })
+
+    it('clears blocks immediately when switching to a different parent', async () => {
+      // Pre-populate store with blocks from a previous parent
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'OLD', parent_id: 'PAGE_A' })],
+        rootParentId: 'PAGE_A',
+        focusedBlockId: 'OLD',
+      })
+
+      // Start loading a different parent (never resolves)
+      mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+      const loadPromise = useBlockStore.getState().load('PAGE_B')
+
+      // Blocks and focusedBlockId are cleared synchronously
+      expect(useBlockStore.getState().blocks).toEqual([])
+      expect(useBlockStore.getState().focusedBlockId).toBeNull()
+      expect(useBlockStore.getState().rootParentId).toBe('PAGE_B')
+      expect(useBlockStore.getState().loading).toBe(true)
+
+      // Cleanup — avoid unhandled rejection
+      void loadPromise
+    })
+
+    it('preserves blocks when reloading the same parent', async () => {
+      const existing = [makeBlock({ id: 'KEEP', parent_id: 'PAGE_A' })]
+      useBlockStore.setState({
+        blocks: existing,
+        rootParentId: 'PAGE_A',
+        focusedBlockId: 'KEEP',
+      })
+
+      // Start reloading the same parent (never resolves)
+      mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+      const loadPromise = useBlockStore.getState().load('PAGE_A')
+
+      // Blocks are NOT cleared — avoids flash of empty content
+      expect(useBlockStore.getState().blocks).toEqual(existing)
+      expect(useBlockStore.getState().focusedBlockId).toBe('KEEP')
+      expect(useBlockStore.getState().loading).toBe(true)
+
+      void loadPromise
+    })
+
+    it('discards results from a stale fetch when a newer load() wins', async () => {
+      let resolveFirst!: (v: unknown) => void
+      const firstFetch = new Promise((resolve) => {
+        resolveFirst = resolve
+      })
+      const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+      // 1) Start loading PAGE_A (slow fetch)
+      mockedInvoke.mockReturnValueOnce(firstFetch)
+      const firstLoad = useBlockStore.getState().load('PAGE_A')
+
+      // 2) Before PAGE_A completes, switch to PAGE_B (fast fetch)
+      mockedInvoke.mockResolvedValue(emptyPage)
+      const secondLoad = useBlockStore.getState().load('PAGE_B')
+      await secondLoad
+
+      expect(useBlockStore.getState().rootParentId).toBe('PAGE_B')
+      expect(useBlockStore.getState().loading).toBe(false)
+
+      // 3) PAGE_A's fetch finally completes — results must be discarded
+      resolveFirst(emptyPage)
+      await firstLoad
+
+      // Store should still reflect PAGE_B, not revert to PAGE_A
+      expect(useBlockStore.getState().rootParentId).toBe('PAGE_B')
+      expect(useBlockStore.getState().loading).toBe(false)
+    })
+
+    it('discards error from a stale fetch without showing toast', async () => {
+      const { toast } = await import('sonner')
+      const mockedToastError = vi.mocked(toast.error)
+
+      let rejectFirst!: (e: Error) => void
+      const firstFetch = new Promise((_resolve, reject) => {
+        rejectFirst = reject
+      })
+      const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+      // 1) Start loading PAGE_A (will fail)
+      mockedInvoke.mockReturnValueOnce(firstFetch)
+      const firstLoad = useBlockStore.getState().load('PAGE_A')
+
+      // 2) Switch to PAGE_B before PAGE_A fails
+      mockedInvoke.mockResolvedValue(emptyPage)
+      await useBlockStore.getState().load('PAGE_B')
+
+      // 3) PAGE_A fails — should NOT show error toast or change loading state
+      rejectFirst(new Error('network'))
+      await firstLoad
+
+      expect(useBlockStore.getState().rootParentId).toBe('PAGE_B')
+      expect(useBlockStore.getState().loading).toBe(false)
+      expect(mockedToastError).not.toHaveBeenCalled()
+    })
   })
 
   // ---------------------------------------------------------------------------

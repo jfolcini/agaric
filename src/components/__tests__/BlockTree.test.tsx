@@ -178,6 +178,7 @@ beforeEach(() => {
   capturedBlockKeyboardOpts = undefined
   useBlockStore.setState({
     blocks: [],
+    rootParentId: null,
     focusedBlockId: null,
     loading: false,
   })
