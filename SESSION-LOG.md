@@ -1,5 +1,39 @@
 # Session Log
 
+## Session 30 — 2026-04-01 — Server-side backlink filter expression system
+
+Replaced incomplete client-side backlink filtering with a composable server-side filter expression system.
+Commit: `b7efa0e`. 13 files changed, 3974 insertions, 631 deletions.
+
+### Phase A — Rust backend
+
+New `backlink_query.rs` module (~2400 lines) with:
+- `BacklinkFilter` enum (13 variants): `BlockType`, `IsDeleted`, `IsConflict`, `HasTag`, `PropertyText`/`Num`/`Date` (with `CompareOp`), `PropertyIsEmpty`/`IsSet`, `Contains` (FTS), `CreatedBetween`, `And`, `Or`, `Not`
+- `BacklinkSort` (4 variants): `Created`, `PropertyText`/`Num`/`Date` — direction-aware, missing values always sort last
+- `eval_backlink_query()`: resolves filters → intersects with backlink set → applies sort → cursor-paginated response with `total_count`
+- Migration 0004: 3 indexes for property queries
+- 77 tests including compound nesting (Not(And), Not(Or)), sort with missing properties, FTS error propagation
+
+Review subagent found 3 issues:
+1. FTS error swallowed by `.unwrap_or_default()` → fixed to `.await?`
+2. Sort tie-breaking applied direction to ID comparison → restructured to direction-only on property value
+3. 14 additional tests added for edge cases
+
+### Phase B — Frontend
+
+- New `BacklinkFilterBuilder` component: pill-based UI with category select, removable Badge pills, sort control, "Clear all", count display
+- `BacklinksPanel` rewrite: removed 4 client-side `<select>` filters + N+1 `getProperties()` calls, replaced with single `queryBacklinksFiltered()` call
+- `tauri.ts` + `tauri-mock.ts` wrappers for new commands
+- 43 frontend tests (17 filter builder + 26 panel)
+
+### Subagents
+
+| ID | Role | Result |
+|----|------|--------|
+| `e7e6b90e` | Phase A build | Completed — backlink_query.rs + commands + migration |
+| `dc70aa20` | Phase A review | Found 3 issues, added 14 tests |
+| `8231642b` | Phase B build | Completed — BacklinkFilterBuilder + BacklinksPanel rewrite |
+
 ## Session 29 — 2026-04-01 — Test coverage audit + 20 new tests + flaky fix
 
 Systematic coverage audit of all 16 Rust files changed by sync blockers (commit `a3a38a5`).
