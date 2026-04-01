@@ -264,6 +264,82 @@ describe('getProjection', () => {
     expect(result.depth).toBe(1)
     expect(result.parentId).toBe('X') // child of X
   })
+
+  it('resolves same-level parent when depth equals previousItem depth', () => {
+    // Flat tree: A(0), A1(1), A2(1), B(0)
+    // Drag B over A2 with offset for depth 1 → same level as A2
+    // After sim: [A, A1, B, A2] → projectedIndex=2, prev=A1(depth 1), next=A2(depth 1)
+    // maxDepth=2, minDepth=1, projectedDepth=0+round(24/24)=1 → depth=1
+    // depth === previousItem.depth → same parent as A1 → 'A'
+    const flat: FlatBlock[] = [
+      mkFlat('A', null, 1, 0),
+      mkFlat('A1', 'A', 1, 1),
+      mkFlat('A2', 'A', 2, 1),
+      mkFlat('B', null, 2, 0),
+    ]
+    const result = getProjection(flat, 'B', 'A2', INDENT, INDENT)
+    expect(result.depth).toBe(1)
+    expect(result.parentId).toBe('A')
+  })
+
+  it('resolves child-of-previous when depth exceeds previousItem depth', () => {
+    // Flat tree: A(0), B(0) — drag B over A with large rightward offset
+    // After sim when overIndex < activeIndex: [B, A] at projectedIndex=0
+    // But that gives no prev. Instead use items where we can get depth > prev.depth
+    // Flat tree: A(0), A1(1), B(0)
+    // Drag B over A1 with offset for depth 2
+    // After sim: [A, B, A1] → projectedIndex=1, prev=A(depth 0), next=A1(depth 1)
+    // maxDepth=1, minDepth=1 → clamped to 1
+    // depth(1) > previousItem.depth(0) → parent = previousItem.id = 'A'
+    const flat: FlatBlock[] = [
+      mkFlat('A', null, 1, 0),
+      mkFlat('A1', 'A', 1, 1),
+      mkFlat('B', null, 2, 0),
+    ]
+    const result = getProjection(flat, 'B', 'A1', INDENT * 3, INDENT)
+    expect(result.depth).toBe(1)
+    expect(result.parentId).toBe('A')
+  })
+
+  it('walks back to ancestor when depth is shallower than previousItem depth', () => {
+    // Flat tree: A(0), A1(1), A1a(2), B(0)
+    // Drag B over A1a with 0 offset → projected depth = 0
+    // After sim: [A, A1, B, A1a] → projectedIndex=2, prev=A1(depth 1), next=A1a(depth 2)
+    // maxDepth=2, minDepth=2 → clamped to 2
+    // Actually that doesn't give shallower. We need minDepth < prev.depth.
+    // Let's set up: A(0), A1(1), A1a(2), C(0), B(0)
+    // Drag B over C with leftward offset
+    // After sim: [A, A1, A1a, B, C] → projectedIndex=3, prev=A1a(depth 2), next=C(depth 0)
+    // maxDepth=3, minDepth=0, projectedDepth=0+round(-24*5/24)=-5 → clamped to 0
+    // depth(0) < previousItem(A1a).depth(2) → walk backwards to find item at depth -1 → none → rootParentId
+    // Actually depth === 0, so getParentId() returns rootParentId immediately.
+    // Let's instead use depth=1 to exercise the walk-back.
+    // Flat tree: A(0), A1(1), A1a(2), A1b(2), B(0)
+    // Drag B over A1b with slight rightward offset for depth 1
+    // After sim: [A, A1, A1a, B, A1b] → projectedIndex=3, prev=A1a(depth 2), next=A1b(depth 2)
+    // maxDepth=3, minDepth=2 → projectedDepth = 0+round(24/24)=1 → clamped to minDepth=2
+    // That doesn't work either. We need minDepth to be low.
+    // Re-approach: items where next has low depth.
+    // Flat tree: GP(0), P(1), P1(2), P2(2), X(0), B(0)
+    // Drag B over X → After sim: [GP, P, P1, P2, B, X]
+    // projectedIndex=4, prev=P2(depth 2), next=X(depth 0)
+    // maxDepth=3, minDepth=0
+    // With offset for depth 1: projectedDepth=0+round(24/24)=1, clamped to [0,3] → 1
+    // depth(1) < previousItem(P2).depth(2)
+    // Walk backwards from [GP, P, P1, P2] to find depth===0 → GP
+    // parentId = GP.id
+    const flat: FlatBlock[] = [
+      mkFlat('GP', null, 1, 0),
+      mkFlat('P', 'GP', 1, 1),
+      mkFlat('P1', 'P', 1, 2),
+      mkFlat('P2', 'P', 2, 2),
+      mkFlat('X', null, 2, 0),
+      mkFlat('B', null, 3, 0),
+    ]
+    const result = getProjection(flat, 'B', 'X', INDENT, INDENT)
+    expect(result.depth).toBe(1)
+    expect(result.parentId).toBe('GP')
+  })
 })
 
 // ── computePosition ──────────────────────────────────────────────────────
@@ -339,5 +415,19 @@ describe('computePosition', () => {
   it('handles root-level items (null parent)', () => {
     const items: FlatBlock[] = [mkFlat('A', null, 1, 0), mkFlat('B', null, 2, 0)]
     expect(computePosition(items, null, 2, 'dragged')).toBe(3)
+  })
+
+  it('returns 1 for first child when parent has no other children', () => {
+    const items: FlatBlock[] = [mkFlat('P', null, 1, 0), mkFlat('Q', null, 2, 0)]
+    expect(computePosition(items, 'P', 1, 'dragged')).toBe(1)
+  })
+
+  it('returns position before first sibling when dropping at parent index + 1', () => {
+    const items: FlatBlock[] = [
+      mkFlat('P', null, 1, 0),
+      mkFlat('C1', 'P', 10, 1),
+      mkFlat('C2', 'P', 20, 1),
+    ]
+    expect(computePosition(items, 'P', 1, 'dragged')).toBe(9)
   })
 })

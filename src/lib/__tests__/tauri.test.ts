@@ -13,18 +13,33 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   addTag,
+  batchResolve,
   createBlock,
   deleteBlock,
+  deleteProperty,
   editBlock,
+  getBacklinks,
+  getBatchProperties,
   getBlock,
+  getBlockHistory,
+  getConflicts,
+  getProperties,
+  getStatus,
   listBlocks,
+  listPageHistory,
   listTagsByPrefix,
+  listTagsForBlock,
   moveBlock,
   purgeBlock,
+  queryByProperty,
   queryByTags,
+  redoPageOp,
   removeTag,
   restoreBlock,
+  revertOps,
   searchBlocks,
+  setProperty,
+  undoPageOp,
 } from '../tauri'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -543,12 +558,497 @@ describe('listTagsByPrefix', () => {
 })
 
 // ---------------------------------------------------------------------------
+// batchResolve
+// ---------------------------------------------------------------------------
+
+describe('batchResolve', () => {
+  it('invokes batch_resolve with ids', async () => {
+    const expected = [
+      { id: 'B1', title: 'Block 1', block_type: 'content', deleted: false },
+      { id: 'B2', title: null, block_type: 'page', deleted: true },
+    ]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await batchResolve(['B1', 'B2'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('batch_resolve', { ids: ['B1', 'B2'] })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getBacklinks
+// ---------------------------------------------------------------------------
+
+describe('getBacklinks', () => {
+  const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+  it('invokes get_backlinks with all parameters', async () => {
+    const pageResp = {
+      items: [
+        {
+          id: 'B1',
+          block_type: 'content',
+          content: 'ref',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        },
+      ],
+      next_cursor: 'next1',
+      has_more: true,
+    }
+    mockedInvoke.mockResolvedValueOnce(pageResp)
+
+    const result = await getBacklinks({ blockId: 'TARGET', cursor: 'cur1', limit: 10 })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_backlinks', {
+      blockId: 'TARGET',
+      cursor: 'cur1',
+      limit: 10,
+    })
+    expect(result).toEqual(pageResp)
+  })
+
+  it('defaults optional cursor and limit to null', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    await getBacklinks({ blockId: 'TARGET' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('get_backlinks', {
+      blockId: 'TARGET',
+      cursor: null,
+      limit: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getBlockHistory
+// ---------------------------------------------------------------------------
+
+describe('getBlockHistory', () => {
+  const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+  it('invokes get_block_history with all parameters', async () => {
+    const pageResp = {
+      items: [{ op_type: 'edit', seq: 1, device_id: 'dev1', timestamp: '2025-01-15T00:00:00Z' }],
+      next_cursor: 'next1',
+      has_more: true,
+    }
+    mockedInvoke.mockResolvedValueOnce(pageResp)
+
+    const result = await getBlockHistory({ blockId: 'BLK001', cursor: 'cur1', limit: 5 })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
+      blockId: 'BLK001',
+      cursor: 'cur1',
+      limit: 5,
+    })
+    expect(result).toEqual(pageResp)
+  })
+
+  it('defaults optional cursor and limit to null', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    await getBlockHistory({ blockId: 'BLK001' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('get_block_history', {
+      blockId: 'BLK001',
+      cursor: null,
+      limit: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getConflicts
+// ---------------------------------------------------------------------------
+
+describe('getConflicts', () => {
+  const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+  it('invokes get_conflicts with all parameters', async () => {
+    const pageResp = {
+      items: [
+        {
+          id: 'C1',
+          block_type: 'content',
+          content: 'conflict',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: true,
+        },
+      ],
+      next_cursor: 'next1',
+      has_more: true,
+    }
+    mockedInvoke.mockResolvedValueOnce(pageResp)
+
+    const result = await getConflicts({ cursor: 'cur1', limit: 10 })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_conflicts', {
+      cursor: 'cur1',
+      limit: 10,
+    })
+    expect(result).toEqual(pageResp)
+  })
+
+  it('defaults optional cursor and limit to null when no params given', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    await getConflicts()
+
+    expect(mockedInvoke).toHaveBeenCalledWith('get_conflicts', {
+      cursor: null,
+      limit: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getStatus
+// ---------------------------------------------------------------------------
+
+describe('getStatus', () => {
+  it('invokes get_status with no arguments', async () => {
+    const expected = { queue_length: 0, last_sync: '2025-01-15T00:00:00Z' }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await getStatus()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_status')
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listTagsForBlock
+// ---------------------------------------------------------------------------
+
+describe('listTagsForBlock', () => {
+  it('invokes list_tags_for_block with blockId', async () => {
+    const expected = ['tag1', 'tag2', 'tag3']
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listTagsForBlock('BLK001')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_tags_for_block', { blockId: 'BLK001' })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// setProperty
+// ---------------------------------------------------------------------------
+
+describe('setProperty', () => {
+  it('invokes set_property with all value fields', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await setProperty({
+      blockId: 'BLK001',
+      key: 'priority',
+      valueText: 'high',
+      valueNum: 1,
+      valueDate: '2025-01-15',
+      valueRef: 'REF001',
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      blockId: 'BLK001',
+      key: 'priority',
+      valueText: 'high',
+      valueNum: 1,
+      valueDate: '2025-01-15',
+      valueRef: 'REF001',
+    })
+  })
+
+  it('defaults optional value fields to null', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await setProperty({ blockId: 'BLK001', key: 'status' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      blockId: 'BLK001',
+      key: 'status',
+      valueText: null,
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+  })
+
+  it('returns void (no return value)', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    const result = await setProperty({ blockId: 'BLK001', key: 'k', valueText: 'v' })
+
+    expect(result).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// deleteProperty
+// ---------------------------------------------------------------------------
+
+describe('deleteProperty', () => {
+  it('invokes delete_property with blockId and key', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await deleteProperty('BLK001', 'priority')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_property', {
+      blockId: 'BLK001',
+      key: 'priority',
+    })
+  })
+
+  it('returns void (no return value)', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    const result = await deleteProperty('BLK001', 'k')
+
+    expect(result).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getProperties
+// ---------------------------------------------------------------------------
+
+describe('getProperties', () => {
+  it('invokes get_properties with blockId', async () => {
+    const expected = [
+      { key: 'status', value_text: 'done', value_num: null, value_date: null, value_ref: null },
+    ]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await getProperties('BLK001')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_properties', { blockId: 'BLK001' })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getBatchProperties
+// ---------------------------------------------------------------------------
+
+describe('getBatchProperties', () => {
+  it('invokes get_batch_properties with blockIds', async () => {
+    const expected = {
+      BLK001: [
+        { key: 'status', value_text: 'done', value_num: null, value_date: null, value_ref: null },
+      ],
+      BLK002: [],
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await getBatchProperties(['BLK001', 'BLK002'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_batch_properties', {
+      blockIds: ['BLK001', 'BLK002'],
+    })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listPageHistory
+// ---------------------------------------------------------------------------
+
+describe('listPageHistory', () => {
+  const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+  it('invokes list_page_history with all parameters', async () => {
+    const pageResp = {
+      items: [{ op_type: 'edit', seq: 1, device_id: 'dev1', timestamp: '2025-01-15T00:00:00Z' }],
+      next_cursor: 'next1',
+      has_more: true,
+    }
+    mockedInvoke.mockResolvedValueOnce(pageResp)
+
+    const result = await listPageHistory({
+      pageId: 'PAGE1',
+      opTypeFilter: 'edit',
+      cursor: 'cur1',
+      limit: 20,
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+      pageId: 'PAGE1',
+      opTypeFilter: 'edit',
+      cursor: 'cur1',
+      limit: 20,
+    })
+    expect(result).toEqual(pageResp)
+  })
+
+  it('defaults optional opTypeFilter, cursor and limit to null', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    await listPageHistory({ pageId: 'PAGE1' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+      pageId: 'PAGE1',
+      opTypeFilter: null,
+      cursor: null,
+      limit: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// revertOps
+// ---------------------------------------------------------------------------
+
+describe('revertOps', () => {
+  it('invokes revert_ops with ops array', async () => {
+    const ops = [
+      { device_id: 'dev1', seq: 10 },
+      { device_id: 'dev2', seq: 20 },
+    ]
+    const expected = { reverted: 2 }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await revertOps({ ops })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('revert_ops', { ops })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// queryByProperty
+// ---------------------------------------------------------------------------
+
+describe('queryByProperty', () => {
+  const emptyPage = { items: [], next_cursor: null, has_more: false }
+
+  it('invokes query_by_property with all parameters', async () => {
+    const pageResp = {
+      items: [
+        {
+          id: 'B1',
+          block_type: 'content',
+          content: 'matched',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        },
+      ],
+      next_cursor: 'next1',
+      has_more: true,
+    }
+    mockedInvoke.mockResolvedValueOnce(pageResp)
+
+    const result = await queryByProperty({
+      key: 'status',
+      valueText: 'done',
+      cursor: 'cur1',
+      limit: 10,
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
+      key: 'status',
+      valueText: 'done',
+      cursor: 'cur1',
+      limit: 10,
+    })
+    expect(result).toEqual(pageResp)
+  })
+
+  it('defaults optional valueText, cursor and limit to null', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    await queryByProperty({ key: 'status' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
+      key: 'status',
+      valueText: null,
+      cursor: null,
+      limit: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// undoPageOp
+// ---------------------------------------------------------------------------
+
+describe('undoPageOp', () => {
+  it('invokes undo_page_op with pageId and undoDepth', async () => {
+    const expected = {
+      reversed_op: { device_id: 'dev1', seq: 5 },
+      new_op_ref: { device_id: 'dev1', seq: 6 },
+      new_op_type: 'edit',
+      is_redo: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await undoPageOp({ pageId: 'PAGE1', undoDepth: 1 })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('undo_page_op', {
+      pageId: 'PAGE1',
+      undoDepth: 1,
+    })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// redoPageOp
+// ---------------------------------------------------------------------------
+
+describe('redoPageOp', () => {
+  it('invokes redo_page_op with undoDeviceId and undoSeq', async () => {
+    const expected = {
+      reversed_op: { device_id: 'dev1', seq: 6 },
+      new_op_ref: { device_id: 'dev1', seq: 7 },
+      new_op_type: 'edit',
+      is_redo: true,
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await redoPageOp({ undoDeviceId: 'dev1', undoSeq: 6 })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('redo_page_op', {
+      undoDeviceId: 'dev1',
+      undoSeq: 6,
+    })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Cross-cutting concerns
 // ---------------------------------------------------------------------------
 
 describe('cross-cutting', () => {
   it('all wrappers use snake_case command names matching Rust', async () => {
-    // Fire each wrapper once and collect command names
     mockedInvoke.mockResolvedValue({})
 
     await createBlock({ blockType: 'content', content: '' })
@@ -558,12 +1058,27 @@ describe('cross-cutting', () => {
     await purgeBlock('id')
     await listBlocks()
     await getBlock('id')
+    await batchResolve(['id'])
     await moveBlock('id', null, 0)
     await addTag('id', 'tag')
     await removeTag('id', 'tag')
+    await getBacklinks({ blockId: 'id' })
+    await getBlockHistory({ blockId: 'id' })
+    await getConflicts()
     await searchBlocks({ query: 'test' })
+    await getStatus()
     await queryByTags({ tagIds: ['t'], prefixes: [], mode: 'and' })
     await listTagsByPrefix({ prefix: 'w' })
+    await listTagsForBlock('id')
+    await setProperty({ blockId: 'id', key: 'k' })
+    await deleteProperty('id', 'k')
+    await getProperties('id')
+    await getBatchProperties(['id'])
+    await listPageHistory({ pageId: 'id' })
+    await revertOps({ ops: [{ device_id: 'd', seq: 1 }] })
+    await queryByProperty({ key: 'k' })
+    await undoPageOp({ pageId: 'id', undoDepth: 1 })
+    await redoPageOp({ undoDeviceId: 'd', undoSeq: 1 })
 
     const commandNames = mockedInvoke.mock.calls.map((call) => call[0])
     expect(commandNames).toEqual([
@@ -574,12 +1089,27 @@ describe('cross-cutting', () => {
       'purge_block',
       'list_blocks',
       'get_block',
+      'batch_resolve',
       'move_block',
       'add_tag',
       'remove_tag',
+      'get_backlinks',
+      'get_block_history',
+      'get_conflicts',
       'search_blocks',
+      'get_status',
       'query_by_tags',
       'list_tags_by_prefix',
+      'list_tags_for_block',
+      'set_property',
+      'delete_property',
+      'get_properties',
+      'get_batch_properties',
+      'list_page_history',
+      'revert_ops',
+      'query_by_property',
+      'undo_page_op',
+      'redo_page_op',
     ])
   })
 })

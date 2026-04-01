@@ -2143,3 +2143,495 @@ describe('BlockTree aria-live announcements', () => {
     })
   })
 })
+
+// =========================================================================
+// handleNavigate — same-tree local navigation
+// =========================================================================
+
+describe('BlockTree handleNavigate — same-tree navigation', () => {
+  it('same-tree navigation focuses the target block without calling onNavigateToPage', async () => {
+    const BLOCK_ID = '01TESTLOCAL0000000000NAV01'
+    const onNav = vi.fn()
+
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_block' && args?.blockId === BLOCK_ID) {
+        return {
+          id: BLOCK_ID,
+          block_type: 'content',
+          content: 'Local block text',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        }
+      }
+      if (cmd === 'get_properties') return []
+      return emptyPage
+    })
+
+    render(<BlockTree onNavigateToPage={onNav} />)
+
+    await waitFor(() => {
+      expect(capturedOnNavigate).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnNavigate?.(BLOCK_ID)
+    })
+
+    // Same-tree: should NOT call onNavigateToPage
+    expect(onNav).not.toHaveBeenCalled()
+    // Should set focus to the target block
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe(BLOCK_ID)
+    })
+  })
+
+  it('navigates to parent page with fallback Untitled when parent fetch fails', async () => {
+    const CONTENT_ID = '01TESTCONT00000000000NAV04'
+    const PARENT_ID = '01TESTPAGE00000000000NAV05'
+    const onNav = vi.fn()
+
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_block' && args?.blockId === CONTENT_ID) {
+        return {
+          id: CONTENT_ID,
+          block_type: 'content',
+          content: 'Cross-page block',
+          parent_id: PARENT_ID,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+        }
+      }
+      // Parent fetch fails
+      if (cmd === 'get_block' && args?.blockId === PARENT_ID) {
+        throw new Error('Parent not found')
+      }
+      if (cmd === 'get_properties') return []
+      return emptyPage
+    })
+
+    render(<BlockTree parentId="DIFFERENT_ROOT" onNavigateToPage={onNav} />)
+
+    await waitFor(() => {
+      expect(capturedOnNavigate).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnNavigate?.(CONTENT_ID)
+    })
+
+    // Should navigate to parent page with fallback title
+    await waitFor(() => {
+      expect(onNav).toHaveBeenCalledWith(PARENT_ID, 'Untitled', CONTENT_ID)
+    })
+  })
+})
+
+// =========================================================================
+// handleDeleteBlock
+// =========================================================================
+
+describe('BlockTree handleDeleteBlock', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('deleting a block calls delete_block via invoke', async () => {
+    const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onDeleteBlock).toBeDefined()
+    })
+
+    act(() => {
+      capturedBlockKeyboardOpts?.onDeleteBlock?.()
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'B' })
+    })
+  })
+
+  it('deleting the only block in the tree sets focus to null', async () => {
+    const tree = [makeBlock('ONLY', null, 0, 'The only block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'ONLY' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onDeleteBlock).toBeDefined()
+    })
+
+    act(() => {
+      capturedBlockKeyboardOpts?.onDeleteBlock?.()
+    })
+
+    // When the only block is deleted, focus should be null
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBeNull()
+    })
+  })
+
+  it('deleting a focused block moves focus to the previous block', async () => {
+    const tree = [
+      makeBlock('A', null, 0, 'First'),
+      makeBlock('B', null, 0, 'Second'),
+      makeBlock('C', null, 0, 'Third'),
+    ]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onDeleteBlock).toBeDefined()
+    })
+
+    act(() => {
+      capturedBlockKeyboardOpts?.onDeleteBlock?.()
+    })
+
+    // Focus should move to previous block A
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('A')
+    })
+  })
+
+  it('deleting the first block moves focus to the next block', async () => {
+    const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onDeleteBlock).toBeDefined()
+    })
+
+    act(() => {
+      capturedBlockKeyboardOpts?.onDeleteBlock?.()
+    })
+
+    // Since A is the first block (idx=0), focus moves to the next block B
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('B')
+    })
+  })
+})
+
+// =========================================================================
+// handleMergeWithPrev (Backspace at start merges with previous block)
+// =========================================================================
+
+describe('BlockTree handleMergeWithPrev', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('merge concatenates previous block content with current and removes current', async () => {
+    const tree = [makeBlock('A', null, 0, 'Hello '), makeBlock('B', null, 0, 'World')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      const handler = capturedBlockKeyboardOpts?.onMergeWithPrev
+      expect(handler).toBeDefined()
+    })
+
+    act(() => {
+      ;(capturedBlockKeyboardOpts?.onMergeWithPrev as () => void)?.()
+    })
+
+    // Should edit previous block with concatenated content
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: 'Hello World',
+      })
+    })
+
+    // Should delete current block
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'B' })
+    })
+
+    // Focus should move to previous block
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('A')
+    })
+  })
+
+  it('merge on first block is a no-op', async () => {
+    const tree = [makeBlock('A', null, 0, 'Only block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      const handler = capturedBlockKeyboardOpts?.onMergeWithPrev
+      expect(handler).toBeDefined()
+    })
+
+    act(() => {
+      ;(capturedBlockKeyboardOpts?.onMergeWithPrev as () => void)?.()
+    })
+
+    // No edit_block or delete_block should be called
+    await new Promise((r) => setTimeout(r, 50))
+    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
+  })
+})
+
+// =========================================================================
+// handleIndent / handleDedent (Tab / Shift+Tab in block tree context)
+// =========================================================================
+
+describe('BlockTree handleIndent / handleDedent', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('indent calls move_block with previous sibling as new parent', async () => {
+    const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      const handler = capturedBlockKeyboardOpts?.onIndent
+      expect(handler).toBeDefined()
+    })
+
+    act(() => {
+      ;(capturedBlockKeyboardOpts?.onIndent as () => void)?.()
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'B',
+        newParentId: 'A',
+        newPosition: 0,
+      })
+    })
+  })
+
+  it('dedent calls move_block with grandparent as new parent', async () => {
+    const tree = [makeBlock('A', null, 0, 'Parent'), makeBlock('B', 'A', 1, 'Child')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      const handler = capturedBlockKeyboardOpts?.onDedent
+      expect(handler).toBeDefined()
+    })
+
+    act(() => {
+      ;(capturedBlockKeyboardOpts?.onDedent as () => void)?.()
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'B',
+        newParentId: null,
+        newPosition: 1,
+      })
+    })
+  })
+
+  it('indent on the first block is a no-op', async () => {
+    const tree = [makeBlock('A', null, 0, 'Only block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      const handler = capturedBlockKeyboardOpts?.onIndent
+      expect(handler).toBeDefined()
+    })
+
+    act(() => {
+      ;(capturedBlockKeyboardOpts?.onIndent as () => void)?.()
+    })
+
+    // No move_block should be called
+    await new Promise((r) => setTimeout(r, 50))
+    expect(mockedInvoke).not.toHaveBeenCalledWith('move_block', expect.anything())
+  })
+
+  it('dedent on a root-level block is a no-op', async () => {
+    const tree = [makeBlock('A', null, 0, 'Root block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      const handler = capturedBlockKeyboardOpts?.onDedent
+      expect(handler).toBeDefined()
+    })
+
+    act(() => {
+      ;(capturedBlockKeyboardOpts?.onDedent as () => void)?.()
+    })
+
+    // No move_block should be called (already at root)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(mockedInvoke).not.toHaveBeenCalledWith('move_block', expect.anything())
+  })
+})
+
+// =========================================================================
+// Priority keyboard shortcuts (Mod+Shift+1/2/3)
+// =========================================================================
+
+describe('BlockTree priority keyboard shortcuts', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('set-priority-1 event sets priority A on focused block', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+    })
+
+    act(() => {
+      document.dispatchEvent(new Event('set-priority-1'))
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'priority',
+        valueText: 'A',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+
+    // Priority should update in UI
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', 'A')
+    })
+  })
+
+  it('set-priority-2 event sets priority B on focused block', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+    })
+
+    act(() => {
+      document.dispatchEvent(new Event('set-priority-2'))
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'priority',
+        valueText: 'B',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', 'B')
+    })
+  })
+
+  it('set-priority-3 event sets priority C on focused block', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+    })
+
+    act(() => {
+      document.dispatchEvent(new Event('set-priority-3'))
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'priority',
+        valueText: 'C',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', 'C')
+    })
+  })
+
+  it('priority event does nothing when no block is focused', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+    })
+
+    act(() => {
+      document.dispatchEvent(new Event('set-priority-1'))
+    })
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+  })
+})

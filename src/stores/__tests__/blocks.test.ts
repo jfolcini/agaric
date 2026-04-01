@@ -609,6 +609,94 @@ describe('useBlockStore', () => {
 
       expect(useBlockStore.getState().blocks.find((b) => b.id === 'B')?.parent_id).toBeNull()
     })
+
+    it('places indented block after prevSibling existing children (while-loop)', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const childA1 = makeBlock({ id: 'A1', position: 0, parent_id: 'A', depth: 1 })
+      const childA2 = makeBlock({ id: 'A2', position: 1, parent_id: 'A', depth: 1 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      useBlockStore.setState({ blocks: [blockA, childA1, childA2, blockB] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        new_parent_id: 'A',
+        new_position: 0,
+      })
+
+      await useBlockStore.getState().indent('B')
+
+      const blocks = useBlockStore.getState().blocks
+      const bIdx = blocks.findIndex((b) => b.id === 'B')
+      expect(bIdx).toBeGreaterThan(blocks.findIndex((b) => b.id === 'A2'))
+      expect(blocks[bIdx].parent_id).toBe('A')
+      expect(blocks[bIdx].depth).toBe(1)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // moveToParent
+  // ---------------------------------------------------------------------------
+  describe('moveToParent', () => {
+    it('calls moveBlock, reloads tree, and notifies undo', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      useBlockStore.setState({ blocks: [blockA, blockB], rootParentId: 'PAGE1' })
+
+      // move_block
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        new_parent_id: 'A',
+        new_position: 0,
+      })
+      // list_blocks (reload from load())
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+
+      await useBlockStore.getState().moveToParent('B', 'A', 0)
+
+      expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
+        blockId: 'B',
+        newParentId: 'A',
+        newPosition: 0,
+      })
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_blocks',
+        expect.objectContaining({ parentId: 'PAGE1' }),
+      )
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE1')
+    })
+
+    it('does not update blocks or notify undo on backend error', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      useBlockStore.setState({ blocks: [blockA, blockB], rootParentId: 'PAGE1' })
+
+      mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
+
+      await useBlockStore.getState().moveToParent('B', 'A', 0)
+
+      expect(useBlockStore.getState().blocks).toHaveLength(2)
+      expect(useBlockStore.getState().blocks[0].id).toBe('A')
+      expect(useBlockStore.getState().blocks[1].id).toBe('B')
+      expect(mockOnNewAction).not.toHaveBeenCalled()
+    })
+
+    it('handles null rootParentId (passes undefined to load)', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      useBlockStore.setState({ blocks: [blockA], rootParentId: null })
+
+      // move_block
+      mockedInvoke.mockResolvedValueOnce({})
+      // list_blocks (reload) — called with parentId: null (top-level)
+      mockedInvoke.mockResolvedValueOnce({ items: [], next_cursor: null, has_more: false })
+
+      await useBlockStore.getState().moveToParent('A', null, 0)
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_blocks',
+        expect.objectContaining({ parentId: null }),
+      )
+      expect(mockOnNewAction).not.toHaveBeenCalled()
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -696,6 +784,32 @@ describe('useBlockStore', () => {
         newParentId: 'GP',
         newPosition: 6,
       })
+    })
+
+    it('places dedented block after parent subtree with other descendants (while-loop)', async () => {
+      const grandparent = makeBlock({ id: 'GP', parent_id: null, position: 0, depth: 0 })
+      const parent = makeBlock({ id: 'P', parent_id: 'GP', position: 0, depth: 1 })
+      const sibling = makeBlock({ id: 'S', parent_id: 'P', position: 0, depth: 2 })
+      const child = makeBlock({ id: 'C', parent_id: 'P', position: 1, depth: 2 })
+      const otherRoot = makeBlock({ id: 'R', parent_id: null, position: 1, depth: 0 })
+      useBlockStore.setState({ blocks: [grandparent, parent, sibling, child, otherRoot] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'C',
+        new_parent_id: 'GP',
+        new_position: 1,
+      })
+
+      await useBlockStore.getState().dedent('C')
+
+      const blocks = useBlockStore.getState().blocks
+      const cIdx = blocks.findIndex((b) => b.id === 'C')
+      const sIdx = blocks.findIndex((b) => b.id === 'S')
+      const pIdx = blocks.findIndex((b) => b.id === 'P')
+      expect(cIdx).toBeGreaterThan(sIdx)
+      expect(cIdx).toBeGreaterThan(pIdx)
+      expect(blocks[cIdx].depth).toBe(1)
+      expect(blocks[cIdx].parent_id).toBe('GP')
     })
   })
 

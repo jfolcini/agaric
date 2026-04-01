@@ -55,7 +55,7 @@ describe('useBootStore', () => {
 
   it('recovering state is observable during boot', async () => {
     // Use a deferred promise so we can observe state mid-boot
-    let resolveInvoke: (v: unknown) => void
+    let resolveInvoke: ((v: unknown) => void) | undefined
     const invokePromise = new Promise((resolve) => {
       resolveInvoke = resolve
     })
@@ -66,9 +66,18 @@ describe('useBootStore', () => {
     // While invoke is pending, state should be 'recovering'
     expect(useBootStore.getState().state).toBe('recovering')
 
-    resolveInvoke!({ items: [], next_cursor: null, has_more: false })
+    resolveInvoke?.({ items: [], next_cursor: null, has_more: false })
     await bootPromise
 
     expect(useBootStore.getState().state).toBe('ready')
+  })
+
+  it('handles non-Error exceptions (String(e) fallback)', async () => {
+    mockedInvoke.mockRejectedValueOnce('plain string error')
+
+    await useBootStore.getState().boot()
+
+    expect(useBootStore.getState().state).toBe('error')
+    expect(useBootStore.getState().error).toBe('plain string error')
   })
 })

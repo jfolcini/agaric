@@ -752,6 +752,465 @@ describe('query_by_tags', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// restore_block
+// ---------------------------------------------------------------------------
+
+describe('restore_block', () => {
+  it('un-soft-deletes a deleted block', () => {
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    const deleted = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(deleted.deleted_at).not.toBeNull()
+
+    const result = invoke('restore_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
+      string,
+      unknown
+    >
+    expect(result.block_id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result.restored_count).toBe(1)
+
+    const restored = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
+      string,
+      unknown
+    >
+    expect(restored.deleted_at).toBeNull()
+  })
+
+  it('is idempotent — restoring a non-deleted block still works', () => {
+    const result = invoke('restore_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
+      string,
+      unknown
+    >
+    expect(result.block_id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result.restored_count).toBe(1)
+
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(block.deleted_at).toBeNull()
+  })
+
+  it('restored block reappears in list_blocks', () => {
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    invoke('restore_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    const result = invoke('list_blocks', { parentId: SEED_IDS.PAGE_GETTING_STARTED }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items.find((b) => b.id === SEED_IDS.BLOCK_GS_1)).toBeDefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// purge_block
+// ---------------------------------------------------------------------------
+
+describe('purge_block', () => {
+  it('permanently removes a block from the store', () => {
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    const result = invoke('purge_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
+      string,
+      unknown
+    >
+    expect(result.block_id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result.purged_count).toBe(1)
+
+    expect(() => invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 })).toThrow('not found')
+  })
+
+  it('purged block is gone from list_blocks', () => {
+    invoke('purge_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    const result = invoke('list_blocks', { parentId: SEED_IDS.PAGE_GETTING_STARTED }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items.find((b) => b.id === SEED_IDS.BLOCK_GS_1)).toBeUndefined()
+  })
+
+  it('purging a parent does not automatically purge children, but parent is gone', () => {
+    // Purge the "Getting Started" page itself
+    invoke('purge_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED })
+    expect(() => invoke('get_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED })).toThrow(
+      'not found',
+    )
+    // Children still exist (orphaned) — mock doesn't cascade purge
+    const child = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(child.parent_id).toBe(SEED_IDS.PAGE_GETTING_STARTED)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// batch_resolve
+// ---------------------------------------------------------------------------
+
+describe('batch_resolve', () => {
+  it('resolves existing block IDs to metadata', () => {
+    const result = invoke('batch_resolve', {
+      ids: [SEED_IDS.PAGE_GETTING_STARTED, SEED_IDS.TAG_WORK],
+    }) as Array<Record<string, unknown>>
+    expect(result).toHaveLength(2)
+
+    const page = result.find((b) => b.id === SEED_IDS.PAGE_GETTING_STARTED)
+    expect(page).toBeDefined()
+    expect(page?.title).toBe('Getting Started')
+    expect(page?.block_type).toBe('page')
+    expect(page?.deleted).toBe(false)
+
+    const tag = result.find((b) => b.id === SEED_IDS.TAG_WORK)
+    expect(tag).toBeDefined()
+    expect(tag?.title).toBe('work')
+    expect(tag?.block_type).toBe('tag')
+  })
+
+  it('omits non-existing IDs from the result', () => {
+    const result = invoke('batch_resolve', {
+      ids: [SEED_IDS.PAGE_GETTING_STARTED, 'NONEXISTENT_ID_XXXXXXXXXX', SEED_IDS.TAG_IDEA],
+    }) as Array<Record<string, unknown>>
+    // Non-existing IDs are filtered out
+    expect(result).toHaveLength(2)
+    const ids = result.map((b) => b.id)
+    expect(ids).toContain(SEED_IDS.PAGE_GETTING_STARTED)
+    expect(ids).toContain(SEED_IDS.TAG_IDEA)
+  })
+
+  it('marks deleted blocks with deleted: true', () => {
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    const result = invoke('batch_resolve', {
+      ids: [SEED_IDS.BLOCK_GS_1, SEED_IDS.BLOCK_GS_2],
+    }) as Array<Record<string, unknown>>
+    expect(result).toHaveLength(2)
+
+    const deletedEntry = result.find((b) => b.id === SEED_IDS.BLOCK_GS_1)
+    expect(deletedEntry?.deleted).toBe(true)
+
+    const liveEntry = result.find((b) => b.id === SEED_IDS.BLOCK_GS_2)
+    expect(liveEntry?.deleted).toBe(false)
+  })
+
+  it('returns empty array for all-nonexistent IDs', () => {
+    const result = invoke('batch_resolve', {
+      ids: ['NONEXISTENT_1_XXXXXXXXXXXXX', 'NONEXISTENT_2_XXXXXXXXXXXXX'],
+    }) as Array<Record<string, unknown>>
+    expect(result).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// get_backlinks
+// ---------------------------------------------------------------------------
+
+describe('get_backlinks', () => {
+  it('finds blocks that reference a target via [[ULID]] pattern', () => {
+    // BLOCK_QN_1 content contains [[PAGE_GETTING_STARTED]]
+    const result = invoke('get_backlinks', { blockId: SEED_IDS.PAGE_GETTING_STARTED }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items.length).toBeGreaterThanOrEqual(1)
+    const ids = result.items.map((b) => b.id)
+    expect(ids).toContain(SEED_IDS.BLOCK_QN_1)
+  })
+
+  it('finds backlinks from seed BLOCK_GS_2 → PAGE_QUICK_NOTES', () => {
+    // BLOCK_GS_2 content contains [[PAGE_QUICK_NOTES]]
+    const result = invoke('get_backlinks', { blockId: SEED_IDS.PAGE_QUICK_NOTES }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items.length).toBeGreaterThanOrEqual(1)
+    const ids = result.items.map((b) => b.id)
+    expect(ids).toContain(SEED_IDS.BLOCK_GS_2)
+  })
+
+  it('returns empty for blocks with no references', () => {
+    const result = invoke('get_backlinks', { blockId: SEED_IDS.TAG_WORK }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items).toHaveLength(0)
+  })
+
+  it('excludes deleted blocks from backlinks', () => {
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_QN_1 })
+    const result = invoke('get_backlinks', { blockId: SEED_IDS.PAGE_GETTING_STARTED }) as {
+      items: Record<string, unknown>[]
+    }
+    const ids = result.items.map((b) => b.id)
+    expect(ids).not.toContain(SEED_IDS.BLOCK_QN_1)
+  })
+
+  it('detects dynamically created backlinks', () => {
+    const created = invoke('create_block', {
+      blockType: 'content',
+      content: `Link to [[${SEED_IDS.TAG_IDEA}]] here`,
+      parentId: SEED_IDS.PAGE_QUICK_NOTES,
+    }) as Record<string, unknown>
+    const result = invoke('get_backlinks', { blockId: SEED_IDS.TAG_IDEA }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0].id).toBe(created.id)
+  })
+
+  it('returns PageResponse shape', () => {
+    const result = invoke('get_backlinks', { blockId: SEED_IDS.PAGE_GETTING_STARTED }) as Record<
+      string,
+      unknown
+    >
+    expect(result).toHaveProperty('items')
+    expect(result).toHaveProperty('next_cursor', null)
+    expect(result).toHaveProperty('has_more', false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// get_conflicts
+// ---------------------------------------------------------------------------
+
+describe('get_conflicts', () => {
+  it('returns seed conflict block', () => {
+    const result = invoke('get_conflicts') as { items: Record<string, unknown>[] }
+    expect(result.items.length).toBeGreaterThanOrEqual(1)
+    const ids = result.items.map((b) => b.id)
+    expect(ids).toContain(SEED_IDS.CONFLICT_01)
+  })
+
+  it('conflict block has is_conflict true', () => {
+    const result = invoke('get_conflicts') as { items: Record<string, unknown>[] }
+    const conflict = result.items.find((b) => b.id === SEED_IDS.CONFLICT_01)
+    expect(conflict).toBeDefined()
+    expect(conflict?.is_conflict).toBe(true)
+  })
+
+  it('excludes non-conflict blocks', () => {
+    const result = invoke('get_conflicts') as { items: Record<string, unknown>[] }
+    const ids = result.items.map((b) => b.id)
+    expect(ids).not.toContain(SEED_IDS.PAGE_GETTING_STARTED)
+    expect(ids).not.toContain(SEED_IDS.BLOCK_GS_1)
+  })
+
+  it('excludes deleted conflict blocks', () => {
+    invoke('delete_block', { blockId: SEED_IDS.CONFLICT_01 })
+    const result = invoke('get_conflicts') as { items: Record<string, unknown>[] }
+    const ids = result.items.map((b) => b.id)
+    expect(ids).not.toContain(SEED_IDS.CONFLICT_01)
+  })
+
+  it('returns PageResponse shape', () => {
+    const result = invoke('get_conflicts') as Record<string, unknown>
+    expect(result).toHaveProperty('items')
+    expect(result).toHaveProperty('next_cursor', null)
+    expect(result).toHaveProperty('has_more', false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// revert_ops
+// ---------------------------------------------------------------------------
+
+describe('revert_ops', () => {
+  it('reverts a create_block op → block becomes soft-deleted', () => {
+    const created = invoke('create_block', {
+      blockType: 'content',
+      content: 'to-revert',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+
+    // Get the op log entry for this create
+    const history = invoke('list_page_history', {}) as { items: Array<Record<string, unknown>> }
+    const createOp = history.items.find((o) => {
+      const p = JSON.parse(o.payload as string) as Record<string, unknown>
+      return o.op_type === 'create_block' && p.block_id === created.id
+    })
+    expect(createOp).toBeDefined()
+
+    const results = invoke('revert_ops', {
+      ops: [{ device_id: createOp?.device_id, seq: createOp?.seq }],
+    }) as Array<Record<string, unknown>>
+    expect(results).toHaveLength(1)
+
+    const block = invoke('get_block', { blockId: created.id as string }) as Record<string, unknown>
+    expect(block.deleted_at).not.toBeNull()
+  })
+
+  it('reverts a delete_block op → block becomes restored', () => {
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_3 })
+    const deleted = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_3 }) as Record<string, unknown>
+    expect(deleted.deleted_at).not.toBeNull()
+
+    const history = invoke('list_page_history', {}) as { items: Array<Record<string, unknown>> }
+    const deleteOp = history.items.find((o) => {
+      const p = JSON.parse(o.payload as string) as Record<string, unknown>
+      return o.op_type === 'delete_block' && p.block_id === SEED_IDS.BLOCK_GS_3
+    })
+    expect(deleteOp).toBeDefined()
+
+    invoke('revert_ops', {
+      ops: [{ device_id: deleteOp?.device_id, seq: deleteOp?.seq }],
+    })
+
+    const restored = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_3 }) as Record<
+      string,
+      unknown
+    >
+    expect(restored.deleted_at).toBeNull()
+  })
+
+  it('reverts an edit_block op → content reverts to previous value', () => {
+    const original = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_4 }) as Record<
+      string,
+      unknown
+    >
+    const originalContent = original.content
+
+    invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_4, toText: 'changed content' })
+
+    const history = invoke('list_page_history', {}) as { items: Array<Record<string, unknown>> }
+    const editOp = history.items.find((o) => {
+      const p = JSON.parse(o.payload as string) as Record<string, unknown>
+      return o.op_type === 'edit_block' && p.block_id === SEED_IDS.BLOCK_GS_4
+    })
+    expect(editOp).toBeDefined()
+
+    invoke('revert_ops', {
+      ops: [{ device_id: editOp?.device_id, seq: editOp?.seq }],
+    })
+
+    const reverted = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_4 }) as Record<
+      string,
+      unknown
+    >
+    expect(reverted.content).toBe(originalContent)
+  })
+
+  it('returns empty array when no matching ops found', () => {
+    const results = invoke('revert_ops', {
+      ops: [{ device_id: 'nonexistent', seq: 99999 }],
+    }) as Array<Record<string, unknown>>
+    expect(results).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// list_blocks with showDeleted
+// ---------------------------------------------------------------------------
+
+describe('list_blocks with showDeleted', () => {
+  it('showDeleted=true includes deleted blocks', () => {
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    const result = invoke('list_blocks', { showDeleted: true }) as {
+      items: Record<string, unknown>[]
+    }
+    const ids = result.items.map((b) => b.id)
+    expect(ids).toContain(SEED_IDS.BLOCK_GS_1)
+    // All returned items should have deleted_at set
+    for (const item of result.items) {
+      expect(item.deleted_at).not.toBeNull()
+    }
+  })
+
+  it('showDeleted=false (default) excludes deleted blocks', () => {
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    const result = invoke('list_blocks', {}) as {
+      items: Record<string, unknown>[]
+    }
+    const ids = result.items.map((b) => b.id)
+    expect(ids).not.toContain(SEED_IDS.BLOCK_GS_1)
+  })
+
+  it('showDeleted=true with blockType filter', () => {
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    const result = invoke('list_blocks', { showDeleted: true, blockType: 'content' }) as {
+      items: Record<string, unknown>[]
+    }
+    for (const item of result.items) {
+      expect(item.block_type).toBe('content')
+      expect(item.deleted_at).not.toBeNull()
+    }
+    const ids = result.items.map((b) => b.id)
+    expect(ids).toContain(SEED_IDS.BLOCK_GS_1)
+  })
+
+  it('showDeleted=true returns empty when nothing is deleted', () => {
+    const result = invoke('list_blocks', { showDeleted: true }) as {
+      items: Record<string, unknown>[]
+    }
+    // Only seed conflict block is not deleted; no blocks have deleted_at set initially
+    expect(result.items).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// undo_page_op edge cases
+// ---------------------------------------------------------------------------
+
+describe('undo_page_op edge cases', () => {
+  it('throws when no undoable ops exist', () => {
+    // Fresh state — no ops have been performed
+    expect(() =>
+      invoke('undo_page_op', { pageId: SEED_IDS.PAGE_GETTING_STARTED, undoDepth: 0 }),
+    ).toThrow('no undoable op found')
+  })
+
+  it('throws when undoDepth exceeds available ops', () => {
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'only-op',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    // undoDepth=0 should work (there's 1 op), but undoDepth=1 should fail
+    expect(() =>
+      invoke('undo_page_op', { pageId: SEED_IDS.PAGE_GETTING_STARTED, undoDepth: 1 }),
+    ).toThrow('no undoable op found')
+  })
+
+  it('undo of edit_block restores previous content', () => {
+    invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_5, toText: 'Edited for undo test' })
+    const edited = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_5 }) as Record<string, unknown>
+    expect(edited.content).toBe('Edited for undo test')
+
+    invoke('undo_page_op', { pageId: SEED_IDS.PAGE_GETTING_STARTED, undoDepth: 0 })
+    const undone = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_5 }) as Record<string, unknown>
+    expect(undone.content).toBe('**Use the search panel** to find anything across all your pages.')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// redo_page_op edge cases
+// ---------------------------------------------------------------------------
+
+describe('redo_page_op edge cases', () => {
+  it('throws when referencing a non-existent op seq', () => {
+    expect(() => invoke('redo_page_op', { undoDeviceId: 'mock-device', undoSeq: 99999 })).toThrow(
+      'op not found for redo',
+    )
+  })
+
+  it('redo re-applies an undone create_block', () => {
+    const created = invoke('create_block', {
+      blockType: 'content',
+      content: 'redo-me',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    const createdId = created.id as string
+
+    // Undo the create → block becomes deleted
+    const undoResult = invoke('undo_page_op', {
+      pageId: SEED_IDS.PAGE_GETTING_STARTED,
+      undoDepth: 0,
+    }) as { reversed_op: { device_id: string; seq: number } }
+
+    const afterUndo = invoke('get_block', { blockId: createdId }) as Record<string, unknown>
+    expect(afterUndo.deleted_at).not.toBeNull()
+
+    // Redo → block is restored
+    invoke('redo_page_op', {
+      undoDeviceId: undoResult.reversed_op.device_id,
+      undoSeq: undoResult.reversed_op.seq,
+    })
+
+    const afterRedo = invoke('get_block', { blockId: createdId }) as Record<string, unknown>
+    expect(afterRedo.deleted_at).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resetMock clears state
+// ---------------------------------------------------------------------------
+
 describe('resetMock clears tag associations', () => {
   it('tag associations are cleared after resetMock', () => {
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })

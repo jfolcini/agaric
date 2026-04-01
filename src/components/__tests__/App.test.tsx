@@ -11,11 +11,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { addDays, addMonths, addWeeks, subDays, subMonths, subWeeks } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import App from '../../App'
 import { announce } from '../../lib/announcer'
 import { useBootStore } from '../../stores/boot'
+import { useJournalStore } from '../../stores/journal'
 import { useNavigationStore } from '../../stores/navigation'
 
 vi.mock('../../lib/announcer', () => ({
@@ -374,6 +376,224 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(announce).toHaveBeenCalledWith('New page created')
+    })
+  })
+
+  // ── Journal navigation shortcuts (Alt+Arrow, Alt+T) ─────────────────
+
+  describe('journal navigation shortcuts', () => {
+    it('Alt+ArrowLeft navigates to previous day in daily mode', async () => {
+      const startDate = new Date(2025, 5, 15) // Jun 15, 2025
+      useJournalStore.setState({ mode: 'daily', currentDate: startDate })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(document, { key: 'ArrowLeft', altKey: true })
+
+      await waitFor(() => {
+        const state = useJournalStore.getState()
+        expect(state.currentDate.getTime()).toBe(subDays(startDate, 1).getTime())
+      })
+      expect(announce).toHaveBeenCalledWith('Navigated to previous day')
+    })
+
+    it('Alt+ArrowRight navigates to next day in daily mode', async () => {
+      const startDate = new Date(2025, 5, 15)
+      useJournalStore.setState({ mode: 'daily', currentDate: startDate })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(document, { key: 'ArrowRight', altKey: true })
+
+      await waitFor(() => {
+        const state = useJournalStore.getState()
+        expect(state.currentDate.getTime()).toBe(addDays(startDate, 1).getTime())
+      })
+      expect(announce).toHaveBeenCalledWith('Navigated to next day')
+    })
+
+    it('Alt+ArrowLeft navigates to previous week in weekly mode', async () => {
+      const startDate = new Date(2025, 5, 15)
+      useJournalStore.setState({ mode: 'weekly', currentDate: startDate })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(document, { key: 'ArrowLeft', altKey: true })
+
+      await waitFor(() => {
+        const state = useJournalStore.getState()
+        expect(state.currentDate.getTime()).toBe(subWeeks(startDate, 1).getTime())
+      })
+      expect(announce).toHaveBeenCalledWith('Navigated to previous week')
+    })
+
+    it('Alt+ArrowRight navigates to next week in weekly mode', async () => {
+      const startDate = new Date(2025, 5, 15)
+      useJournalStore.setState({ mode: 'weekly', currentDate: startDate })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(document, { key: 'ArrowRight', altKey: true })
+
+      await waitFor(() => {
+        const state = useJournalStore.getState()
+        expect(state.currentDate.getTime()).toBe(addWeeks(startDate, 1).getTime())
+      })
+      expect(announce).toHaveBeenCalledWith('Navigated to next week')
+    })
+
+    it('Alt+ArrowLeft navigates to previous month in monthly mode', async () => {
+      const startDate = new Date(2025, 5, 15)
+      useJournalStore.setState({ mode: 'monthly', currentDate: startDate })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(document, { key: 'ArrowLeft', altKey: true })
+
+      await waitFor(() => {
+        const state = useJournalStore.getState()
+        expect(state.currentDate.getTime()).toBe(subMonths(startDate, 1).getTime())
+      })
+      expect(announce).toHaveBeenCalledWith('Navigated to previous month')
+    })
+
+    it('Alt+ArrowRight navigates to next month in monthly mode', async () => {
+      const startDate = new Date(2025, 5, 15)
+      useJournalStore.setState({ mode: 'monthly', currentDate: startDate })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(document, { key: 'ArrowRight', altKey: true })
+
+      await waitFor(() => {
+        const state = useJournalStore.getState()
+        expect(state.currentDate.getTime()).toBe(addMonths(startDate, 1).getTime())
+      })
+      expect(announce).toHaveBeenCalledWith('Navigated to next month')
+    })
+
+    it('Alt+T jumps to today', async () => {
+      const pastDate = new Date(2024, 0, 1)
+      useJournalStore.setState({ mode: 'daily', currentDate: pastDate })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const beforePress = new Date()
+      fireEvent.keyDown(document, { key: 't', altKey: true })
+
+      await waitFor(() => {
+        const state = useJournalStore.getState()
+        // The date should be "today" — within a few seconds of now
+        const diff = Math.abs(state.currentDate.getTime() - beforePress.getTime())
+        expect(diff).toBeLessThan(5000)
+      })
+      expect(announce).toHaveBeenCalledWith('Jumped to today')
+    })
+
+    it('Alt+T (uppercase) also jumps to today', async () => {
+      const pastDate = new Date(2024, 0, 1)
+      useJournalStore.setState({ mode: 'daily', currentDate: pastDate })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(document, { key: 'T', altKey: true })
+
+      await waitFor(() => {
+        expect(announce).toHaveBeenCalledWith('Jumped to today')
+      })
+    })
+
+    it('Alt+Arrow does nothing when not on journal view', async () => {
+      useNavigationStore.setState({ currentView: 'pages', pageStack: [], selectedBlockId: null })
+      const startDate = new Date(2025, 5, 15)
+      useJournalStore.setState({ mode: 'daily', currentDate: startDate })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(document, { key: 'ArrowLeft', altKey: true })
+
+      // Date should not change
+      expect(useJournalStore.getState().currentDate.getTime()).toBe(startDate.getTime())
+      expect(announce).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── Keyboard shortcuts modal ─────────────────────────────────────────
+
+  describe('keyboard shortcuts modal', () => {
+    it('pressing "?" opens the shortcuts panel', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(document, { key: '?' })
+
+      await waitFor(() => {
+        expect(screen.getByText('Keyboard Shortcuts')).toBeInTheDocument()
+      })
+    })
+
+    it('shortcuts panel shows shortcut categories', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      fireEvent.keyDown(document, { key: '?' })
+
+      await waitFor(() => {
+        expect(screen.getByText('Keyboard Shortcuts')).toBeInTheDocument()
+      })
+
+      // Scope to the shortcuts table to avoid collisions with sidebar nav items
+      const shortcutsTable = screen.getByTestId('shortcuts-table')
+      expect(within(shortcutsTable).getByText('Navigation')).toBeInTheDocument()
+      expect(within(shortcutsTable).getByText('Editing')).toBeInTheDocument()
+      expect(within(shortcutsTable).getByText('Global')).toBeInTheDocument()
+      expect(within(shortcutsTable).getByText('Journal')).toBeInTheDocument()
+    })
+
+    it('clicking sidebar Shortcuts button also opens the panel', async () => {
+      const user = userEvent.setup()
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      const sidebar = getSidebar()
+      await user.click(sidebar.getByText('Shortcuts'))
+
+      await waitFor(() => {
+        expect(screen.getByText('Keyboard Shortcuts')).toBeInTheDocument()
+      })
     })
   })
 })

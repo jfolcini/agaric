@@ -227,4 +227,96 @@ describe('positioning', () => {
 
     expect(popup.style.left).toBe('220px')
   })
+
+  it('does not throw when clientRect returns null', () => {
+    const renderer = createSuggestionRenderer()
+
+    expect(() => {
+      renderer.onStart({
+        items: [],
+        command: vi.fn(),
+        clientRect: () => null,
+        // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+        editor: {} as any,
+        query: '',
+        range: { from: 0, to: 1 },
+        text: '@',
+        decorationNode: null,
+        // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      } as any)
+    }).not.toThrow()
+
+    // Popup is created but no positioning styles are applied (early return)
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    expect(popup).toBeTruthy()
+    expect(popup.style.position).toBe('')
+
+    renderer.onExit()
+  })
+
+  it('falls back to window.innerHeight when visualViewport is null', () => {
+    const original = window.visualViewport
+    Object.defineProperty(window, 'visualViewport', {
+      value: null,
+      writable: true,
+      configurable: true,
+    })
+
+    const renderer = createSuggestionRenderer()
+    const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
+
+    renderer.onStart({
+      items: [],
+      command: vi.fn(),
+      clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: {} as any,
+      query: '',
+      range: { from: 0, to: 2 },
+      text: '[[',
+      decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+    } as any)
+
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    expect(popup).toBeTruthy()
+    // Should still position correctly using window.innerHeight fallback
+    expect(popup.style.top).toBe('104px')
+
+    renderer.onExit()
+
+    Object.defineProperty(window, 'visualViewport', {
+      value: original,
+      writable: true,
+      configurable: true,
+    })
+  })
+
+  it('clamps top to minimum 8px when popup is taller than available space', () => {
+    const renderer = createSuggestionRenderer()
+    // In jsdom, el.offsetHeight is 0 so popupHeight defaults to 200.
+    // Default window.innerHeight is 768 so viewportHeight = 768.
+    // Place below: top = 600 + 4 = 604, 604 + 200 = 804 > 760 → flip above.
+    // Place above: top = 100 - 200 - 4 = -104 → Math.max(8, -104) = 8.
+    const mockRect = { left: 100, right: 120, top: 100, bottom: 600, width: 20, height: 500 }
+
+    renderer.onStart({
+      items: [],
+      command: vi.fn(),
+      clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: {} as any,
+      query: '',
+      range: { from: 0, to: 2 },
+      text: '[[',
+      decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+    } as any)
+
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    expect(popup).toBeTruthy()
+    expect(popup.style.top).toBe('8px')
+
+    renderer.onExit()
+  })
 })
