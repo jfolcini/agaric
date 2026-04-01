@@ -71,6 +71,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   useBlockStore.setState({
     blocks: [],
+    rootParentId: null,
     focusedBlockId: null,
     loading: false,
   })

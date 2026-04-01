@@ -50,6 +50,7 @@ describe('useBlockStore', () => {
   beforeEach(() => {
     useBlockStore.setState({
       blocks: [],
+      rootParentId: null,
       focusedBlockId: null,
       loading: false,
     })

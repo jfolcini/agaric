@@ -110,6 +110,7 @@ beforeEach(() => {
   // Reset the Zustand stores to a clean state before each test
   useBlockStore.setState({
     blocks: [],
+    rootParentId: null,
     focusedBlockId: null,
     loading: false,
   })

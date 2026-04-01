@@ -99,9 +99,12 @@ export function useSyncEvents(): void {
         toast.success(`Synced ${ops_received} change${ops_received === 1 ? '' : 's'} from device`)
       }
 
-      // Reload blocks if we received ops (data changed)
+      // Reload blocks if we received ops (data changed).
+      // Pass the current rootParentId so we reload the page the user is
+      // viewing instead of resetting to the root tree.
       if (ops_received > 0) {
-        useBlockStore.getState().load()
+        const { rootParentId } = useBlockStore.getState()
+        useBlockStore.getState().load(rootParentId ?? undefined)
       }
     }).then((unlisten) => {
       if (cancelled) unlisten()
