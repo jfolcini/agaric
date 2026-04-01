@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 27 — 2026-03-31 — REVIEW-LATER.md cleanup: verify and remove resolved items
+
+167 resolved items verified by 5 parallel subagents, then deleted from REVIEW-LATER.md.
+File reduced from 1707 → 505 lines. 27 unresolved items remain across 4 tiers.
+
+### Verification batches
+
+| Batch | Items | Result |
+|-------|-------|--------|
+| Tier 4 (Android) | #24-#66, #103-#112 (28 items) | All confirmed |
+| Tier 5 (A11y/UX) | #36-#60, #113-#126 (31 items) | All confirmed |
+| Tier 6 (Testing) | #76-#102, #136-#138 (30 items) | All confirmed |
+| Tier 7 (Component) | #139-#206 (68 items) | All confirmed (commit hashes verified) |
+| Tier 2 (Robustness) | #127, #131-#135 (6 items) | All confirmed; #128, #129 already marked unresolved |
+
+4 items in gen/android/ (#63-#66) were manually verified after subagent incorrectly reported missing files.
+
+### Remaining unresolved items (27)
+
+- **Tier 1 (Sync):** #1-#13, #67-#70, #130 — 18 items, deferred to Phase 4
+- **Tier 2 (Minor):** #72-#75, #128, #129 — 6 items
+- **Tier 3 (Perf):** #20, #21 — 2 items
+- **Tier 4 (Android):** #30 — 1 item (mobile toolbar/gestures)
+
 ## Session 26 — 2026-03-31 — Tier 4 Android/cross-platform cleanup
 
 8 items resolved, 1 deferred: #24, #25, #29, #31, #32, #34, #61, #62 (Tier 4). #30 deferred.
