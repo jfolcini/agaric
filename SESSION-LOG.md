@@ -1025,3 +1025,30 @@ All 8 bench binaries compile and run cleanly:
 - **Result:** <outcome>
 - **Commit:** <hash>
 -->
+
+## Session 19 — Tier 5 A11y & UX (batch 2)
+
+**Date:** 2026-03-31
+**Commit:** `61912e1`
+**Items resolved:** #40, #41, #46, #47, #48, #53, #54, #118
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `src/lib/announcer.ts` | New aria-live announcer singleton (polite, rAF-based) |
+| `src/lib/__tests__/announcer.test.ts` | 8 tests for announcer utility |
+| `src/components/BlockTree.tsx` | announce() on focus prev/next + block deletion |
+| `src/hooks/useBlockProperties.ts` | announce() on task state toggle with STATE_LABELS |
+| `src/components/EditableBlock.tsx` | scrollIntoView on focus, id=editor-{blockId} |
+| `src/components/FormattingToolbar.tsx` | aria-controls linking toolbar to editor |
+| `src/components/__tests__/EditableBlock.test.tsx` | 4 new tests (scrollIntoView, id, blockId prop) |
+| `src/components/__tests__/FormattingToolbar.test.tsx` | 2 new tests (aria-controls) |
+| `src/components/__tests__/BlockTree.test.tsx` | 8 new tests (announce calls) |
+| `src/components/__tests__/Sidebar.test.tsx` | New file: 7 tests (2 axe, toggle, Ctrl+B, ARIA, structure) |
+| `src/index.css` | @media (prefers-contrast: more), placeholder opacity fix |
+| `src/components/ui/sidebar.tsx` | SidebarGroupLabel contrast fix |
+
+### Stats
+- 29 new tests, 53 test files, 1472 total tests
+- 4 build subagents + 4 review subagents (all passed)
