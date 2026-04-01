@@ -1,5 +1,50 @@
 # Session Log
 
+## Session 13 — 2026-03-31 — Tier 6 Final Item (#102)
+
+### Commit: purge E2E tests
+
+**Build: Purge E2E tests (#102)**
+- Added 4 E2E tests to `e2e/features-coverage.spec.ts` Trash describe block:
+  1. Purge button shows confirmation
+  2. Purge No dismisses without deleting
+  3. Purge Yes permanently removes block
+  4. Purge Escape dismisses without deleting (review-added)
+- All 20 tests in features-coverage.spec.ts pass
+
+**Review:** Found missing Escape key dismissal test (TrashView supports Escape handler). Added as 4th test.
+
+### Items resolved: 1 (#102 — Tier 6 now fully complete)
+
+## Session 12 — 2026-03-31 — Tier 6 Testing Items (#136, #137, #138)
+
+### Commit: `35b0ca7`
+
+**Build 1: Mock enhancement + E2E tests (#136, #137)**
+- Enhanced `tauri-mock.ts` with operational op log — undo/redo/revert/history now actually modify in-memory state
+- `MockOpLogEntry` interface + `pushOp()` for create/edit/delete/move/restore tracking
+- `undo_page_op`: finds Nth undoable op, reverses it (create→delete, delete→restore, edit→old content, move→old position)
+- `redo_page_op`: re-applies original operation
+- `list_page_history`: returns op log in reverse chronological order
+- `revert_ops`: batch reverse with newest-first ordering
+- Updated existing mock tests to work with stateful implementation
+- **3 E2E tests** in `e2e/undo-redo-blocks.spec.ts`: undo create, undo delete, redo
+- **5 E2E tests** in `e2e/history-revert.spec.ts`: history entries display, selection+dialog, batch revert create_block, batch revert delete_block, cancel dialog
+
+**Build 2: Rust concurrent undo test (#138)**
+- `concurrent_undo_from_multiple_devices` in `src-tauri/src/commands.rs`
+- Creates page + 2 children from different devices, edits both, spawns concurrent `undo_page_op_inner` via `tokio::spawn` + `tokio::join!`
+- Verifies: both succeed, distinct op refs, blocks readable, op_log integrity
+
+**Reviews:** 2 review subagents. Review 1 found 2 mock bugs (incorrect `redoOpType`, missing `restore_block` case in redo) — fixed. Review 2 raised concerns about concurrent assertion logic — analyzed and determined test is correct (both undos can succeed due to SELECT outside transaction).
+
+### Test counts
+- Vitest: 1312 tests, 49 files — all pass
+- E2E: 8 new tests (3 undo + 5 history) — all pass
+- Rust: 1 new test — passes
+
+### Items resolved: 3 (Tier 6 complete)
+
 ## Session 11 — 2026-03-30 — Journal Tri-Mode, Slash Commands, Checkboxes, Fixes
 
 ### Features built (3 parallel subagents)

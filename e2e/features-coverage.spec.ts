@@ -198,6 +198,122 @@ test.describe('Trash', () => {
     // Verify the item was removed from trash
     await expect(page.locator('.trash-item')).toHaveCount(0, { timeout: 3000 })
   })
+
+  test('purge button shows confirmation before deleting', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+
+    // Delete a block
+    const firstBlock = page.locator('.sortable-block').first()
+    await firstBlock.hover()
+    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
+    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await deleteBtn.click()
+
+    // Navigate to Trash
+    await page.getByRole('button', { name: 'Trash' }).click()
+    await expect(page.locator('.trash-item').first()).toBeVisible({ timeout: 3000 })
+
+    // Click Purge on the first trash item
+    await page.locator('.trash-purge-btn').first().click()
+
+    // Verify confirmation UI appears
+    await expect(page.locator('.trash-purge-confirm')).toBeVisible({ timeout: 3000 })
+
+    // Verify Yes and No buttons are visible
+    await expect(page.locator('.trash-purge-yes')).toBeVisible()
+    await expect(page.locator('.trash-purge-no')).toBeVisible()
+  })
+
+  test('purge confirmation No dismisses without deleting', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+
+    // Delete a block
+    const firstBlock = page.locator('.sortable-block').first()
+    await firstBlock.hover()
+    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
+    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await deleteBtn.click()
+
+    // Navigate to Trash
+    await page.getByRole('button', { name: 'Trash' }).click()
+    await expect(page.locator('.trash-item').first()).toBeVisible({ timeout: 3000 })
+
+    // Click Purge → confirmation appears
+    await page.locator('.trash-purge-btn').first().click()
+    await expect(page.locator('.trash-purge-confirm')).toBeVisible({ timeout: 3000 })
+
+    // Click No to dismiss
+    await page.locator('.trash-purge-no').click()
+
+    // Verify confirmation disappears
+    await expect(page.locator('.trash-purge-confirm')).not.toBeVisible({ timeout: 3000 })
+
+    // Verify the trash item is still present
+    await expect(page.locator('.trash-item').first()).toBeVisible({ timeout: 3000 })
+  })
+
+  test('purge confirmation Yes permanently removes block', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+
+    // Delete a block
+    const firstBlock = page.locator('.sortable-block').first()
+    await firstBlock.hover()
+    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
+    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await deleteBtn.click()
+
+    // Navigate to Trash
+    await page.getByRole('button', { name: 'Trash' }).click()
+    await expect(page.locator('.trash-item').first()).toBeVisible({ timeout: 3000 })
+
+    // Count trash items before purge
+    const countBefore = await page.locator('.trash-item').count()
+
+    // Click Purge → then confirm with Yes
+    await page.locator('.trash-purge-btn').first().click()
+    await expect(page.locator('.trash-purge-confirm')).toBeVisible({ timeout: 3000 })
+    await page.locator('.trash-purge-yes').click()
+
+    // Verify the item is removed from trash (count decreased)
+    await expect(page.locator('.trash-item')).toHaveCount(countBefore - 1, { timeout: 3000 })
+
+    // Navigate back to Getting Started page
+    await openPage(page, 'Getting Started')
+
+    // Verify the purged block does NOT reappear (permanently gone)
+    const blocks = page.locator('.sortable-block')
+    const blockTexts = await blocks.allTextContents()
+    // The block was permanently deleted, so the page should have fewer blocks
+    // than the original 5 seed blocks
+    expect(blockTexts.length).toBeLessThan(5)
+  })
+
+  test('purge confirmation Escape dismisses without deleting', async ({ page }) => {
+    await openPage(page, 'Getting Started')
+
+    // Delete a block
+    const firstBlock = page.locator('.sortable-block').first()
+    await firstBlock.hover()
+    const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
+    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await deleteBtn.click()
+
+    // Navigate to Trash
+    await page.getByRole('button', { name: 'Trash' }).click()
+    await expect(page.locator('.trash-item').first()).toBeVisible({ timeout: 3000 })
+    const countBefore = await page.locator('.trash-item').count()
+
+    // Click Purge → confirmation appears
+    await page.locator('.trash-purge-btn').first().click()
+    await expect(page.locator('.trash-purge-confirm')).toBeVisible({ timeout: 3000 })
+
+    // Press Escape to dismiss
+    await page.keyboard.press('Escape')
+
+    // Verify confirmation disappears and item remains
+    await expect(page.locator('.trash-purge-confirm')).not.toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-item')).toHaveCount(countBefore, { timeout: 3000 })
+  })
 })
 
 // ===========================================================================
