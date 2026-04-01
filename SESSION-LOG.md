@@ -1135,3 +1135,32 @@ All 8 bench binaries compile and run cleanly:
 ### Stats
 - 19 new tests, 53 test files, 1491 total tests
 - 4 build subagents + 4 review subagents (all passed)
+
+---
+
+## Session 22 — Swipe-to-open sidebar gesture (#112)
+
+**Date:** 2026-03-31
+**Branch:** `feat/undo-redo-history`
+**Commit:** `d787ec7`
+
+### Summary
+Resolved the last Tier 4 item: added swipe-from-left-edge gesture to open the mobile sidebar, following the standard Android navigation drawer pattern.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `src/components/ui/sidebar.tsx` | Added `SWIPE_EDGE_ZONE` / `SWIPE_MIN_DISTANCE` constants + `useEffect` in `SidebarProvider` with touch event tracking (multi-touch guard, dx/dy ratio check) |
+| `src/components/__tests__/Sidebar.test.tsx` | 7 new tests: edge swipe open, non-edge ignored, vertical rejected, short swipe rejected, left swipe rejected, multi-touch ignored, desktop inactive |
+| `REVIEW-LATER.md` | #112 marked resolved |
+
+### Review findings applied
+- `dy > dx` changed to `dy > Math.abs(dx)` — handles negative dx (left swipes) correctly
+- Multi-touch guard added (`e.touches.length > 1` early return)
+- `setOpenMobile` removed from dependency array (biome lint)
+- 3 extra tests added (short swipe, left swipe, multi-touch)
+
+### Stats
+- 7 new tests, 55 test files, 1529 total tests
+- 1 build subagent + 1 review subagent (conditional pass, fixes applied)
