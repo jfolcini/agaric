@@ -74,12 +74,18 @@ vi.mock('lucide-react', () => ({
   Tag: () => <svg data-testid="tag-icon" />,
 }))
 
+// ── Mock sonner ─────────────────────────────────────────────────────
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
+
+import { toast } from 'sonner'
+
 import { useBlockStore } from '../../stores/blocks'
 import { useNavigationStore } from '../../stores/navigation'
 import { useUndoStore } from '../../stores/undo'
 import { PageEditor } from '../PageEditor'
 
 const mockedInvoke = vi.mocked(invoke)
+const mockedToastError = vi.mocked(toast.error)
 
 function makeBlock(id: string, content: string, parentId: string | null = null, position = 0) {
   return {
@@ -294,6 +300,76 @@ describe('PageEditor', () => {
         parentId: 'PAGE_1',
         position: 0,
       })
+    })
+  })
+
+  it('Add block button creates top-level block when page has nested blocks', async () => {
+    const user = userEvent.setup()
+
+    // Pre-populate store with a nested block tree:
+    //   B1 (depth 0, parent PAGE_1)
+    //     B2 (depth 1, parent B1)
+    //       B3 (depth 2, parent B2)
+    // The last entry in the flat tree is B3 (deeply nested).
+    // "Add block" must create a top-level sibling of B1, NOT a sibling of B3.
+    useBlockStore.setState({
+      blocks: [
+        { ...makeBlock('B1', 'Top-level block', 'PAGE_1', 0), depth: 0 },
+        { ...makeBlock('B2', 'Nested child', 'B1', 0), depth: 1 },
+        { ...makeBlock('B3', 'Deeply nested', 'B2', 0), depth: 2 },
+      ],
+      focusedBlockId: null,
+      loading: false,
+    })
+
+    // Mock createBlock response — the new block should be under PAGE_1
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'B4',
+      block_type: 'content',
+      content: '',
+      parent_id: 'PAGE_1',
+      position: 1,
+    })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    const addBtn = screen.getByRole('button', { name: /add block/i })
+    await user.click(addBtn)
+
+    await waitFor(() => {
+      // Must create under PAGE_1 (top-level), not under B2 (nested parent)
+      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+        blockType: 'content',
+        content: '',
+        parentId: 'PAGE_1',
+        position: 1,
+      })
+    })
+
+    // Should focus the new block
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('B4')
+    })
+  })
+
+  it('Add block button shows toast on failure when no blocks exist', async () => {
+    const user = userEvent.setup()
+
+    useBlockStore.setState({
+      blocks: [],
+      focusedBlockId: null,
+      loading: false,
+    })
+
+    mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    const addBtn = screen.getByRole('button', { name: /add block/i })
+    await user.click(addBtn)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to create block')
     })
   })
 

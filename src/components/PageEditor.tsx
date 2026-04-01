@@ -8,6 +8,7 @@
 import { ArrowLeft, ChevronDown, ChevronUp, History, Link, Plus, Tag } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { editBlock } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
@@ -129,7 +130,12 @@ export function PageEditor({
   }, [])
 
   const handleAddBlock = useCallback(async () => {
-    const lastBlock = blocks[blocks.length - 1]
+    // Find the last top-level block (direct child of this page) rather than
+    // the last entry in the flat tree, which could be a deeply nested child.
+    // Using the flat-tree tail would create the new block under the wrong
+    // parent (the nested block's parent instead of the page).
+    const topLevel = blocks.filter((b) => b.parent_id === pageId)
+    const lastBlock = topLevel[topLevel.length - 1]
     if (lastBlock) {
       const newId = await createBelow(lastBlock.id, '')
       if (newId) {
@@ -139,17 +145,21 @@ export function PageEditor({
       // No blocks yet — create a first block under this page.
       // createBelow needs an afterBlockId, so for the empty case we call
       // createBlock from the Tauri API directly and reload.
-      const { createBlock } = await import('../lib/tauri')
-      const result = await createBlock({
-        blockType: 'content',
-        content: '',
-        parentId: pageId,
-        position: 0,
-      })
-      // Reload blocks via the store to pick up the new block
-      const { load } = useBlockStore.getState()
-      await load(pageId)
-      setFocused(result.id)
+      try {
+        const { createBlock } = await import('../lib/tauri')
+        const result = await createBlock({
+          blockType: 'content',
+          content: '',
+          parentId: pageId,
+          position: 0,
+        })
+        // Reload blocks via the store to pick up the new block
+        const { load } = useBlockStore.getState()
+        await load(pageId)
+        setFocused(result.id)
+      } catch {
+        toast.error('Failed to create block')
+      }
     }
   }, [blocks, createBelow, setFocused, pageId])
 
