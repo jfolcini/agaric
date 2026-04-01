@@ -25,6 +25,23 @@ vi.mock('../DeviceManagement', () => ({
   DeviceManagement: () => <div data-testid="device-management">Device ID: mock-device</div>,
 }))
 
+// Controllable sync store state for tests that need non-default values.
+const { mockSyncStoreState } = vi.hoisted(() => ({
+  mockSyncStoreState: {
+    state: 'idle' as string,
+    error: null as string | null,
+    peers: [] as Array<{ peer_id: string }>,
+    lastSyncedAt: null as string | null,
+    opsReceived: 0,
+    opsSent: 0,
+  },
+}))
+
+vi.mock('../../stores/sync', () => ({
+  useSyncStore: (selector: (s: typeof mockSyncStoreState) => unknown) =>
+    selector(mockSyncStoreState),
+}))
+
 const mockedInvoke = vi.mocked(invoke)
 
 const mockStatus = {
@@ -36,6 +53,13 @@ const mockStatus = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Reset sync store to defaults
+  mockSyncStoreState.state = 'idle'
+  mockSyncStoreState.error = null
+  mockSyncStoreState.peers = []
+  mockSyncStoreState.lastSyncedAt = null
+  mockSyncStoreState.opsReceived = 0
+  mockSyncStoreState.opsSent = 0
 })
 
 describe('StatusPanel', () => {
@@ -414,6 +438,51 @@ describe('StatusPanel', () => {
     // DeviceManagement shows local device ID after loading
     await waitFor(() => {
       expect(screen.getByText(/Device ID/i)).toBeInTheDocument()
+    })
+  })
+
+  describe('tooltip keyboard accessibility', () => {
+    it('tooltip triggers have tabIndex={0} for keyboard access', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      const { container } = render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+
+      const tooltipTriggers = container.querySelectorAll('.cursor-help')
+      expect(tooltipTriggers).toHaveLength(4)
+      for (const trigger of tooltipTriggers) {
+        expect(trigger.getAttribute('tabindex')).toBe('0')
+      }
+    })
+  })
+
+  describe('Last Synced display', () => {
+    it('shows relative time when lastSyncedAt is set', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+      mockSyncStoreState.peers = [{ peer_id: 'peer-1' }]
+      mockSyncStoreState.lastSyncedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+
+      // formatTimestamp with 'relative' style produces "5m ago"
+      const lastSyncedEl = document.querySelector('.sync-last-synced')
+      expect(lastSyncedEl?.textContent).toBe('5m ago')
+    })
+
+    it('shows "--" when lastSyncedAt is null', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+      mockSyncStoreState.peers = [{ peer_id: 'peer-1' }]
+      mockSyncStoreState.lastSyncedAt = null
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+
+      const lastSyncedEl = document.querySelector('.sync-last-synced')
+      expect(lastSyncedEl?.textContent).toBe('--')
     })
   })
 })

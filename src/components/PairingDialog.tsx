@@ -6,28 +6,18 @@
  *  2. Passphrase entry (4 word inputs) for joining from another device
  *  3. List of already-paired devices with Unpair action
  *
- * Props: open (boolean), onOpenChange (callback).
+ * Props: open (boolean), onOpenChange (callback), triggerRef (optional).
  */
 
 import { Loader2, Smartphone, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import QRCode from 'react-qr-code'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
+import { formatLastSynced } from '@/lib/format'
 import type { PeerRefRow } from '../lib/tauri'
 import {
   cancelPairing,
@@ -37,15 +27,20 @@ import {
   startPairing,
 } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
+import { UnpairConfirmDialog } from './UnpairConfirmDialog'
 
 interface PairingDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  triggerRef?: React.RefObject<HTMLButtonElement | null>
 }
+
+const PAIRING_TIMEOUT_SECONDS = 300 // 5 minutes
 
 export function PairingDialog({
   open,
   onOpenChange,
+  triggerRef,
 }: PairingDialogProps): React.ReactElement | null {
   const [pairingInfo, setPairingInfo] = useState<{
     passphrase: string
@@ -58,11 +53,38 @@ export function PairingDialog({
   const [pairLoading, setPairLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [unpairPeerId, setUnpairPeerId] = useState<string | null>(null)
+  const [countdown, setCountdown] = useState<number | null>(null)
 
-  const firstInputRef = useRef<HTMLInputElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
 
+  // Helper: query word inputs from the DOM (Input component doesn't forward refs)
+  const getWordInputs = useCallback(
+    () =>
+      dialogRef.current
+        ? Array.from(
+            dialogRef.current.querySelectorAll<HTMLInputElement>('.pairing-word-inputs input'),
+          )
+        : [],
+    [],
+  )
+
   const syncSetState = useSyncStore((s) => s.setState)
+
+  // init function extracted so it can be called for retry (#282)
+  const init = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [info, peerList] = await Promise.all([startPairing(), listPeerRefs()])
+      setPairingInfo(info)
+      setPeers(peerList)
+      setCountdown(PAIRING_TIMEOUT_SECONDS)
+    } catch (err) {
+      console.error('Failed to initialize pairing:', err)
+      setError(`Failed to start pairing: ${String(err instanceof Error ? err.message : err)}`)
+    }
+    setLoading(false)
+  }, [])
 
   // Load pairing info and peer list when dialog opens;
   // cancel the pairing session on close/unmount to avoid leaking the listener.
@@ -71,45 +93,80 @@ export function PairingDialog({
 
     let cancelled = false
 
-    async function init() {
-      setLoading(true)
-      setError(null)
-      try {
-        const [info, peerList] = await Promise.all([startPairing(), listPeerRefs()])
-        if (cancelled) return
-        setPairingInfo(info)
-        setPeers(peerList)
-      } catch (err) {
-        if (cancelled) return
-        console.error('Failed to initialize pairing:', err)
-        setError('Failed to start pairing. Please try again.')
-      }
-      if (!cancelled) setLoading(false)
+    async function doInit() {
+      await init()
     }
 
-    init()
+    doInit().then(() => {
+      if (cancelled) {
+        // Component closed before init finished — clean up
+      }
+    })
 
     return () => {
       cancelled = true
       // Cancel any in-progress pairing when the dialog closes or unmounts
       cancelPairing().catch(() => {})
     }
-  }, [open])
+  }, [open, init])
+
+  // Countdown timer (#294) — only re-run effect when active/inactive changes
+  const countdownActive = countdown !== null && countdown > 0
+  useEffect(() => {
+    if (!countdownActive) return
+
+    const interval = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev === null || prev <= 1) {
+          clearInterval(interval)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [countdownActive])
 
   // Focus first word input when pairing info is loaded
   useEffect(() => {
-    if (open && pairingInfo && firstInputRef.current) {
-      firstInputRef.current.focus()
+    if (open && pairingInfo) {
+      const inputs = getWordInputs()
+      inputs[0]?.focus()
     }
-  }, [open, pairingInfo])
+  }, [open, pairingInfo, getWordInputs])
 
-  const handleWordChange = useCallback((index: number, value: string) => {
-    setWords((prev) => {
-      const next = [...prev] as [string, string, string, string]
-      next[index] = value.trim().toLowerCase()
-      return next
-    })
-  }, [])
+  // #279: Paste support — when pasting multi-word text, split and distribute across inputs
+  const handleWordChange = useCallback(
+    (index: number, value: string) => {
+      const trimmed = value.trim().toLowerCase()
+      const parts = trimmed.split(/\s+/)
+
+      if (parts.length > 1) {
+        // Paste detected: distribute words across inputs starting at index
+        setWords((prev) => {
+          const next = [...prev] as [string, string, string, string]
+          for (let i = 0; i < parts.length && index + i < 4; i++) {
+            next[index + i] = parts[i]
+          }
+          return next
+        })
+        // Focus the next empty input after the distributed words
+        const nextEmpty = Math.min(index + parts.length, 3)
+        setTimeout(() => {
+          const inputs = getWordInputs()
+          inputs[nextEmpty]?.focus()
+        }, 0)
+      } else {
+        setWords((prev) => {
+          const next = [...prev] as [string, string, string, string]
+          next[index] = trimmed
+          return next
+        })
+      }
+    },
+    [getWordInputs],
+  )
 
   const handlePair = useCallback(async () => {
     const passphrase = words.join(' ').trim()
@@ -127,10 +184,27 @@ export function PairingDialog({
       setWords(['', '', '', ''])
     } catch (err) {
       console.error('Pairing failed:', err)
-      setError('Pairing failed. Check the passphrase and try again.')
+      setError(`Pairing failed: ${String(err instanceof Error ? err.message : err)}`)
     }
     setPairLoading(false)
   }, [words, syncSetState])
+
+  // #279: Space auto-advance and Enter-to-submit (uses DOM queries for focus)
+  const handleWordKeyDown = useCallback(
+    (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === ' ') {
+        e.preventDefault()
+        if (index < 3) {
+          const inputs = getWordInputs()
+          inputs[index + 1]?.focus()
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        handlePair()
+      }
+    },
+    [handlePair, getWordInputs],
+  )
 
   const handleCancel = useCallback(async () => {
     try {
@@ -141,8 +215,11 @@ export function PairingDialog({
     setPairingInfo(null)
     setWords(['', '', '', ''])
     setError(null)
+    setCountdown(null)
     onOpenChange(false)
-  }, [onOpenChange])
+    // #288: Return focus to trigger element
+    triggerRef?.current?.focus()
+  }, [onOpenChange, triggerRef])
 
   const handleUnpair = useCallback(async (peerId: string) => {
     try {
@@ -151,7 +228,7 @@ export function PairingDialog({
       setUnpairPeerId(null)
     } catch (err) {
       console.error('Failed to unpair device:', err)
-      setError('Failed to unpair device.')
+      setError(`Failed to unpair device: ${String(err instanceof Error ? err.message : err)}`)
     }
   }, [])
 
@@ -192,23 +269,12 @@ export function PairingDialog({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [open, handleCancel])
 
-  function formatLastSynced(syncedAt: string | null): string {
-    if (!syncedAt) return 'Never synced'
-    try {
-      const date = new Date(syncedAt)
-      const now = new Date()
-      const diffMs = now.getTime() - date.getTime()
-      const diffMin = Math.floor(diffMs / 60000)
-      if (diffMin < 1) return 'Just now'
-      if (diffMin < 60) return `${diffMin} min ago`
-      const diffHours = Math.floor(diffMin / 60)
-      if (diffHours < 24) return `${diffHours}h ago`
-      const diffDays = Math.floor(diffHours / 24)
-      return `${diffDays}d ago`
-    } catch {
-      return syncedAt
-    }
-  }
+  // #294: Format countdown for display
+  const isExpired = countdown !== null && countdown <= 0
+  const countdownDisplay =
+    countdown !== null && countdown > 0
+      ? `${Math.floor(countdown / 60)}:${String(countdown % 60).padStart(2, '0')}`
+      : null
 
   if (!open) return null
 
@@ -244,11 +310,19 @@ export function PairingDialog({
           </Button>
         </div>
 
-        {/* Error message */}
+        {/* Error message with Retry button (#282) */}
         {error && (
-          <p className="pairing-error text-sm text-destructive mb-4" aria-live="polite">
-            {error}
-          </p>
+          <div className="pairing-error flex items-center gap-2 mb-4" aria-live="polite">
+            <p className="text-sm text-destructive flex-1">{error}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => init()}
+              className="pairing-retry-btn shrink-0"
+            >
+              Retry
+            </Button>
+          </div>
         )}
 
         {/* Loading state */}
@@ -263,13 +337,15 @@ export function PairingDialog({
         {!loading && pairingInfo && (
           <>
             <div className="flex flex-col sm:flex-row gap-4 items-center mb-4">
+              {/* #290: Use backend QR SVG instead of react-qr-code */}
               <div
                 className="pairing-qr shrink-0 rounded-lg border bg-white p-3"
                 role="img"
                 aria-label="QR code for device pairing"
-              >
-                <QRCode value={pairingInfo.passphrase} size={128} data-testid="pairing-qr-code" />
-              </div>
+                data-testid="pairing-qr-code"
+                // biome-ignore lint/security/noDangerouslySetInnerHtml: SVG from our own Rust backend, not user input
+                dangerouslySetInnerHTML={{ __html: pairingInfo.qr_svg }}
+              />
               <div className="flex flex-col gap-1">
                 <span className="text-sm font-medium text-muted-foreground">Passphrase:</span>
                 <p className="pairing-passphrase text-lg font-mono font-semibold">
@@ -278,6 +354,17 @@ export function PairingDialog({
                 <p className="text-xs text-muted-foreground mt-1">
                   Scan the QR code or enter the passphrase on the other device.
                 </p>
+                {/* #294: Countdown timer */}
+                {countdownDisplay && (
+                  <p className="pairing-countdown text-xs text-muted-foreground mt-1">
+                    Session expires in {countdownDisplay}
+                  </p>
+                )}
+                {isExpired && (
+                  <p className="pairing-expired text-xs text-destructive mt-1 font-medium">
+                    Session expired
+                  </p>
+                )}
               </div>
             </div>
 
@@ -288,18 +375,18 @@ export function PairingDialog({
               </span>
             </div>
 
-            {/* Word inputs */}
-            <div className="pairing-word-inputs grid grid-cols-4 gap-2 mb-4">
+            {/* Word inputs — #295: responsive grid */}
+            <div className="pairing-word-inputs grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
               {(['first', 'second', 'third', 'fourth'] as const).map((slot, i) => (
                 <Input
                   key={slot}
-                  ref={i === 0 ? firstInputRef : undefined}
                   value={words[i]}
                   onChange={(e) => handleWordChange(i, e.target.value)}
+                  onKeyDown={(e) => handleWordKeyDown(i, e)}
                   placeholder={`word ${i + 1}`}
                   aria-label={`Passphrase word ${i + 1}`}
                   className="text-center [@media(pointer:coarse)]:min-h-[44px]"
-                  disabled={pairLoading}
+                  disabled={pairLoading || isExpired}
                 />
               ))}
             </div>
@@ -316,7 +403,7 @@ export function PairingDialog({
               </Button>
               <Button
                 onClick={handlePair}
-                disabled={pairLoading || words.some((w) => w === '')}
+                disabled={pairLoading || words.some((w) => w === '') || isExpired}
                 className="pairing-pair-btn [@media(pointer:coarse)]:min-h-[44px]"
               >
                 {pairLoading && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
@@ -378,33 +465,17 @@ export function PairingDialog({
         </div>
       </div>
 
-      {/* Unpair confirmation dialog */}
-      <AlertDialog
+      {/* #301: Use shared UnpairConfirmDialog */}
+      <UnpairConfirmDialog
         open={!!unpairPeerId}
-        onOpenChange={(dialogOpen) => {
-          if (!dialogOpen) setUnpairPeerId(null)
+        onOpenChange={(o) => {
+          if (!o) setUnpairPeerId(null)
         }}
-      >
-        <AlertDialogContent className="pairing-unpair-confirm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Unpair device?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will remove the paired device. You will need to pair again to sync.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="pairing-unpair-yes"
-              onClick={() => {
-                if (unpairPeerId) handleUnpair(unpairPeerId)
-              }}
-            >
-              Yes, unpair
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        onConfirm={() => {
+          if (unpairPeerId) handleUnpair(unpairPeerId)
+        }}
+        className="pairing-unpair-confirm"
+      />
     </>
   )
 }

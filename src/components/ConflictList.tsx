@@ -8,13 +8,18 @@
  * Enhanced with:
  *  - Conflict type badge (Text / Property / Move)
  *  - Metadata display: conflict source block ID, created timestamp
+ *  - Expandable content (#292)
+ *  - Navigation to original block (#296)
+ *  - ULID timestamp decoding (#285)
+ *  - Persistent help text (#304)
+ *  - Aria-labels on actions (#298)
  *
  * NOTE: The backend currently does not distinguish conflict types in the DB.
  * "Text conflict" is shown as default. Property and Move conflict types will
  * be supported when the backend exposes them via a conflict_type field.
  */
 
-import { Check, GitMerge, X } from 'lucide-react'
+import { Check, ExternalLink, GitMerge, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
@@ -31,8 +36,10 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { formatTimestamp, truncateId, ulidToDate } from '@/lib/format'
 import type { BlockRow } from '../lib/tauri'
 import { deleteBlock, editBlock, getBlock, getConflicts } from '../lib/tauri'
+import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
 
 /**
@@ -64,35 +71,6 @@ function conflictTypeBadgeClass(type: 'Text' | 'Property' | 'Move'): string {
   }
 }
 
-/** Format a timestamp string to a human-readable relative or absolute format. */
-function formatTimestamp(ts: string | null | undefined): string {
-  if (!ts) return 'Unknown'
-  try {
-    const date = new Date(ts)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffMin = Math.floor(diffMs / 60000)
-    if (diffMin < 1) return 'Just now'
-    if (diffMin < 60) return `${diffMin} min ago`
-    const diffHours = Math.floor(diffMin / 60)
-    if (diffHours < 24) return `${diffHours}h ago`
-    return date.toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return ts
-  }
-}
-
-/** Truncate a block ID for display. */
-function truncateId(id: string, len = 12): string {
-  if (id.length <= len) return id
-  return `${id.slice(0, len)}...`
-}
-
 export function ConflictList(): React.ReactElement {
   const [blocks, setBlocks] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -101,6 +79,21 @@ export function ConflictList(): React.ReactElement {
   const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null)
   const [confirmKeepBlock, setConfirmKeepBlock] = useState<BlockRow | null>(null)
   const [originals, setOriginals] = useState<Map<string, BlockRow>>(new Map())
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+
+  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }, [])
 
   const loadConflicts = useCallback(async (cursor?: string) => {
     setLoading(true)
@@ -128,8 +121,8 @@ export function ConflictList(): React.ReactElement {
         for (const [k, v] of fetchedOriginals) next.set(k, v)
         return next
       })
-    } catch {
-      toast.error('Failed to load conflicts')
+    } catch (err: unknown) {
+      toast.error(`Failed to load conflicts: ${err instanceof Error ? err.message : String(err)}`)
     }
     setLoading(false)
   }, [])
@@ -145,12 +138,21 @@ export function ConflictList(): React.ReactElement {
         await editBlock(block.parent_id, block.content)
       }
       // Delete the conflict block
-      await deleteBlock(block.id)
+      try {
+        await deleteBlock(block.id)
+      } catch (_deleteErr: unknown) {
+        // editBlock succeeded but deleteBlock failed — partial success
+        toast.success(
+          'Updated original but failed to remove conflict copy — please delete it manually.',
+        )
+        setConfirmKeepBlock(null)
+        return
+      }
       setBlocks((prev) => prev.filter((b) => b.id !== block.id))
       setConfirmKeepBlock(null)
       toast.success('Kept selected version')
-    } catch {
-      toast.error('Failed to resolve conflict')
+    } catch (err: unknown) {
+      toast.error(`Failed to resolve conflict: ${err instanceof Error ? err.message : String(err)}`)
     }
   }, [])
 
@@ -160,14 +162,21 @@ export function ConflictList(): React.ReactElement {
       setBlocks((prev) => prev.filter((b) => b.id !== blockId))
       setConfirmDiscardId(null)
       toast.success('Conflict discarded')
-    } catch {
-      toast.error('Failed to resolve conflict')
+    } catch (err: unknown) {
+      toast.error(`Failed to discard conflict: ${err instanceof Error ? err.message : String(err)}`)
     }
   }, [])
 
   const loadMore = useCallback(() => {
     if (nextCursor) loadConflicts(nextCursor)
   }, [nextCursor, loadConflicts])
+
+  /** Resolve the display timestamp for a conflict block from its ULID. */
+  function getConflictTimestamp(block: BlockRow): string {
+    const ulidDate = ulidToDate(block.id)
+    if (ulidDate) return formatTimestamp(ulidDate.toISOString(), 'relative')
+    return 'Unknown'
+  }
 
   return (
     <div className="conflict-list space-y-4">
@@ -185,16 +194,29 @@ export function ConflictList(): React.ReactElement {
         />
       )}
 
+      {blocks.length > 0 && (
+        <p className="text-xs text-muted-foreground mb-2">
+          <strong>Keep</strong> replaces the current content with the incoming version.{' '}
+          <strong>Discard</strong> removes the conflicting version.
+        </p>
+      )}
+
       <div className="conflict-items space-y-2">
         {blocks.map((block) => {
           const original = block.parent_id ? originals.get(block.parent_id) : undefined
           const conflictType = inferConflictType(block, original)
+          const isExpanded = expandedIds.has(block.id)
           return (
             <div
               key={block.id}
-              className="conflict-item flex items-center justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
+              className="conflict-item flex items-start justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
             >
-              <div className="conflict-item-content flex min-w-0 flex-col gap-1">
+              <button
+                type="button"
+                className="conflict-item-content flex min-w-0 flex-col gap-1 text-left flex-1 cursor-pointer bg-transparent border-none p-0"
+                onClick={() => toggleExpanded(block.id)}
+                aria-expanded={isExpanded}
+              >
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge variant="secondary" className="conflict-item-type shrink-0">
                     {block.block_type}
@@ -210,25 +232,38 @@ export function ConflictList(): React.ReactElement {
                   <span className="conflict-source-id font-mono" title={block.id}>
                     ID: {truncateId(block.id)}
                   </span>
-                  <span className="conflict-timestamp">
-                    {formatTimestamp(block.deleted_at ?? block.archived_at)}
-                  </span>
+                  <span className="conflict-timestamp">{getConflictTimestamp(block)}</span>
                 </div>
-                <div className="conflict-original text-sm text-muted-foreground truncate">
+                <div
+                  className={`conflict-original text-sm text-muted-foreground${isExpanded ? '' : ' truncate'}`}
+                >
                   <span className="font-medium">Current:</span>{' '}
                   {original ? (original.content ?? '(empty)') : '(original not available)'}
                 </div>
-                <div className="conflict-incoming text-sm truncate">
+                <div className={`conflict-incoming text-sm${isExpanded ? '' : ' truncate'}`}>
                   <span className="font-medium">Incoming:</span>{' '}
                   <span className="conflict-item-text">{block.content ?? '(empty)'}</span>
                 </div>
-              </div>
-              <div className="conflict-item-actions flex items-center gap-2">
+              </button>
+              <div className="conflict-item-actions flex items-center gap-2 ml-2 shrink-0">
+                {block.parent_id && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="conflict-view-original-btn"
+                    aria-label={`View original block for ${truncateId(block.id)}`}
+                    onClick={() => navigateToPage(block.parent_id as string, '')}
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    View original
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
                   className="conflict-keep-btn [@media(pointer:coarse)]:min-h-[44px]"
                   onClick={() => setConfirmKeepBlock(block)}
+                  aria-label={`Keep incoming version for block ${truncateId(block.id)}`}
                 >
                   <Check className="h-3.5 w-3.5" />
                   Keep
@@ -238,6 +273,7 @@ export function ConflictList(): React.ReactElement {
                   size="sm"
                   className="conflict-discard-btn [@media(pointer:coarse)]:min-h-[44px]"
                   onClick={() => setConfirmDiscardId(block.id)}
+                  aria-label={`Discard conflict for block ${truncateId(block.id)}`}
                 >
                   <X className="h-3.5 w-3.5" />
                   Discard

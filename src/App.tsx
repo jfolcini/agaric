@@ -103,7 +103,7 @@ function syncDotClass(syncState: string, hasPeers: boolean): string {
   }
 }
 
-/** Returns true when at least one unresolved conflict exists. Polls every 30 s. */
+/** Returns true when at least one unresolved conflict exists. Polls every 30 s and on focus. */
 function useHasConflicts(): boolean {
   const [hasConflicts, setHasConflicts] = useState(false)
   const currentView = useNavigationStore((s) => s.currentView)
@@ -123,9 +123,15 @@ function useHasConflicts(): boolean {
 
     poll()
     const id = setInterval(poll, 30_000)
+
+    // Re-poll immediately when the window regains focus (e.g. after resolving
+    // conflicts and switching apps, the badge updates without waiting 30 s).
+    window.addEventListener('focus', poll)
+
     return () => {
       cancelled = true
       clearInterval(id)
+      window.removeEventListener('focus', poll)
     }
   }, [currentView])
 

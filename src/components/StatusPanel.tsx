@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { formatTimestamp } from '@/lib/format'
 import type { StatusInfo } from '../lib/tauri'
 import { getStatus } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
@@ -36,7 +37,13 @@ function MetricLabel({ label }: { label: string }): React.ReactElement {
     <dt className="status-metric-label text-sm text-muted-foreground">
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className="cursor-help border-b border-dotted border-current">{label}</span>
+          <button
+            type="button"
+            tabIndex={0}
+            className="cursor-help border-b border-dotted border-current bg-transparent p-0 font-inherit text-inherit"
+          >
+            {label}
+          </button>
         </TooltipTrigger>
         <TooltipContent>{TOOLTIP_TEXT[label]}</TooltipContent>
       </Tooltip>
@@ -235,7 +242,7 @@ export function StatusPanel(): React.ReactElement {
 
                   <div className="rounded-lg border bg-muted/30 p-4 text-center">
                     <dd className="sync-last-synced text-2xl font-bold">
-                      {syncLastSynced ?? '--'}
+                      {syncLastSynced ? formatTimestamp(syncLastSynced, 'relative') : '--'}
                     </dd>
                     <dt className="text-sm text-muted-foreground">Last Synced</dt>
                   </div>

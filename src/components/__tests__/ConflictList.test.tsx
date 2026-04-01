@@ -11,6 +11,14 @@
  *  - Original block content fetched and displayed
  *  - Fallback text when original fetch fails
  *  - a11y compliance
+ *  - #281 Error messages include backend error text
+ *  - #285 ULID timestamp decoding
+ *  - #286 Keep partial failure handling
+ *  - #292 Expand/collapse conflict content
+ *  - #296 View original navigation
+ *  - #298 Aria-labels on Keep/Discard
+ *  - #300 Shared format utilities
+ *  - #304 Help text banner
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -19,6 +27,8 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { ulidToDate } from '@/lib/format'
+import { useNavigationStore } from '../../stores/navigation'
 import { ConflictList } from '../ConflictList'
 
 vi.mock('sonner', () => ({
@@ -29,6 +39,22 @@ vi.mock('sonner', () => ({
 }))
 
 const mockedInvoke = vi.mocked(invoke)
+
+/**
+ * Generate a valid ULID string for a given timestamp (ms since epoch).
+ * Encodes the timestamp in the first 10 Crockford base32 chars,
+ * followed by 16 random chars (here just 'A').
+ */
+function makeUlid(timestampMs: number): string {
+  const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+  let ts = timestampMs
+  const chars: string[] = []
+  for (let i = 0; i < 10; i++) {
+    chars.unshift(CROCKFORD[ts % 32])
+    ts = Math.floor(ts / 32)
+  }
+  return `${chars.join('')}AAAAAAAAAAAAAAAA`
+}
 
 function makeConflict(id: string, content: string, parentId: string | null = 'ORIG001') {
   return {
@@ -179,8 +205,8 @@ describe('ConflictList', () => {
 
     render(<ConflictList />)
 
-    // First click: shows confirmation
-    const discardBtn = await screen.findByRole('button', { name: /Discard/i })
+    // First click: shows confirmation (use aria-label to avoid matching content button)
+    const discardBtn = await screen.findByRole('button', { name: /Discard conflict for block/i })
     await user.click(discardBtn)
 
     expect(screen.getByText('Discard conflict?')).toBeInTheDocument()
@@ -206,8 +232,8 @@ describe('ConflictList', () => {
 
     render(<ConflictList />)
 
-    // First click: shows confirmation
-    const discardBtn = await screen.findByRole('button', { name: /Discard/i })
+    // First click: shows confirmation (use aria-label to avoid matching content button)
+    const discardBtn = await screen.findByRole('button', { name: /Discard conflict for block/i })
     await user.click(discardBtn)
 
     expect(screen.getByText('Discard conflict?')).toBeInTheDocument()
@@ -234,8 +260,8 @@ describe('ConflictList', () => {
 
     render(<ConflictList />)
 
-    // First click shows confirmation
-    const discardBtn = await screen.findByRole('button', { name: /Discard/i })
+    // First click shows confirmation (use aria-label to avoid matching content button)
+    const discardBtn = await screen.findByRole('button', { name: /Discard conflict for block/i })
     await user.click(discardBtn)
 
     // Second click (Yes) executes discard
@@ -264,8 +290,8 @@ describe('ConflictList', () => {
 
     expect(await screen.findByText('will be discarded')).toBeInTheDocument()
 
-    // Discard with confirmation
-    const discardBtn = screen.getByRole('button', { name: /Discard/i })
+    // Discard with confirmation (use aria-label to avoid matching content button)
+    const discardBtn = screen.getByRole('button', { name: /Discard conflict for block/i })
     await user.click(discardBtn)
     const yesBtn = screen.getByRole('button', { name: /Yes, discard/i })
     await user.click(yesBtn)
@@ -379,7 +405,7 @@ describe('ConflictList', () => {
     })
   })
 
-  it('handles error from getConflicts without crashing', async () => {
+  it('handles error from getConflicts and shows backend error text (#281)', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
 
     render(<ConflictList />)
@@ -393,20 +419,20 @@ describe('ConflictList', () => {
       ).toBeInTheDocument()
     })
 
-    // Should show error toast
+    // Should show error toast with backend error text
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load conflicts')
+      expect(toast.error).toHaveBeenCalledWith('Failed to load conflicts: network failure')
     })
   })
 
-  it('shows toast on failed Keep action', async () => {
+  it('shows toast on failed Keep action with backend error text (#281)', async () => {
     const user = userEvent.setup()
     const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
     // edit_block will reject
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return { items: [conflict], next_cursor: null, has_more: false }
       if (cmd === 'get_block') return originalBlock
-      if (cmd === 'edit_block') throw new Error('fail')
+      if (cmd === 'edit_block') throw new Error('permission denied')
       return undefined
     })
 
@@ -420,18 +446,18 @@ describe('ConflictList', () => {
     await user.click(yesKeepBtn)
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to resolve conflict')
+      expect(toast.error).toHaveBeenCalledWith('Failed to resolve conflict: permission denied')
     })
   })
 
-  it('shows toast on failed Discard action', async () => {
+  it('shows toast on failed Discard action with backend error text (#281)', async () => {
     const user = userEvent.setup()
     const conflict = makeConflict('C1', 'conflict text')
     // delete_block will reject
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return { items: [conflict], next_cursor: null, has_more: false }
       if (cmd === 'get_block') return originalBlock
-      if (cmd === 'delete_block') throw new Error('fail')
+      if (cmd === 'delete_block') throw new Error('db locked')
       return undefined
     })
 
@@ -444,7 +470,7 @@ describe('ConflictList', () => {
     await user.click(yesBtn)
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to resolve conflict')
+      expect(toast.error).toHaveBeenCalledWith('Failed to discard conflict: db locked')
     })
   })
 
@@ -782,17 +808,11 @@ describe('ConflictList', () => {
     expect(sourceId?.textContent).toContain('CONFLICT-ID-...')
   })
 
-  it('displays conflict metadata: timestamp', async () => {
-    const conflict = {
-      id: 'C1',
-      block_type: 'content',
-      content: 'conflict text',
-      parent_id: 'ORIG001',
-      position: null,
-      deleted_at: '2025-06-15T10:30:00Z',
-      archived_at: null,
-      is_conflict: true,
-    }
+  it('displays conflict metadata: timestamp from ULID (#285)', async () => {
+    // Create a ULID encoding a known timestamp
+    const knownTs = Date.now() - 3600_000 // 1 hour ago
+    const ulidId = makeUlid(knownTs)
+    const conflict = makeConflict(ulidId, 'conflict text')
     const page = {
       items: [conflict],
       next_cursor: null,
@@ -804,15 +824,16 @@ describe('ConflictList', () => {
 
     await screen.findByText('conflict text')
 
-    // Timestamp should be displayed in the metadata area
+    // Timestamp should be displayed and should not be "Unknown"
     const timestamp = container.querySelector('.conflict-timestamp')
     expect(timestamp).toBeTruthy()
-    // The timestamp should contain some formatted date text (not "Unknown")
     expect(timestamp?.textContent).not.toBe('')
     expect(timestamp?.textContent).not.toBe('Unknown')
+    // Should show something like "1h ago"
+    expect(timestamp?.textContent).toMatch(/ago|Just now/i)
   })
 
-  it('shows "Unknown" timestamp when deleted_at and archived_at are null', async () => {
+  it('shows "Unknown" timestamp when block ID is not a valid ULID', async () => {
     const conflict = makeConflict('C1', 'conflict text')
     const page = {
       items: [conflict],
@@ -886,5 +907,195 @@ describe('ConflictList', () => {
     await waitFor(() => {
       expect(screen.queryByText('conflict with badge')).not.toBeInTheDocument()
     })
+  })
+
+  // --- #285 ULID timestamp decoding (unit tests for ulidToDate) ---
+
+  describe('ulidToDate', () => {
+    it('decodes a valid ULID to the correct date', () => {
+      const ts = 1700000000000 // Nov 14 2023
+      const ulid = makeUlid(ts)
+      const date = ulidToDate(ulid)
+      expect(date).not.toBeNull()
+      expect(date?.getTime()).toBe(ts)
+    })
+
+    it('returns null for empty string', () => {
+      expect(ulidToDate('')).toBeNull()
+    })
+
+    it('returns null for too-short string', () => {
+      expect(ulidToDate('ABC')).toBeNull()
+    })
+
+    it('returns null for string with invalid Crockford chars', () => {
+      // 'I', 'L', 'O', 'U' are not in Crockford base32
+      expect(ulidToDate('ILOUIIIIII0000000000000000')).toBeNull()
+    })
+  })
+
+  // --- #286 Keep partial failure: editBlock succeeds, deleteBlock fails ---
+
+  it('handles Keep partial failure: editBlock succeeds but deleteBlock fails (#286)', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'incoming changes', 'ORIG001')
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_conflicts') return { items: [conflict], next_cursor: null, has_more: false }
+      if (cmd === 'get_block') return originalBlock
+      if (cmd === 'edit_block')
+        return { id: 'ORIG001', block_type: 'content', content: 'incoming changes' }
+      if (cmd === 'delete_block') throw new Error('storage full')
+      return undefined
+    })
+
+    render(<ConflictList />)
+
+    const keepBtn = await screen.findByRole('button', { name: /Keep/i })
+    await user.click(keepBtn)
+
+    const yesKeepBtn = screen.getByRole('button', { name: /Yes, keep/i })
+    await user.click(yesKeepBtn)
+
+    // Should show the partial-success toast
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith(
+        'Updated original but failed to remove conflict copy — please delete it manually.',
+      )
+    })
+
+    // Should NOT show an error toast (editBlock succeeded)
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  // --- #292 Expand/collapse conflict content ---
+
+  it('toggles expand/collapse on conflict item click (#292)', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'A very long incoming content string', 'ORIG001')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+    })
+
+    const { container } = render(<ConflictList />)
+
+    await screen.findByText(/A very long incoming content string/)
+
+    // Initially content divs should have truncate class
+    const currentDiv = container.querySelector('.conflict-original')
+    const incomingDiv = container.querySelector('.conflict-incoming')
+    expect(currentDiv?.className).toContain('truncate')
+    expect(incomingDiv?.className).toContain('truncate')
+
+    // Click the expandable content area
+    const expandBtn = container.querySelector('.conflict-item-content') as HTMLElement
+    await user.click(expandBtn)
+
+    // After click, truncate class should be removed
+    expect(currentDiv?.className).not.toContain('truncate')
+    expect(incomingDiv?.className).not.toContain('truncate')
+
+    // Click again to collapse
+    await user.click(expandBtn)
+
+    // Truncate class should be restored
+    expect(currentDiv?.className).toContain('truncate')
+    expect(incomingDiv?.className).toContain('truncate')
+  })
+
+  // --- #296 View original button / navigation ---
+
+  it('shows "View original" button when parent_id exists (#296)', async () => {
+    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+
+    const viewOriginalBtn = await screen.findByRole('button', { name: /View original/i })
+    expect(viewOriginalBtn).toBeInTheDocument()
+  })
+
+  it('does not show "View original" button when parent_id is null (#296)', async () => {
+    const conflict = makeConflict('C1', 'orphan conflict', null)
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('orphan conflict')
+
+    expect(screen.queryByRole('button', { name: /View original/i })).not.toBeInTheDocument()
+  })
+
+  it('"View original" navigates to the parent page (#296)', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+
+    const viewOriginalBtn = await screen.findByRole('button', { name: /View original/i })
+    await user.click(viewOriginalBtn)
+
+    // Should have navigated to the original block's page
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('page-editor')
+    expect(navState.pageStack).toContainEqual(expect.objectContaining({ pageId: 'ORIG001' }))
+  })
+
+  // --- #298 Aria-labels on Keep/Discard buttons ---
+
+  it('Keep and Discard buttons have aria-labels with block ID context (#298)', async () => {
+    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict text')
+
+    const keepBtn = screen.getByRole('button', { name: /Keep incoming version for block C1/i })
+    expect(keepBtn).toBeInTheDocument()
+
+    const discardBtn = screen.getByRole('button', { name: /Discard conflict for block C1/i })
+    expect(discardBtn).toBeInTheDocument()
+  })
+
+  // --- #304 Help text banner ---
+
+  it('shows help text banner when conflicts exist (#304)', async () => {
+    const conflict = makeConflict('C1', 'conflict text')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict text')
+
+    // Help text about Keep and Discard should be visible
+    expect(screen.getByText(/replaces the current content/i)).toBeInTheDocument()
+    expect(screen.getByText(/removes the conflicting version/i)).toBeInTheDocument()
+  })
+
+  it('does not show help text banner when no conflicts', async () => {
+    mockInvokeByCommand({ get_conflicts: emptyPage })
+
+    render(<ConflictList />)
+
+    await screen.findByText(/No conflicts/)
+
+    // Help text should NOT be visible
+    expect(screen.queryByText(/replaces the current content/i)).not.toBeInTheDocument()
   })
 })

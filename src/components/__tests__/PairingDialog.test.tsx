@@ -9,19 +9,26 @@
  *  - Cancel button calls cancelPairing
  *  - Shows paired devices list
  *  - Unpair button calls deletePeerRef
+ *  - Paste support distributes words across inputs
+ *  - Space auto-advances focus
+ *  - Enter submits pairing
+ *  - Retry button re-initializes on error
+ *  - Countdown timer and session expiry
+ *  - Responsive grid classes
+ *  - Error messages include backend text
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { PairingDialog } from '../PairingDialog'
 
-// Mock react-qr-code — render a simple div with a data-testid
+// Mock react-qr-code — no longer used by the component, but keep mock to avoid import errors
 vi.mock('react-qr-code', () => ({
   default: ({ value, ...props }: { value: string; [key: string]: unknown }) => (
-    <div data-testid="pairing-qr-code" data-value={value} {...props} />
+    <div data-testid="pairing-qr-code-legacy" data-value={value} {...props} />
   ),
 }))
 
@@ -47,7 +54,7 @@ const mockedInvoke = vi.mocked(invoke)
 
 const mockPairingInfo = {
   passphrase: 'alpha bravo charlie delta',
-  qr_svg: '<svg>mock</svg>',
+  qr_svg: '<svg data-testid="backend-qr"><rect/></svg>',
   port: 9000,
 }
 
@@ -99,7 +106,7 @@ describe('PairingDialog', () => {
     expect(await screen.findByText('Pair Device')).toBeInTheDocument()
   })
 
-  it('shows QR code when pairing info is loaded', async () => {
+  it('shows QR code when pairing info is loaded (backend SVG)', async () => {
     mockInvokeByCommand({
       start_pairing: mockPairingInfo,
       list_peer_refs: [],
@@ -107,8 +114,12 @@ describe('PairingDialog', () => {
 
     render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
 
+    // The QR is rendered via dangerouslySetInnerHTML with the backend SVG
     const qr = await screen.findByTestId('pairing-qr-code')
     expect(qr).toBeInTheDocument()
+    // Backend SVG should be injected as innerHTML
+    expect(qr.innerHTML).toContain('<svg')
+    expect(qr.innerHTML).toContain('backend-qr')
   })
 
   it('shows passphrase when pairing info is loaded', async () => {
@@ -279,7 +290,7 @@ describe('PairingDialog', () => {
     })
   })
 
-  it('shows error when startPairing fails', async () => {
+  it('shows error with backend message when startPairing fails', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'start_pairing') throw new Error('network error')
       if (cmd === 'list_peer_refs') return []
@@ -288,20 +299,21 @@ describe('PairingDialog', () => {
 
     const { container } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
 
-    // Error text appears in both the visible .pairing-error and the sr-only aria-live div
+    // Error text includes the backend error message
     await waitFor(() => {
       const errorEl = container.querySelector('.pairing-error')
       expect(errorEl).toBeTruthy()
-      expect(errorEl?.textContent).toBe('Failed to start pairing. Please try again.')
+      expect(errorEl?.textContent).toContain('Failed to start pairing:')
+      expect(errorEl?.textContent).toContain('network error')
     })
   })
 
-  it('shows error when confirmPairing fails', async () => {
+  it('shows error with backend message when confirmPairing fails', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'start_pairing') return mockPairingInfo
       if (cmd === 'list_peer_refs') return []
-      if (cmd === 'confirm_pairing') throw new Error('pairing failed')
+      if (cmd === 'confirm_pairing') throw new Error('invalid passphrase')
       return undefined
     })
 
@@ -321,7 +333,8 @@ describe('PairingDialog', () => {
     await waitFor(() => {
       const errorEl = container.querySelector('.pairing-error')
       expect(errorEl).toBeTruthy()
-      expect(errorEl?.textContent).toBe('Pairing failed. Check the passphrase and try again.')
+      expect(errorEl?.textContent).toContain('Pairing failed:')
+      expect(errorEl?.textContent).toContain('invalid passphrase')
     })
   })
 
@@ -415,5 +428,212 @@ describe('PairingDialog', () => {
     const title = document.getElementById('pairing-dialog-title')
     expect(title).toBeTruthy()
     expect(title?.textContent).toBe('Pair Device')
+  })
+
+  // -----------------------------------------------------------------------
+  // New tests for issues #279, #282, #294, #295
+  // -----------------------------------------------------------------------
+
+  it('distributes pasted multi-word text across inputs (#279 paste)', async () => {
+    const user = userEvent.setup()
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    await screen.findByText('alpha bravo charlie delta')
+
+    const inputs = screen.getAllByRole('textbox') as HTMLInputElement[]
+
+    // Simulate pasting "echo foxtrot golf hotel" into the first input
+    // userEvent.paste triggers onChange with the full text
+    await user.click(inputs[0])
+    await user.paste('echo foxtrot golf hotel')
+
+    await waitFor(() => {
+      expect(inputs[0]).toHaveValue('echo')
+      expect(inputs[1]).toHaveValue('foxtrot')
+      expect(inputs[2]).toHaveValue('golf')
+      expect(inputs[3]).toHaveValue('hotel')
+    })
+  })
+
+  it('Space key auto-advances focus to next input (#279 space)', async () => {
+    const user = userEvent.setup()
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    await screen.findByText('alpha bravo charlie delta')
+
+    const inputs = screen.getAllByRole('textbox')
+
+    // Type a word in the first input
+    await user.click(inputs[0])
+    await user.type(inputs[0], 'echo', { skipClick: true })
+
+    // Fire Space keydown directly on the focused input
+    fireEvent.keyDown(inputs[0], { key: ' ' })
+
+    // Focus should be on the second input
+    await waitFor(() => {
+      expect(document.activeElement).toBe(inputs[1])
+    })
+  })
+
+  it('Enter key submits when all words filled (#279 enter)', async () => {
+    const user = userEvent.setup()
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+      confirm_pairing: undefined,
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    await screen.findByText('alpha bravo charlie delta')
+
+    const inputs = screen.getAllByRole('textbox')
+    await user.type(inputs[0], 'echo')
+    await user.type(inputs[1], 'foxtrot')
+    await user.type(inputs[2], 'golf')
+    await user.type(inputs[3], 'hotel')
+
+    // Press Enter on the last input
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
+        passphrase: 'echo foxtrot golf hotel',
+        remoteDeviceId: '',
+      })
+    })
+  })
+
+  it('shows Retry button on error and clicking it calls startPairing again (#282)', async () => {
+    const user = userEvent.setup()
+    let callCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'start_pairing') {
+        callCount++
+        if (callCount === 1) throw new Error('network error')
+        return mockPairingInfo
+      }
+      if (cmd === 'list_peer_refs') return []
+      if (cmd === 'cancel_pairing') return undefined
+      return undefined
+    })
+
+    const { container } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    // Wait for error to appear (query via container to avoid sr-only duplicate)
+    await waitFor(() => {
+      const errorEl = container.querySelector('.pairing-error p')
+      expect(errorEl).toBeTruthy()
+      expect(errorEl?.textContent).toContain('network error')
+    })
+
+    // Retry button should be visible
+    const retryBtn = screen.getByRole('button', { name: /Retry/i })
+    expect(retryBtn).toBeInTheDocument()
+
+    // Click retry — should call startPairing again
+    await user.click(retryBtn)
+
+    await waitFor(() => {
+      expect(callCount).toBe(2)
+    })
+
+    // After successful retry, pairing info should be shown
+    await waitFor(() => {
+      expect(screen.getByText('alpha bravo charlie delta')).toBeInTheDocument()
+    })
+  })
+
+  it('shows countdown timer and session expired text (#294)', async () => {
+    vi.useFakeTimers()
+
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+      cancel_pairing: undefined,
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    // Wait for pairing info to load — use real microtasks for promises
+    await act(async () => {
+      // Flush pending microtasks (promises from init)
+      await vi.runAllTimersAsync()
+    })
+
+    // After loading, countdown should appear (starts at 5:00)
+    expect(screen.getByText(/Session expires in 5:00/)).toBeInTheDocument()
+
+    // Advance 10 seconds
+    await act(async () => {
+      vi.advanceTimersByTime(10_000)
+    })
+
+    expect(screen.getByText(/Session expires in 4:50/)).toBeInTheDocument()
+
+    // Advance to expiry (remaining ~290 seconds)
+    await act(async () => {
+      vi.advanceTimersByTime(290_000)
+    })
+
+    // Should show "Session expired"
+    expect(screen.getByText('Session expired')).toBeInTheDocument()
+
+    // Pair button should be disabled when expired
+    const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
+    expect(pairBtn).toBeDisabled()
+
+    vi.useRealTimers()
+  })
+
+  it('word inputs container has responsive grid classes (#295)', async () => {
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+    })
+
+    const { container } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    await screen.findByText('alpha bravo charlie delta')
+
+    const grid = container.querySelector('.pairing-word-inputs')
+    expect(grid).toBeTruthy()
+    expect(grid?.classList.contains('grid-cols-2')).toBe(true)
+    expect(grid?.classList.contains('sm:grid-cols-4')).toBe(true)
+  })
+
+  it('returns focus to triggerRef on cancel (#288)', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    const triggerRef = { current: document.createElement('button') }
+    document.body.appendChild(triggerRef.current)
+    triggerRef.current.textContent = 'Open Pairing'
+    const focusSpy = vi.spyOn(triggerRef.current, 'focus')
+
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+      cancel_pairing: undefined,
+    })
+
+    render(<PairingDialog open={true} onOpenChange={onOpenChange} triggerRef={triggerRef} />)
+
+    await screen.findByText('alpha bravo charlie delta')
+
+    const cancelBtn = screen.getByRole('button', { name: /Cancel/i })
+    await user.click(cancelBtn)
+
+    await waitFor(() => {
+      expect(focusSpy).toHaveBeenCalled()
+    })
+
+    document.body.removeChild(triggerRef.current)
   })
 })

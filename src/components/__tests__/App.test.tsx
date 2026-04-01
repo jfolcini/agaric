@@ -596,6 +596,55 @@ describe('App', () => {
         expect(screen.queryByLabelText('Has unresolved conflicts')).not.toBeInTheDocument()
       })
     })
+
+    it('re-polls conflicts on window focus event (#293)', async () => {
+      // Initially no conflicts
+      let conflictResponse: {
+        items: Record<string, unknown>[]
+        next_cursor: null
+        has_more: boolean
+      } = emptyPage
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_conflicts') return conflictResponse
+        return emptyPage
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      // Initially no conflict dot
+      await waitFor(() => {
+        expect(screen.queryByLabelText('Has unresolved conflicts')).not.toBeInTheDocument()
+      })
+
+      // Now conflicts appear on the backend
+      conflictResponse = {
+        items: [
+          {
+            id: 'CONFLICT_2',
+            block_type: 'paragraph',
+            content: 'y',
+            parent_id: null,
+            position: 0,
+            deleted_at: null,
+            archived_at: null,
+            is_conflict: true,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      }
+
+      // Dispatch focus event to trigger re-poll
+      fireEvent(window, new Event('focus'))
+
+      // The conflict dot should appear after the focus-triggered poll
+      await waitFor(() => {
+        expect(screen.getByLabelText('Has unresolved conflicts')).toBeInTheDocument()
+      })
+    })
   })
 
   // ── Keyboard shortcuts modal ─────────────────────────────────────────

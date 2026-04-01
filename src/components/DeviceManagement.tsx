@@ -14,23 +14,15 @@
 import { Loader2, RefreshCw, Smartphone, Unplug } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { formatLastSynced, truncateId } from '@/lib/format'
 import type { PeerRefRow } from '../lib/tauri'
-import { deletePeerRef, getDeviceId, listPeerRefs, startSync } from '../lib/tauri'
+import { cancelSync, deletePeerRef, getDeviceId, listPeerRefs, startSync } from '../lib/tauri'
 import { PairingDialog } from './PairingDialog'
+import { UnpairConfirmDialog } from './UnpairConfirmDialog'
 
 export function DeviceManagement(): React.ReactElement {
   const [deviceId, setDeviceId] = useState<string | null>(null)
@@ -70,39 +62,38 @@ export function DeviceManagement(): React.ReactElement {
     }
   }, [])
 
-  const handleSyncNow = useCallback(async (peerId: string) => {
-    setSyncingPeerId(peerId)
-    try {
-      await startSync(peerId)
-    } catch (err) {
-      console.error('Sync failed:', err)
-      setError('Sync failed')
-    }
-    setSyncingPeerId(null)
-  }, [])
+  const handleSyncNow = useCallback(
+    async (peerId: string) => {
+      setSyncingPeerId(peerId)
+      let timeoutId: ReturnType<typeof setTimeout> | undefined
+      try {
+        const timeout = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('Sync timed out')), 60000)
+        })
+        await Promise.race([startSync(peerId), timeout])
+        await loadData()
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Sync failed'
+        console.error('Sync failed:', err)
+        setError(message)
+        if (message === 'Sync timed out') {
+          await cancelSync()
+        }
+      } finally {
+        clearTimeout(timeoutId)
+      }
+      setSyncingPeerId(null)
+    },
+    [loadData],
+  )
 
-  function formatLastSynced(syncedAt: string | null): string {
-    if (!syncedAt) return 'Never synced'
-    try {
-      const date = new Date(syncedAt)
-      const now = new Date()
-      const diffMs = now.getTime() - date.getTime()
-      const diffMin = Math.floor(diffMs / 60000)
-      if (diffMin < 1) return 'Just now'
-      if (diffMin < 60) return `${diffMin} min ago`
-      const diffHours = Math.floor(diffMin / 60)
-      if (diffHours < 24) return `${diffHours}h ago`
-      const diffDays = Math.floor(diffHours / 24)
-      return `${diffDays}d ago`
-    } catch {
-      return syncedAt
-    }
-  }
-
-  function truncateId(id: string, len = 12): string {
-    if (id.length <= len) return id
-    return `${id.slice(0, len)}...`
-  }
+  const handlePairingClose = useCallback(
+    (open: boolean) => {
+      setPairingOpen(open)
+      if (!open) loadData()
+    },
+    [loadData],
+  )
 
   return (
     <div className="device-management space-y-4">
@@ -122,9 +113,15 @@ export function DeviceManagement(): React.ReactElement {
           )}
 
           {error && (
-            <p className="device-management-error text-sm text-destructive mb-3" aria-live="polite">
-              {error}
-            </p>
+            <div
+              className="device-management-error flex items-center gap-2 mb-3"
+              aria-live="polite"
+            >
+              <p className="text-sm text-destructive">{error}</p>
+              <Button variant="outline" size="sm" onClick={() => loadData()}>
+                Retry
+              </Button>
+            </div>
           )}
 
           {deviceId && (
@@ -174,7 +171,7 @@ export function DeviceManagement(): React.ReactElement {
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
+                        <div className="flex items-center gap-2 shrink-0">
                           <Button
                             variant="outline"
                             size="sm"
@@ -195,6 +192,7 @@ export function DeviceManagement(): React.ReactElement {
                             size="sm"
                             className="device-unpair-btn [@media(pointer:coarse)]:min-h-[44px]"
                             onClick={() => setUnpairPeerId(peer.peer_id)}
+                            aria-label={`Unpair device ${truncateId(peer.peer_id)}`}
                           >
                             <Unplug className="h-3.5 w-3.5" />
                             Unpair
@@ -217,35 +215,19 @@ export function DeviceManagement(): React.ReactElement {
       </Card>
 
       {/* Pairing Dialog */}
-      <PairingDialog open={pairingOpen} onOpenChange={setPairingOpen} />
+      <PairingDialog open={pairingOpen} onOpenChange={handlePairingClose} />
 
       {/* Unpair confirmation dialog */}
-      <AlertDialog
+      <UnpairConfirmDialog
         open={!!unpairPeerId}
-        onOpenChange={(dialogOpen) => {
-          if (!dialogOpen) setUnpairPeerId(null)
+        onOpenChange={(o) => {
+          if (!o) setUnpairPeerId(null)
         }}
-      >
-        <AlertDialogContent className="device-unpair-confirm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Unpair device?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will remove the paired device. You will need to pair again to sync.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="device-unpair-yes"
-              onClick={() => {
-                if (unpairPeerId) handleUnpair(unpairPeerId)
-              }}
-            >
-              Yes, unpair
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        onConfirm={() => {
+          if (unpairPeerId) handleUnpair(unpairPeerId)
+        }}
+        className="device-unpair-confirm"
+      />
     </div>
   )
 }
