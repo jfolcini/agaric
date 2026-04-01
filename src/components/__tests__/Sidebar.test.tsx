@@ -11,7 +11,7 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import {
   Sidebar,
@@ -184,5 +184,152 @@ describe('Sidebar', () => {
     expect(menuButtons.length).toBe(2)
     expect(menuButtons[0]).toHaveTextContent('Home')
     expect(menuButtons[1]).toHaveTextContent('Settings')
+  })
+})
+
+describe('swipe-to-open gesture', () => {
+  beforeEach(() => {
+    Object.defineProperty(window, 'innerWidth', { value: 375, configurable: true, writable: true })
+    vi.spyOn(window, 'matchMedia').mockReturnValue({
+      matches: true,
+      media: '',
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    } as unknown as MediaQueryList)
+  })
+
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true, writable: true })
+    vi.restoreAllMocks()
+  })
+
+  it('swipe from left edge opens mobile sidebar', async () => {
+    renderSidebar()
+
+    // On mobile the sidebar renders as a Sheet; when closed, the dialog is not in the DOM
+    expect(document.querySelector('[data-mobile="true"]')).not.toBeInTheDocument()
+
+    fireEvent.touchStart(document, {
+      touches: [{ clientX: 10, clientY: 200 }],
+    })
+    fireEvent.touchMove(document, {
+      touches: [{ clientX: 70, clientY: 200 }],
+    })
+    fireEvent.touchEnd(document)
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).toBeInTheDocument()
+    })
+  })
+
+  it('swipe not from edge does not open', async () => {
+    renderSidebar()
+
+    fireEvent.touchStart(document, {
+      touches: [{ clientX: 100, clientY: 200 }],
+    })
+    fireEvent.touchMove(document, {
+      touches: [{ clientX: 200, clientY: 200 }],
+    })
+    fireEvent.touchEnd(document)
+
+    // Give React a tick to flush any state updates
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).not.toBeInTheDocument()
+    })
+  })
+
+  it('vertical swipe from edge does not open', async () => {
+    renderSidebar()
+
+    fireEvent.touchStart(document, {
+      touches: [{ clientX: 10, clientY: 200 }],
+    })
+    fireEvent.touchMove(document, {
+      touches: [{ clientX: 30, clientY: 300 }],
+    })
+    fireEvent.touchEnd(document)
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).not.toBeInTheDocument()
+    })
+  })
+
+  it('short swipe from edge does not open', async () => {
+    renderSidebar()
+
+    fireEvent.touchStart(document, {
+      touches: [{ clientX: 10, clientY: 200 }],
+    })
+    fireEvent.touchMove(document, {
+      touches: [{ clientX: 40, clientY: 200 }],
+    })
+    fireEvent.touchEnd(document)
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).not.toBeInTheDocument()
+    })
+  })
+
+  it('swipe left from edge does not open', async () => {
+    renderSidebar()
+
+    fireEvent.touchStart(document, {
+      touches: [{ clientX: 10, clientY: 200 }],
+    })
+    fireEvent.touchMove(document, {
+      touches: [{ clientX: 2, clientY: 200 }],
+    })
+    fireEvent.touchEnd(document)
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).not.toBeInTheDocument()
+    })
+  })
+
+  it('multi-touch is ignored', async () => {
+    renderSidebar()
+
+    fireEvent.touchStart(document, {
+      touches: [
+        { clientX: 10, clientY: 200 },
+        { clientX: 300, clientY: 400 },
+      ],
+    })
+    fireEvent.touchMove(document, {
+      touches: [
+        { clientX: 70, clientY: 200 },
+        { clientX: 350, clientY: 400 },
+      ],
+    })
+    fireEvent.touchEnd(document)
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).not.toBeInTheDocument()
+    })
+  })
+
+  it('no swipe listener on desktop', async () => {
+    // Restore desktop viewport
+    Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true, writable: true })
+    vi.restoreAllMocks()
+
+    renderSidebar()
+
+    fireEvent.touchStart(document, {
+      touches: [{ clientX: 10, clientY: 200 }],
+    })
+    fireEvent.touchMove(document, {
+      touches: [{ clientX: 70, clientY: 200 }],
+    })
+    fireEvent.touchEnd(document)
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).not.toBeInTheDocument()
+    })
   })
 })

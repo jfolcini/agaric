@@ -26,6 +26,8 @@ const SIDEBAR_WIDTH_ICON = '3rem'
 const SIDEBAR_WIDTH_ICON_PX = 48 // 3rem at 16px base
 const SIDEBAR_WIDTH_STORAGE_KEY = 'sidebar_width'
 const SIDEBAR_KEYBOARD_SHORTCUT = 'b'
+const SWIPE_EDGE_ZONE = 20 // px from left edge to start tracking
+const SWIPE_MIN_DISTANCE = 50 // px horizontal distance to trigger open
 
 type SidebarContextProps = {
   state: 'expanded' | 'collapsed'
@@ -131,6 +133,57 @@ function SidebarProvider({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [toggleSidebar])
+
+  // Swipe-from-left-edge gesture to open mobile sidebar (navigation drawer pattern).
+  React.useEffect(() => {
+    if (!isMobile || openMobile) return
+
+    let startX = 0
+    let startY = 0
+    let tracking = false
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length > 1) return
+      const touch = e.touches[0]
+      if (touch.clientX < SWIPE_EDGE_ZONE) {
+        startX = touch.clientX
+        startY = touch.clientY
+        tracking = true
+      }
+    }
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!tracking) return
+      const touch = e.touches[0]
+      const dx = touch.clientX - startX
+      const dy = Math.abs(touch.clientY - startY)
+
+      // Cancel if swipe becomes more vertical than horizontal
+      if (dy > Math.abs(dx)) {
+        tracking = false
+        return
+      }
+
+      if (dx >= SWIPE_MIN_DISTANCE) {
+        tracking = false
+        setOpenMobile(true)
+      }
+    }
+
+    const onTouchEnd = () => {
+      tracking = false
+    }
+
+    document.addEventListener('touchstart', onTouchStart, { passive: true })
+    document.addEventListener('touchmove', onTouchMove, { passive: true })
+    document.addEventListener('touchend', onTouchEnd, { passive: true })
+
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart)
+      document.removeEventListener('touchmove', onTouchMove)
+      document.removeEventListener('touchend', onTouchEnd)
+    }
+  }, [isMobile, openMobile])
 
   // We add a state so that we can do data-state="expanded" or "collapsed".
   // This makes it easier to style the sidebar with Tailwind classes.
