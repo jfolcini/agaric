@@ -175,12 +175,12 @@ SQLite in WAL mode. Database file at `~/.local/share/com.blocknotes.app/notes.db
 **Migrations:** Auto-run on pool init from `src-tauri/migrations/`. Versioned `.sql` files.
 
 **Compile-time validation:** All static SQL uses `sqlx::query!` / `query_as!` / `query_scalar!`.
-The `.sqlx/` offline cache (90 query files) is committed; CI fails if stale. Runtime queries are
+The `.sqlx/` offline cache (101 query files) is committed; CI fails if stale. Runtime queries are
 limited to PRAGMAs, FTS5 operations, and dynamic SQL (~11 queries).
 
 ### Schema
 
-12 tables + 1 FTS5 virtual table, 9 indexes across 2 migrations.
+12 tables + 1 FTS5 virtual table, 13 indexes across 5 migrations.
 
 **Core tables:**
 
@@ -216,7 +216,9 @@ fts_blocks          — FTS5 virtual table (block_id UNINDEXED, stripped), unico
 **Indexes:** Covering indexes on `blocks(parent_id, deleted_at)`,
 `blocks(block_type, deleted_at)`, `blocks(deleted_at, id)`, `block_tags(tag_id)`,
 `block_links(target_id)`, `block_properties(value_date)`, `op_log(created_at)`,
-`agenda_cache(date)`, `attachments(block_id)`.
+`agenda_cache(date)`, `attachments(block_id)`, `op_log(json_extract(payload, '$.block_id'))`,
+`block_properties(key, block_id)`, `block_properties(key, value_text)`,
+`block_properties(key, value_num)`.
 
 ---
 
@@ -579,6 +581,7 @@ the focused block, there is zero per-block overhead for off-screen blocks.
 | `useJournalStore` | Journal mode and date selection | mode (daily/weekly/monthly/agenda), currentDate |
 | `useResolveStore` | Centralized ULID → title cache | cache Map, pagesList[], version counter |
 | `useUndoStore` | Page-level undo/redo state | undoDepth per page, redoStack (OpRef[]) |
+| `useSyncStore` | Peer-to-peer sync lifecycle | state (idle/discovering/pairing/syncing/error), peers[], opsReceived/opsSent |
 
 `useResolveStore` is preloaded on boot (`preload()` fetches all pages and tags) and updated
 incrementally on create/edit/delete. Both JournalPage and BlockTree consume from the same store —
@@ -606,11 +609,17 @@ App
 ├── HistoryView                    — global op log with multi-select batch revert
 ├── StatusPanel                    — materializer queue metrics
 ├── ConflictList                   — pending conflict copies
+├── DeviceManagement               — device identity and peer management
+├── PairingDialog                  — passphrase/QR pairing flow
+│   └── QrScanner                  — camera-based QR code scanning
+├── EmptyState                     — placeholder for empty views
 └── Panels (contextual)
     ├── BacklinksPanel             — blocks linking to current block (filtered)
+    │   └── BacklinkFilterBuilder  — composable filter expression UI
     ├── HistoryPanel               — per-block edit chain from op log
     ├── PropertiesPanel            — typed key-value properties
     ├── TagPanel                   — apply/remove tags
+    ├── TagFilterPanel             — AND/OR tag query builder
     ├── FormattingToolbar          — bold/italic/code/link/undo/redo
     ├── LinkEditPopover            — inline link creation/editing
     └── KeyboardShortcuts          — help panel
@@ -640,7 +649,7 @@ prev/next, Alt+T for today), scroll-to-date support.
 
 ### Tauri command wrappers
 
-`src/lib/tauri.ts` provides 28 type-safe wrappers over auto-generated `bindings.ts`. Handles
+`src/lib/tauri.ts` provides 39 type-safe wrappers over auto-generated `bindings.ts`. Handles
 Tauri 2's requirement for explicit `null` (not `undefined`) on `Option<T>` parameters.
 
 ### Extracted hooks
@@ -654,6 +663,7 @@ BlockTree's concerns are decomposed into focused hooks:
 | `useBlockProperties` | Property state, TODO/priority cycling |
 | `useUndoShortcuts` | Global Ctrl+Z / Ctrl+Y (outside editor contentEditable) |
 | `useViewportObserver` | IntersectionObserver for off-screen block placeholders |
+| `useMobile` | Responsive breakpoint detection for mobile layout |
 
 ---
 
@@ -674,7 +684,8 @@ FTS5 `unicode61` tokenizer does not handle CJK word boundaries — searching CJK
 This is documented and accepted for v1. CJK text storage, rendering, and IME input all work
 correctly. Only FTS5 search is affected.
 
-See ADR.md for the Phase 5 Tantivy + lindera roadmap.
+If CJK search demand arises, FTS5's `trigram` tokenizer (SQLite 3.34+) can be enabled with a
+single virtual table recreation — no schema migration, no additional dependencies.
 
 ---
 
@@ -778,7 +789,7 @@ dispatch after boot (stale-while-revalidate handles it).
 
 ### specta + tauri-specta
 
-All 28 Tauri commands are annotated with `#[specta::specta]`. TypeScript bindings are auto-
+All 34 Tauri commands are annotated with `#[specta::specta]`. TypeScript bindings are auto-
 generated to `src/lib/bindings.ts`. A pre-commit test (`ts_bindings_up_to_date`) fails if the
 committed bindings diverge from the Rust types.
 
@@ -806,14 +817,14 @@ CI doesn't need a live database. `cargo sqlx prepare --check` is a CI gate.
 
 | Layer | Tool | Scope |
 |-------|------|-------|
-| Rust unit tests | cargo nextest | Inline `#[cfg(test)] mod tests` in every module (~945 tests) |
+| Rust unit tests | cargo nextest | Inline `#[cfg(test)] mod tests` in every module (~850 tests) |
 | Rust integration | cargo nextest | Pipeline tests, API contract tests |
-| Rust snapshots | insta (22 YAML snapshots) | Op payload serialization, command responses |
+| Rust snapshots | insta (25 YAML snapshots) | Op payload serialization, command responses, backlink queries, pagination |
 | Frontend unit | Vitest (jsdom) | Pure functions, store logic, hooks |
 | Frontend component | Vitest + @testing-library/react | Render, interaction, a11y (vitest-axe) |
 | Frontend property | Vitest + fast-check | Markdown serializer fuzzing, round-trip stability |
-| E2E | Playwright (Chromium, 12 spec files) | Smoke, editor lifecycle, links, keyboard, Markdown syntax, slash commands, toolbar, tags, undo/redo, conflicts, history, features coverage |
-| Benchmarks | Criterion (9 bench files) | Cache, commands, drafts, FTS, hash, op log, pagination, soft delete, undo/redo (manual only) |
+| E2E | Playwright (Chromium, 14 spec files) | Smoke, editor lifecycle, links, keyboard, Markdown syntax, slash commands, toolbar, tags, undo/redo, conflicts, history, error scenarios, sync UI, features coverage |
+| Benchmarks | Criterion (10 bench files) | Backlink queries, cache, commands, drafts, FTS, hash, op log, pagination, soft delete, undo/redo (manual only) |
 
 ### Pre-commit hooks (prek)
 
