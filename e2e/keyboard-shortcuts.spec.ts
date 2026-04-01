@@ -145,19 +145,19 @@ test.describe('Block navigation', () => {
     await expect(editor).toBeVisible({ timeout: 3000 })
     const secondBlockId = await page.locator('.block-editor').getAttribute('data-block-id')
 
-    // Wait for React effects to settle (useEffect keydown listener reattach)
-    await page.waitForTimeout(300)
+    // Ensure editor is focused and interactive (React keydown listener attached)
+    await editor.focus()
+    await expect(editor).toBeFocused()
 
-    // Move cursor to the very start with Home key
-    await page.keyboard.press('Home')
-
-    // Press ArrowUp — at position ≤ 1, the handler triggers onFocusPrev
-    await page.keyboard.press('ArrowUp')
-
-    // Wait for the editor to switch to a different block
-    await expect(page.locator(`.block-editor:not([data-block-id="${secondBlockId}"])`)).toBeVisible(
-      { timeout: 5000 },
-    )
+    // Navigate to previous block via Home+ArrowUp
+    // Retry until the React useEffect keydown handler is ready
+    await expect(async () => {
+      await page.keyboard.press('Home')
+      await page.keyboard.press('ArrowUp')
+      await expect(
+        page.locator(`.block-editor:not([data-block-id="${secondBlockId}"])`),
+      ).toBeVisible({ timeout: 1000 })
+    }).toPass({ timeout: 5000 })
   })
 })
 
@@ -185,35 +185,58 @@ test.describe('Block organization', () => {
     // Press Tab to indent
     await page.keyboard.press('Tab')
 
-    // Wait a moment for the indent to apply
-    await page.waitForTimeout(300)
-
-    // Verify the block now has increased paddingLeft (indented)
-    const newPadding = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
-    expect(Number.parseInt(newPadding, 10)).toBeGreaterThan(Number.parseInt(initialPadding, 10))
+    // Wait for indent to apply and verify the block now has increased paddingLeft
+    await expect
+      .poll(
+        async () => {
+          const p = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
+          return Number.parseInt(p, 10)
+        },
+        { timeout: 3000 },
+      )
+      .toBeGreaterThan(Number.parseInt(initialPadding, 10))
   })
 
   test('Shift+Tab dedents block', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
+    // Capture pre-indent padding for the third block
+    const targetBlock = page.locator('.sortable-block').nth(2)
+    const basePadding = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
+
     // Focus the third block (index 2, GS_3) and indent it first
     await focusBlock(page, 2)
     await page.keyboard.press('Tab')
-    await page.waitForTimeout(300)
+
+    // Wait for indent to apply (padding increases from base)
+    await expect
+      .poll(
+        async () => {
+          const p = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
+          return Number.parseInt(p, 10)
+        },
+        { timeout: 3000 },
+      )
+      .toBeGreaterThan(Number.parseInt(basePadding, 10))
 
     // Get the indented paddingLeft
-    const targetBlock = page.locator('.sortable-block').nth(2)
     const indentedPadding = await targetBlock.evaluate(
       (el) => window.getComputedStyle(el).paddingLeft,
     )
 
     // Now press Shift+Tab to dedent (editor should still be open)
     await page.keyboard.press('Shift+Tab')
-    await page.waitForTimeout(300)
 
-    // Verify paddingLeft decreased
-    const finalPadding = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
-    expect(Number.parseInt(finalPadding, 10)).toBeLessThan(Number.parseInt(indentedPadding, 10))
+    // Wait for dedent to apply and verify paddingLeft decreased
+    await expect
+      .poll(
+        async () => {
+          const p = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
+          return Number.parseInt(p, 10)
+        },
+        { timeout: 3000 },
+      )
+      .toBeLessThan(Number.parseInt(indentedPadding, 10))
   })
 
   test('Ctrl+Shift+ArrowUp moves block up', async ({ page }) => {
@@ -223,7 +246,7 @@ test.describe('Block organization', () => {
     // Capture original block order via data-block-id
     const blocks = page.locator('.sortable-block')
     const _originalFirstId = await blocks.nth(0).getAttribute('data-block-id')
-    const originalSecondId = await blocks.nth(1).getAttribute('data-block-id')
+    const originalSecondId = (await blocks.nth(1).getAttribute('data-block-id')) ?? ''
 
     // Focus the second block and move it up
     await focusBlock(page, 1)
@@ -238,15 +261,11 @@ test.describe('Block organization', () => {
     // Press Escape to exit editor
     await page.keyboard.press('Escape')
 
-    // Wait for the reorder to settle — use Playwright auto-retry
+    // Wait for the reorder to settle — auto-retrying attribute assertion
     // After MoveUp, the second block should now be first
-    await expect(page.locator(`.sortable-block[data-block-id="${originalSecondId}"]`)).toBeVisible({
+    await expect(blocks.nth(0)).toHaveAttribute('data-block-id', originalSecondId, {
       timeout: 5000,
     })
-
-    // Verify the order swapped: original second block is now first
-    const newFirstId = await blocks.nth(0).getAttribute('data-block-id')
-    expect(newFirstId).toBe(originalSecondId)
   })
 
   test('Ctrl+Shift+ArrowDown moves block down', async ({ page }) => {
@@ -266,16 +285,13 @@ test.describe('Block organization', () => {
     await page.keyboard.up('Shift')
     await page.keyboard.up('Control')
 
-    // Wait for the reorder to take effect
-    await page.waitForTimeout(300)
-
-    // Press Escape to leave editing mode
+    // Wait for the reorder to take effect, then press Escape to leave editing mode
     await page.keyboard.press('Escape')
-    await page.waitForTimeout(300)
 
-    // Verify the blocks swapped: old second block is now first
-    const newFirstBlockText = await page.locator('.block-static').nth(0).innerText()
-    expect(newFirstBlockText).toBe(secondBlockText)
+    // Wait for reorder to settle and verify blocks swapped: old second block is now first
+    await expect(page.locator('.block-static').nth(0)).toHaveText(secondBlockText, {
+      timeout: 5000,
+    })
   })
 })
 
@@ -313,13 +329,14 @@ test.describe('Task and priority shortcuts', () => {
     // Indent the fourth block (index 3, GS_4) under the third (index 2, GS_3 plain text)
     await focusBlock(page, 3)
     await page.keyboard.press('Tab')
-    await page.waitForTimeout(300)
 
     // Close the editor so only the document-level Ctrl+. handler fires
     // (Avoids double-toggle: both editor-level and document-level handlers
     //  call toggleCollapse, which would net to zero change.)
     await page.keyboard.press('Escape')
-    await page.waitForTimeout(200)
+
+    // Wait for editor to close after Escape
+    await expect(page.locator('.block-editor')).not.toBeVisible({ timeout: 3000 })
 
     // The third block (GS_3) should now have a collapse chevron (hasChildren)
     const parentBlock = page.locator('.sortable-block').nth(2)
@@ -376,20 +393,25 @@ test.describe('Global shortcuts', () => {
     await page.keyboard.press('ArrowLeft')
     await page.keyboard.up('Alt')
 
-    // Wait for the date to change
-    await page.waitForTimeout(300)
-
-    // Verify the date display changed
-    const newDate = await page.locator('[data-testid="date-display"]').innerText()
-    expect(newDate).not.toBe(initialDate)
+    // Wait for the date display to change
+    await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(initialDate, {
+      timeout: 3000,
+    })
   })
 
   test('Alt+Right navigates journal forward', async ({ page }) => {
+    // Capture today's date before navigating
+    const todayDate = await page.locator('[data-testid="date-display"]').innerText()
+
     // First go back a day so we can go forward
     await page.keyboard.down('Alt')
     await page.keyboard.press('ArrowLeft')
     await page.keyboard.up('Alt')
-    await page.waitForTimeout(300)
+
+    // Wait for the date to change from today
+    await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(todayDate, {
+      timeout: 3000,
+    })
 
     const backDate = await page.locator('[data-testid="date-display"]').innerText()
 
@@ -398,11 +420,10 @@ test.describe('Global shortcuts', () => {
     await page.keyboard.press('ArrowRight')
     await page.keyboard.up('Alt')
 
-    await page.waitForTimeout(300)
-
-    // Verify the date display changed again
-    const forwardDate = await page.locator('[data-testid="date-display"]').innerText()
-    expect(forwardDate).not.toBe(backDate)
+    // Wait for the date display to change from the back date
+    await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(backDate, {
+      timeout: 3000,
+    })
   })
 
   test('Alt+T goes to today', async ({ page }) => {
@@ -413,28 +434,26 @@ test.describe('Global shortcuts', () => {
     await page.keyboard.down('Alt')
     await page.keyboard.press('ArrowLeft')
     await page.keyboard.up('Alt')
-    await page.waitForTimeout(300)
 
-    // Verify we moved away
-    const backDate = await page.locator('[data-testid="date-display"]').innerText()
-    expect(backDate).not.toBe(todayDate)
+    // Wait for the date to change from today
+    await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(todayDate, {
+      timeout: 3000,
+    })
 
     // Press Alt+T to go to today
     await page.keyboard.down('Alt')
     await page.keyboard.press('t')
     await page.keyboard.up('Alt')
 
-    await page.waitForTimeout(300)
-
-    // Verify date is back to today
-    const currentDate = await page.locator('[data-testid="date-display"]').innerText()
-    expect(currentDate).toBe(todayDate)
+    // Wait for the date to return to today
+    await expect(page.locator('[data-testid="date-display"]')).toHaveText(todayDate, {
+      timeout: 3000,
+    })
   })
 
   test('? opens keyboard shortcuts panel', async ({ page }) => {
     // Click on the header to ensure no input/textarea/contenteditable is focused
     await page.locator('header').click()
-    await page.waitForTimeout(200)
 
     // Type ? using keyboard.type which dispatches keydown with key='?'
     await page.keyboard.type('?')

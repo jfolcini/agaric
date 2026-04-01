@@ -1,5 +1,32 @@
 # Session Log
 
+## Session 14 — 2026-03-31 — Tier 6 Items #77, #78, #99
+
+### Build 1a: useBlockDnD hook tests (#77)
+- Created `src/hooks/__tests__/useBlockDnD.test.ts` — 31 tests
+- All 5 drag handlers, memo correctness, edge cases, sensors config
+- Mocks: @dnd-kit/core, @dnd-kit/sortable, tree-utils, SortableBlock
+
+### Build 1b: useBlockResolve hook tests (#78)
+- Created `src/hooks/__tests__/useBlockResolve.test.ts` — 45 tests (41 build + 4 review)
+- Resolve callbacks, searchPages dual strategy, searchTags, onCreatePage, "Create new" logic
+- Review added 4 error propagation tests
+
+### Build 2: keyboard-shortcuts.spec.ts (#99)
+- Replaced all 13 `waitForTimeout` calls with proper Playwright waits
+- Techniques: expect.poll() for CSS, toHaveText/toHaveAttribute for DOM, toPass() for retry blocks
+- Review found 1 minor race condition (toBeVisible on already-visible element) — fixed with toHaveAttribute
+
+### Reviews: 2 subagents
+- Hook tests review: useBlockDnD passed clean, useBlockResolve got 4 error propagation tests added
+- E2E review: found potential race in move-up assertion — fixed with auto-retrying toHaveAttribute
+
+### Test counts
+- Vitest: 76 new tests (31 + 45) — all pass
+- E2E: 18 keyboard-shortcuts tests — all pass (0 waitForTimeout remaining)
+
+### Items resolved: 3
+
 ## Session 13 — 2026-03-31 — Tier 6 Final Item (#102)
 
 ### Commit: purge E2E tests
