@@ -618,13 +618,8 @@ export function setupMock(): void {
         const newOp = pushOp(`undo_${reverseOpType}`, { reversed: target })
         return {
           reversed_op: { device_id: target.device_id, seq: target.seq },
-          new_op: {
-            device_id: newOp.device_id,
-            seq: newOp.seq,
-            op_type: reverseOpType,
-            payload: newOp.payload,
-            created_at: newOp.created_at,
-          },
+          new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
+          new_op_type: reverseOpType,
           is_redo: false,
         }
       }
@@ -669,13 +664,8 @@ export function setupMock(): void {
         const newOp = pushOp(`redo_${redoOpType}`, { re_applied: originalOp })
         return {
           reversed_op: { device_id: originalOp.device_id, seq: originalOp.seq },
-          new_op: {
-            device_id: newOp.device_id,
-            seq: newOp.seq,
-            op_type: redoOpType,
-            payload: newOp.payload,
-            created_at: newOp.created_at,
-          },
+          new_op_ref: { device_id: newOp.device_id, seq: newOp.seq },
+          new_op_type: redoOpType,
           is_redo: true,
         }
       }

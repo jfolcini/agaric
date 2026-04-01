@@ -579,7 +579,8 @@ describe('undo_page_op', () => {
       undoDepth: 0,
     }) as Record<string, unknown>
     expect(result).toHaveProperty('reversed_op')
-    expect(result).toHaveProperty('new_op')
+    expect(result).toHaveProperty('new_op_ref')
+    expect(result).toHaveProperty('new_op_type')
     expect(result).toHaveProperty('is_redo', false)
   })
 })
@@ -606,7 +607,8 @@ describe('redo_page_op', () => {
       undoSeq: undoResult.reversed_op.seq,
     }) as Record<string, unknown>
     expect(result).toHaveProperty('reversed_op')
-    expect(result).toHaveProperty('new_op')
+    expect(result).toHaveProperty('new_op_ref')
+    expect(result).toHaveProperty('new_op_type')
     expect(result).toHaveProperty('is_redo', true)
   })
 })

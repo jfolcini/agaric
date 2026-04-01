@@ -12,6 +12,8 @@ import { redoPageOp, undoPageOp } from '../lib/tauri'
 
 export type { OpRef, UndoResult }
 
+export const MAX_REDO_STACK = 100
+
 interface PageUndoState {
   /** Ops that have been undone, available for redo (most recent undo first). */
   redoStack: OpRef[]
@@ -99,7 +101,7 @@ export const useUndoStore = create<UndoStore>((set, get) => ({
         const current = newPages.get(pageId) ?? { redoStack: [], undoDepth: currentDepth + 1 }
         newPages.set(pageId, {
           ...current,
-          redoStack: [result.reversed_op, ...current.redoStack],
+          redoStack: [result.reversed_op, ...current.redoStack].slice(0, MAX_REDO_STACK),
         })
         return { pages: newPages }
       })

@@ -5,9 +5,19 @@
  * Supports restore (p15-t24) and permanent purge (p15-t25).
  */
 
-import { AlertTriangle, RotateCcw, Trash2 } from 'lucide-react'
+import { RotateCcw, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -23,16 +33,6 @@ export function TrashView(): React.ReactElement {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [confirmPurgeId, setConfirmPurgeId] = useState<string | null>(null)
-
-  // Dismiss purge confirmation on Escape key
-  useEffect(() => {
-    if (!confirmPurgeId) return
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setConfirmPurgeId(null)
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [confirmPurgeId])
 
   const loadTrash = useCallback(async (cursor?: string) => {
     setLoading(true)
@@ -126,37 +126,14 @@ export function TrashView(): React.ReactElement {
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
-              {confirmPurgeId === block.id ? (
-                <div className="trash-purge-confirm flex items-center gap-2 rounded-md bg-destructive/10 px-3 py-1.5">
-                  <AlertTriangle className="h-3.5 w-3.5 text-destructive shrink-0" />
-                  <span className="text-sm">Delete forever?</span>
-                  <Button
-                    variant="destructive"
-                    size="xs"
-                    className="trash-purge-yes [@media(pointer:coarse)]:h-9"
-                    onClick={() => handlePurge(block.id)}
-                  >
-                    Yes
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    className="trash-purge-no [@media(pointer:coarse)]:h-9"
-                    onClick={() => setConfirmPurgeId(null)}
-                  >
-                    No
-                  </Button>
-                </div>
-              ) : (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="trash-purge-btn [@media(pointer:coarse)]:h-10"
-                  onClick={() => setConfirmPurgeId(block.id)}
-                >
-                  Purge
-                </Button>
-              )}
+              <Button
+                variant="destructive"
+                size="sm"
+                className="trash-purge-btn [@media(pointer:coarse)]:h-10"
+                onClick={() => setConfirmPurgeId(block.id)}
+              >
+                Purge
+              </Button>
             </div>
           </div>
         ))}
@@ -173,6 +150,32 @@ export function TrashView(): React.ReactElement {
           {loading ? 'Loading...' : 'Load more'}
         </Button>
       )}
+
+      {/* Purge confirmation dialog */}
+      <AlertDialog
+        open={!!confirmPurgeId}
+        onOpenChange={(open) => {
+          if (!open) setConfirmPurgeId(null)
+        }}
+      >
+        <AlertDialogContent className="trash-purge-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Permanently delete?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This block will be permanently deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="trash-purge-no">No</AlertDialogCancel>
+            <AlertDialogAction
+              className="trash-purge-yes"
+              onClick={() => handlePurge(confirmPurgeId!)}
+            >
+              Yes, delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

@@ -1923,6 +1923,12 @@ pub async fn undo_page_op_inner(
     page_id: String,
     undo_depth: i64,
 ) -> Result<UndoResult, AppError> {
+    if undo_depth < 0 {
+        return Err(AppError::Validation(
+            "undo_depth must be non-negative".into(),
+        ));
+    }
+
     use crate::reverse;
 
     // Find the op to undo: page ops ordered newest first, offset by undo_depth.
@@ -8214,6 +8220,30 @@ mod tests {
         assert!(
             total_ops >= 5,
             "expected at least 5 ops (2 creates + 2 edits + 1 undo), got {total_ops}"
+        );
+    }
+
+    // ======================================================================
+    // undo_page_op_inner – input validation
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_rejects_negative_depth() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = undo_page_op_inner(&pool, DEV, &mat, "nonexistent-page".into(), -1).await;
+
+        assert!(result.is_err(), "negative undo_depth should be rejected");
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("undo_depth must be non-negative"),
+            "error should mention undo_depth validation, got: {msg}"
+        );
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "error should be Validation variant, got: {err:?}"
         );
     }
 }

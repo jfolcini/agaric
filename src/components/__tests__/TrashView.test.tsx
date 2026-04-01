@@ -130,8 +130,8 @@ describe('TrashView', () => {
     const purgeBtn = await screen.findByRole('button', { name: /Purge/i })
     await user.click(purgeBtn)
 
-    // After first click, confirmation should appear
-    expect(screen.getByText('Delete forever?')).toBeInTheDocument()
+    // After first click, confirmation dialog should appear
+    expect(screen.getByText('Permanently delete?')).toBeInTheDocument()
 
     // invoke should NOT have been called for purge yet (only the initial list_blocks)
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
@@ -140,7 +140,7 @@ describe('TrashView', () => {
     const noBtn = screen.getByRole('button', { name: /No/i })
     await user.click(noBtn)
 
-    expect(screen.queryByText('Delete forever?')).not.toBeInTheDocument()
+    expect(screen.queryByText('Permanently delete?')).not.toBeInTheDocument()
     expect(mockedInvoke).toHaveBeenCalledTimes(1) // Still only the initial list call
   })
 
@@ -159,12 +159,12 @@ describe('TrashView', () => {
     const purgeBtn = await screen.findByRole('button', { name: /Purge/i })
     await user.click(purgeBtn)
 
-    expect(screen.getByText('Delete forever?')).toBeInTheDocument()
+    expect(screen.getByText('Permanently delete?')).toBeInTheDocument()
 
     // Press Escape to dismiss
     await user.keyboard('{Escape}')
 
-    expect(screen.queryByText('Delete forever?')).not.toBeInTheDocument()
+    expect(screen.queryByText('Permanently delete?')).not.toBeInTheDocument()
     expect(mockedInvoke).toHaveBeenCalledTimes(1) // Only the initial list call
   })
 
@@ -335,10 +335,10 @@ describe('TrashView', () => {
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
-    const { container } = render(<TrashView />)
+    render(<TrashView />)
 
     await waitFor(async () => {
-      const results = await axe(container)
+      const results = await axe(document.body)
       expect(results).toHaveNoViolations()
     })
   })

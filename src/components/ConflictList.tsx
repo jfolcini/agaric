@@ -6,9 +6,19 @@
  * with two-click confirmation on Discard.
  */
 
-import { AlertTriangle, Check, GitMerge, X } from 'lucide-react'
+import { Check, GitMerge, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -22,16 +32,6 @@ export function ConflictList(): React.ReactElement {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null)
-
-  // Dismiss discard confirmation on Escape key
-  useEffect(() => {
-    if (!confirmDiscardId) return
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setConfirmDiscardId(null)
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [confirmDiscardId])
 
   const loadConflicts = useCallback(async (cursor?: string) => {
     setLoading(true)
@@ -122,38 +122,15 @@ export function ConflictList(): React.ReactElement {
                 <Check className="h-3.5 w-3.5" />
                 Keep
               </Button>
-              {confirmDiscardId === block.id ? (
-                <div className="conflict-discard-confirm flex items-center gap-2 rounded-md bg-destructive/10 px-3 py-1.5">
-                  <AlertTriangle className="h-3.5 w-3.5 text-destructive shrink-0" />
-                  <span className="text-sm">Discard forever?</span>
-                  <Button
-                    variant="destructive"
-                    size="xs"
-                    className="conflict-discard-yes [@media(pointer:coarse)]:h-9"
-                    onClick={() => handleDiscard(block.id)}
-                  >
-                    Yes
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    className="conflict-discard-no [@media(pointer:coarse)]:h-9"
-                    onClick={() => setConfirmDiscardId(null)}
-                  >
-                    No
-                  </Button>
-                </div>
-              ) : (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="conflict-discard-btn [@media(pointer:coarse)]:h-10"
-                  onClick={() => setConfirmDiscardId(block.id)}
-                >
-                  <X className="h-3.5 w-3.5" />
-                  Discard
-                </Button>
-              )}
+              <Button
+                variant="destructive"
+                size="sm"
+                className="conflict-discard-btn [@media(pointer:coarse)]:h-10"
+                onClick={() => setConfirmDiscardId(block.id)}
+              >
+                <X className="h-3.5 w-3.5" />
+                Discard
+              </Button>
             </div>
           </div>
         ))}
@@ -170,6 +147,32 @@ export function ConflictList(): React.ReactElement {
           {loading ? 'Loading...' : 'Load more'}
         </Button>
       )}
+
+      {/* Discard confirmation dialog */}
+      <AlertDialog
+        open={!!confirmDiscardId}
+        onOpenChange={(open) => {
+          if (!open) setConfirmDiscardId(null)
+        }}
+      >
+        <AlertDialogContent className="conflict-discard-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard conflict?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove the conflicting version.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="conflict-discard-no">No</AlertDialogCancel>
+            <AlertDialogAction
+              className="conflict-discard-yes"
+              onClick={() => handleDiscard(confirmDiscardId!)}
+            >
+              Yes, discard
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

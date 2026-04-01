@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useUndoStore } from '../undo'
+import { MAX_REDO_STACK, useUndoStore } from '../undo'
 
 vi.mock('@/lib/tauri', () => ({
   undoPageOp: vi.fn(),
@@ -25,13 +25,8 @@ function makeUndoResult(
   const newSeq = overrides.newSeq ?? seq + 1
   return {
     reversed_op: { device_id: deviceId, seq },
-    new_op: {
-      device_id: deviceId,
-      seq: newSeq,
-      op_type: 'edit_block',
-      payload: '{}',
-      created_at: '2025-01-01T00:00:00Z',
-    },
+    new_op_ref: { device_id: deviceId, seq: newSeq },
+    new_op_type: 'edit_block',
     is_redo: overrides.isRedo ?? false,
   }
 }
@@ -162,6 +157,18 @@ describe('useUndoStore', () => {
       expect(mockedUndoPageOp).toHaveBeenCalledTimes(2)
       expect(mockedUndoPageOp).toHaveBeenNthCalledWith(1, { pageId: 'page1', undoDepth: 0 })
       expect(mockedUndoPageOp).toHaveBeenNthCalledWith(2, { pageId: 'page1', undoDepth: 1 })
+    })
+
+    it('caps redoStack at MAX_REDO_STACK entries', async () => {
+      for (let i = 0; i < MAX_REDO_STACK + 10; i++) {
+        mockedUndoPageOp.mockResolvedValueOnce(
+          makeUndoResult({ deviceId: 'dev1', seq: 1000 - i, newSeq: 2000 + i }),
+        )
+        await useUndoStore.getState().undo('page1')
+      }
+
+      const pageState = useUndoStore.getState().pages.get('page1')
+      expect(pageState?.redoStack).toHaveLength(MAX_REDO_STACK)
     })
   })
 

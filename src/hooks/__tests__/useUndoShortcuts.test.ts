@@ -7,11 +7,20 @@ import { useUndoShortcuts } from '../useUndoShortcuts'
 
 // -- Mock sonner ---------------------------------------------------------------
 
-vi.mock('sonner', () => ({ toast: vi.fn() }))
+const { toastMock } = vi.hoisted(() => {
+  const mock: ReturnType<typeof vi.fn> & { error: ReturnType<typeof vi.fn> } = Object.assign(
+    vi.fn(),
+    { error: vi.fn() },
+  )
+  return { toastMock: mock }
+})
+
+vi.mock('sonner', () => ({ toast: toastMock }))
 
 import { toast } from 'sonner'
 
 const mockedToast = vi.mocked(toast)
+const mockedToastError = vi.mocked(toast.error)
 
 // -- Mock stores --------------------------------------------------------------
 
@@ -288,7 +297,7 @@ describe('useUndoShortcuts', () => {
 })
 
 describe('error handling', () => {
-  it('does not crash when undo rejects (unhandled rejection)', () => {
+  it('shows error toast when undo rejects', async () => {
     mockUndo.mockRejectedValueOnce(new Error('undo failed'))
 
     const { unmount } = renderHook(() => useUndoShortcuts())
@@ -300,10 +309,14 @@ describe('error handling', () => {
 
     expect(mockUndo).toHaveBeenCalledWith('PAGE_1')
 
+    await vi.waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Undo failed')
+    })
+
     unmount()
   })
 
-  it('does not crash when redo rejects', () => {
+  it('shows error toast when redo rejects', async () => {
     mockRedo.mockRejectedValueOnce(new Error('redo failed'))
 
     const { unmount } = renderHook(() => useUndoShortcuts())
@@ -313,6 +326,10 @@ describe('error handling', () => {
     }).not.toThrow()
 
     expect(mockRedo).toHaveBeenCalledWith('PAGE_1')
+
+    await vi.waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Redo failed')
+    })
 
     unmount()
   })

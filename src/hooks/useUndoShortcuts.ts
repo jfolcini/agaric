@@ -35,7 +35,7 @@ export function useUndoShortcuts(): void {
           .then((result) => {
             if (result) toast('Undone', { duration: 1500 })
           })
-          .catch(() => {})
+          .catch(() => toast.error('Undo failed'))
         return
       }
 
@@ -48,7 +48,7 @@ export function useUndoShortcuts(): void {
           .then((result) => {
             if (result) toast('Redone', { duration: 1500 })
           })
-          .catch(() => {})
+          .catch(() => toast.error('Redo failed'))
         return
       }
     }

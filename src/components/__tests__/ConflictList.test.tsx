@@ -134,7 +134,7 @@ describe('ConflictList', () => {
     const discardBtn = await screen.findByRole('button', { name: /Discard/i })
     await user.click(discardBtn)
 
-    expect(screen.getByText('Discard forever?')).toBeInTheDocument()
+    expect(screen.getByText('Discard conflict?')).toBeInTheDocument()
 
     // Only get_conflicts has been called
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
@@ -143,7 +143,7 @@ describe('ConflictList', () => {
     const noBtn = screen.getByRole('button', { name: /No/i })
     await user.click(noBtn)
 
-    expect(screen.queryByText('Discard forever?')).not.toBeInTheDocument()
+    expect(screen.queryByText('Discard conflict?')).not.toBeInTheDocument()
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
   })
 
@@ -162,12 +162,12 @@ describe('ConflictList', () => {
     const discardBtn = await screen.findByRole('button', { name: /Discard/i })
     await user.click(discardBtn)
 
-    expect(screen.getByText('Discard forever?')).toBeInTheDocument()
+    expect(screen.getByText('Discard conflict?')).toBeInTheDocument()
 
     // Press Escape to dismiss
     await user.keyboard('{Escape}')
 
-    expect(screen.queryByText('Discard forever?')).not.toBeInTheDocument()
+    expect(screen.queryByText('Discard conflict?')).not.toBeInTheDocument()
     expect(mockedInvoke).toHaveBeenCalledTimes(1) // Only the initial get_conflicts call
   })
 
@@ -299,10 +299,10 @@ describe('ConflictList', () => {
     }
     mockedInvoke.mockResolvedValueOnce(page)
 
-    const { container } = render(<ConflictList />)
+    render(<ConflictList />)
 
     await waitFor(async () => {
-      const results = await axe(container)
+      const results = await axe(document.body)
       expect(results).toHaveNoViolations()
     })
   })
@@ -310,10 +310,10 @@ describe('ConflictList', () => {
   it('has no a11y violations when empty', async () => {
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
-    const { container } = render(<ConflictList />)
+    render(<ConflictList />)
 
     await waitFor(async () => {
-      const results = await axe(container)
+      const results = await axe(document.body)
       expect(results).toHaveNoViolations()
     })
   })

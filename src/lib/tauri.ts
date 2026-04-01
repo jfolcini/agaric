@@ -305,13 +305,8 @@ export interface OpRef {
 
 export interface UndoResult {
   reversed_op: OpRef
-  new_op: {
-    device_id: string
-    seq: number
-    op_type: string
-    payload: string
-    created_at: string
-  }
+  new_op_ref: OpRef
+  new_op_type: string
   is_redo: boolean
 }
 
