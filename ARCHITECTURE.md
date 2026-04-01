@@ -27,6 +27,7 @@ Anytype, faster than Logseq.
 15. [Security](#15-security)
 16. [Query System](#16-query-system)
 17. [Android Platform](#17-android-platform)
+18. [Sync & Networking](#18-sync--networking)
 
 ---
 
@@ -65,6 +66,12 @@ Anytype, faster than Logseq.
 | FxHashMap (rustc-hash) | Fast hash maps on materializer hot paths |
 | ulid + uuid | ULID generation for all IDs; UUID v4 for device identity |
 | chrono | Timestamps (RFC 3339 with millisecond precision) |
+| mdns-sd | mDNS service discovery for local WiFi sync |
+| tokio-tungstenite + rustls | TLS WebSocket transport for sync |
+| rcgen | Self-signed ECDSA P-256 certificate generation |
+| hkdf + sha2 | HKDF-SHA256 key derivation for pairing |
+| chacha20poly1305 | AEAD encryption for pairing messages |
+| qrcode | QR code SVG generation for pairing |
 
 ---
 
@@ -890,8 +897,8 @@ CTEs.
 matching. Keyset-paginated on `block_id ASC`. Excludes soft-deleted and conflict blocks.
 
 `block_properties` supports four typed value columns — `value_text`, `value_num`, `value_date`,
-`value_ref` — but the current query API only supports text matching. Numeric, date, and reference
-filtering is a planned extension.
+`value_ref`. The query API supports text, numeric, and date filtering via `CompareOp` (Eq, Neq,
+Lt, Gt, Lte, Gte). Reference filtering is a planned extension.
 
 ### Backlinks
 
@@ -899,12 +906,29 @@ filtering is a planned extension.
 `block_links` table (materializer-maintained) is joined with `blocks` to produce paginated
 results. Excludes soft-deleted and conflict blocks.
 
-**Client-side filters (current):** The BacklinksPanel applies type, TODO status, priority, and
-creation-date filters in JavaScript after loading. Properties are fetched per-block via
-`getProperties()`.
+**Server-side compound filtering:** `query_backlinks_filtered` accepts a composable filter
+expression tree (`BacklinkFilter` enum) pushed to SQL:
 
-**Planned:** Server-side compound filter expression (AND/OR/NOT over property, tag, date, and
-text predicates) pushed to SQL. See the backlinks filter plan for details.
+| Filter | Description |
+|--------|-------------|
+| `PropertyText` | Text property comparison (Eq, Neq, Lt, Gt, Lte, Gte) |
+| `PropertyNum` | Numeric property comparison |
+| `PropertyDate` | Date property comparison |
+| `PropertyIsSet` | Property key exists |
+| `PropertyIsEmpty` | Property key absent |
+| `HasTag` | Block tagged with specific tag_id |
+| `HasTagPrefix` | Block tagged with any tag matching prefix |
+| `Contains` | FTS5 full-text search within backlinks |
+| `CreatedInRange` | ULID timestamp range (ISO 8601) |
+| `BlockType` | Filter by block_type |
+| `And` / `Or` / `Not` | Boolean composition |
+
+**Sorting:** `BacklinkSort` supports `Created`, `PropertyText`, `PropertyNum`, and `PropertyDate`
+with ascending/descending direction. Default: `Created { Asc }`.
+
+**Algorithm:** Resolve base backlink set → evaluate filter tree (each leaf → `FxHashSet<block_id>`
+via SQL) → intersect → sort → keyset cursor pagination → fetch full `BlockRow` data. Response
+includes `total_count` for UI display.
 
 ### Batch operations
 
@@ -951,3 +975,105 @@ AI agents and CI can interact with the Android app entirely via ADB — no displ
 - `adb shell input tap/text/swipe` for interaction
 - `adb logcat -s RustStdoutStderr:V` for Rust logs
 - Chrome DevTools Protocol via `adb forward` for WebView inspection
+
+---
+
+## 18. Sync & Networking
+
+Local WiFi sync between devices. No cloud. Discovery via mDNS, pairing via passphrase/QR code,
+transport via TLS WebSocket, protocol via op streaming with three-way merge.
+
+### Rust crates
+
+| Crate | Purpose |
+|-------|---------|
+| mdns-sd | mDNS service announcement and browsing (`_blocknotes._tcp.local.`) |
+| tokio-tungstenite | Async WebSocket (server + client) |
+| rustls + rcgen | TLS with self-signed ECDSA P-256 certificates |
+| hkdf + sha2 | HKDF-SHA256 session key derivation from passphrase |
+| chacha20poly1305 | ChaCha20-Poly1305 AEAD for pairing message encryption |
+| qrcode | QR code SVG generation for pairing |
+
+### Discovery
+
+mDNS service type `_blocknotes._tcp.local.`. On announce: register service with TXT record
+`device_id=<UUID>`. On browse: receive `ServiceResolved` events, extract peer addresses and port.
+
+### Pairing
+
+Per-session passphrase + QR code. Ephemeral — discarded after pairing or 5-minute timeout.
+
+1. Host generates a 4-word EFF large wordlist passphrase (~51.7 bits entropy, 7,776-word list).
+2. Host displays QR code (JSON: `{"passphrase":"...","host":"...","port":12345}`) and 4-word text.
+3. Both sides derive a 32-byte session key via HKDF-SHA256:
+   - Salt: sorted concatenation of local + remote device IDs (order-independent).
+   - Info: `b"block-notes-sync-v1"`.
+4. Messages encrypted with ChaCha20-Poly1305: `[12-byte nonce][ciphertext + 16-byte tag]`.
+
+**`PairingSession`** struct holds passphrase, derived key, and creation instant. `is_expired()`
+checks the 5-minute timeout.
+
+**Rejected:** Persistent shared passphrase (hard to rotate), SPAKE2 (correct but adds crypto
+dependency for marginal gain at this threat model).
+
+### Transport
+
+Self-signed ECDSA P-256 certificates generated per device (`CN=block-notes-{device_id}`,
+SAN: localhost/127.0.0.1). `SyncServer` binds to a random port, accepts TLS+WebSocket connections.
+`connect_to_peer()` establishes client connection with optional certificate pinning via a custom
+`ServerCertVerifier` that computes SHA-256 of the peer's certificate.
+
+`SyncConnection` abstracts over server/client streams with `send_json<T>`, `recv_json<T>`,
+`send_binary`, `recv_binary`, and `peer_cert_hash()` methods.
+
+### Protocol
+
+`SyncOrchestrator` is a state machine (`SyncState` enum) that drives the sync flow:
+
+```
+Idle → ExchangingHeads → StreamingOps → ApplyingOps → Merging → Complete
+                                                              ↘ ResetRequired
+                                                              ↘ Failed
+```
+
+**Messages** (`SyncMessage` enum): `HeadExchange`, `OpBatch`, `ResetRequired`, `SnapshotOffer`,
+`SnapshotAccept`, `SnapshotReject`, `SyncComplete`, `Error`.
+
+**Flow:**
+
+1. **Head exchange:** Each peer sends its latest `(device_id, seq, hash)` per known device.
+2. **Compute divergence:** `compute_ops_to_send()` compares remote heads against local op log.
+3. **Reset check:** If remote's last known op predates the oldest retained op (after compaction)
+   and no snapshot covers it → `RESET_REQUIRED`. UI confirms before wiping.
+4. **Op streaming:** Diverging ops sent as `OpBatch`. Receiver inserts with original
+   `(device_id, seq)` via `INSERT OR IGNORE` (duplicate delivery is idempotent).
+5. **Merge:** `merge_diverged_blocks()` handles four conflict types:
+
+| Conflict | Resolution |
+|----------|------------|
+| Concurrent text edits | `diffy::merge` via `merge::merge_block`. Non-overlapping → clean merge. Overlapping → conflict copy. |
+| Property conflicts | LWW on `created_at` with `device_id` tiebreaker via `merge::resolve_property_conflict`. |
+| Move conflicts | LWW on `created_at`. Block moved into deleted subtree → reparent to root. |
+| Delete + edit | Edit wins. Block resurrected via synthetic `restore_block` op before applying `edit_block`. |
+
+6. **Complete:** `complete_sync()` updates `peer_refs` atomically.
+
+### `peer_refs` maintenance
+
+| Column | Updated when | Value |
+|--------|-------------|-------|
+| `last_hash` | Successful sync | Hash of the last op *received* from this peer |
+| `last_sent_hash` | Successful sync | Hash of the last op *sent* to this peer |
+| `synced_at` | Successful sync | Wall-clock timestamp, updated atomically with hashes |
+| `reset_count` | RESET_REQUIRED completes | Incremented by 1 |
+| `last_reset_at` | RESET_REQUIRED completes | Current timestamp |
+
+On sync failure (connection lost mid-stream): `peer_refs` is **not** updated. Next sync restarts
+from `last_hash`. Duplicate delivery is safe due to `INSERT OR IGNORE` on the composite PK.
+
+### Duplicate tag dedup
+
+On cache rebuild after sync, the materializer detects tag blocks with duplicate content
+(case-insensitive). Keeps the lexicographically smallest ULID as canonical. Emits `edit_block`
+ops to rewrite `#[loser-ULID]` tokens in all referencing blocks. Background reconciliation,
+idempotent.
