@@ -81,7 +81,7 @@
 | Block properties | `key:: value` inline syntax | `block_properties` table with `set_property` / `delete_property` / `get_properties` commands. Backend + frontend wrappers complete | Backend + API complete, **no general UI** (task marker is the first property-based UI) |
 | Typed values | DB version: Text, Number, Date, DateTime, Checkbox, URL, Node | 4 types: text, num, date, ref (block reference) | Close -- missing DateTime, Checkbox, URL |
 | Built-in properties | 17+ (tags, alias, title, icon, template, collapsed, etc.) | None built-in -- all custom | **Gap** -- need to define semantic properties |
-| Property-based queries | `{{query (property type book)}}` | `query_by_tags` supports tag-based queries. No property-based query command | **Gap** |
+| Property-based queries | `{{query (property type book)}}` | `query_by_property` command with cursor-based pagination. No inline query blocks | Partial -- API exists, no embedded query syntax |
 | Property name autocomplete | `::` triggers suggestions | Not implemented | **Gap** |
 | Property value autocomplete | Suggests previously-used values | Not implemented | **Gap** |
 | Comma-separated multi-values | `tags:: a, b, c` parsed as multiple refs | Not supported | **Gap** |
@@ -146,7 +146,7 @@
 | Full-text search | `Ctrl+K` / `Cmd+K` global search | `SearchPanel` with FTS5 backend, debounced, paginated | Comparable |
 | Search scope | Pages + blocks, filterable | All blocks, no scope filtering | Minor gap |
 | Search ranking | BM25-based | FTS5 rank (BM25) with cursor pagination | None |
-| Search in linked references | Filter bar in backlinks panel | Not implemented | **Gap** |
+| Search in linked references | Filter bar in backlinks panel | Server-side backlink filter expressions with `Contains` filter (FTS5 search within backlinks) + 9 other filter types with And/Or/Not composition | **We're better** |
 | Recent pages quick access | Shown in search results | Not implemented | **Gap** |
 | Unlinked references search | Finds plain-text mentions of page name | Not implemented | **Gap** |
 
@@ -156,9 +156,9 @@
 |---|---|---|---|
 | Local-first | Flat files on disk (.md/.org per page) | SQLite database in app data dir | Both local-first, different storage model |
 | File format | Human-readable Markdown or Org-mode files | Binary SQLite database | **Trade-off** -- our format is not human-readable but more robust |
-| Cloud sync | Logseq Sync (paid), or DIY via git/iCloud/Dropbox | Not implemented -- infrastructure exists (peer_refs, DAG, merge) but no sync protocol | **Gap** -- backend ready, transport missing |
-| Conflict resolution | File-level, can cause issues with git | Three-way merge with diffy, conflict copies, LWW for properties | **We're better** architecturally |
-| Multi-device | Via sync solution | Not yet -- single device | **Gap** |
+| Cloud sync | Logseq Sync (paid), or DIY via git/iCloud/Dropbox | Full sync protocol (tested), TLS WebSocket transport, mDNS discovery, device pairing with ChaCha20-Poly1305. Transport not wired to Tauri commands yet | **Gap** -- protocol + transport + UI ready, 5 Tauri commands missing to connect them |
+| Conflict resolution | File-level, can cause issues with git | Three-way merge with diffy, conflict copies, LWW for properties. 4 conflict types handled (edit, property, move, delete-vs-edit) | **We're better** architecturally |
+| Multi-device | Via sync solution | Not yet -- single device (sync protocol exists but not exposed) | **Gap** |
 | Op log / history | No explicit op log (git history if using git) | Full append-only op log with blake3 hashes, per-device sequence | **We're better** |
 | Snapshots / compaction | N/A (file-based) | zstd-compressed CBOR snapshots, 90-day compaction | **We're better** |
 | Crash recovery | File system journaling | Explicit recovery at boot (pending snapshots, draft errors) | **We're better** |
@@ -408,21 +408,23 @@
 
 | Area | Block Notes Advantage | Logseq Limitation |
 |---|---|---|
-| **Journal views** | 4 modes (daily/weekly/monthly/agenda) with calendar grid | Single scrollable daily view |
+| **Journal views** | 4 modes (daily/weekly/monthly/agenda) with calendar picker + keyboard nav | Single scrollable daily view |
 | **Task dashboard** | Dedicated agenda mode with collapsible sections per state | Requires manually writing Datalog queries |
-| **Backlink filtering** | 4 filter dimensions (type, status, date, priority) | Basic filter bar |
-| **Formatting toolbar** | BubbleMenu with bold/italic/code/link/page-link/tag/codeblock/priority 1-2-3/date/undo/redo + Radix tooltips with shortcut hints | None (keyboard shortcuts only) |
-| **Sync foundation** | Append-only op log, DAG-based merge, three-way conflict resolution, blake3 integrity | File-based sync is fragile, conflicts are file-level |
-| **Data integrity** | Every op is hash-verified, crash recovery at boot | File corruption possible, no checksums |
-| **Performance architecture** | CQRS materializer, cursor-based pagination everywhere, FTS5 with BM25 | Datascript in-memory DB can be slow for large graphs |
+| **Backlink filtering** | Server-side expression tree: 10 filter types (property text/num/date, tag, FTS, date range, block type) + And/Or/Not composition, keyset pagination | Basic filter bar with simple matching |
+| **Formatting toolbar** | BubbleMenu with bold/italic/code/link/page-link/tag/codeblock/priority 1-2-3/date/undo/redo + Radix tooltips with shortcut hints (11 buttons) | None (keyboard shortcuts only) |
+| **Sync architecture** | Full sync protocol (1,841 LOC) + three-way merge (2,157 LOC) + TLS WebSocket transport + mDNS discovery + ChaCha20-Poly1305 pairing + UI scaffolding. Protocol tested, transport not wired to app yet | File-based sync is fragile, conflicts are file-level |
+| **Data integrity** | Every op is hash-verified (blake3), crash recovery at boot, op-level undo/redo | File corruption possible, no checksums |
+| **Search** | FTS5 with trigram tokenizer (CJK substring search), BM25 ranking, cursor pagination | Standard unicode61 tokenizer, no CJK substring support |
+| **Performance architecture** | CQRS materializer, cursor-based pagination everywhere, depth limits (max 20), Tauri 2 | Datascript in-memory DB can be slow for large graphs |
 | **Storage efficiency** | Single SQLite file with WAL, zstd-compressed snapshots | One file per page = thousands of small files |
 | **Structured properties** | Typed properties (text, num, date, ref) with validation + PropertiesPanel UI | Properties are untyped strings in file graph |
 | **ID system** | ULIDs are sortable, case-normalized, deterministic ordering | UUID v4 is random, not sortable |
 | **Soft delete** | Cascade soft-delete with restore + purge, timestamp verification | Delete is file deletion or block removal |
 | **Undo/redo history** | Op-level undo/redo + HistoryView with multi-select batch revert, filter by op type, payload preview | No explicit undo history UI |
-| **Test coverage** | 1,777 tests across 3 layers (836 Rust + 903 Vitest + 38 Playwright) | Community-reported quality issues |
+| **Test coverage** | ~3,300 tests across 3 layers (~1,178 Rust + ~2,123 Vitest + E2E Playwright) | Community-reported quality issues |
 | **Desktop performance** | Tauri 2 (Rust + WebView) -- small binary, low memory | Electron -- large binary, high memory |
 | **Android** | Tauri 2 Android target (spike working, IPC confirmed) | Electron-based, no native mobile |
+| **Accessibility** | ~50% ARIA coverage on core components (toolbar, blocks, journal, context menu), keyboard navigation, semantic HTML | Basic keyboard shortcuts, limited ARIA |
 
 ---
 
@@ -430,23 +432,25 @@
 
 | Category | Logseq | Block Notes | Notes |
 |---|:---:|:---:|---|
-| Block CRUD | 10 | 9 | Collapse works (not persisted). Tree indent lines done, no bullets. Move up/down via keyboard + DnD. Op-level undo per page, HistoryView for batch revert. No multi-block selection, no zoom/focus mode |
+| Block CRUD | 10 | 9 | Collapse works (not persisted). Tree indent lines done, no bullets. Move up/down via keyboard + DnD. Op-level undo per page, HistoryView for batch revert. Depth limit (20). No multi-block selection, no zoom/focus mode |
 | Page management | 9 | 7 | Missing aliases, namespaces |
 | Editor formatting | 9 | 8 | Bold/italic/code/headings (h1-h6 via slash commands)/code blocks with lowlight syntax highlighting + 11-button formatting toolbar with Radix tooltips. No tables, highlight, strikethrough, blockquotes |
-| Linking system | 10 | 6 | Page links + backlinks + external links + rich backlink filtering (4 dimensions). Missing block refs, embeds, unlinked refs |
+| Linking system | 10 | 7 | Page links + backlinks + external links + server-side backlink filter expressions (10 filter types + And/Or/Not). Missing block refs, embeds, unlinked refs |
 | Properties | 8 | 8 | Full system: backend + PropertiesPanel + priority badges + batch fetch + query_by_property |
 | Tags | 8 | 7 | Boolean AND/OR/NOT filtering. Tags not unified with pages (design choice) |
 | Query system | 9 | 5 | Tag queries + FTS + property queries + agenda mode. No inline query blocks, no compound queries |
 | Task management | 8 | 8 | TODO/DOING/DONE + priority A/B/C (slash commands + Ctrl+Shift+1/2/3 + click-to-cycle badges) + agenda dashboard + context menu actions. No scheduling/deadline semantics |
 | Daily journal | 8 | 8 | 4 modes (daily/weekly/monthly/agenda) + calendar picker with content dots + keyboard nav (Alt+Arrow, Alt+T). No templates, no auto-create today, monthly view is stacked sections not grid |
-| Search | 8 | 7 | FTS5 + FTS in pickers + batch resolve. Missing scope filters, unlinked refs |
+| Search | 8 | 8 | FTS5 with trigram tokenizer (CJK substring search) + BM25 ranking + FTS in pickers + batch resolve. Missing scope filters, unlinked refs |
 | Templates | 7 | 0 | Not started -- **top priority** |
-| Sync/storage | 5 | 8 | Architecture fundamentally better, transport not exposed yet |
-| Data integrity | 4 | 9 | Op log + blake3 hashing + recovery far ahead |
-| Performance arch | 6 | 8 | CQRS + cursor pagination + Tauri 2 |
+| Sync/storage | 5 | 9 | Full sync protocol + three-way merge + TLS WebSocket + mDNS + pairing crypto + UI scaffolding. All tested. Transport not wired to Tauri commands yet (~1-2 days to complete) |
+| Data integrity | 4 | 9 | Op log + blake3 hashing + recovery + undo hardening + error injection testing |
+| Performance arch | 6 | 8 | CQRS + cursor pagination + depth limits + Tauri 2 |
 | Import/export | 7 | 0 | Not started |
 
-**Overall: Block Notes has closed most original gaps and now has features Logseq lacks (4 journal modes, agenda dashboard, 11-button formatting toolbar, rich backlink filtering, op-level undo with HistoryView, syntax highlighting). The next sprint is templates + UX polish (auto-create today, collapse persistence, strikethrough/highlight, monthly calendar grid) + date-aware task scheduling. Block refs/embeds are deferred -- not needed for the target workflow.**
+**Totals: Logseq 116 / Block Notes 101** (87%)
+
+**Overall: Block Notes has closed most original gaps and now exceeds Logseq in sync architecture, data integrity, search (CJK trigram), backlink filtering (server-side expression tree), undo/redo history, formatting toolbar, and journal views. The next sprint is templates + UX polish (auto-create today, collapse persistence, strikethrough/highlight, monthly calendar grid) + wiring the sync transport + date-aware task scheduling. Block refs/embeds are deferred -- not needed for the target workflow.**
 
 ---
 
