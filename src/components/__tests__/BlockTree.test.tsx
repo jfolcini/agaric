@@ -270,6 +270,7 @@ describe('BlockTree picker wiring', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
         {
           id: 'C1',
@@ -280,6 +281,7 @@ describe('BlockTree picker wiring', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -321,6 +323,7 @@ describe('BlockTree picker wiring', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
         {
           id: 'P2',
@@ -331,6 +334,7 @@ describe('BlockTree picker wiring', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -367,6 +371,7 @@ describe('BlockTree picker wiring', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -417,6 +422,7 @@ describe('BlockTree picker wiring', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -452,6 +458,7 @@ describe('BlockTree picker wiring', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -484,6 +491,7 @@ describe('BlockTree picker wiring', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -611,6 +619,7 @@ describe('BlockTree rendering edge cases', () => {
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        conflict_type: null,
         depth: 0,
       },
       {
@@ -622,6 +631,7 @@ describe('BlockTree rendering edge cases', () => {
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        conflict_type: null,
         depth: 1,
       },
       {
@@ -633,6 +643,7 @@ describe('BlockTree rendering edge cases', () => {
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        conflict_type: null,
         depth: 2,
       },
       {
@@ -644,6 +655,7 @@ describe('BlockTree rendering edge cases', () => {
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        conflict_type: null,
         depth: 3,
       },
     ]
@@ -701,6 +713,7 @@ describe('BlockTree rendering edge cases', () => {
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        conflict_type: null,
         depth: 0,
       },
     ]
@@ -742,6 +755,7 @@ const makeBlock = (
   deleted_at: null,
   archived_at: null,
   is_conflict: false,
+  conflict_type: null,
   depth,
 })
 
@@ -905,13 +919,25 @@ describe('BlockTree task cycling', () => {
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
-    // Mock get_properties to return a TODO property for block A
+    // Mock get_batch_properties to return a TODO property for block A
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_properties' && args?.blockId === 'A') {
-        return [
-          { key: 'todo', value_text: 'TODO', value_num: null, value_date: null, value_ref: null },
-        ]
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) {
+          if (id === 'A')
+            result[id] = [
+              {
+                key: 'todo',
+                value_text: 'TODO',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ]
+          else result[id] = []
+        }
+        return result
       }
       return []
     })
@@ -928,8 +954,16 @@ describe('BlockTree task cycling', () => {
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
-    // Mock get_properties to return empty array
-    mockedInvoke.mockResolvedValue([])
+    // Mock get_batch_properties to return empty arrays
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) result[id] = []
+        return result
+      }
+      return []
+    })
 
     render(<BlockTree />)
 
@@ -985,10 +1019,22 @@ describe('BlockTree task cycling', () => {
     // Block A starts with TODO property
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_properties' && args?.blockId === 'A') {
-        return [
-          { key: 'todo', value_text: 'TODO', value_num: null, value_date: null, value_ref: null },
-        ]
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) {
+          if (id === 'A')
+            result[id] = [
+              {
+                key: 'todo',
+                value_text: 'TODO',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ]
+          else result[id] = []
+        }
+        return result
       }
       return []
     })
@@ -1029,10 +1075,22 @@ describe('BlockTree task cycling', () => {
     // Block A starts with DONE property
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_properties' && args?.blockId === 'A') {
-        return [
-          { key: 'todo', value_text: 'DONE', value_num: null, value_date: null, value_ref: null },
-        ]
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) {
+          if (id === 'A')
+            result[id] = [
+              {
+                key: 'todo',
+                value_text: 'DONE',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ]
+          else result[id] = []
+        }
+        return result
       }
       return []
     })
@@ -1345,6 +1403,7 @@ describe('BlockTree resolve cache preload', () => {
       deleted_at: null,
       archived_at: null,
       is_conflict: false,
+      conflict_type: null,
     }
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
@@ -1365,7 +1424,11 @@ describe('BlockTree resolve cache preload', () => {
             deleted: false,
           }))
       }
-      if (cmd === 'get_properties') return []
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) result[id] = []
+        return result
+      }
       return emptyPage
     })
 
@@ -1415,9 +1478,14 @@ describe('BlockTree handleNavigate', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         }
       }
-      if (cmd === 'get_properties') return []
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) result[id] = []
+        return result
+      }
       return emptyPage
     })
 
@@ -1453,6 +1521,7 @@ describe('BlockTree handleNavigate', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         }
       }
       if (cmd === 'get_block' && args?.blockId === PARENT_ID) {
@@ -1465,9 +1534,14 @@ describe('BlockTree handleNavigate', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         }
       }
-      if (cmd === 'get_properties') return []
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) result[id] = []
+        return result
+      }
       if (cmd === 'batch_resolve') return []
       return emptyPage
     })
@@ -1493,9 +1567,14 @@ describe('BlockTree handleNavigate', () => {
   it('handles missing/deleted block without crashing', async () => {
     const onNav = vi.fn()
 
-    mockedInvoke.mockImplementation(async (cmd: string) => {
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block') throw new Error('Block not found')
-      if (cmd === 'get_properties') return []
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) result[id] = []
+        return result
+      }
       return emptyPage
     })
 
@@ -1541,6 +1620,7 @@ describe('BlockTree searchPages caching', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -1586,6 +1666,7 @@ describe('BlockTree searchPages caching', () => {
       deleted_at: null,
       archived_at: null,
       is_conflict: false,
+      conflict_type: null,
     })
 
     await capturedOnCreatePage?.('Freshly Created')
@@ -1751,10 +1832,22 @@ describe('BlockTree priority slash commands', () => {
 
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_properties' && args?.blockId === 'A') {
-        return [
-          { key: 'priority', value_text: 'B', value_num: null, value_date: null, value_ref: null },
-        ]
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) {
+          if (id === 'A')
+            result[id] = [
+              {
+                key: 'priority',
+                value_text: 'B',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ]
+          else result[id] = []
+        }
+        return result
       }
       return []
     })
@@ -2090,10 +2183,22 @@ describe('BlockTree aria-live announcements', () => {
     // Block A starts with TODO property
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_properties' && args?.blockId === 'A') {
-        return [
-          { key: 'todo', value_text: 'TODO', value_num: null, value_date: null, value_ref: null },
-        ]
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) {
+          if (id === 'A')
+            result[id] = [
+              {
+                key: 'todo',
+                value_text: 'TODO',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ]
+          else result[id] = []
+        }
+        return result
       }
       return []
     })
@@ -2122,10 +2227,22 @@ describe('BlockTree aria-live announcements', () => {
     // Block A starts with DONE property
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_properties' && args?.blockId === 'A') {
-        return [
-          { key: 'todo', value_text: 'DONE', value_num: null, value_date: null, value_ref: null },
-        ]
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) {
+          if (id === 'A')
+            result[id] = [
+              {
+                key: 'todo',
+                value_text: 'DONE',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+              },
+            ]
+          else result[id] = []
+        }
+        return result
       }
       return []
     })
@@ -2167,9 +2284,14 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         }
       }
-      if (cmd === 'get_properties') return []
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) result[id] = []
+        return result
+      }
       return emptyPage
     })
 
@@ -2208,13 +2330,18 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         }
       }
       // Parent fetch fails
       if (cmd === 'get_block' && args?.blockId === PARENT_ID) {
         throw new Error('Parent not found')
       }
-      if (cmd === 'get_properties') return []
+      if (cmd === 'get_batch_properties') {
+        const result: Record<string, unknown[]> = {}
+        for (const id of args?.blockIds ?? []) result[id] = []
+        return result
+      }
       return emptyPage
     })
 

@@ -15,8 +15,7 @@
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Check, ChevronRight, GripVertical, Trash2 } from 'lucide-react'
-import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { cn } from '../lib/utils'
 import { BlockContextMenu } from './BlockContextMenu'
@@ -75,7 +74,7 @@ interface SortableBlockProps {
   onMoveDown?: (blockId: string) => void
 }
 
-export function SortableBlock({
+function SortableBlockInner({
   blockId,
   content,
   isFocused,
@@ -382,3 +381,6 @@ export function SortableBlock({
     </TooltipProvider>
   )
 }
+
+export const SortableBlock = React.memo(SortableBlockInner)
+SortableBlock.displayName = 'SortableBlock'

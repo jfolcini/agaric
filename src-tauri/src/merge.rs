@@ -364,7 +364,8 @@ pub async fn merge_block(
             ancestor: _,
         } => {
             // 4. Create conflict copy with "theirs" content
-            let conflict_op = create_conflict_copy(pool, device_id, block_id, &theirs, "Text").await?;
+            let conflict_op =
+                create_conflict_copy(pool, device_id, block_id, &theirs, "Text").await?;
 
             // 5. Create a merge op on the ORIGINAL block to unify the two
             //    divergent heads in the DAG.  The original block retains the
@@ -748,13 +749,10 @@ mod tests {
 
         let payload: CreateBlockPayload = serde_json::from_str(&record.payload).unwrap();
         let block_id = payload.block_id.as_str();
-        let row = sqlx::query!(
-            "SELECT conflict_type FROM blocks WHERE id = ?",
-            block_id
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row = sqlx::query!("SELECT conflict_type FROM blocks WHERE id = ?", block_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
         assert_eq!(row.conflict_type, Some("Property".to_owned()));
     }

@@ -2784,16 +2784,15 @@ pub async fn compute_edit_diff_inner(
     }
 
     let payload: crate::op::EditBlockPayload = serde_json::from_str(&row.payload)?;
-    let prior = crate::reverse::find_prior_text(
-        pool,
-        payload.block_id.as_str(),
-        &row.created_at,
-        seq,
-    )
-    .await?;
+    let prior =
+        crate::reverse::find_prior_text(pool, payload.block_id.as_str(), &row.created_at, seq)
+            .await?;
 
     let old_text = prior.unwrap_or_default();
-    Ok(Some(crate::word_diff::compute_word_diff(&old_text, &payload.to_text)))
+    Ok(Some(crate::word_diff::compute_word_diff(
+        &old_text,
+        &payload.to_text,
+    )))
 }
 
 /// Tauri command: compute word-level diff for an edit_block history entry.

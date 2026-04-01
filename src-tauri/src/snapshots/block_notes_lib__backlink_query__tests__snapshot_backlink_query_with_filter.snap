@@ -1,6 +1,6 @@
 ---
 source: src/backlink_query.rs
-assertion_line: 2545
+assertion_line: 2723
 expression: resp
 ---
 items:
@@ -12,6 +12,7 @@ items:
     deleted_at: ~
     archived_at: ~
     is_conflict: false
+    conflict_type: ~
 next_cursor: "[CURSOR]"
 has_more: false
 total_count: 1

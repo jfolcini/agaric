@@ -554,7 +554,7 @@ fn bench_scale(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("scale");
 
-    for count in [100, 1_000, 10_000] {
+    for count in [100, 1_000, 10_000, 100_000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("scale_{count}")));
         rt.block_on(seed_backlinks_full(&pool, count));

@@ -309,7 +309,11 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
           onClick={loadMore}
           disabled={loading}
           aria-busy={loading}
-          aria-label={loading ? 'Loading more backlinks' : `Load more backlinks (${blocks.length} of ${totalCount} loaded)`}
+          aria-label={
+            loading
+              ? 'Loading more backlinks'
+              : `Load more backlinks (${blocks.length} of ${totalCount} loaded)`
+          }
         >
           {loading ? 'Loading...' : 'Load more'}
         </Button>

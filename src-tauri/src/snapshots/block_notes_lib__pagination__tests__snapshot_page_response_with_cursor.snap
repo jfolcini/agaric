@@ -1,5 +1,6 @@
 ---
 source: src/pagination.rs
+assertion_line: 1892
 expression: resp
 ---
 items:
@@ -11,6 +12,7 @@ items:
     deleted_at: ~
     archived_at: ~
     is_conflict: false
+    conflict_type: ~
   - id: SNAP_C02
     block_type: content
     content: child 2
@@ -19,5 +21,6 @@ items:
     deleted_at: ~
     archived_at: ~
     is_conflict: false
+    conflict_type: ~
 next_cursor: "[CURSOR]"
 has_more: true

@@ -68,6 +68,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        conflict_type: null,
       }
       setTags((prev) => [newTag, ...prev])
       setNewTagName('')

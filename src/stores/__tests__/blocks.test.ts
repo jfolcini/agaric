@@ -30,6 +30,7 @@ function makeBlock(
     deleted_at: string | null
     archived_at: string | null
     is_conflict: boolean
+    conflict_type: string | null
     depth: number
   }> = {},
 ) {
@@ -42,6 +43,7 @@ function makeBlock(
     deleted_at: overrides.deleted_at ?? null,
     archived_at: overrides.archived_at ?? null,
     is_conflict: overrides.is_conflict ?? false,
+    conflict_type: null,
     depth: overrides.depth ?? 0,
   }
 }

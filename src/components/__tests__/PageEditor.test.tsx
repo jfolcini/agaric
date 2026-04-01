@@ -97,6 +97,7 @@ function makeBlock(id: string, content: string, parentId: string | null = null, 
     deleted_at: null,
     archived_at: null,
     is_conflict: false,
+    conflict_type: null,
     depth: 0,
   }
 }

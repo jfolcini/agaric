@@ -58,7 +58,10 @@ mod tests {
         let spans = compute_word_diff("hello world", "hello universe");
         let tags: Vec<DiffTag> = spans.iter().map(|s| s.tag).collect();
         assert!(tags.contains(&DiffTag::Delete), "should have a Delete span");
-        assert!(tags.contains(&DiffTag::Insert), "should have an Insert span");
+        assert!(
+            tags.contains(&DiffTag::Insert),
+            "should have an Insert span"
+        );
         // The deleted word should be "world" and inserted should be "universe"
         let deleted: Vec<&str> = spans
             .iter()

@@ -32,8 +32,8 @@ import {
   batchResolve,
   createBlock,
   editBlock,
+  getBatchProperties,
   getBlock,
-  getProperties,
   listBlocks,
   setProperty,
 } from '../lib/tauri'
@@ -329,18 +329,16 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   useEffect(() => {
     if (blocks.length === 0) return
     const fetchProps = async () => {
-      const propsMap = new Map<string, PropertyRow[]>()
-      await Promise.all(
-        blocks.map(async (b) => {
-          try {
-            const props = await getProperties(b.id)
-            if (props.length > 0) propsMap.set(b.id, props)
-          } catch {
-            /* ignore */
-          }
-        }),
-      )
-      setBlockProperties(propsMap)
+      try {
+        const propsRecord = await getBatchProperties(blocks.map((b) => b.id))
+        const propsMap = new Map<string, PropertyRow[]>()
+        for (const [blockId, props] of Object.entries(propsRecord)) {
+          if (props.length > 0) propsMap.set(blockId, props)
+        }
+        setBlockProperties(propsMap)
+      } catch {
+        /* batch fetch failed — non-critical */
+      }
     }
     fetchProps()
   }, [blocks, setBlockProperties])

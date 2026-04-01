@@ -17,6 +17,7 @@
 
 use rustc_hash::FxHashSet;
 use serde::Serialize;
+use serde_json;
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
@@ -145,19 +146,30 @@ fn resolve_expr<'a>(
                 Ok(result)
             }
             TagExpr::Not(inner) => {
-                // PERF: The universal set loads ALL non-deleted, non-conflict
-                // block ids into memory.  For a personal notes app (<100 k
-                // blocks) this is fine; at larger scale, push NOT into SQL.
-                let all = sqlx::query_scalar!(
-                    "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0"
-                )
-                .fetch_all(pool)
-                .await?;
                 let inner_set: FxHashSet<String> = resolve_expr(pool, inner).await?;
-                Ok(all
-                    .into_iter()
-                    .filter(|id| !inner_set.contains(id))
-                    .collect())
+                if inner_set.is_empty() {
+                    // Not of empty set = all non-deleted blocks
+                    let rows = sqlx::query_scalar::<_, String>(
+                        "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
+                    )
+                    .fetch_all(pool)
+                    .await?;
+                    return Ok(rows.into_iter().collect());
+                }
+
+                // Push NOT into SQL via json_each() to avoid loading all
+                // block IDs into memory at 100k+ scale.
+                let json_ids = serde_json::to_string(&inner_set.iter().collect::<Vec<_>>())
+                    .map_err(|e| AppError::InvalidOperation(e.to_string()))?;
+                Ok(sqlx::query_scalar::<_, String>(
+                    "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
+                     AND id NOT IN (SELECT value FROM json_each(?))",
+                )
+                .bind(&json_ids)
+                .fetch_all(pool)
+                .await?
+                .into_iter()
+                .collect())
             }
         }
     })
@@ -228,7 +240,7 @@ pub async fn eval_tag_query(
     let placeholders = actual_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let query_str = format!(
         "SELECT id, block_type, content, parent_id, position, \
-         deleted_at, archived_at, is_conflict \
+         deleted_at, archived_at, is_conflict, conflict_type \
          FROM blocks WHERE id IN ({placeholders}) ORDER BY id"
     );
 
@@ -281,14 +293,16 @@ const MAX_TAGS_PREFIX: i64 = 200;
 pub async fn list_tags_by_prefix(
     pool: &SqlitePool,
     prefix: &str,
+    limit: Option<i64>,
 ) -> Result<Vec<TagCacheRow>, AppError> {
     let like_pattern = format!("{}%", escape_like(prefix));
+    let effective_limit = limit.unwrap_or(MAX_TAGS_PREFIX);
     let rows = sqlx::query_as!(
         TagCacheRow,
         r#"SELECT tag_id, name, usage_count, updated_at
          FROM tags_cache WHERE name LIKE ?1 ESCAPE '\' ORDER BY name LIMIT ?2"#,
         like_pattern,
-        MAX_TAGS_PREFIX
+        effective_limit
     )
     .fetch_all(pool)
     .await?;
@@ -872,7 +886,7 @@ mod tests {
         insert_tag_cache(&pool, "TAG_WE", "work/email", 3).await;
         insert_tag_cache(&pool, "TAG_P", "personal", 10).await;
 
-        let result = list_tags_by_prefix(&pool, "work/").await.unwrap();
+        let result = list_tags_by_prefix(&pool, "work/", None).await.unwrap();
 
         assert_eq!(result.len(), 2);
         // Ordered by name
@@ -894,7 +908,7 @@ mod tests {
         insert_tag_cache(&pool, "TAG_A", "alpha", 1).await;
         insert_tag_cache(&pool, "TAG_B", "beta", 2).await;
 
-        let result = list_tags_by_prefix(&pool, "").await.unwrap();
+        let result = list_tags_by_prefix(&pool, "", None).await.unwrap();
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].name, "alpha");
@@ -908,7 +922,7 @@ mod tests {
         insert_block(&pool, "TAG_A", "tag", "alpha").await;
         insert_tag_cache(&pool, "TAG_A", "alpha", 1).await;
 
-        let result = list_tags_by_prefix(&pool, "zzz").await.unwrap();
+        let result = list_tags_by_prefix(&pool, "zzz", None).await.unwrap();
 
         assert!(result.is_empty());
     }
@@ -953,11 +967,11 @@ mod tests {
         insert_tag_cache(&pool, "TAG_B", "alpha", 2).await;
 
         // Prefix "%" should NOT match all tags — it should be escaped to literal '%'
-        let result = list_tags_by_prefix(&pool, "%").await.unwrap();
+        let result = list_tags_by_prefix(&pool, "%", None).await.unwrap();
         assert_eq!(result.len(), 0, "literal % prefix should not match 'alpha'");
 
         // Prefix "100%" should match only the tag with literal '%'
-        let result = list_tags_by_prefix(&pool, "100%").await.unwrap();
+        let result = list_tags_by_prefix(&pool, "100%", None).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "100%_done");
     }

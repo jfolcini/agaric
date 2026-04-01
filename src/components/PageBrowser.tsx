@@ -83,6 +83,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        conflict_type: null,
       }
       setPages((prev) => [newPage, ...prev])
       setNewPageName('')

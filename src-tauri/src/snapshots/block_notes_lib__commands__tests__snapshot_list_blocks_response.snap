@@ -1,5 +1,6 @@
 ---
 source: src/commands.rs
+assertion_line: 5066
 expression: resp
 ---
 items:
@@ -11,6 +12,7 @@ items:
     deleted_at: ~
     archived_at: ~
     is_conflict: false
+    conflict_type: ~
   - id: SNAP_BLK2
     block_type: page
     content: second
@@ -19,5 +21,6 @@ items:
     deleted_at: ~
     archived_at: ~
     is_conflict: false
+    conflict_type: ~
 next_cursor: ~
 has_more: false

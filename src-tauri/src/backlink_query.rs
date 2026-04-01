@@ -481,7 +481,7 @@ fn resolve_filter<'a>(
                 let mut iter = results.into_iter();
                 let mut result = iter.next().unwrap();
                 for set in iter {
-                    result.retain(|id| set.contains(&*id));
+                    result.retain(|id| set.contains(id));
                 }
                 Ok(result)
             }
@@ -611,9 +611,7 @@ pub async fn eval_backlink_query(
             base_ids.clone()
         } else {
             // Resolve all top-level filters concurrently (#319)
-            let futures = filter_list
-                .iter()
-                .map(|f| resolve_filter(pool, f, 0));
+            let futures = filter_list.iter().map(|f| resolve_filter(pool, f, 0));
             let results = try_join_all(futures).await?;
             let mut result = base_ids.clone();
             for set in results {
@@ -676,7 +674,7 @@ pub async fn eval_backlink_query(
     let placeholders = actual_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let query_str = format!(
         "SELECT id, block_type, content, parent_id, position, \
-         deleted_at, archived_at, is_conflict \
+         deleted_at, archived_at, is_conflict, conflict_type \
          FROM blocks WHERE id IN ({placeholders})"
     );
 

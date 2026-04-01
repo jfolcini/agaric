@@ -295,6 +295,7 @@ describe('searchPages — short query (<=2 chars)', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
         {
           id: 'P11',
@@ -305,6 +306,7 @@ describe('searchPages — short query (<=2 chars)', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -338,6 +340,7 @@ describe('searchPages — short query (<=2 chars)', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -365,6 +368,7 @@ describe('searchPages — short query (<=2 chars)', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -440,6 +444,7 @@ describe('searchPages — long query (>2 chars)', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
         {
           id: 'F2',
@@ -450,6 +455,7 @@ describe('searchPages — long query (>2 chars)', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
         {
           id: 'F3',
@@ -460,6 +466,7 @@ describe('searchPages — long query (>2 chars)', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -494,6 +501,7 @@ describe('searchPages — long query (>2 chars)', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -537,6 +545,7 @@ describe('searchPages — long query (>2 chars)', () => {
       deleted_at: null,
       archived_at: null,
       is_conflict: false,
+      conflict_type: null,
     }))
 
     mockedSearchBlocks.mockResolvedValue({
@@ -576,6 +585,7 @@ describe('searchPages — long query (>2 chars)', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -607,6 +617,7 @@ describe('searchPages — long query (>2 chars)', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -727,6 +738,7 @@ describe('searchPages — "Create new" option', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -757,6 +769,7 @@ describe('searchPages — "Create new" option', () => {
           deleted_at: null,
           archived_at: null,
           is_conflict: false,
+          conflict_type: null,
         },
       ],
       next_cursor: null,
@@ -791,6 +804,7 @@ describe('onCreatePage', () => {
       deleted_at: null,
       archived_at: null,
       is_conflict: false,
+      conflict_type: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -817,6 +831,7 @@ describe('onCreatePage', () => {
       deleted_at: null,
       archived_at: null,
       is_conflict: false,
+      conflict_type: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -839,6 +854,7 @@ describe('onCreatePage', () => {
       deleted_at: null,
       archived_at: null,
       is_conflict: false,
+      conflict_type: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -868,6 +884,7 @@ describe('onCreatePage', () => {
       deleted_at: null,
       archived_at: null,
       is_conflict: false,
+      conflict_type: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())

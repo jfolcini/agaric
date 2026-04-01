@@ -1,5 +1,6 @@
 ---
 source: src/commands.rs
+assertion_line: 5028
 expression: resp
 ---
 id: "[ULID]"
@@ -10,3 +11,4 @@ position: 1
 deleted_at: ~
 archived_at: ~
 is_conflict: false
+conflict_type: ~

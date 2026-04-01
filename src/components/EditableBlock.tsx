@@ -7,8 +7,7 @@
  */
 
 import { EditorContent } from '@tiptap/react'
-import type React from 'react'
-import { useCallback, useEffect, useRef } from 'react'
+import React, { useCallback, useEffect, useRef } from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { useBlockStore } from '../stores/blocks'
 import { FormattingToolbar } from './FormattingToolbar'
@@ -31,7 +30,7 @@ interface EditableBlockProps {
   resolveTagStatus?: (id: string) => 'active' | 'deleted'
 }
 
-export function EditableBlock({
+function EditableBlockInner({
   blockId,
   content,
   isFocused,
@@ -143,3 +142,6 @@ export function EditableBlock({
     </section>
   )
 }
+
+export const EditableBlock = React.memo(EditableBlockInner)
+EditableBlock.displayName = 'EditableBlock'
