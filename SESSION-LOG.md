@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 41 — 2026-04-01 — Tier 8 Backlinks Filter Polish (#329-#345)
+
+Resolved all 17 Tier 8 "Backlinks Filter Minor / Polish" items from REVIEW-LATER.md.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `src/components/BacklinkFilterBuilder.tsx` | #329 structural dedup via getFilterKey(), #330 remove pill aria-label, #331 Clear all contrast fix, #332 ul/li pills, #333 sort direction always visible, #334 Clear all repositioned, #335 property filter reorder, #336 sr-only legend, #339 ULID validation, #340 maxLength on tag prefix, #344 shrink-0 pills |
+| `src/components/BacklinksPanel.tsx` | #337 backlinks ul aria-label, #338 remove redundant aria-label (keep role=status), #341 stale results during filter change, #342 document stale total_count, #343 document filter persistence, #345 list-style items |
+| `src/components/__tests__/BacklinkFilterBuilder.test.tsx` | 14 new tests (32 total) |
+| `src/components/__tests__/BacklinksPanel.test.tsx` | 4 new tests (37 total) |
+
+### Stats
+- 18 new tests, 69 backlinks tests total, 1917 total tests
+- Commit: bad3da4
+
+---
+
 ## Session 40 — 2026-04-01 — Sync Event Emission Infrastructure
 
 Added Tauri event emission to SyncOrchestrator and frontend event listeners. Resolves #277, #276, #386, #378.
