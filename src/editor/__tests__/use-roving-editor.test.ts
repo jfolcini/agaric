@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { dispatchPriorityEvent, replaceDocSilently } from '../use-roving-editor'
+import type { DocNode } from '../types'
+import {
+  computeContentDelta,
+  dispatchPriorityEvent,
+  replaceDocSilently,
+  shouldSplitOnBlur,
+} from '../use-roving-editor'
 
 // -- editorProps ARIA attributes ------------------------------------------------
 // Verified via grep: use-roving-editor.ts contains editorProps.attributes with
@@ -123,5 +129,85 @@ describe('replaceDocSilently', () => {
     replaceDocSilently(editor as never, { type: 'doc' })
 
     expect(callOrder).toEqual(['replaceWith', 'setMeta', 'dispatch'])
+  })
+})
+
+// -- computeContentDelta ------------------------------------------------------
+
+describe('computeContentDelta', () => {
+  it('returns changed:false when content is unchanged', () => {
+    const original = 'hello world'
+    // Build a DocNode that serializes back to 'hello world'
+    const json: DocNode = {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello world' }] }],
+    }
+    const delta = computeContentDelta(original, json)
+    expect(delta.changed).toBe(false)
+    expect(delta.newMarkdown).toBe('hello world')
+    expect(delta.originalMarkdown).toBe('hello world')
+  })
+
+  it('returns changed:true with correct newMarkdown when content differs', () => {
+    const original = 'hello world'
+    const json: DocNode = {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'goodbye world' }] }],
+    }
+    const delta = computeContentDelta(original, json)
+    expect(delta.changed).toBe(true)
+    expect(delta.newMarkdown).toBe('goodbye world')
+    expect(delta.originalMarkdown).toBe('hello world')
+  })
+
+  it('handles empty doc → empty string', () => {
+    const original = ''
+    const json: DocNode = { type: 'doc' }
+    const delta = computeContentDelta(original, json)
+    expect(delta.changed).toBe(false)
+    expect(delta.newMarkdown).toBe('')
+  })
+
+  it('detects change from empty to non-empty', () => {
+    const original = ''
+    const json: DocNode = {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'new content' }] }],
+    }
+    const delta = computeContentDelta(original, json)
+    expect(delta.changed).toBe(true)
+    expect(delta.newMarkdown).toBe('new content')
+  })
+})
+
+// -- shouldSplitOnBlur --------------------------------------------------------
+
+describe('shouldSplitOnBlur', () => {
+  it('returns false for single line', () => {
+    expect(shouldSplitOnBlur('hello world')).toBe(false)
+  })
+
+  it('returns true when markdown contains a newline (multiple paragraphs)', () => {
+    expect(shouldSplitOnBlur('line1\nline2')).toBe(true)
+  })
+
+  it('returns false when newline is inside a code block', () => {
+    expect(shouldSplitOnBlur('```\ncode line\nmore code\n```')).toBe(false)
+  })
+
+  it('returns true when newline exists outside code block', () => {
+    expect(shouldSplitOnBlur('```\ncode\n```\ntext after')).toBe(true)
+  })
+
+  it('returns false for empty string', () => {
+    expect(shouldSplitOnBlur('')).toBe(false)
+  })
+
+  it('returns false for a single heading', () => {
+    expect(shouldSplitOnBlur('## Just a heading')).toBe(false)
+  })
+
+  it('returns true for heading followed by paragraph', () => {
+    expect(shouldSplitOnBlur('# Title\nParagraph')).toBe(true)
   })
 })

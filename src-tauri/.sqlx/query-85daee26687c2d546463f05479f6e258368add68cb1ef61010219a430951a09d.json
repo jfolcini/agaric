@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE peer_refs SET reset_count = reset_count + 1, last_reset_at = ?\n         WHERE peer_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "85daee26687c2d546463f05479f6e258368add68cb1ef61010219a430951a09d"
+}

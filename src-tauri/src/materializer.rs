@@ -448,9 +448,11 @@ impl Materializer {
                 self.check_queue_pressure();
                 Ok(())
             }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                // Queue full — silently drop. The cache will be rebuilt on
-                // the next edit that triggers the same task type.
+            Err(mpsc::error::TrySendError::Full(_dropped)) => {
+                // Queue full — drop with warning.  The cache will be rebuilt
+                // on the next edit that triggers the same task type
+                // (stale-while-revalidate).
+                tracing::warn!("background queue full, dropping task");
                 Ok(())
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {

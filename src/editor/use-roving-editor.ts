@@ -30,6 +30,35 @@ import { parse, serialize } from './markdown-serializer'
 import type { PickerItem } from './SuggestionList'
 import type { DocNode } from './types'
 
+// -- Extracted pure functions (testable without TipTap / jsdom) ---------------
+
+export interface ContentDelta {
+  newMarkdown: string
+  changed: boolean
+  originalMarkdown: string
+}
+
+/**
+ * Serialize a ProseMirror JSON doc and compare against the original markdown.
+ * Pure function — no editor instance required.
+ */
+export function computeContentDelta(originalMarkdown: string, currentJson: DocNode): ContentDelta {
+  const newMarkdown = serialize(currentJson)
+  return { newMarkdown, changed: newMarkdown !== originalMarkdown, originalMarkdown }
+}
+
+/**
+ * Return true when the markdown would produce multiple top-level blocks
+ * (i.e. contains newlines outside of code fences), meaning the block
+ * should be split on blur.
+ */
+export function shouldSplitOnBlur(markdown: string): boolean {
+  if (!markdown.includes('\n')) return false
+  const doc = parse(markdown)
+  const blocks = doc.content ?? []
+  return blocks.length > 1
+}
+
 const lowlight = createLowlight(common)
 
 /** CodeBlockLowlight with Mod-Shift-c to toggle code blocks. */
@@ -235,15 +264,14 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     if (!editor) return null
 
     const json = editor.getJSON() as DocNode
-    const newMarkdown = serialize(json)
-    const changed = newMarkdown !== originalMarkdownRef.current
+    const delta = computeContentDelta(originalMarkdownRef.current, json)
 
     // Reset to empty doc without polluting undo history
     replaceDocSilently(editor, { type: 'doc', content: [{ type: 'paragraph' }] })
     activeBlockIdRef.current = null
     originalMarkdownRef.current = ''
 
-    return changed ? newMarkdown : null
+    return delta.changed ? delta.newMarkdown : null
   }, [editor])
 
   return {

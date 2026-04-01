@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT payload FROM op_log\n         WHERE op_type = 'add_attachment'\n         AND json_extract(payload, '$.attachment_id') = ?\n         ORDER BY created_at DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "payload",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6d004efcd761bcf88df53c3e39b7fa9de68499a743a386da771fe170273ab2ca"
+}

@@ -22,7 +22,7 @@ vi.mock('@tauri-apps/api/mocks', () => ({
   mockWindows: vi.fn(),
 }))
 
-import { resetMock, SEED_IDS, setupMock } from '../tauri-mock'
+import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '../tauri-mock'
 
 /** Helper — call the captured IPC handler as if invoke() were called. */
 function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
@@ -1329,5 +1329,58 @@ describe('resetMock clears tag associations', () => {
       Record<string, unknown>
     >
     expect(tags).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Error injection (injectMockError / clearMockErrors)
+// ---------------------------------------------------------------------------
+
+describe('error injection', () => {
+  it('injectMockError causes command to throw', () => {
+    injectMockError('create_block', 'test error')
+    expect(() =>
+      invoke('create_block', {
+        blockType: 'content',
+        content: 'should fail',
+        parentId: SEED_IDS.PAGE_GETTING_STARTED,
+      }),
+    ).toThrow('test error')
+    clearMockErrors()
+  })
+
+  it('clearMockErrors restores normal operation', () => {
+    injectMockError('get_block', 'injected failure')
+    clearMockErrors()
+    const block = invoke('get_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED }) as Record<
+      string,
+      unknown
+    >
+    expect(block.content).toBe('Getting Started')
+  })
+
+  it('only the injected command throws; others still work', () => {
+    injectMockError('edit_block', 'edit is broken')
+    // get_block should still work fine
+    const block = invoke('get_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED }) as Record<
+      string,
+      unknown
+    >
+    expect(block.content).toBe('Getting Started')
+    // edit_block should throw
+    expect(() =>
+      invoke('edit_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED, toText: 'nope' }),
+    ).toThrow('edit is broken')
+    clearMockErrors()
+  })
+
+  it('resetMock clears injected errors', () => {
+    injectMockError('get_block', 'should be cleared')
+    resetMock()
+    const block = invoke('get_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED }) as Record<
+      string,
+      unknown
+    >
+    expect(block.content).toBe('Getting Started')
   })
 })

@@ -1770,6 +1770,12 @@ pub async fn apply_reverse_in_tx(
     reverse_payload: &OpPayload,
 ) -> Result<(), AppError> {
     match reverse_payload {
+        // NOTE: DeleteBlock and RestoreBlock are cascade operations that are
+        // idempotent — deleting an already-deleted block or restoring an
+        // already-restored block is a harmless no-op (rows_affected == 0 is
+        // fine).  EditBlock and MoveBlock check rows_affected because they
+        // modify data the user expects to see on a live block; silently
+        // succeeding on a soft-deleted block would mask a real problem.
         OpPayload::DeleteBlock(p) => {
             // Cascade soft-delete (same as delete_block_inner)
             let now = now_rfc3339();
@@ -1807,19 +1813,35 @@ pub async fn apply_reverse_in_tx(
             .await?;
         }
         OpPayload::EditBlock(p) => {
-            sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
-                .bind(&p.to_text)
-                .bind(p.block_id.as_str())
-                .execute(&mut **tx)
-                .await?;
+            let result =
+                sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
+                    .bind(&p.to_text)
+                    .bind(p.block_id.as_str())
+                    .execute(&mut **tx)
+                    .await?;
+            if result.rows_affected() == 0 {
+                return Err(AppError::NotFound(format!(
+                    "block '{}' not found or soft-deleted during undo",
+                    p.block_id
+                )));
+            }
         }
         OpPayload::MoveBlock(p) => {
-            sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
-                .bind(p.new_parent_id.as_ref().map(BlockId::as_str))
-                .bind(p.new_position)
-                .bind(p.block_id.as_str())
-                .execute(&mut **tx)
-                .await?;
+            let result = sqlx::query(
+                "UPDATE blocks SET parent_id = ?, position = ? \
+                 WHERE id = ? AND deleted_at IS NULL",
+            )
+            .bind(p.new_parent_id.as_ref().map(BlockId::as_str))
+            .bind(p.new_position)
+            .bind(p.block_id.as_str())
+            .execute(&mut **tx)
+            .await?;
+            if result.rows_affected() == 0 {
+                return Err(AppError::NotFound(format!(
+                    "block '{}' not found or soft-deleted during undo",
+                    p.block_id
+                )));
+            }
         }
         OpPayload::AddTag(p) => {
             sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
@@ -1862,6 +1884,20 @@ pub async fn apply_reverse_in_tx(
                 .bind(&p.attachment_id)
                 .execute(&mut **tx)
                 .await?;
+        }
+        OpPayload::AddAttachment(p) => {
+            sqlx::query(
+                "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), NULL)"
+            )
+            .bind(p.attachment_id.as_str())
+            .bind(p.block_id.as_str())
+            .bind(&p.mime_type)
+            .bind(&p.filename)
+            .bind(p.size_bytes)
+            .bind(&p.fs_path)
+            .execute(&mut **tx)
+            .await?;
         }
         // Note: CreateBlock never appears here because reverse::compute_reverse
         // maps CreateBlock → DeleteBlock, and RestoreBlock → DeleteBlock.

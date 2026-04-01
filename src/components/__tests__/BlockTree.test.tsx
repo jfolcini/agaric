@@ -1307,7 +1307,7 @@ describe('BlockTree cross-page navigation', () => {
 // =========================================================================
 
 describe('BlockTree resolve cache preload', () => {
-  it('preload fetches all pages and tags on mount', async () => {
+  it('does NOT fetch pages or tags on mount (App.tsx preloads those)', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
     render(<BlockTree />)
@@ -1316,15 +1316,18 @@ describe('BlockTree resolve cache preload', () => {
       expect(capturedSearchTags).toBeDefined()
     })
 
-    // Preload should call list_blocks for pages and list_tags_by_prefix
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'list_blocks',
-      expect.objectContaining({ blockType: 'page', limit: 1000 }),
+    // Pages + tags preload is now done once by App.tsx via
+    // useResolveStore.preload(), so BlockTree must NOT duplicate it.
+    const pageCalls = mockedInvoke.mock.calls.filter(
+      ([cmd, args]) =>
+        cmd === 'list_blocks' &&
+        (args as Record<string, unknown>)?.blockType === 'page' &&
+        (args as Record<string, unknown>)?.limit === 1000,
     )
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'list_tags_by_prefix',
-      expect.objectContaining({ prefix: '' }),
-    )
+    expect(pageCalls).toHaveLength(0)
+
+    const tagCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_tags_by_prefix')
+    expect(tagCalls).toHaveLength(0)
   })
 
   it('preload fetches uncached ULIDs found in block content', async () => {
@@ -1341,15 +1344,10 @@ describe('BlockTree resolve cache preload', () => {
     }
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'list_blocks' && args?.blockType === 'page') {
-        return emptyPage // preload page fetch — no pages match this ULID
-      }
       if (cmd === 'list_blocks') {
+        if (args?.blockType === 'page') return emptyPage
         // load() call — return block with link content
         return { items: [blockWithLink], next_cursor: null, has_more: false }
-      }
-      if (cmd === 'list_tags_by_prefix') {
-        return [] // no tags
       }
       if (cmd === 'batch_resolve') {
         // biome-ignore lint/suspicious/noExplicitAny: test mock

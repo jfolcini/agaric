@@ -253,6 +253,12 @@ pub async fn apply_remote_ops(
 /// 4. **`delete_block` vs `edit_block`** — if one device deleted a block
 ///    while the other edited it, the edit wins and the block is resurrected
 ///    via a `restore_block` op.
+///
+/// **Not handled as a conflict: `move_block` vs `delete_block`.**  Both ops
+/// apply in sequence and the block ends up deleted regardless of order
+/// (commutativity).  A move to a new parent followed by a delete still
+/// soft-deletes the block; a delete followed by a move updates a
+/// soft-deleted row's parent (harmless).  No resolution op is needed.
 pub async fn merge_diverged_blocks(
     pool: &SqlitePool,
     device_id: &str,

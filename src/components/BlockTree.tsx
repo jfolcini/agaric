@@ -35,7 +35,6 @@ import {
   getBlock,
   getProperties,
   listBlocks,
-  listTagsByPrefix,
   setProperty,
 } from '../lib/tauri'
 import { getDragDescendants } from '../lib/tree-utils'
@@ -285,34 +284,14 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     load(parentId)
   }, [load, parentId])
 
-  // Preload all pages + tags into the resolve cache so link chips show
-  // resolved titles on first render instead of truncated ULIDs.
-  // MUST be declared after the load effect so it fires second on mount.
+  // Scan loaded blocks for [[ULID]] tokens not yet in the resolve cache
+  // and batch-fetch them.  Pages + tags are already preloaded by App.tsx
+  // via useResolveStore.preload(); this effect only handles block-link
+  // references that may not be in the cache (e.g. links to content blocks).
   useEffect(() => {
     let cancelled = false
-    async function preload() {
+    async function resolveUncachedLinks() {
       try {
-        const store = useResolveStore.getState()
-
-        // Fetch all pages
-        const pagesResp = await listBlocks({ blockType: 'page', limit: 1000 })
-        if (cancelled) return
-        const pagesList: Array<{ id: string; title: string }> = []
-        for (const p of pagesResp.items) {
-          const title = p.content ?? 'Untitled'
-          store.set(p.id, title, p.deleted_at !== null)
-          pagesList.push({ id: p.id, title })
-        }
-        resolve.pagesListRef.current = pagesList
-
-        // Fetch all tags
-        const tags = await listTagsByPrefix({ prefix: '' })
-        if (cancelled) return
-        for (const t of tags) {
-          store.set(t.tag_id, t.name, false)
-        }
-
-        // Scan loaded blocks for [[ULID]] tokens not yet cached
         const ULID_LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
         const uncached = new Set<string>()
         const currentCache = useResolveStore.getState().cache
@@ -323,11 +302,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           }
         }
 
-        // Batch-fetch any uncached block references via single IPC call
         if (uncached.size > 0) {
           try {
             const resolved = await batchResolve([...uncached])
             if (!cancelled) {
+              const store = useResolveStore.getState()
               for (const r of resolved) {
                 store.set(r.id, r.title?.slice(0, 60) || `[[${r.id.slice(0, 8)}...]]`, r.deleted)
               }
@@ -337,14 +316,14 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           }
         }
       } catch {
-        // Preload failed — resolve callbacks will use fallbacks
+        // Scan failed — resolve callbacks will use fallbacks
       }
     }
-    preload()
+    resolveUncachedLinks()
     return () => {
       cancelled = true
     }
-  }, [blocks, resolve.pagesListRef])
+  }, [blocks])
 
   // ── Fetch properties for all blocks (batch) ────────────────────────
   useEffect(() => {

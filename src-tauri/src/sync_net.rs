@@ -9,11 +9,13 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
+use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
@@ -509,6 +511,11 @@ impl SyncConnection {
 
     // -- private helpers --------------------------------------------------
 
+    /// Timeout for waiting on the next WebSocket message.  If the peer goes
+    /// silent (e.g. WiFi drop without TCP RST, peer crash), the sync session
+    /// will fail rather than hang indefinitely.
+    const RECV_TIMEOUT: Duration = Duration::from_secs(30);
+
     async fn send_message(&mut self, msg: Message) -> Result<(), AppError> {
         match &mut self.inner {
             InnerStream::Server(ws) => ws
@@ -523,17 +530,15 @@ impl SyncConnection {
     }
 
     async fn recv_message(&mut self) -> Result<Message, AppError> {
-        match &mut self.inner {
-            InnerStream::Server(ws) => ws
-                .next()
-                .await
-                .ok_or_else(|| sync_err("connection closed"))?
-                .map_err(|e| sync_err(format!("recv: {e}"))),
-            InnerStream::Client(ws) => ws
-                .next()
-                .await
-                .ok_or_else(|| sync_err("connection closed"))?
-                .map_err(|e| sync_err(format!("recv: {e}"))),
+        let result = match &mut self.inner {
+            InnerStream::Server(ws) => timeout(Self::RECV_TIMEOUT, ws.next()).await,
+            InnerStream::Client(ws) => timeout(Self::RECV_TIMEOUT, ws.next()).await,
+        };
+        match result {
+            Ok(Some(Ok(msg))) => Ok(msg),
+            Ok(Some(Err(e))) => Err(sync_err(format!("recv: {e}"))),
+            Ok(None) => Err(sync_err("connection closed")),
+            Err(_elapsed) => Err(sync_err("recv timed out after 30s")),
         }
     }
 }

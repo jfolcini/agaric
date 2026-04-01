@@ -8,8 +8,12 @@
 //!
 //! ## Non-reversible operations
 //!
-//! `purge_block` and `delete_attachment` are physically destructive and cannot
-//! be reversed.  Attempting to reverse them returns
+//! `purge_block` is physically destructive and cannot be reversed.
+//! Attempting to reverse it returns [`AppError::NonReversible`].
+//!
+//! `delete_attachment` is reversible when the original `add_attachment` op
+//! exists in the op log — the reverse restores the attachment metadata.
+//! When no prior `add_attachment` op is found, it falls back to
 //! [`AppError::NonReversible`].
 
 #![allow(dead_code)]
@@ -39,7 +43,7 @@ use crate::ulid::BlockId;
 ///
 /// - [`AppError::NotFound`] — no op with the given `(device_id, seq)`
 /// - [`AppError::NonReversible`] — the op type cannot be reversed
-///   (`purge_block`, `delete_attachment`)
+///   (`purge_block`, or `delete_attachment` when no prior `add_attachment` exists)
 /// - [`AppError::Database`] — underlying SQLite error
 /// - [`AppError::Json`] — payload deserialization failure
 pub async fn compute_reverse(
@@ -64,7 +68,8 @@ pub async fn compute_reverse(
         OpType::DeleteProperty => reverse_delete_property(pool, &record).await,
         OpType::AddAttachment => reverse_add_attachment(&record),
         OpType::RestoreBlock => reverse_restore_block(&record),
-        OpType::DeleteAttachment | OpType::PurgeBlock => Err(AppError::NonReversible {
+        OpType::DeleteAttachment => reverse_delete_attachment(pool, &record).await,
+        OpType::PurgeBlock => Err(AppError::NonReversible {
             op_type: record.op_type.clone(),
         }),
     }
@@ -243,6 +248,35 @@ fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> {
             attachment_id: payload.attachment_id,
         },
     ))
+}
+
+/// `delete_attachment` -> `AddAttachment { ... }` (restore from op log)
+async fn reverse_delete_attachment(
+    pool: &SqlitePool,
+    record: &OpRecord,
+) -> Result<OpPayload, AppError> {
+    let payload: crate::op::DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
+
+    // Find the original add_attachment op for this attachment
+    let original = sqlx::query!(
+        r#"SELECT payload FROM op_log
+         WHERE op_type = 'add_attachment'
+         AND json_extract(payload, '$.attachment_id') = ?
+         ORDER BY created_at DESC LIMIT 1"#,
+        payload.attachment_id
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    match original {
+        Some(row) => {
+            let add_payload: crate::op::AddAttachmentPayload = serde_json::from_str(&row.payload)?;
+            Ok(OpPayload::AddAttachment(add_payload))
+        }
+        None => Err(AppError::NonReversible {
+            op_type: "delete_attachment".into(),
+        }),
+    }
 }
 
 /// `restore_block` -> `DeleteBlock { block_id }`
@@ -1437,6 +1471,122 @@ mod tests {
                 );
             }
             _ => panic!("expected EditBlock, got: {reverse:?}"),
+        }
+    }
+
+    // ── #128: reverse_delete_attachment returns AddAttachment ────────────
+
+    #[tokio::test]
+    async fn reverse_delete_attachment_returns_add_attachment_with_metadata() {
+        let (pool, _dir) = test_pool().await;
+
+        // First: add_attachment op
+        let _add = append_op(
+            &pool,
+            OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+                attachment_id: "ATT_001".into(),
+                block_id: BlockId::test_id("BLK_ATT"),
+                mime_type: "image/png".into(),
+                filename: "photo.png".into(),
+                size_bytes: 2048,
+                fs_path: "/data/photo.png".into(),
+            }),
+            FIXED_TS,
+        )
+        .await;
+
+        // Second: delete_attachment op
+        let del = append_op(
+            &pool,
+            OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+                attachment_id: "ATT_001".into(),
+            }),
+            "2025-01-15T12:01:00+00:00",
+        )
+        .await;
+
+        // Reverse the delete_attachment
+        let reverse = compute_reverse(&pool, TEST_DEVICE, del.seq).await.unwrap();
+
+        match &reverse {
+            OpPayload::AddAttachment(p) => {
+                assert_eq!(p.attachment_id, "ATT_001");
+                assert_eq!(p.block_id, "BLK_ATT");
+                assert_eq!(p.mime_type, "image/png");
+                assert_eq!(p.filename, "photo.png");
+                assert_eq!(p.size_bytes, 2048);
+                assert_eq!(p.fs_path, "/data/photo.png");
+            }
+            other => panic!("Expected AddAttachment, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn reverse_delete_attachment_no_add_op_returns_non_reversible() {
+        let (pool, _dir) = test_pool().await;
+
+        // delete_attachment op without any prior add_attachment
+        let del = append_op(
+            &pool,
+            OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+                attachment_id: "ATT_ORPHAN".into(),
+            }),
+            FIXED_TS,
+        )
+        .await;
+
+        let result = compute_reverse(&pool, TEST_DEVICE, del.seq).await;
+        assert!(
+            matches!(result, Err(AppError::NonReversible { .. })),
+            "should return NonReversible when no add_attachment found, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reverse_delete_attachment_roundtrip() {
+        let (pool, _dir) = test_pool().await;
+
+        // add_attachment op
+        let add_rec = append_op(
+            &pool,
+            OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+                attachment_id: "ATT_RT".into(),
+                block_id: BlockId::test_id("BLK_RT"),
+                mime_type: "application/pdf".into(),
+                filename: "doc.pdf".into(),
+                size_bytes: 4096,
+                fs_path: "/data/doc.pdf".into(),
+            }),
+            FIXED_TS,
+        )
+        .await;
+
+        // Reverse add_attachment → should give DeleteAttachment
+        let rev1 = compute_reverse(&pool, TEST_DEVICE, add_rec.seq)
+            .await
+            .unwrap();
+        assert!(
+            matches!(rev1, OpPayload::DeleteAttachment(ref p) if p.attachment_id == "ATT_RT"),
+            "reverse of add_attachment should be DeleteAttachment, got: {rev1:?}"
+        );
+
+        // Append the delete_attachment op
+        let del_rec = append_op(&pool, rev1, "2025-01-15T12:01:00+00:00").await;
+
+        // Reverse delete_attachment → should give AddAttachment
+        let rev2 = compute_reverse(&pool, TEST_DEVICE, del_rec.seq)
+            .await
+            .unwrap();
+        match &rev2 {
+            OpPayload::AddAttachment(p) => {
+                assert_eq!(p.attachment_id, "ATT_RT");
+                assert_eq!(p.block_id, "BLK_RT");
+                assert_eq!(p.mime_type, "application/pdf");
+                assert_eq!(p.filename, "doc.pdf");
+                assert_eq!(p.size_bytes, 4096);
+                assert_eq!(p.fs_path, "/data/doc.pdf");
+            }
+            other => panic!("Expected AddAttachment, got {:?}", other),
         }
     }
 }

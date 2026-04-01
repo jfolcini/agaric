@@ -14,6 +14,18 @@ function fakeId(): string {
   return `MOCK${String(counter).padStart(8, '0')}`
 }
 
+// -- Error injection for E2E tests --------------------------------------------
+
+const injectedErrors = new Map<string, string>()
+
+export function injectMockError(command: string, message: string): void {
+  injectedErrors.set(command, message)
+}
+
+export function clearMockErrors(): void {
+  injectedErrors.clear()
+}
+
 const blocks: Map<string, Record<string, unknown>> = new Map()
 
 // Property store: block_id → key → PropertyRow
@@ -233,6 +245,7 @@ function seedBlocks(): void {
 
 /** Reset mock state — clears and re-seeds the in-memory store. Useful for tests. */
 export function resetMock(): void {
+  injectedErrors.clear()
   seedBlocks()
 }
 
@@ -244,6 +257,12 @@ export function setupMock(): void {
   seedBlocks()
 
   mockIPC((cmd, args) => {
+    // Error injection — E2E tests can force any command to fail
+    if (injectedErrors.has(cmd)) {
+      // biome-ignore lint/style/noNonNullAssertion: has() guard above ensures get() is defined
+      throw new Error(injectedErrors.get(cmd)!)
+    }
+
     switch (cmd) {
       case 'list_blocks': {
         const a = args as Record<string, unknown>
@@ -785,4 +804,9 @@ export function setupMock(): void {
         return null
     }
   })
+
+  // Expose error injection to E2E tests via window globals
+  const w = window as unknown as Record<string, unknown>
+  w.__injectMockError = injectMockError
+  w.__clearMockErrors = clearMockErrors
 }

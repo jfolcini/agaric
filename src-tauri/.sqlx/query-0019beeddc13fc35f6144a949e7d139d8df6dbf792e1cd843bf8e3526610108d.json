@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT peer_id, last_hash, last_sent_hash, synced_at,\n                  reset_count as \"reset_count!: i64\", last_reset_at\n           FROM peer_refs WHERE peer_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "peer_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_hash",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_sent_hash",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "synced_at",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "reset_count!: i64",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "last_reset_at",
+        "ordinal": 5,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "0019beeddc13fc35f6144a949e7d139d8df6dbf792e1cd843bf8e3526610108d"
+}
