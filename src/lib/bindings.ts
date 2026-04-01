@@ -207,9 +207,9 @@ async queryByProperty(key: string, valueText: string | null, cursor: string | nu
 /**
  * Tauri command: list tags matching a name prefix. Delegates to [`list_tags_by_prefix_inner`].
  */
-async listTagsByPrefix(prefix: string) : Promise<Result<TagCacheRow[], { kind: string; message: string }>> {
+async listTagsByPrefix(prefix: string, limit: number | null) : Promise<Result<TagCacheRow[], { kind: string; message: string }>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_tags_by_prefix", { prefix }) };
+    return { status: "ok", data: await TAURI_INVOKE("list_tags_by_prefix", { prefix, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -315,6 +315,18 @@ async redoPageOp(undoDeviceId: string, undoSeq: number) : Promise<Result<UndoRes
 }
 },
 /**
+ * Tauri command: compute word-level diff for an edit_block history entry.
+ * Delegates to [`compute_edit_diff_inner`].
+ */
+async computeEditDiff(deviceId: string, seq: number) : Promise<Result<DiffSpan[] | null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("compute_edit_diff", { deviceId, seq }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: filtered backlink query. Delegates to [`query_backlinks_filtered_inner`].
  */
 async queryBacklinksFiltered(blockId: string, filters: BacklinkFilter[] | null, sort: BacklinkSort | null, cursor: string | null, limit: number | null) : Promise<Result<BacklinkQueryResponse, { kind: string; message: string }>> {
@@ -410,12 +422,20 @@ export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "Property
 /**
  * Row returned by paginated block queries.
  */
-export type BlockRow = { id: string; block_type: string; content: string | null; parent_id: string | null; position: number | null; deleted_at: string | null; archived_at: string | null; is_conflict: boolean }
+export type BlockRow = { id: string; block_type: string; content: string | null; parent_id: string | null; position: number | null; deleted_at: string | null; archived_at: string | null; is_conflict: boolean; conflict_type?: string | null }
 /**
  * Comparison operators for property filters.
  */
 export type CompareOp = "Eq" | "Neq" | "Lt" | "Gt" | "Lte" | "Gte"
 export type DeleteResponse = { block_id: string; deleted_at: string; descendants_affected: number }
+/**
+ * A contiguous span of text with a diff tag.
+ */
+export type DiffSpan = { tag: DiffTag; value: string }
+/**
+ * Tag indicating what happened to a span of text.
+ */
+export type DiffTag = "Equal" | "Delete" | "Insert"
 /**
  * Row returned by block history queries (op_log entries for a block).
  */

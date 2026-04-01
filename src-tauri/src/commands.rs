@@ -10,7 +10,6 @@
 
 use std::collections::HashMap;
 
-use chrono::Utc;
 use serde::Serialize;
 use specta::Type;
 use sqlx::SqlitePool;
@@ -289,6 +288,7 @@ pub async fn create_block_inner(
         deleted_at: None,
         archived_at: None,
         is_conflict: false,
+        conflict_type: None,
     })
 }
 
@@ -318,7 +318,7 @@ pub async fn edit_block_inner(
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut *tx)
@@ -388,6 +388,7 @@ pub async fn edit_block_inner(
         deleted_at: None,
         archived_at: None,
         is_conflict: false,
+        conflict_type: None,
     })
 }
 
@@ -1079,7 +1080,7 @@ pub async fn reorder_block_inner(
 
     // 7. Append to op_log within transaction
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, Utc::now().to_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
     // 8. Update block's parent and position
     sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
@@ -1169,7 +1170,7 @@ pub async fn list_blocks_inner(
 pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool" FROM blocks WHERE id = ?"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type FROM blocks WHERE id = ?"#,
         block_id
     )
     .fetch_optional(pool)
@@ -1542,8 +1543,9 @@ pub async fn query_by_property_inner(
 pub async fn list_tags_by_prefix_inner(
     pool: &SqlitePool,
     prefix: String,
+    limit: Option<i64>,
 ) -> Result<Vec<TagCacheRow>, AppError> {
-    tag_query::list_tags_by_prefix(pool, &prefix).await
+    tag_query::list_tags_by_prefix(pool, &prefix, limit).await
 }
 
 /// List all tag_ids currently associated with a block.
@@ -1621,7 +1623,7 @@ pub async fn set_property_inner(
     // 3. Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut *tx)
@@ -1664,6 +1666,7 @@ pub async fn set_property_inner(
         deleted_at: existing.deleted_at,
         archived_at: existing.archived_at,
         is_conflict: existing.is_conflict,
+        conflict_type: existing.conflict_type,
     })
 }
 
@@ -2553,8 +2556,9 @@ pub async fn query_by_property(
 pub async fn list_tags_by_prefix(
     pool: State<'_, ReadPool>,
     prefix: String,
+    limit: Option<i64>,
 ) -> Result<Vec<TagCacheRow>, AppError> {
-    list_tags_by_prefix_inner(&pool.0, prefix)
+    list_tags_by_prefix_inner(&pool.0, prefix, limit)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2745,6 +2749,66 @@ pub async fn redo_page_op(
     )
     .await
     .map_err(sanitize_internal_error)
+}
+
+// ---------------------------------------------------------------------------
+// Word-level diff for history display
+// ---------------------------------------------------------------------------
+
+/// Compute a word-level diff for an `edit_block` op by looking up the prior
+/// text in the op log and comparing with the op's `to_text`.
+///
+/// Returns `Ok(None)` if the op is not `edit_block` or if no prior text exists
+/// (i.e. the block was just created and this is the first edit).
+pub async fn compute_edit_diff_inner(
+    pool: &SqlitePool,
+    device_id: String,
+    seq: i64,
+) -> Result<Option<Vec<crate::word_diff::DiffSpan>>, AppError> {
+    let row = sqlx::query!(
+        "SELECT op_type, payload, created_at FROM op_log \
+         WHERE device_id = ?1 AND seq = ?2",
+        device_id,
+        seq,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let row = match row {
+        Some(r) => r,
+        None => return Err(AppError::NotFound(format!("op ({device_id}, {seq})"))),
+    };
+
+    if row.op_type != "edit_block" {
+        return Ok(None);
+    }
+
+    let payload: crate::op::EditBlockPayload = serde_json::from_str(&row.payload)?;
+    let prior = crate::reverse::find_prior_text(
+        pool,
+        payload.block_id.as_str(),
+        &row.created_at,
+        seq,
+    )
+    .await?;
+
+    let old_text = prior.unwrap_or_default();
+    Ok(Some(crate::word_diff::compute_word_diff(&old_text, &payload.to_text)))
+}
+
+/// Tauri command: compute word-level diff for an edit_block history entry.
+/// Delegates to [`compute_edit_diff_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn compute_edit_diff(
+    pool: State<'_, ReadPool>,
+    device_id: String,
+    seq: i64,
+) -> Result<Option<Vec<crate::word_diff::DiffSpan>>, AppError> {
+    compute_edit_diff_inner(&pool.0, device_id, seq)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -5464,7 +5528,7 @@ mod tests {
         insert_tag_cache(&pool, "TAG_WE", "work/email", 3).await;
         insert_tag_cache(&pool, "TAG_P", "personal", 10).await;
 
-        let result = list_tags_by_prefix_inner(&pool, "work/".into())
+        let result = list_tags_by_prefix_inner(&pool, "work/".into(), None)
             .await
             .unwrap();
 
@@ -5477,11 +5541,34 @@ mod tests {
     async fn list_tags_by_prefix_inner_empty_returns_empty() {
         let (pool, _dir) = test_pool().await;
 
-        let result = list_tags_by_prefix_inner(&pool, "nonexistent/".into())
+        let result = list_tags_by_prefix_inner(&pool, "nonexistent/".into(), None)
             .await
             .unwrap();
 
         assert!(result.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_tags_by_prefix_inner_respects_limit() {
+        let (pool, _dir) = test_pool().await;
+
+        for i in 0..5 {
+            insert_block(
+                &pool,
+                &format!("TAG_A{i}"),
+                "tag",
+                &format!("alpha{i}"),
+                None,
+                None,
+            )
+            .await;
+            insert_tag_cache(&pool, &format!("TAG_A{i}"), &format!("alpha{i}"), 1).await;
+        }
+
+        let result = list_tags_by_prefix_inner(&pool, "alpha".into(), Some(2))
+            .await
+            .unwrap();
+        assert_eq!(result.len(), 2);
     }
 
     // ======================================================================

@@ -467,4 +467,90 @@ describe('DeviceManagement', () => {
       expect(screen.getByText('Connection refused by peer')).toBeInTheDocument()
     })
   })
+
+  // --- Sync All tests (#379) ---
+
+  it('shows Sync All button when 2+ peers exist', async () => {
+    mockInvokeByCommand({
+      get_device_id: mockDeviceId,
+      list_peer_refs: mockPeers,
+    })
+
+    const { container } = render(<DeviceManagement />)
+    await waitFor(() => {
+      expect(container.querySelector('.device-sync-all-btn')).toBeTruthy()
+    })
+  })
+
+  it('hides Sync All button when fewer than 2 peers', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_device_id') return 'device-123'
+      if (cmd === 'list_peer_refs')
+        return [
+          {
+            peer_id: 'peer-1',
+            last_hash: null,
+            last_sent_hash: null,
+            synced_at: null,
+            reset_count: 0,
+            last_reset_at: null,
+          },
+        ]
+      return null
+    })
+    const { container } = render(<DeviceManagement />)
+    await waitFor(() => {
+      expect(container.querySelector('.device-peer-item')).toBeTruthy()
+    })
+    expect(container.querySelector('.device-sync-all-btn')).toBeNull()
+  })
+
+  it('Sync All calls startSync for each peer sequentially', async () => {
+    const syncCalls: string[] = []
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_device_id') return 'device-123'
+      if (cmd === 'list_peer_refs')
+        return [
+          {
+            peer_id: 'peer-1',
+            last_hash: null,
+            last_sent_hash: null,
+            synced_at: null,
+            reset_count: 0,
+            last_reset_at: null,
+          },
+          {
+            peer_id: 'peer-2',
+            last_hash: null,
+            last_sent_hash: null,
+            synced_at: null,
+            reset_count: 0,
+            last_reset_at: null,
+          },
+        ]
+      if (cmd === 'start_sync') {
+        syncCalls.push((args as Record<string, string>).peerId)
+        return {
+          state: 'completed',
+          local_device_id: 'device-123',
+          remote_device_id: (args as Record<string, string>).peerId,
+          ops_received: 0,
+          ops_sent: 0,
+        }
+      }
+      return null
+    })
+
+    const { container } = render(<DeviceManagement />)
+    await waitFor(() => {
+      expect(container.querySelector('.device-sync-all-btn')).toBeTruthy()
+    })
+
+    const syncAllBtn = container.querySelector('.device-sync-all-btn') as HTMLButtonElement
+    await userEvent.click(syncAllBtn)
+
+    await waitFor(() => {
+      expect(syncCalls).toEqual(['peer-1', 'peer-2'])
+    })
+  })
 })

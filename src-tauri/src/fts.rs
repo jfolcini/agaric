@@ -361,6 +361,7 @@ struct FtsSearchRow {
     deleted_at: Option<String>,
     archived_at: Option<String>,
     is_conflict: bool,
+    conflict_type: Option<String>,
     // FTS ranking field (for cursor)
     search_rank: f64,
 }
@@ -424,7 +425,7 @@ pub async fn search_fts(
 
     let rows = sqlx::query_as::<_, FtsSearchRow>(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.archived_at, b.is_conflict,
+                b.deleted_at, b.archived_at, b.is_conflict, b.conflict_type,
                 fts.rank as search_rank
          FROM fts_blocks fts
          JOIN blocks b ON b.id = fts.block_id
@@ -468,6 +469,7 @@ pub async fn search_fts(
             deleted_at: r.deleted_at.clone(),
             archived_at: r.archived_at.clone(),
             is_conflict: r.is_conflict,
+            conflict_type: r.conflict_type.clone(),
         })
         .collect();
 

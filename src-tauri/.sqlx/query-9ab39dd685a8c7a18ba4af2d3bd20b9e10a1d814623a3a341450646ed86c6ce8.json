@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT op_type, payload, created_at FROM op_log WHERE device_id = ?1 AND seq = ?2",
+  "describe": {
+    "columns": [
+      {
+        "name": "op_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "payload",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9ab39dd685a8c7a18ba4af2d3bd20b9e10a1d814623a3a341450646ed86c6ce8"
+}

@@ -12,6 +12,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+
+const MDNS_BROWSE_TIMEOUT: Duration = Duration::from_secs(5);
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
@@ -157,6 +159,32 @@ impl MdnsService {
         self.daemon
             .browse(MDNS_SERVICE_TYPE)
             .map_err(|e| sync_err(format!("browse: {e}")))
+    }
+
+    /// Browse for peers with a timeout, preventing indefinite blocking.
+    ///
+    /// Collects all `DiscoveredPeer` entries received within the timeout window.
+    /// Returns an empty vec if no peers are found before the timeout expires.
+    pub async fn browse_with_timeout(&self) -> Result<Vec<DiscoveredPeer>, AppError> {
+        let receiver = self.browse()?;
+        let mut peers = Vec::new();
+        let deadline = tokio::time::Instant::now() + MDNS_BROWSE_TIMEOUT;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match timeout(remaining, receiver.recv_async()).await {
+                Ok(Ok(event)) => {
+                    if let Some(peer) = parse_service_event(event) {
+                        peers.push(peer);
+                    }
+                }
+                Ok(Err(_)) => break, // Channel closed
+                Err(_) => break,     // Timeout expired
+            }
+        }
+        Ok(peers)
     }
 
     /// Shut down the mDNS daemon, stopping all announce/browse activity.
@@ -806,6 +834,16 @@ mod tests {
     fn mdns_lifecycle_skipped_explanation() {
         // This test documents why mDNS announce/browse is not unit-tested.
         // See sync_integration_tests.rs for the full lifecycle test.
+    }
+
+    /// Verify the browse timeout constant is 5 seconds.
+    #[test]
+    fn mdns_browse_timeout_is_5_seconds() {
+        assert_eq!(
+            MDNS_BROWSE_TIMEOUT,
+            Duration::from_secs(5),
+            "mDNS browse timeout should be 5s per SYNC-PLATFORM-NOTES.md"
+        );
     }
 
     /// Verify `SyncMessage::Error` serialisation round-trip.

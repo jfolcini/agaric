@@ -11,15 +11,15 @@
       {
         "name": "seq!: i64",
         "ordinal": 1,
-        "type_info": "Integer"
+        "type_info": "Null"
       }
     ],
     "parameters": {
       "Right": 1
     },
     "nullable": [
-      true,
-      false
+      false,
+      null
     ]
   },
   "hash": "a96edd92af480f61a52b372ab2ba0faf8d35b757d92748dcfb885b086ad0cc1d"

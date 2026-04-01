@@ -173,6 +173,7 @@ pub async fn create_conflict_copy(
     device_id: &str,
     original_block_id: &str,
     conflict_content: &str,
+    conflict_type: &str,
 ) -> Result<OpRecord, AppError> {
     // 1. Query the original block for metadata
     let original = sqlx::query!(
@@ -217,8 +218,8 @@ pub async fn create_conflict_copy(
 
     // Insert into blocks table
     sqlx::query(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict, conflict_source) \
-         VALUES (?, ?, ?, ?, ?, 1, ?)",
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, is_conflict, conflict_source, conflict_type) \
+         VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
     )
     .bind(new_block_id.as_str())
     .bind(&block_type)
@@ -226,6 +227,7 @@ pub async fn create_conflict_copy(
     .bind(&parent_id)
     .bind(new_position)
     .bind(original_block_id)
+    .bind(conflict_type)
     .execute(&mut *tx)
     .await?;
 
@@ -362,7 +364,7 @@ pub async fn merge_block(
             ancestor: _,
         } => {
             // 4. Create conflict copy with "theirs" content
-            let conflict_op = create_conflict_copy(pool, device_id, block_id, &theirs).await?;
+            let conflict_op = create_conflict_copy(pool, device_id, block_id, &theirs, "Text").await?;
 
             // 5. Create a merge op on the ORIGINAL block to unify the two
             //    divergent heads in the DAG.  The original block retains the
@@ -703,7 +705,7 @@ mod tests {
         // Insert an original block in the blocks table
         insert_block(&pool, "B1", "content", "original text", None, Some(5)).await;
 
-        let record = create_conflict_copy(&pool, DEV_A, "B1", "conflicting text")
+        let record = create_conflict_copy(&pool, DEV_A, "B1", "conflicting text", "Text")
             .await
             .unwrap();
 
@@ -736,6 +738,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_conflict_copy_stores_conflict_type() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "CT1", "content", "original", None, Some(1)).await;
+
+        let record = create_conflict_copy(&pool, DEV_A, "CT1", "conflict text", "Property")
+            .await
+            .unwrap();
+
+        let payload: CreateBlockPayload = serde_json::from_str(&record.payload).unwrap();
+        let block_id = payload.block_id.as_str();
+        let row = sqlx::query!(
+            "SELECT conflict_type FROM blocks WHERE id = ?",
+            block_id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(row.conflict_type, Some("Property".to_owned()));
+    }
+
+    #[tokio::test]
     async fn create_conflict_copy_preserves_parent_id() {
         let (pool, _dir) = test_pool().await;
 
@@ -752,7 +776,7 @@ mod tests {
         )
         .await;
 
-        let record = create_conflict_copy(&pool, DEV_A, "B2", "conflict version")
+        let record = create_conflict_copy(&pool, DEV_A, "B2", "conflict version", "Text")
             .await
             .unwrap();
 
@@ -765,7 +789,7 @@ mod tests {
     async fn create_conflict_copy_fails_for_missing_block() {
         let (pool, _dir) = test_pool().await;
 
-        let err = create_conflict_copy(&pool, DEV_A, "NONEXISTENT", "text").await;
+        let err = create_conflict_copy(&pool, DEV_A, "NONEXISTENT", "text", "Text").await;
         assert!(err.is_err());
         let msg = err.unwrap_err().to_string();
         assert!(
@@ -1291,7 +1315,7 @@ mod tests {
         // Insert a tag block with NULL position
         insert_block(&pool, "T1", "tag", "my-tag", None, None).await;
 
-        let record = create_conflict_copy(&pool, DEV_A, "T1", "conflicting tag")
+        let record = create_conflict_copy(&pool, DEV_A, "T1", "conflicting tag", "Text")
             .await
             .unwrap();
 

@@ -78,6 +78,7 @@ const originalBlock = {
   deleted_at: null,
   archived_at: null,
   is_conflict: false,
+  conflict_type: null,
 }
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }
@@ -626,6 +627,7 @@ describe('ConflictList', () => {
         deleted_at: null,
         archived_at: null,
         is_conflict: false,
+        conflict_type: null,
       },
     })
 
@@ -786,6 +788,94 @@ describe('ConflictList', () => {
     expect(typeBadges).toHaveLength(2)
     expect(typeBadges[0].textContent).toBe('Text')
     expect(typeBadges[1].textContent).toBe('Text')
+  })
+
+  it('renders Property conflict type badge when backend provides it', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'get_conflicts') {
+        return {
+          items: [
+            {
+              id: '01JTEST00001',
+              block_type: 'content',
+              content: 'property conflict',
+              parent_id: 'PARENT1',
+              position: 1,
+              deleted_at: null,
+              archived_at: null,
+              is_conflict: true,
+              conflict_type: 'Property',
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'get_block')
+        return {
+          id: 'PARENT1',
+          block_type: 'content',
+          content: 'original',
+          parent_id: null,
+          position: 1,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+        }
+      return null
+    })
+    const { container } = render(<ConflictList />)
+    await waitFor(() => {
+      expect(container.querySelector('.conflict-type-badge')).toBeTruthy()
+    })
+    const badge = container.querySelector('.conflict-type-badge')
+    expect(badge?.textContent).toBe('Property')
+    expect(badge?.className).toContain('bg-blue-100')
+  })
+
+  it('renders Move conflict type badge when backend provides it', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'get_conflicts') {
+        return {
+          items: [
+            {
+              id: '01JTEST00002',
+              block_type: 'content',
+              content: 'move conflict',
+              parent_id: 'PARENT2',
+              position: 1,
+              deleted_at: null,
+              archived_at: null,
+              is_conflict: true,
+              conflict_type: 'Move',
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'get_block')
+        return {
+          id: 'PARENT2',
+          block_type: 'content',
+          content: 'original',
+          parent_id: null,
+          position: 1,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+        }
+      return null
+    })
+    const { container } = render(<ConflictList />)
+    await waitFor(() => {
+      expect(container.querySelector('.conflict-type-badge')).toBeTruthy()
+    })
+    const badge = container.querySelector('.conflict-type-badge')
+    expect(badge?.textContent).toBe('Move')
+    expect(badge?.className).toContain('bg-purple-100')
   })
 
   it('displays conflict metadata: source block ID (truncated)', async () => {

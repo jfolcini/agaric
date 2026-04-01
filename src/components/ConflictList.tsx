@@ -43,19 +43,14 @@ import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
 
 /**
- * Infer the conflict type from block data.
+ * Determine the conflict type from backend metadata.
  *
- * Currently the backend does not expose a `conflict_type` field, so we default
- * to "Text". When the backend adds conflict type metadata, this function should
- * be updated to use it.
- *
- * Future types:
- *  - "Property" — when block has is_conflict = 1 and properties differ
- *  - "Move" — when block parents differ (requires parent tracking in conflict data)
+ * Reads the `conflict_type` field added by migration 0007. Falls back to
+ * "Text" for blocks created before the migration (where conflict_type is null).
  */
-function inferConflictType(_block: BlockRow, _original?: BlockRow): 'Text' | 'Property' | 'Move' {
-  // TODO: When the backend exposes conflict_type, use it here.
-  // For now, all conflicts are treated as text conflicts.
+function inferConflictType(block: BlockRow, _original?: BlockRow): 'Text' | 'Property' | 'Move' {
+  if (block.conflict_type === 'Property') return 'Property'
+  if (block.conflict_type === 'Move') return 'Move'
   return 'Text'
 }
 

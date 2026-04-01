@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id, b.block_type, b.content, b.parent_id, b.position,\n                b.deleted_at, b.archived_at, b.is_conflict as \"is_conflict: bool\"\n         FROM block_links bl\n         JOIN blocks b ON b.id = bl.source_id\n         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR b.id > ?3)\n         ORDER BY b.id ASC\n         LIMIT ?4",
+  "query": "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as \"is_conflict: bool\", conflict_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -42,10 +42,15 @@
         "name": "is_conflict: bool",
         "ordinal": 7,
         "type_info": "Integer"
+      },
+      {
+        "name": "conflict_type",
+        "ordinal": 8,
+        "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 4
+      "Right": 1
     },
     "nullable": [
       false,
@@ -55,8 +60,9 @@
       true,
       true,
       true,
-      false
+      false,
+      true
     ]
   },
-  "hash": "0ed7f7bfd36281846040d8e774ed99ce77bfb9ce9b925c7dfda399cde76d3d32"
+  "hash": "1be7300861974e7feed5cae8e3419cfd434c3dcd9a60f5fa1eb239af79fde1c8"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as \"is_conflict: bool\" FROM blocks WHERE id = ?",
+  "query": "SELECT b.id, b.block_type, b.content, b.parent_id, b.position,\n                b.deleted_at, b.archived_at, b.is_conflict as \"is_conflict: bool\",\n                b.conflict_type\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR b.id > ?3)\n         ORDER BY b.id ASC\n         LIMIT ?4",
   "describe": {
     "columns": [
       {
@@ -42,10 +42,15 @@
         "name": "is_conflict: bool",
         "ordinal": 7,
         "type_info": "Integer"
+      },
+      {
+        "name": "conflict_type",
+        "ordinal": 8,
+        "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 4
     },
     "nullable": [
       false,
@@ -55,8 +60,9 @@
       true,
       true,
       true,
-      false
+      false,
+      true
     ]
   },
-  "hash": "433b084d319c99b29846d777bb585cb945d8fe2fa3799a6b392fa13d4712a0fa"
+  "hash": "daefbddab1799d369e2cb30bbe834a3b95b3d8ca97ccff2d06f5b5f175462435"
 }
