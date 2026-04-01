@@ -621,6 +621,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   const handleDeleteBlock = useCallback(() => {
     if (!focusedBlockId) return
+    if (blocks.length <= 1) {
+      toast.error('Cannot delete the last block on a page')
+      return
+    }
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     rovingEditor.unmount()
     remove(focusedBlockId)
@@ -637,7 +641,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     } else {
       setFocused(null)
     }
-  }, [focusedBlockId, collapsedVisible, rovingEditor, remove, setFocused])
+  }, [focusedBlockId, blocks, collapsedVisible, rovingEditor, remove, setFocused])
 
   const handleIndent = useCallback(() => {
     if (!focusedBlockId) return

@@ -68,6 +68,8 @@ pub enum MaterializeTask {
     ReindexBlockLinks { block_id: String },
     /// Background: update FTS index for a specific block
     UpdateFtsBlock { block_id: String },
+    /// Background: reindex FTS for all blocks referencing a renamed tag/page
+    ReindexFtsReferences { block_id: String },
     /// Background: remove a block from the FTS index
     RemoveFtsBlock { block_id: String },
     /// Background: full FTS index rebuild
@@ -666,9 +668,21 @@ impl Materializer {
                 match block_type_hint {
                     Some("tag") => {
                         self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
+                        // Reindex FTS for blocks referencing this tag (name changed)
+                        if !hint.block_id.is_empty() {
+                            self.try_enqueue_background(MaterializeTask::ReindexFtsReferences {
+                                block_id: hint.block_id.clone(),
+                            })?;
+                        }
                     }
                     Some("page") => {
                         self.try_enqueue_background(MaterializeTask::RebuildPagesCache)?;
+                        // Reindex FTS for blocks referencing this page (title changed)
+                        if !hint.block_id.is_empty() {
+                            self.try_enqueue_background(MaterializeTask::ReindexFtsReferences {
+                                block_id: hint.block_id.clone(),
+                            })?;
+                        }
                     }
                     Some("content") => {
                         // Content blocks only need link reindexing (done above).
@@ -780,8 +794,8 @@ impl Materializer {
 /// - Parameterless cache-rebuild tasks (`RebuildTagsCache`, `RebuildPagesCache`,
 ///   `RebuildAgendaCache`, `RebuildFtsIndex`, `FtsOptimize`) are deduplicated
 ///   by discriminant — only the first occurrence survives.
-/// - `ReindexBlockLinks`, `UpdateFtsBlock`, and `RemoveFtsBlock` tasks are
-///   deduplicated by `block_id`.
+/// - `ReindexBlockLinks`, `UpdateFtsBlock`, `ReindexFtsReferences`, and
+///   `RemoveFtsBlock` tasks are deduplicated by `block_id`.
 /// - `ApplyOp` tasks are always preserved (they should not appear on the bg
 ///   queue, but we never silently drop them).
 fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
@@ -789,6 +803,7 @@ fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     let mut seen_block_ids: HashSet<String> = HashSet::new();
     let mut seen_fts_update_ids: HashSet<String> = HashSet::new();
     let mut seen_fts_remove_ids: HashSet<String> = HashSet::new();
+    let mut seen_fts_reindex_ref_ids: HashSet<String> = HashSet::new();
     let mut result = Vec::with_capacity(tasks.len());
 
     for task in tasks {
@@ -800,6 +815,11 @@ fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
             }
             MaterializeTask::UpdateFtsBlock { block_id } => {
                 if seen_fts_update_ids.insert(block_id.clone()) {
+                    result.push(task);
+                }
+            }
+            MaterializeTask::ReindexFtsReferences { block_id } => {
+                if seen_fts_reindex_ref_ids.insert(block_id.clone()) {
                     result.push(task);
                 }
             }
@@ -1163,6 +1183,9 @@ async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
         }
         MaterializeTask::UpdateFtsBlock { ref block_id } => {
             crate::fts::update_fts_for_block(pool, block_id).await
+        }
+        MaterializeTask::ReindexFtsReferences { ref block_id } => {
+            crate::fts::reindex_fts_references(pool, block_id).await
         }
         MaterializeTask::RemoveFtsBlock { ref block_id } => {
             crate::fts::remove_fts_for_block(pool, block_id).await
@@ -2266,6 +2289,28 @@ mod tests {
             deduped.len(),
             2,
             "should coalesce to 2 unique RemoveFtsBlock tasks"
+        );
+    }
+
+    #[test]
+    fn dedup_fts_reindex_references_coalesced_by_block_id() {
+        let tasks = vec![
+            MaterializeTask::ReindexFtsReferences {
+                block_id: "tag-1".into(),
+            },
+            MaterializeTask::ReindexFtsReferences {
+                block_id: "tag-2".into(),
+            },
+            MaterializeTask::ReindexFtsReferences {
+                block_id: "tag-1".into(),
+            }, // dup
+        ];
+
+        let deduped = dedup_tasks(tasks);
+        assert_eq!(
+            deduped.len(),
+            2,
+            "should coalesce to 2 unique ReindexFtsReferences tasks"
         );
     }
 

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE path(id, depth) AS (\n                 SELECT ?, 0\n                 UNION ALL\n                 SELECT b.parent_id, p.depth + 1\n                 FROM path p\n                 JOIN blocks b ON b.id = p.id\n                 WHERE b.parent_id IS NOT NULL\n             )\n             SELECT MAX(depth) as \"max_depth: i64\" FROM path",
+  "describe": {
+    "columns": [
+      {
+        "name": "max_depth: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b3bf066bf5e015ae68f5141d5a51144701512a6c9812317800f894b1691d599c"
+}

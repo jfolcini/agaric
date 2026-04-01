@@ -210,6 +210,38 @@ pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
     Ok(())
 }
 
+/// Reindex FTS for all blocks that reference the given tag or page block.
+///
+/// When a tag/page is renamed (edited), the FTS entries for every block that
+/// references it become stale because `strip_for_fts` resolves `#[ULID]` /
+/// `[[ULID]]` tokens to human-readable names. This function finds all
+/// referencing blocks and re-runs FTS indexing for each.
+pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
+    // Find blocks referencing this ID via block_tags (for tags)
+    let tag_refs: Vec<String> =
+        sqlx::query_scalar!("SELECT block_id FROM block_tags WHERE tag_id = ?", block_id)
+            .fetch_all(pool)
+            .await?;
+
+    // Find blocks referencing this ID via block_links (for pages)
+    let link_refs: Vec<String> = sqlx::query_scalar!(
+        "SELECT source_id FROM block_links WHERE target_id = ?",
+        block_id
+    )
+    .fetch_all(pool)
+    .await?;
+
+    // Collect unique block IDs and update each
+    let mut seen = std::collections::HashSet::new();
+    for bid in tag_refs.into_iter().chain(link_refs.into_iter()) {
+        if seen.insert(bid.clone()) {
+            update_fts_for_block(pool, &bid).await?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Full rebuild: clear fts_blocks, re-index all non-deleted, non-conflict blocks with content.
 ///
 /// Batches tag/page lookups by loading all names/titles into HashMaps first.
@@ -1723,5 +1755,90 @@ mod tests {
                 result.err()
             );
         }
+    }
+
+    // ── #72: reindex_fts_references after tag/page rename ────────────
+
+    #[tokio::test]
+    async fn reindex_fts_references_updates_tag_refs() {
+        let (pool, _dir) = test_pool().await;
+
+        // Use 26-char ULID-style IDs so TAG_REF_RE matches
+        let tag_id = "01AAAAAAAAAAAAAAAAAAAAATAG";
+        let blk_id = "01AAAAAAAAAAAAAAAAAAAABLK1";
+
+        // Create a tag block and a content block referencing it
+        insert_block(&pool, tag_id, "tag", "meeting", None, Some(1)).await;
+        insert_block(
+            &pool,
+            blk_id,
+            "content",
+            &format!("notes about #[{tag_id}]"),
+            None,
+            Some(2),
+        )
+        .await;
+
+        // Index the tag reference in block_tags
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(blk_id)
+            .bind(tag_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Index the content block — should resolve #[TAG_ID] to "meeting"
+        update_fts_for_block(&pool, blk_id).await.unwrap();
+
+        // Search for "meeting" — should find blk_id
+        let results = search_fts(
+            &pool,
+            "meeting",
+            &crate::pagination::PageRequest::new(None, Some(10)).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            results.items.iter().any(|r| r.id == blk_id),
+            "should find block when searching 'meeting'"
+        );
+
+        // Now rename the tag
+        sqlx::query("UPDATE blocks SET content = 'standup' WHERE id = ?")
+            .bind(tag_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Reindex references — should update block's FTS entry
+        reindex_fts_references(&pool, tag_id).await.unwrap();
+
+        // Search for "standup" — should now find the block
+        let results2 = search_fts(
+            &pool,
+            "standup",
+            &crate::pagination::PageRequest::new(None, Some(10)).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            results2.items.iter().any(|r| r.id == blk_id),
+            "should find block when searching 'standup' after rename"
+        );
+    }
+
+    #[tokio::test]
+    async fn reindex_fts_references_with_no_refs_is_noop() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create an orphan tag with no references
+        insert_block(&pool, "TAG_ORPHAN", "tag", "orphan", None, Some(1)).await;
+
+        // Should succeed without errors even with no referencing blocks
+        let result = reindex_fts_references(&pool, "TAG_ORPHAN").await;
+        assert!(
+            result.is_ok(),
+            "reindex with no refs should be ok: {result:?}"
+        );
     }
 }

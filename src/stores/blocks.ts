@@ -9,6 +9,7 @@
  * keyboard indent/dedent, and proper hierarchy rendering.
  */
 
+import { toast } from 'sonner'
 import { create } from 'zustand'
 import { parse, serialize } from '../editor/markdown-serializer'
 import type { BlockRow, PageResponse } from '../lib/tauri'
@@ -104,6 +105,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       set({ blocks: flatTree, loading: false })
     } catch {
       set({ loading: false })
+      toast.error('Failed to load blocks')
     }
   },
 
@@ -151,6 +153,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       notifyUndoNewAction(get().rootParentId)
       return result.id
     } catch {
+      toast.error('Failed to create block')
       return null
     }
   },
@@ -163,7 +166,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       }))
       notifyUndoNewAction(get().rootParentId)
     } catch {
-      // Silently fail — content is already in the editor
+      toast.error('Failed to save changes')
     }
   },
 
@@ -179,7 +182,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       }))
       notifyUndoNewAction(get().rootParentId)
     } catch {
-      // Silently fail
+      toast.error('Failed to delete block')
     }
   },
 
@@ -260,7 +263,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       set({ blocks: newBlocks })
       notifyUndoNewAction(get().rootParentId)
     } catch {
-      // Silently fail
+      toast.error('Failed to reorder block')
     }
   },
 
@@ -274,7 +277,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       await get().load(rootParentId ?? undefined)
       notifyUndoNewAction(rootParentId)
     } catch {
-      // Silently fail
+      toast.error('Failed to move block')
     }
   },
 
@@ -330,7 +333,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       set({ blocks: remaining })
       notifyUndoNewAction(get().rootParentId)
     } catch {
-      // Silently fail
+      toast.error('Failed to indent block')
     }
   },
 
@@ -373,7 +376,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       set({ blocks: remaining })
       notifyUndoNewAction(get().rootParentId)
     } catch {
-      // Silently fail
+      toast.error('Failed to dedent block')
     }
   },
 
@@ -399,7 +402,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       await get().load(rootParentId ?? undefined)
       notifyUndoNewAction(rootParentId)
     } catch {
-      // Silently fail
+      toast.error('Failed to move block up')
     }
   },
 
@@ -425,7 +428,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       await get().load(rootParentId ?? undefined)
       notifyUndoNewAction(rootParentId)
     } catch {
-      // Silently fail
+      toast.error('Failed to move block down')
     }
   },
 }))

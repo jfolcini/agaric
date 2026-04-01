@@ -39,6 +39,10 @@ use crate::ulid::BlockId;
 /// Maximum allowed content length for a single block (256 KB).
 const MAX_CONTENT_LENGTH: usize = 256 * 1024;
 
+/// Maximum allowed nesting depth for the block tree.
+/// Prevents pathological recursion and keeps recursive CTEs bounded.
+const MAX_BLOCK_DEPTH: i64 = 20;
+
 // ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------
@@ -825,6 +829,45 @@ pub async fn move_block_inner(
         .await?;
         if cycle.is_some() {
             return Err(AppError::Validation("cycle detected".into()));
+        }
+
+        // Depth check: count ancestors of the target parent (its depth from
+        // root) and the max descendant depth of the block being moved. The
+        // deepest descendant will end up at parent_depth + 1 + subtree_depth.
+        let parent_depth = sqlx::query_scalar!(
+            r#"WITH RECURSIVE path(id, depth) AS (
+                 SELECT ?, 0
+                 UNION ALL
+                 SELECT b.parent_id, p.depth + 1
+                 FROM path p
+                 JOIN blocks b ON b.id = p.id
+                 WHERE b.parent_id IS NOT NULL
+             )
+             SELECT MAX(depth) as "max_depth: i64" FROM path"#,
+            pid
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        let subtree_depth = sqlx::query_scalar!(
+            r#"WITH RECURSIVE descendants(id, depth) AS (
+                 SELECT ?, 0
+                 UNION ALL
+                 SELECT b.id, d.depth + 1
+                 FROM descendants d
+                 JOIN blocks b ON b.parent_id = d.id
+                 WHERE b.deleted_at IS NULL
+             )
+             SELECT MAX(depth) as "max_depth: i64" FROM descendants"#,
+            block_id
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        if parent_depth + 1 + subtree_depth > MAX_BLOCK_DEPTH {
+            return Err(AppError::Validation(format!(
+                "maximum nesting depth of {MAX_BLOCK_DEPTH} exceeded"
+            )));
         }
     }
 
@@ -1851,11 +1894,17 @@ pub async fn apply_reverse_in_tx(
                 .await?;
         }
         OpPayload::RemoveTag(p) => {
-            sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            let result = sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
                 .bind(p.block_id.as_str())
                 .bind(p.tag_id.as_str())
                 .execute(&mut **tx)
                 .await?;
+            if result.rows_affected() == 0 {
+                return Err(AppError::NotFound(format!(
+                    "tag association ({}, {}) not found during undo",
+                    p.block_id, p.tag_id
+                )));
+            }
         }
         OpPayload::SetProperty(p) => {
             sqlx::query(
@@ -1872,18 +1921,30 @@ pub async fn apply_reverse_in_tx(
             .await?;
         }
         OpPayload::DeleteProperty(p) => {
-            sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+            let result = sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
                 .bind(p.block_id.as_str())
                 .bind(&p.key)
                 .execute(&mut **tx)
                 .await?;
+            if result.rows_affected() == 0 {
+                return Err(AppError::NotFound(format!(
+                    "property '{}.{}' not found during undo",
+                    p.block_id, p.key
+                )));
+            }
         }
         OpPayload::DeleteAttachment(p) => {
-            sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
+            let result = sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
                 .bind(now_rfc3339())
                 .bind(&p.attachment_id)
                 .execute(&mut **tx)
                 .await?;
+            if result.rows_affected() == 0 {
+                return Err(AppError::NotFound(format!(
+                    "attachment '{}' not found during undo",
+                    p.attachment_id
+                )));
+            }
         }
         OpPayload::AddAttachment(p) => {
             sqlx::query(
@@ -8709,5 +8770,169 @@ mod tests {
         let ids: Vec<&str> = peers.iter().map(|p| p.peer_id.as_str()).collect();
         assert!(ids.contains(&"peer-A"), "must contain peer-A");
         assert!(ids.contains(&"peer-B"), "must contain peer-B");
+    }
+
+    // ── #74: max nesting depth guard ─────────────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn move_block_exceeding_max_depth_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Build a chain of MAX_BLOCK_DEPTH levels: page→b1→b2→...→b20
+        insert_block(&pool, "DEPTH_PAGE", "page", "root", None, Some(1)).await;
+        let mut parent = "DEPTH_PAGE".to_string();
+        for i in 1..=MAX_BLOCK_DEPTH {
+            let id = format!("DEPTH_{i:02}");
+            insert_block(
+                &pool,
+                &id,
+                "content",
+                &format!("level {i}"),
+                Some(&parent),
+                Some(1),
+            )
+            .await;
+            parent = id;
+        }
+
+        // Create a loose block to try nesting under the deepest
+        insert_block(&pool, "DEPTH_EXTRA", "content", "extra", None, Some(99)).await;
+
+        // Try moving the loose block under the deepest level — should fail
+        let result =
+            move_block_inner(&pool, DEV, &mat, "DEPTH_EXTRA".into(), Some(parent), 1).await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "moving beyond MAX_BLOCK_DEPTH should return Validation, got: {result:?}"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("nesting depth"),
+            "error message should mention nesting depth"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn move_block_at_depth_limit_succeeds() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Build a chain of MAX_BLOCK_DEPTH - 1 levels
+        insert_block(&pool, "DLIM_PAGE", "page", "root", None, Some(1)).await;
+        let mut parent = "DLIM_PAGE".to_string();
+        for i in 1..MAX_BLOCK_DEPTH {
+            let id = format!("DLIM_{i:02}");
+            insert_block(
+                &pool,
+                &id,
+                "content",
+                &format!("level {i}"),
+                Some(&parent),
+                Some(1),
+            )
+            .await;
+            parent = id;
+        }
+
+        // Create a loose block and move under the (MAX_BLOCK_DEPTH - 1)th level — should succeed
+        insert_block(&pool, "DLIM_OK", "content", "ok", None, Some(99)).await;
+
+        let result = move_block_inner(&pool, DEV, &mat, "DLIM_OK".into(), Some(parent), 1).await;
+
+        assert!(
+            result.is_ok(),
+            "moving to exactly MAX_BLOCK_DEPTH should succeed, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn move_block_with_subtree_exceeding_max_depth_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Build a deep parent chain of 17 levels: page→d1→d2→...→d17
+        insert_block(&pool, "SUB_PAGE", "page", "root", None, Some(1)).await;
+        let mut parent = "SUB_PAGE".to_string();
+        for i in 1..=17_i64 {
+            let id = format!("SUB_P{i:02}");
+            insert_block(
+                &pool,
+                &id,
+                "content",
+                &format!("parent {i}"),
+                Some(&parent),
+                Some(1),
+            )
+            .await;
+            parent = id;
+        }
+
+        // Build a detached subtree: A→B→C→D (depth 3 below A)
+        insert_block(&pool, "SUB_A", "content", "a", None, Some(90)).await;
+        insert_block(&pool, "SUB_B", "content", "b", Some("SUB_A"), Some(1)).await;
+        insert_block(&pool, "SUB_C", "content", "c", Some("SUB_B"), Some(1)).await;
+        insert_block(&pool, "SUB_D", "content", "d", Some("SUB_C"), Some(1)).await;
+
+        // Moving A under d17 means D ends up at depth 17+1+3 = 21 > 20
+        let result = move_block_inner(&pool, DEV, &mat, "SUB_A".into(), Some(parent), 1).await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "moving subtree that would exceed depth limit should fail, got: {result:?}"
+        );
+    }
+
+    // ── #129: rows_affected checks in apply_reverse_in_tx ────────────
+
+    #[tokio::test]
+    async fn apply_reverse_remove_tag_on_nonexistent_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+
+        let payload = OpPayload::RemoveTag(RemoveTagPayload {
+            block_id: BlockId::test_id("GHOST_BLK"),
+            tag_id: BlockId::test_id("GHOST_TAG"),
+        });
+        let result = apply_reverse_in_tx(&mut tx, &payload).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "removing a nonexistent tag association should return NotFound, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_reverse_delete_property_on_nonexistent_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+
+        let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: BlockId::test_id("GHOST_BLK"),
+            key: "priority".into(),
+        });
+        let result = apply_reverse_in_tx(&mut tx, &payload).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "deleting a nonexistent property should return NotFound, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_reverse_delete_attachment_on_nonexistent_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+
+        let payload = OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+            attachment_id: "ATT_GHOST".into(),
+        });
+        let result = apply_reverse_in_tx(&mut tx, &payload).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "soft-deleting a nonexistent attachment should return NotFound, got: {result:?}"
+        );
     }
 }

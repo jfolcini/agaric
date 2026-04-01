@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT source_id FROM block_links WHERE target_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "source_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0769e2e9d3366ebd2657b5e03d3308695f02f91bba0f65fc6e32f7991fddd6cd"
+}

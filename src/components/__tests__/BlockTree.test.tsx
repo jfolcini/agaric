@@ -74,7 +74,10 @@ vi.mock('../../editor/use-block-keyboard', () => ({
   },
 }))
 
-vi.mock('sonner', () => ({ toast: vi.fn() }))
+vi.mock('sonner', () => {
+  const toast = Object.assign(vi.fn(), { error: vi.fn() })
+  return { toast }
+})
 
 vi.mock('../../hooks/useViewportObserver', () => ({
   useViewportObserver: () => ({
@@ -2261,7 +2264,8 @@ describe('BlockTree handleDeleteBlock', () => {
     })
   })
 
-  it('deleting the only block in the tree sets focus to null', async () => {
+  it('deleting the only block in the tree is prevented (#75)', async () => {
+    const { toast } = await import('sonner')
     const tree = [makeBlock('ONLY', null, 0, 'The only block')]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'ONLY' })
 
@@ -2277,10 +2281,10 @@ describe('BlockTree handleDeleteBlock', () => {
       capturedBlockKeyboardOpts?.onDeleteBlock?.()
     })
 
-    // When the only block is deleted, focus should be null
-    await waitFor(() => {
-      expect(useBlockStore.getState().focusedBlockId).toBeNull()
-    })
+    // Block should NOT be deleted — guard prevents it
+    expect(useBlockStore.getState().blocks).toHaveLength(1)
+    expect(useBlockStore.getState().focusedBlockId).toBe('ONLY')
+    expect(toast.error).toHaveBeenCalledWith('Cannot delete the last block on a page')
   })
 
   it('deleting a focused block moves focus to the previous block', async () => {

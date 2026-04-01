@@ -40,6 +40,7 @@ import {
 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
@@ -406,22 +407,26 @@ export function JournalPage({
 
   /** Add a new block under a specific day's page, creating the page if needed. */
   async function handleAddBlock(dateStr: string) {
-    let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
+    try {
+      let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
 
-    if (!pageId) {
-      const page = await createBlock({ blockType: 'page', content: dateStr })
-      pageId = page.id
-      setCreatedPages((prev) => new Map(prev).set(dateStr, pageId as string))
-      setPageMap((prev) => new Map(prev).set(dateStr, pageId as string))
+      if (!pageId) {
+        const page = await createBlock({ blockType: 'page', content: dateStr })
+        pageId = page.id
+        setCreatedPages((prev) => new Map(prev).set(dateStr, pageId as string))
+        setPageMap((prev) => new Map(prev).set(dateStr, pageId as string))
+      }
+
+      await createBlock({
+        blockType: 'content',
+        content: '',
+        parentId: pageId,
+      })
+
+      await load(pageId)
+    } catch {
+      toast.error('Failed to add block')
     }
-
-    await createBlock({
-      blockType: 'content',
-      content: '',
-      parentId: pageId,
-    })
-
-    await load(pageId)
   }
 
   // ── Render helpers ──────────────────────────────────────────────────

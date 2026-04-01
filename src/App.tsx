@@ -12,6 +12,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { BootGate } from './components/BootGate'
 import { ConflictList } from './components/ConflictList'
 import { HistoryView } from './components/HistoryView'
@@ -211,10 +212,12 @@ function App() {
       }
       if (e.key === 'n') {
         e.preventDefault()
-        createBlock({ blockType: 'page', content: 'Untitled' }).then((resp) => {
-          useNavigationStore.getState().navigateToPage(resp.id, 'Untitled')
-          announce('New page created')
-        })
+        createBlock({ blockType: 'page', content: 'Untitled' })
+          .then((resp) => {
+            useNavigationStore.getState().navigateToPage(resp.id, 'Untitled')
+            announce('New page created')
+          })
+          .catch(() => toast.error('Failed to create page'))
       }
     }
     window.addEventListener('keydown', handleGlobalShortcuts)

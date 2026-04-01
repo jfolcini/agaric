@@ -2,6 +2,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useBlockStore } from '../blocks'
 
+vi.mock('sonner', () => {
+  const toast = Object.assign(vi.fn(), { error: vi.fn() })
+  return { toast }
+})
+
 const mockedInvoke = vi.mocked(invoke)
 
 // --- Mock for undo store (used by notifyUndoNewAction in blocks.ts) ---
