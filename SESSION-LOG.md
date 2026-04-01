@@ -1,5 +1,63 @@
 # Session Log
 
+## Session 34 — 2026-04-01 — Backlink filter fixes (36 REVIEW-LATER items)
+
+Resolved #238-#250, #252-#274 (36 of 37 backlink filter items). #251 (benchmark) deferred.
+5 build subagents (parallel) + 2 review subagents. 12 files changed. +56 tests.
+
+### Build A — Backend Rust (backlink_query.rs + fts.rs)
+- **#238:** FTS5 query sanitization — imported `sanitize_fts_query()` into Contains filter
+- **#243:** PropertyIsEmpty rewritten from two-query diff to single NOT EXISTS subquery
+- **#244:** Doc comments on sort functions explaining trade-off
+- **#246:** 2 new sort tests (PropertyNum desc, PropertyDate desc)
+- **#248:** 3 insta snapshot tests with ULID/cursor redaction
+- **#249:** Recursion depth limit (max 50) on `resolve_filter()` with depth parameter
+- **#250:** `unwrap_or(f64::NAN)` → `expect()` with SQL guarantee comment
+- 83 backlink_query tests pass (6 new)
+
+### Build B — Backend integration tests
+- **#240:** 20 new integration tests for `query_backlinks_filtered_inner` and `list_property_keys_inner`
+- Covers: happy paths (6), filters (4), sorting (2), pagination (2), error paths (2), edge cases (4)
+
+### Build C — Frontend BacklinksPanel.tsx
+- **#239:** Race condition fix via `requestIdRef` counter
+- **#252:** Filters/sort reset on blockId change via `prevBlockIdRef`
+- **#264:** Loading skeleton a11y (`aria-busy`, `aria-label`, `role="status"`)
+- **#265:** `<div>` → `<ul>/<li>` semantic HTML
+- **#267:** Pagination dedup via Set
+- **#268:** Differentiated empty states with Clear button
+- **#269:** Silent catch → `console.error` for listPropertyKeys
+- **#271:** Removed redundant state resets
+- 34 tests pass (8 new)
+
+### Build D — Frontend BacklinkFilterBuilder.tsx + PageEditor.tsx
+- **#245:** Empty date filter validation guard
+- **#247:** max-h-60 → max-h-96 for scrollable area
+- **#253-#256:** a11y improvements (label associations, aria-label, fieldset, aria-describedby)
+- **#257:** HasTag/HasTagPrefix/PropertyIsSet/PropertyIsEmpty exposed in UI
+- **#258-#259:** PropertyNum/PropertyDate filter categories added
+- **#260:** Duplicate filter prevention
+- **#261:** Focus management after adding filter
+- **#262-#263:** Keyboard support (Enter to apply, Escape to cancel)
+- **#266:** Filter count badge
+- **#270:** Tooltips on operator options
+- **#272:** Consistent button heights (h-7)
+- **#273:** "Sort by creation date (default)" label
+- **#274:** Tag filter pill shows full tag_id
+- 21 tests pass (4 new)
+
+### Build E — Frontend IPC tests
+- **#241:** 6 new tests in tauri.test.ts for queryBacklinksFiltered/listPropertyKeys
+- **#242:** 8 new tests in tauri-mock.test.ts for mock handler
+
+### Review A (Backend) — Clean, no issues
+### Review B (Frontend) — 3 fixes applied
+1. Button `forwardRef` for React 18 compatibility (focus ref would silently fail)
+2. Biome lint fixes (useless fragments, semantic elements, arrow function style)
+3. Stale biome-ignore comment removed
+
+**Test totals:** Frontend 1805 (was 1779, +26), Backend 1162 (was ~1132, +30)
+
 ## Session 33 — 2026-04-01 — Sync merge coverage + state validation + E2E tests
 
 Resolved #229 (E2E sync tests). Fixed 2 sync_protocol.rs TODOs (merge coverage, state validation).

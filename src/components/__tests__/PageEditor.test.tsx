@@ -483,7 +483,7 @@ describe('PageEditor detail panel', () => {
 
     // The content container should have max-height + overflow classes
     const contentEl = screen.getByTestId('backlinks-panel').parentElement
-    expect(contentEl).toHaveClass('max-h-60')
+    expect(contentEl).toHaveClass('max-h-96')
     expect(contentEl).toHaveClass('overflow-y-auto')
   })
 

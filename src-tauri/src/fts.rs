@@ -306,7 +306,7 @@ const MAX_SEARCH_RESULTS: i64 = 100;
 /// from being interpreted as query syntax while still allowing multi-term
 /// implicit-AND matching.
 #[must_use]
-fn sanitize_fts_query(query: &str) -> String {
+pub(crate) fn sanitize_fts_query(query: &str) -> String {
     query
         .split_whitespace()
         .map(|term| {

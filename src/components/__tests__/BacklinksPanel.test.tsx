@@ -397,13 +397,13 @@ describe('BacklinksPanel', () => {
       })
     })
 
-    it('renders filter builder toolbar', async () => {
+    it('renders filter builder', async () => {
       mockInvokeWith(emptyResponse)
 
       render(<BacklinksPanel blockId="TARGET01" />)
 
       await waitFor(() => {
-        expect(screen.getByRole('toolbar', { name: /Backlink filters/i })).toBeInTheDocument()
+        expect(screen.getByRole('group', { name: /Backlink filters/i })).toBeInTheDocument()
       })
     })
   })
@@ -732,6 +732,315 @@ describe('BacklinksPanel', () => {
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // -- Bug-fix regression tests -----------------------------------------------
+
+  describe('race condition (#239)', () => {
+    it('discards stale responses when filters change rapidly', async () => {
+      // Simulate: Request A (for BLOCK_A) is slow, Request B (for BLOCK_B) is fast.
+      // B's response should win; A's stale response should be discarded.
+      const resolveSlowRequests: Array<(value: unknown) => void> = []
+
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+        if (cmd === 'query_backlinks_filtered') {
+          const { blockId: reqBlockId } = args as { blockId: string }
+          if (reqBlockId === 'TARGET01') {
+            // Initial mount load — resolve immediately
+            return {
+              items: [makeBlock('INIT0001', 'initial')],
+              next_cursor: null,
+              has_more: false,
+              total_count: 1,
+            }
+          }
+          if (reqBlockId === 'BLOCK_A') {
+            // Slow request — hangs until manually resolved
+            return new Promise((resolve) => {
+              resolveSlowRequests.push(resolve)
+            })
+          }
+          if (reqBlockId === 'BLOCK_B') {
+            // Fast request — resolves immediately
+            return {
+              items: [makeBlock('FAST0001', 'fast result')],
+              next_cursor: null,
+              has_more: false,
+              total_count: 1,
+            }
+          }
+          return emptyResponse
+        }
+        if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'batch_resolve') return []
+        return emptyResponse
+      })
+
+      const { rerender } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      // Wait for initial load
+      await waitFor(() => {
+        expect(screen.getByText('initial')).toBeInTheDocument()
+      })
+
+      // Trigger slow request(s) for BLOCK_A
+      rerender(<BacklinksPanel blockId="BLOCK_A" />)
+
+      // Wait for the slow request to be issued
+      await waitFor(() => {
+        expect(resolveSlowRequests.length).toBeGreaterThan(0)
+      })
+
+      // Now trigger fast request for BLOCK_B (before BLOCK_A resolves)
+      rerender(<BacklinksPanel blockId="BLOCK_B" />)
+
+      // Wait for fast response
+      await waitFor(() => {
+        expect(screen.getByText('fast result')).toBeInTheDocument()
+      })
+
+      // Now resolve all slow BLOCK_A requests (the stale ones)
+      for (const resolve of resolveSlowRequests) {
+        resolve({
+          items: [makeBlock('SLOW0001', 'slow stale result')],
+          next_cursor: null,
+          has_more: false,
+          total_count: 1,
+        })
+      }
+
+      // The stale response should NOT overwrite the fast result
+      await new Promise((r) => setTimeout(r, 50))
+
+      expect(screen.getByText('fast result')).toBeInTheDocument()
+      expect(screen.queryByText('slow stale result')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('filters/sort reset on blockId change (#252)', () => {
+    it('resets filters and sort when blockId changes', async () => {
+      const user = userEvent.setup()
+      mockInvokeWith({
+        items: [makeBlock('B1', 'some block')],
+        next_cursor: null,
+        has_more: false,
+        total_count: 1,
+      })
+
+      const { rerender } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('some block')
+
+      // Add a filter via the filter builder UI
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
+      await user.selectOptions(screen.getByLabelText('Block type value'), 'page')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      // Confirm filter was applied (query with filters)
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('query_backlinks_filtered', {
+          blockId: 'TARGET01',
+          filters: [{ type: 'BlockType', block_type: 'page' }],
+          sort: null,
+          cursor: null,
+          limit: 50,
+        })
+      })
+
+      // Change blockId
+      rerender(<BacklinksPanel blockId="NEW_BLOCK" />)
+
+      // After blockId change, the query should be called with NO filters (reset)
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('query_backlinks_filtered', {
+          blockId: 'NEW_BLOCK',
+          filters: null,
+          sort: null,
+          cursor: null,
+          limit: 50,
+        })
+      })
+    })
+  })
+
+  describe('loading skeleton accessibility (#264)', () => {
+    it('loading skeleton has aria-busy and role="status"', async () => {
+      // Make the query hang so loading state persists
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+        if (cmd === 'query_backlinks_filtered') {
+          return new Promise(() => {}) // never resolves — keeps loading
+        }
+        if (cmd === 'list_property_keys') return ['todo', 'priority']
+        return emptyResponse
+      })
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      await waitFor(() => {
+        const loadingDiv = container.querySelector('.backlinks-panel-loading')
+        expect(loadingDiv).toBeInTheDocument()
+        expect(loadingDiv).toHaveAttribute('aria-busy', 'true')
+        expect(loadingDiv).toHaveAttribute('aria-label', 'Loading backlinks')
+        expect(loadingDiv).toHaveAttribute('role', 'status')
+      })
+    })
+  })
+
+  describe('backlinks list uses ul/li (#265)', () => {
+    it('renders backlinks in a ul with li elements', async () => {
+      const page = {
+        items: [
+          makeBlock('01HAAAAA00000000000001', 'First backlink', 'content'),
+          makeBlock('01HBBBBB00000000000002', 'Second backlink', 'page'),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: 2,
+      }
+      mockInvokeWith(page)
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('First backlink')
+
+      const list = container.querySelector('ul.backlinks-list')
+      expect(list).toBeInTheDocument()
+
+      const items = list!.querySelectorAll('li.backlink-item')
+      expect(items).toHaveLength(2)
+    })
+  })
+
+  describe('pagination dedup (#267)', () => {
+    it('does not show duplicate blocks when paginated response overlaps', async () => {
+      const SHARED_ID = 'SHARED0000000000000000001'
+      let callCount = 0
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+        if (cmd === 'query_backlinks_filtered') {
+          callCount++
+          if (callCount === 1) {
+            return {
+              items: [
+                makeBlock(SHARED_ID, 'shared item'),
+                makeBlock('UNIQUE01000000000000000001', 'unique page1'),
+              ],
+              next_cursor: 'cursor_2',
+              has_more: true,
+              total_count: 3,
+            }
+          }
+          // Page 2 returns the shared item again (overlap) plus a new one
+          return {
+            items: [
+              makeBlock(SHARED_ID, 'shared item'),
+              makeBlock('UNIQUE02000000000000000001', 'unique page2'),
+            ],
+            next_cursor: null,
+            has_more: false,
+            total_count: 3,
+          }
+        }
+        if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'batch_resolve') return []
+        return emptyResponse
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      // Wait for page 1
+      await screen.findByText('shared item')
+      await screen.findByText('unique page1')
+
+      // Click Load more
+      const loadMoreBtn = screen.getByText('Load more')
+      await userEvent.click(loadMoreBtn)
+
+      // Wait for page 2
+      await screen.findByText('unique page2')
+
+      // "shared item" should appear exactly once (dedup)
+      const sharedItems = screen.getAllByText('shared item')
+      expect(sharedItems).toHaveLength(1)
+    })
+  })
+
+  describe('empty state differentiation (#268)', () => {
+    it('shows "No backlinks match your filters" when filters are active', async () => {
+      const user = userEvent.setup()
+      let callCount = 0
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+        if (cmd === 'query_backlinks_filtered') {
+          callCount++
+          if (callCount === 1) {
+            return {
+              items: [makeBlock('B1', 'some block')],
+              next_cursor: null,
+              has_more: false,
+              total_count: 1,
+            }
+          }
+          // After filter: empty
+          return emptyResponse
+        }
+        if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'batch_resolve') return []
+        return emptyResponse
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('some block')
+
+      // Add a filter that produces no results
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
+      await user.selectOptions(screen.getByLabelText('Block type value'), 'page')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      // Should show filtered empty state
+      expect(await screen.findByText('No backlinks match your filters')).toBeInTheDocument()
+
+      // Should show Clear filters button
+      expect(screen.getByRole('button', { name: /Clear filters/i })).toBeInTheDocument()
+    })
+
+    it('shows "No backlinks found" when no filters are active', async () => {
+      mockInvokeWith(emptyResponse)
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      expect(await screen.findByText('No backlinks found')).toBeInTheDocument()
+      // No "Clear filters" button
+      expect(screen.queryByRole('button', { name: /Clear filters/i })).not.toBeInTheDocument()
+    })
+  })
+
+  describe('listPropertyKeys error logging (#269)', () => {
+    it('logs error to console when listPropertyKeys fails', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const testError = new Error('property keys failure')
+
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+        if (cmd === 'list_property_keys') throw testError
+        if (cmd === 'query_backlinks_filtered') return emptyResponse
+        if (cmd === 'batch_resolve') return []
+        return emptyResponse
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await waitFor(() => {
+        expect(consoleSpy).toHaveBeenCalledWith('Failed to load property keys:', testError)
+      })
+
+      consoleSpy.mockRestore()
     })
   })
 })

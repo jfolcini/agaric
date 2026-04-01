@@ -32,6 +32,8 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
   const [totalCount, setTotalCount] = useState(0)
   const [resolveVersion, setResolveVersion] = useState(0)
   const resolveCache = useRef<Map<string, { title: string; deleted: boolean }>>(new Map())
+  const requestIdRef = useRef(0)
+  const prevBlockIdRef = useRef(blockId)
 
   // Filter & sort state
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
@@ -42,14 +44,15 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
   useEffect(() => {
     listPropertyKeys()
       .then(setPropertyKeys)
-      .catch(() => {
-        // silently ignore
+      .catch((err) => {
+        console.error('Failed to load property keys:', err)
       })
   }, [])
 
   const loadBacklinks = useCallback(
     async (cursor?: string) => {
       if (!blockId) return
+      const currentRequestId = ++requestIdRef.current
       setLoading(true)
       try {
         const resp = await queryBacklinksFiltered({
@@ -59,8 +62,13 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
           cursor,
           limit: 50,
         })
+        if (requestIdRef.current !== currentRequestId) return // stale response
         if (cursor) {
-          setBlocks((prev) => [...prev, ...resp.items])
+          setBlocks((prev) => {
+            const existingIds = new Set(prev.map((b) => b.id))
+            const newItems = resp.items.filter((b) => !existingIds.has(b.id))
+            return [...prev, ...newItems]
+          })
         } else {
           setBlocks(resp.items)
         }
@@ -68,6 +76,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
         setHasMore(resp.has_more)
         setTotalCount(resp.total_count)
       } catch {
+        if (requestIdRef.current !== currentRequestId) return // stale response
         toast.error('Failed to load backlinks')
       }
       setLoading(false)
@@ -76,12 +85,17 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
   )
 
   // Reset and reload when blockId changes
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset and reload when blockId changes
   useEffect(() => {
     setBlocks([])
     setNextCursor(null)
     setHasMore(false)
     setTotalCount(0)
+    // Only reset filters/sort when the blockId itself changes (not on filter/sort-triggered rebuilds)
+    if (prevBlockIdRef.current !== blockId) {
+      setFilters([])
+      setSort(null)
+      prevBlockIdRef.current = blockId
+    }
     resolveCache.current.clear()
     loadBacklinks()
   }, [blockId, loadBacklinks])
@@ -174,18 +188,10 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
 
   const handleFiltersChange = useCallback((newFilters: BacklinkFilter[]) => {
     setFilters(newFilters)
-    // Reset pagination — loadBacklinks will re-fetch via useEffect
-    setBlocks([])
-    setNextCursor(null)
-    setHasMore(false)
   }, [])
 
   const handleSortChange = useCallback((newSort: BacklinkSort | null) => {
     setSort(newSort)
-    // Reset pagination — loadBacklinks will re-fetch via useEffect
-    setBlocks([])
-    setNextCursor(null)
-    setHasMore(false)
   }, [])
 
   if (!blockId) {
@@ -206,17 +212,42 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
       />
 
       {loading && blocks.length === 0 && (
-        <div className="backlinks-panel-loading space-y-2">
+        <div
+          className="backlinks-panel-loading space-y-2"
+          aria-busy="true"
+          aria-label="Loading backlinks"
+          role="status"
+        >
           <Skeleton className="h-12 w-full rounded-lg" />
           <Skeleton className="h-12 w-full rounded-lg" />
         </div>
       )}
 
-      {!loading && blocks.length === 0 && <EmptyState icon={Link} message="No backlinks found" />}
+      {!loading && blocks.length === 0 && (
+        <EmptyState
+          icon={Link}
+          message={filters.length > 0 ? 'No backlinks match your filters' : 'No backlinks found'}
+          action={
+            filters.length > 0 ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2 w-full text-xs"
+                onClick={() => {
+                  setFilters([])
+                  setSort(null)
+                }}
+              >
+                Clear filters
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
 
-      <div className="backlinks-list space-y-2">
+      <ul className="backlinks-list space-y-2">
         {blocks.map((block) => (
-          <div
+          <li
             key={block.id}
             className="backlink-item flex items-center gap-3 rounded-lg border bg-card p-3 cursor-default"
           >
@@ -235,9 +266,9 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
             <span className="backlink-item-id text-xs text-muted-foreground font-mono">
               {block.id.slice(0, 8)}...
             </span>
-          </div>
+          </li>
         ))}
-      </div>
+      </ul>
 
       {hasMore && (
         <Button

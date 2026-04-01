@@ -34,10 +34,12 @@ import {
   listBlocks,
   listPageHistory,
   listPeerRefs,
+  listPropertyKeys,
   listTagsByPrefix,
   listTagsForBlock,
   moveBlock,
   purgeBlock,
+  queryBacklinksFiltered,
   queryByProperty,
   queryByTags,
   redoPageOp,
@@ -1242,6 +1244,93 @@ describe('cancelSync', () => {
 })
 
 // ---------------------------------------------------------------------------
+// queryBacklinksFiltered
+// ---------------------------------------------------------------------------
+
+describe('queryBacklinksFiltered', () => {
+  const emptyResponse = { items: [], next_cursor: null, has_more: false, total_count: 0 }
+
+  it('calls invoke with correct command name', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyResponse)
+
+    await queryBacklinksFiltered({ blockId: 'TARGET' })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke.mock.calls[0][0]).toBe('query_backlinks_filtered')
+  })
+
+  it('passes blockId parameter', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyResponse)
+
+    await queryBacklinksFiltered({ blockId: 'TARGET_BLOCK' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'query_backlinks_filtered',
+      expect.objectContaining({
+        blockId: 'TARGET_BLOCK',
+      }),
+    )
+  })
+
+  it('defaults optional params to null', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyResponse)
+
+    await queryBacklinksFiltered({ blockId: 'TARGET' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('query_backlinks_filtered', {
+      blockId: 'TARGET',
+      filters: null,
+      sort: null,
+      cursor: null,
+      limit: null,
+    })
+  })
+
+  it('passes filters when provided', async () => {
+    const filters = [
+      { type: 'BlockType' as const, block_type: 'content' },
+      { type: 'Contains' as const, query: 'hello' },
+    ]
+    mockedInvoke.mockResolvedValueOnce(emptyResponse)
+
+    await queryBacklinksFiltered({ blockId: 'TARGET', filters })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('query_backlinks_filtered', {
+      blockId: 'TARGET',
+      filters,
+      sort: null,
+      cursor: null,
+      limit: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listPropertyKeys
+// ---------------------------------------------------------------------------
+
+describe('listPropertyKeys', () => {
+  it('calls invoke with correct command name', async () => {
+    mockedInvoke.mockResolvedValueOnce(['todo', 'priority'])
+
+    await listPropertyKeys()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_property_keys')
+  })
+
+  it('returns string array', async () => {
+    const expected = ['priority', 'status', 'todo']
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listPropertyKeys()
+
+    expect(result).toEqual(expected)
+    expect(Array.isArray(result)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Cross-cutting concerns
 // ---------------------------------------------------------------------------
 
@@ -1275,6 +1364,8 @@ describe('cross-cutting', () => {
     await listPageHistory({ pageId: 'id' })
     await revertOps({ ops: [{ device_id: 'd', seq: 1 }] })
     await queryByProperty({ key: 'k' })
+    await queryBacklinksFiltered({ blockId: 'id' })
+    await listPropertyKeys()
     await undoPageOp({ pageId: 'id', undoDepth: 1 })
     await redoPageOp({ undoDeviceId: 'd', undoSeq: 1 })
     await listPeerRefs()
@@ -1315,6 +1406,8 @@ describe('cross-cutting', () => {
       'list_page_history',
       'revert_ops',
       'query_by_property',
+      'query_backlinks_filtered',
+      'list_property_keys',
       'undo_page_op',
       'redo_page_op',
       'list_peer_refs',

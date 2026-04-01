@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
+use crate::fts::sanitize_fts_query;
 use crate::pagination::{BlockRow, Cursor, PageRequest};
 
 // ---------------------------------------------------------------------------
@@ -209,10 +210,16 @@ pub struct BacklinkQueryResponse {
 fn resolve_filter<'a>(
     pool: &'a SqlitePool,
     filter: &'a BacklinkFilter,
+    depth: u32,
 ) -> std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<FxHashSet<String>, AppError>> + Send + 'a>,
 > {
     Box::pin(async move {
+        if depth > 50 {
+            return Err(AppError::Validation(
+                "Filter nesting depth exceeds 50".into(),
+            ));
+        }
         match filter {
             BacklinkFilter::PropertyText { key, op, value } => {
                 // Fetch all block_ids with the given property key and text value,
@@ -260,7 +267,7 @@ fn resolve_filter<'a>(
                 Ok(rows
                     .into_iter()
                     .filter(|(_, v)| {
-                        let v = v.unwrap_or(f64::NAN);
+                        let v = v.expect("value_num guaranteed non-null by SQL WHERE clause");
                         match op {
                             CompareOp::Eq => (v - value).abs() < f64::EPSILON,
                             CompareOp::Neq => (v - value).abs() >= f64::EPSILON,
@@ -319,30 +326,19 @@ fn resolve_filter<'a>(
 
             BacklinkFilter::PropertyIsEmpty { key } => {
                 // Blocks that do NOT have the property set.
-                // Get all non-deleted/non-conflict blocks, subtract those with the property.
-                let all = sqlx::query_scalar::<_, String>(
-                    "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
-                )
-                .fetch_all(pool)
-                .await?;
-
-                let has_prop: FxHashSet<String> = sqlx::query_scalar::<_, String>(
-                    "SELECT bp.block_id \
-                     FROM block_properties bp \
-                     JOIN blocks b ON b.id = bp.block_id \
-                     WHERE bp.key = ?1 \
-                       AND b.deleted_at IS NULL AND b.is_conflict = 0",
+                // Single query with NOT EXISTS to avoid fetching all block IDs into memory.
+                let rows = sqlx::query_scalar::<_, String>(
+                    "SELECT b.id FROM blocks b \
+                     WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                       AND NOT EXISTS ( \
+                         SELECT 1 FROM block_properties bp \
+                         WHERE bp.block_id = b.id AND bp.key = ?1 \
+                       )",
                 )
                 .bind(key)
                 .fetch_all(pool)
-                .await?
-                .into_iter()
-                .collect();
-
-                Ok(all
-                    .into_iter()
-                    .filter(|id| !has_prop.contains(id))
-                    .collect())
+                .await?;
+                Ok(rows.into_iter().collect())
             }
 
             BacklinkFilter::HasTag { tag_id } => {
@@ -378,6 +374,10 @@ fn resolve_filter<'a>(
                 if query.trim().is_empty() {
                     return Ok(FxHashSet::default());
                 }
+                let sanitized = sanitize_fts_query(query);
+                if sanitized.is_empty() {
+                    return Ok(FxHashSet::default());
+                }
                 // Query FTS5 index, join back to blocks to get block id and
                 // exclude deleted/conflict blocks.
                 let rows = sqlx::query_scalar::<_, String>(
@@ -387,7 +387,7 @@ fn resolve_filter<'a>(
                      WHERE fts_blocks MATCH ?1 \
                        AND b.deleted_at IS NULL AND b.is_conflict = 0",
                 )
-                .bind(query)
+                .bind(&sanitized)
                 .fetch_all(pool)
                 .await?;
                 Ok(rows.into_iter().collect())
@@ -435,9 +435,9 @@ fn resolve_filter<'a>(
                     return Ok(FxHashSet::default());
                 }
                 let mut iter = filters.iter();
-                let mut result = resolve_filter(pool, iter.next().unwrap()).await?;
+                let mut result = resolve_filter(pool, iter.next().unwrap(), depth + 1).await?;
                 for f in iter {
-                    let set = resolve_filter(pool, f).await?;
+                    let set = resolve_filter(pool, f, depth + 1).await?;
                     result.retain(|id| set.contains(id));
                 }
                 Ok(result)
@@ -446,7 +446,7 @@ fn resolve_filter<'a>(
             BacklinkFilter::Or { filters } => {
                 let mut result = FxHashSet::default();
                 for f in filters {
-                    let set = resolve_filter(pool, f).await?;
+                    let set = resolve_filter(pool, f, depth + 1).await?;
                     result.extend(set);
                 }
                 Ok(result)
@@ -458,7 +458,7 @@ fn resolve_filter<'a>(
                 )
                 .fetch_all(pool)
                 .await?;
-                let inner_set = resolve_filter(pool, filter).await?;
+                let inner_set = resolve_filter(pool, filter, depth + 1).await?;
                 Ok(all
                     .into_iter()
                     .filter(|id| !inner_set.contains(id))
@@ -533,7 +533,7 @@ pub async fn eval_backlink_query(
         } else {
             let mut result = base_ids.clone();
             for filter in filter_list {
-                let set = resolve_filter(pool, filter).await?;
+                let set = resolve_filter(pool, filter, 0).await?;
                 result.retain(|id| set.contains(id));
             }
             result
@@ -665,6 +665,11 @@ async fn sort_ids(
 
 /// Sort block IDs by a text property value.  Blocks without the property
 /// are placed at the end.
+///
+/// Fetches all property values for `key` (not filtered to `ids`) because a dynamic
+/// IN clause would require runtime query building, losing compile-time SQL validation.
+/// Acceptable trade-off: the HashMap lookup is O(1), and property tables are small for
+/// personal note-taking use cases.
 async fn sort_by_property_text(
     pool: &SqlitePool,
     ids: &FxHashSet<String>,
@@ -702,6 +707,11 @@ async fn sort_by_property_text(
 }
 
 /// Sort block IDs by a numeric property value.
+///
+/// Fetches all property values for `key` (not filtered to `ids`) because a dynamic
+/// IN clause would require runtime query building, losing compile-time SQL validation.
+/// Acceptable trade-off: the HashMap lookup is O(1), and property tables are small for
+/// personal note-taking use cases.
 async fn sort_by_property_num(
     pool: &SqlitePool,
     ids: &FxHashSet<String>,
@@ -738,6 +748,11 @@ async fn sort_by_property_num(
 }
 
 /// Sort block IDs by a date property value.
+///
+/// Fetches all property values for `key` (not filtered to `ids`) because a dynamic
+/// IN clause would require runtime query building, losing compile-time SQL validation.
+/// Acceptable trade-off: the HashMap lookup is O(1), and property tables are small for
+/// personal note-taking use cases.
 async fn sort_by_property_date(
     pool: &SqlitePool,
     ids: &FxHashSet<String>,
@@ -958,7 +973,7 @@ mod tests {
             op: CompareOp::Eq,
             value: "active".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(!set.contains("SRC_B"));
     }
@@ -974,7 +989,7 @@ mod tests {
             op: CompareOp::Eq,
             value: "nonexistent".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.is_empty());
     }
 
@@ -990,7 +1005,7 @@ mod tests {
             op: CompareOp::Neq,
             value: "active".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(!set.contains("SRC_A"));
         assert!(set.contains("SRC_B"));
     }
@@ -1007,7 +1022,7 @@ mod tests {
             op: CompareOp::Lt,
             value: "beta".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(!set.contains("SRC_B"));
     }
@@ -1024,7 +1039,7 @@ mod tests {
             op: CompareOp::Gt,
             value: "alpha".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(!set.contains("SRC_A"));
         assert!(set.contains("SRC_B"));
     }
@@ -1041,7 +1056,7 @@ mod tests {
             op: CompareOp::Lte,
             value: "alpha".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(!set.contains("SRC_B"));
     }
@@ -1058,7 +1073,7 @@ mod tests {
             op: CompareOp::Gte,
             value: "beta".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(!set.contains("SRC_A"));
         assert!(set.contains("SRC_B"));
     }
@@ -1079,7 +1094,7 @@ mod tests {
             op: CompareOp::Eq,
             value: 1.0,
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(!set.contains("SRC_B"));
     }
@@ -1096,7 +1111,7 @@ mod tests {
             op: CompareOp::Gt,
             value: 3.0,
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(!set.contains("SRC_A"));
         assert!(set.contains("SRC_B"));
     }
@@ -1113,7 +1128,7 @@ mod tests {
             op: CompareOp::Lt,
             value: 3.0,
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(!set.contains("SRC_B"));
     }
@@ -1129,7 +1144,7 @@ mod tests {
             op: CompareOp::Eq,
             value: 999.0,
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.is_empty());
     }
 
@@ -1145,7 +1160,7 @@ mod tests {
             op: CompareOp::Neq,
             value: 1.0,
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(!set.contains("SRC_A"));
         assert!(set.contains("SRC_B"));
     }
@@ -1162,7 +1177,7 @@ mod tests {
             op: CompareOp::Lte,
             value: 3.0,
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(!set.contains("SRC_B"));
     }
@@ -1179,7 +1194,7 @@ mod tests {
             op: CompareOp::Gte,
             value: 5.0,
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(!set.contains("SRC_A"));
         assert!(set.contains("SRC_B"));
     }
@@ -1200,7 +1215,7 @@ mod tests {
             op: CompareOp::Eq,
             value: "2025-01-15".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(!set.contains("SRC_B"));
     }
@@ -1217,7 +1232,7 @@ mod tests {
             op: CompareOp::Lt,
             value: "2025-02-01".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(!set.contains("SRC_B"));
     }
@@ -1233,7 +1248,7 @@ mod tests {
             op: CompareOp::Eq,
             value: "2099-12-31".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.is_empty());
     }
 
@@ -1251,7 +1266,7 @@ mod tests {
         let filter = BacklinkFilter::PropertyIsSet {
             key: "status".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(!set.contains("SRC_B"));
     }
@@ -1264,7 +1279,7 @@ mod tests {
         let filter = BacklinkFilter::PropertyIsSet {
             key: "nonexistent".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.is_empty());
     }
 
@@ -1278,7 +1293,7 @@ mod tests {
         let filter = BacklinkFilter::PropertyIsEmpty {
             key: "status".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(!set.contains("SRC_A"));
         assert!(set.contains("SRC_B"));
         assert!(set.contains("SRC_C"));
@@ -1298,7 +1313,7 @@ mod tests {
         let filter = BacklinkFilter::HasTag {
             tag_id: "TAG_X".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(!set.contains("SRC_B"));
     }
@@ -1311,7 +1326,7 @@ mod tests {
         let filter = BacklinkFilter::HasTag {
             tag_id: "NONEXISTENT".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.is_empty());
     }
 
@@ -1331,7 +1346,7 @@ mod tests {
         let filter = BacklinkFilter::HasTagPrefix {
             prefix: "work/".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(set.contains("SRC_B"));
         assert!(!set.contains("SRC_C"));
@@ -1345,7 +1360,7 @@ mod tests {
         let filter = BacklinkFilter::HasTagPrefix {
             prefix: "zzz_nonexistent/".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.is_empty());
     }
 
@@ -1363,7 +1378,7 @@ mod tests {
         let filter = BacklinkFilter::Contains {
             query: "searchable".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(!set.contains("SRC_B"));
     }
@@ -1377,7 +1392,7 @@ mod tests {
         let filter = BacklinkFilter::Contains {
             query: "nonexistent".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.is_empty());
     }
 
@@ -1387,7 +1402,7 @@ mod tests {
         setup_backlinks(&pool).await;
 
         let filter = BacklinkFilter::Contains { query: "".into() };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.is_empty());
     }
 
@@ -1413,7 +1428,7 @@ mod tests {
             after: Some("2020-01-01".into()),
             before: None,
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains(&recent_ulid));
     }
 
@@ -1430,7 +1445,7 @@ mod tests {
             after: None,
             before: Some("2000-01-01".into()),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(!set.contains(&recent_ulid));
     }
 
@@ -1446,7 +1461,7 @@ mod tests {
             after: Some("2020-01-01".into()),
             before: Some("2099-12-31".into()),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains(&recent_ulid));
     }
 
@@ -1462,7 +1477,7 @@ mod tests {
         let filter = BacklinkFilter::BlockType {
             block_type: "content".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(set.contains("SRC_B"));
         assert!(set.contains("SRC_C"));
@@ -1476,7 +1491,7 @@ mod tests {
         let filter = BacklinkFilter::BlockType {
             block_type: "tag".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         // SRC_A, SRC_B, SRC_C are all "content" type
         assert!(!set.contains("SRC_A"));
     }
@@ -1508,7 +1523,7 @@ mod tests {
                 },
             ],
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(!set.contains("SRC_B")); // status != "active"
     }
@@ -1534,7 +1549,7 @@ mod tests {
                 },
             ],
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"));
         assert!(set.contains("SRC_B"));
     }
@@ -1552,7 +1567,7 @@ mod tests {
                 value: "active".into(),
             }),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(!set.contains("SRC_A"));
         // SRC_B, SRC_C, TARGET should all be in the not set
         assert!(set.contains("SRC_B"));
@@ -1565,7 +1580,7 @@ mod tests {
         setup_backlinks(&pool).await;
 
         let filter = BacklinkFilter::And { filters: vec![] };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.is_empty());
     }
 
@@ -1575,7 +1590,7 @@ mod tests {
         setup_backlinks(&pool).await;
 
         let filter = BacklinkFilter::Or { filters: vec![] };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.is_empty());
     }
 
@@ -1616,7 +1631,7 @@ mod tests {
                 },
             ],
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         // Both SRC_A and SRC_B have status=active AND (HasTag(TAG_X) OR HasTagPrefix(work/))
         assert!(set.contains("SRC_A"));
         assert!(set.contains("SRC_B"));
@@ -2026,7 +2041,7 @@ mod tests {
             op: CompareOp::Neq,
             value: "2025-01-15".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(
             !set.contains("SRC_A"),
             "SRC_A has due=2025-01-15, should be excluded by Neq"
@@ -2049,7 +2064,7 @@ mod tests {
             op: CompareOp::Gt,
             value: "2025-02-01".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(!set.contains("SRC_A"), "2025-01-15 is not > 2025-02-01");
         assert!(set.contains("SRC_B"), "2025-02-20 is > 2025-02-01");
     }
@@ -2066,7 +2081,7 @@ mod tests {
             op: CompareOp::Lte,
             value: "2025-01-15".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(set.contains("SRC_A"), "2025-01-15 <= 2025-01-15");
         assert!(!set.contains("SRC_B"), "2025-02-20 is not <= 2025-01-15");
     }
@@ -2083,7 +2098,7 @@ mod tests {
             op: CompareOp::Gte,
             value: "2025-02-20".into(),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(!set.contains("SRC_A"), "2025-01-15 is not >= 2025-02-20");
         assert!(set.contains("SRC_B"), "2025-02-20 >= 2025-02-20");
     }
@@ -2108,8 +2123,8 @@ mod tests {
             key: "status".into(),
         };
 
-        let set_not_empty = resolve_filter(&pool, &not_empty).await.unwrap();
-        let set_is_set = resolve_filter(&pool, &is_set).await.unwrap();
+        let set_not_empty = resolve_filter(&pool, &not_empty, 0).await.unwrap();
+        let set_is_set = resolve_filter(&pool, &is_set, 0).await.unwrap();
 
         assert_eq!(
             set_not_empty, set_is_set,
@@ -2148,7 +2163,7 @@ mod tests {
                 ],
             }),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(
             !set.contains("SRC_A"),
             "SRC_A matches both => excluded by Not"
@@ -2183,7 +2198,7 @@ mod tests {
                 ],
             }),
         };
-        let set = resolve_filter(&pool, &filter).await.unwrap();
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
         assert!(
             !set.contains("SRC_A"),
             "SRC_A has status=active => in Or => excluded by Not"
@@ -2338,22 +2353,25 @@ mod tests {
     }
 
     // ======================================================================
-    // Review findings: FTS Contains with invalid syntax returns error
+    // Review findings: FTS Contains with sanitized syntax
     // ======================================================================
 
     #[tokio::test]
-    async fn fts_contains_invalid_syntax_returns_error() {
+    async fn fts_contains_sanitises_bare_operators() {
         let (pool, _dir) = test_pool().await;
         setup_backlinks(&pool).await;
+        insert_fts(&pool, "SRC_A", "hello OR world").await;
 
-        let filter = BacklinkFilter::Contains {
-            query: "OR".into(), // bare OR is invalid FTS5 syntax
-        };
-        let result = resolve_filter(&pool, &filter).await;
+        // A bare "OR" used to cause an FTS5 syntax error; sanitize_fts_query
+        // now wraps each token in double-quotes so it matches literally.
+        let filter = BacklinkFilter::Contains { query: "OR".into() };
+        let result = resolve_filter(&pool, &filter, 0).await;
         assert!(
-            result.is_err(),
-            "invalid FTS syntax should propagate as an error"
+            result.is_ok(),
+            "sanitized FTS query should not produce a syntax error"
         );
+        let set = result.unwrap();
+        assert!(set.contains("SRC_A"), "SRC_A contains literal 'OR'");
     }
 
     // ======================================================================
@@ -2414,5 +2432,164 @@ mod tests {
     #[test]
     fn parse_iso_invalid_returns_none() {
         assert!(parse_iso_to_ms("not-a-date").is_none());
+    }
+
+    // ======================================================================
+    // #246 — PropertyNum / PropertyDate Desc sort with missing values
+    // ======================================================================
+
+    #[tokio::test]
+    async fn sort_property_num_desc_order() {
+        let (pool, _dir) = test_pool().await;
+        setup_backlinks(&pool).await;
+        insert_property(&pool, "SRC_A", "effort", None, Some(5.0), None).await;
+        insert_property(&pool, "SRC_B", "effort", None, Some(2.0), None).await;
+        // SRC_C has NO "effort" property
+        let page = default_page();
+
+        let resp = eval_backlink_query(
+            &pool,
+            "TARGET",
+            None,
+            Some(BacklinkSort::PropertyNum {
+                key: "effort".into(),
+                dir: SortDir::Desc,
+            }),
+            &page,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.items[0].id, "SRC_A", "effort=5 first in desc");
+        assert_eq!(resp.items[1].id, "SRC_B", "effort=2 second in desc");
+        assert_eq!(
+            resp.items[2].id, "SRC_C",
+            "missing effort property still last in desc"
+        );
+    }
+
+    #[tokio::test]
+    async fn sort_property_date_desc_order() {
+        let (pool, _dir) = test_pool().await;
+        setup_backlinks(&pool).await;
+        insert_property(&pool, "SRC_A", "due", None, None, Some("2025-03-01")).await;
+        insert_property(&pool, "SRC_B", "due", None, None, Some("2025-01-01")).await;
+        // SRC_C has NO "due" property
+        let page = default_page();
+
+        let resp = eval_backlink_query(
+            &pool,
+            "TARGET",
+            None,
+            Some(BacklinkSort::PropertyDate {
+                key: "due".into(),
+                dir: SortDir::Desc,
+            }),
+            &page,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.items[0].id, "SRC_A", "2025-03-01 first in desc");
+        assert_eq!(resp.items[1].id, "SRC_B", "2025-01-01 second in desc");
+        assert_eq!(
+            resp.items[2].id, "SRC_C",
+            "missing due date still last in desc"
+        );
+    }
+
+    // ======================================================================
+    // #248 — Snapshot tests for BacklinkQueryResponse
+    // ======================================================================
+
+    #[tokio::test]
+    async fn snapshot_backlink_query_basic() {
+        let (pool, _dir) = test_pool().await;
+        setup_backlinks(&pool).await;
+        let page = default_page();
+
+        let resp = eval_backlink_query(
+            &pool,
+            "TARGET",
+            None,
+            Some(BacklinkSort::Created { dir: SortDir::Asc }),
+            &page,
+        )
+        .await
+        .unwrap();
+
+        insta::assert_yaml_snapshot!(resp, {
+            ".items[].id" => "[ULID]",
+            ".next_cursor" => "[CURSOR]",
+        });
+    }
+
+    #[tokio::test]
+    async fn snapshot_backlink_query_with_filter() {
+        let (pool, _dir) = test_pool().await;
+        setup_backlinks(&pool).await;
+        insert_property(&pool, "SRC_A", "status", Some("active"), None, None).await;
+        insert_property(&pool, "SRC_B", "status", Some("done"), None, None).await;
+        let page = default_page();
+
+        let filters = vec![BacklinkFilter::PropertyText {
+            key: "status".into(),
+            op: CompareOp::Eq,
+            value: "active".into(),
+        }];
+
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            .await
+            .unwrap();
+
+        insta::assert_yaml_snapshot!(resp, {
+            ".items[].id" => "[ULID]",
+            ".next_cursor" => "[CURSOR]",
+        });
+    }
+
+    #[tokio::test]
+    async fn snapshot_backlink_query_empty() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "LONELY", "page", "No one links to me").await;
+        let page = default_page();
+
+        let resp = eval_backlink_query(&pool, "LONELY", None, None, &page)
+            .await
+            .unwrap();
+
+        insta::assert_yaml_snapshot!(resp, {
+            ".items[].id" => "[ULID]",
+            ".next_cursor" => "[CURSOR]",
+        });
+    }
+
+    // ======================================================================
+    // #249 — Recursion depth limit test
+    // ======================================================================
+
+    #[tokio::test]
+    async fn resolve_filter_rejects_excessive_nesting() {
+        let (pool, _dir) = test_pool().await;
+        setup_backlinks(&pool).await;
+
+        // Build a filter nested 52 levels deep (exceeds limit of 50)
+        let mut filter = BacklinkFilter::PropertyIsSet {
+            key: "anything".into(),
+        };
+        for _ in 0..52 {
+            filter = BacklinkFilter::Not {
+                filter: Box::new(filter),
+            };
+        }
+
+        let result = resolve_filter(&pool, &filter, 0).await;
+        assert!(result.is_err(), "should reject deeply nested filters");
+        let err = result.unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("depth exceeds 50"),
+            "error should mention depth limit, got: {msg}"
+        );
     }
 }

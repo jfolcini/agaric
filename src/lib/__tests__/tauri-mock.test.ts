@@ -957,6 +957,116 @@ describe('get_backlinks', () => {
 })
 
 // ---------------------------------------------------------------------------
+// query_backlinks_filtered
+// ---------------------------------------------------------------------------
+
+describe('query_backlinks_filtered', () => {
+  it('returns backlinks for target block', () => {
+    // BLOCK_QN_1 contains [[PAGE_GETTING_STARTED]]
+    const result = invoke('query_backlinks_filtered', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as { items: Record<string, unknown>[] }
+    expect(result.items.length).toBeGreaterThanOrEqual(1)
+    const ids = result.items.map((b) => b.id)
+    expect(ids).toContain(SEED_IDS.BLOCK_QN_1)
+  })
+
+  it('returns empty for block with no backlinks', () => {
+    const result = invoke('query_backlinks_filtered', {
+      blockId: SEED_IDS.TAG_WORK,
+    }) as { items: Record<string, unknown>[] }
+    expect(result.items).toHaveLength(0)
+  })
+
+  it('applies BlockType filter', () => {
+    // Create a page-type block referencing Getting Started
+    invoke('create_block', {
+      blockType: 'page',
+      content: `Page linking to [[${SEED_IDS.PAGE_GETTING_STARTED}]]`,
+    })
+    // Filter to only 'page' type — should exclude the seed content block BLOCK_QN_1
+    const result = invoke('query_backlinks_filtered', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+      filters: [{ type: 'BlockType', block_type: 'page' }],
+    }) as { items: Record<string, unknown>[] }
+    for (const item of result.items) {
+      expect(item.block_type).toBe('page')
+    }
+    const ids = result.items.map((b) => b.id)
+    expect(ids).not.toContain(SEED_IDS.BLOCK_QN_1)
+  })
+
+  it('applies Contains filter', () => {
+    // Create another block referencing Getting Started with unique text
+    invoke('create_block', {
+      blockType: 'content',
+      content: `Unique xylophone text [[${SEED_IDS.PAGE_GETTING_STARTED}]]`,
+      parentId: SEED_IDS.PAGE_QUICK_NOTES,
+    })
+    const result = invoke('query_backlinks_filtered', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+      filters: [{ type: 'Contains', query: 'xylophone' }],
+    }) as { items: Record<string, unknown>[] }
+    expect(result.items).toHaveLength(1)
+    expect((result.items[0].content as string).toLowerCase()).toContain('xylophone')
+  })
+
+  it('returns correct total_count', () => {
+    const result = invoke('query_backlinks_filtered', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as { total_count: number; items: Record<string, unknown>[] }
+    expect(result.total_count).toBe(result.items.length)
+  })
+
+  it('returns BacklinkQueryResponse shape', () => {
+    const result = invoke('query_backlinks_filtered', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    expect(result).toHaveProperty('items')
+    expect(result).toHaveProperty('total_count')
+    expect(result).toHaveProperty('has_more')
+    expect(result).toHaveProperty('next_cursor')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// list_property_keys
+// ---------------------------------------------------------------------------
+
+describe('list_property_keys', () => {
+  it('returns sorted distinct keys', () => {
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      key: 'status',
+      valueText: 'done',
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+    invoke('set_property', {
+      blockId: SEED_IDS.BLOCK_GS_2,
+      key: 'category',
+      valueText: 'work',
+      valueNum: null,
+      valueDate: null,
+      valueRef: null,
+    })
+    const result = invoke('list_property_keys') as string[]
+    // Should be sorted and include 'category', 'status', plus defaults 'priority' and 'todo'
+    expect(result).toEqual([...result].sort())
+    expect(result).toContain('status')
+    expect(result).toContain('category')
+  })
+
+  it('includes default keys', () => {
+    // Even with no properties set, 'todo' and 'priority' should always be present
+    const result = invoke('list_property_keys') as string[]
+    expect(result).toContain('todo')
+    expect(result).toContain('priority')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // get_conflicts
 // ---------------------------------------------------------------------------
 

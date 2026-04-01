@@ -291,7 +291,7 @@ export function PageEditor({
               role="tabpanel"
               id="detail-tabpanel"
               aria-labelledby={`detail-tab-${activeTab}`}
-              className="detail-panel-content max-h-60 overflow-y-auto p-3"
+              className="detail-panel-content max-h-96 overflow-y-auto p-3"
             >
               {activeTab === 'backlinks' && <BacklinksPanel blockId={effectiveBlockId} />}
               {activeTab === 'history' && <HistoryPanel blockId={effectiveBlockId} />}

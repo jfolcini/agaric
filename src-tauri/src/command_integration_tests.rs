@@ -8,6 +8,7 @@
 //! Focus: verify every command's happy path, error variants, edge cases,
 //! and cross-cutting lifecycle interactions at the command boundary.
 
+use crate::backlink_query::{BacklinkFilter, BacklinkSort, CompareOp, SortDir};
 use crate::commands::*;
 use crate::db::init_pool;
 use crate::error::AppError;
@@ -3220,4 +3221,1418 @@ async fn query_by_property_happy_path() {
         .unwrap();
 
     assert!(empty.items.is_empty(), "nonexistent key must return empty");
+}
+
+// ======================================================================
+// query_backlinks_filtered — happy paths
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_returns_linking_blocks() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Create a target page
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Create two content blocks that reference the page
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        format!("links to [[{}]]", page.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone(),
+        format!("also links to [[{}]]", page.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let resp = query_backlinks_filtered_inner(&pool, page.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+
+    let ids: HashSet<String> = resp.items.iter().map(|b| b.id.clone()).collect();
+    assert!(ids.contains(&b1.id), "b1 must be in backlinks");
+    assert!(ids.contains(&b2.id), "b2 must be in backlinks");
+    assert_eq!(resp.items.len(), 2, "exactly two backlinks expected");
+    assert_eq!(resp.total_count, 2, "total_count must be 2");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_empty_for_no_links() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Lonely Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let resp = query_backlinks_filtered_inner(&pool, page.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+
+    assert!(resp.items.is_empty(), "no backlinks expected");
+    assert_eq!(resp.total_count, 0, "total_count must be 0");
+    assert!(!resp.has_more, "has_more must be false");
+    assert!(resp.next_cursor.is_none(), "no cursor for empty results");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_excludes_deleted() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        format!("link [[{}]]", page.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Verify backlink exists
+    let resp = query_backlinks_filtered_inner(&pool, page.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.items.len(), 1, "one backlink before deletion");
+
+    // Delete the linking block
+    delete_block_inner(&pool, DEV, &mat, b1.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let resp = query_backlinks_filtered_inner(&pool, page.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+
+    assert!(resp.items.is_empty(), "deleted backlink must be excluded");
+    assert_eq!(resp.total_count, 0, "total_count must be 0 after deletion");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_with_block_type_filter() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Create a page-type block linking to target
+    let page_linker = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "placeholder".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        page_linker.id.clone(),
+        format!("page ref [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Create a content-type block linking to target
+    let content_linker = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        content_linker.id.clone(),
+        format!("content ref [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Filter by block_type = content
+    let filters = vec![BacklinkFilter::BlockType {
+        block_type: "content".into(),
+    }];
+    let resp =
+        query_backlinks_filtered_inner(&pool, target.id.clone(), Some(filters), None, None, None)
+            .await
+            .unwrap();
+
+    assert_eq!(resp.items.len(), 1, "only content backlink returned");
+    assert_eq!(resp.items[0].id, content_linker.id);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_with_contains_filter() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        format!("foo bar [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone(),
+        format!("baz qux [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let filters = vec![BacklinkFilter::Contains {
+        query: "foo".into(),
+    }];
+    let resp =
+        query_backlinks_filtered_inner(&pool, target.id.clone(), Some(filters), None, None, None)
+            .await
+            .unwrap();
+
+    assert_eq!(resp.items.len(), 1, "only 'foo' content returned");
+    assert_eq!(resp.items[0].id, b1.id);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_with_property_text_filter() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        format!("first [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        "status".into(),
+        Some("active".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone(),
+        format!("second [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone(),
+        "status".into(),
+        Some("archived".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let filters = vec![BacklinkFilter::PropertyText {
+        key: "status".into(),
+        op: CompareOp::Eq,
+        value: "active".into(),
+    }];
+    let resp =
+        query_backlinks_filtered_inner(&pool, target.id.clone(), Some(filters), None, None, None)
+            .await
+            .unwrap();
+
+    assert_eq!(resp.items.len(), 1, "only active status returned");
+    assert_eq!(resp.items[0].id, b1.id);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_with_sort_created() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Create blocks with slight time gaps so ULIDs differ
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        format!("first [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone(),
+        format!("second [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Sort ascending (oldest first)
+    let resp_asc = query_backlinks_filtered_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        Some(BacklinkSort::Created { dir: SortDir::Asc }),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp_asc.items.len(), 2);
+    assert_eq!(
+        resp_asc.items[0].id, b1.id,
+        "b1 created first → first in Asc"
+    );
+    assert_eq!(
+        resp_asc.items[1].id, b2.id,
+        "b2 created second → second in Asc"
+    );
+
+    // Sort descending (newest first)
+    let resp_desc = query_backlinks_filtered_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        Some(BacklinkSort::Created { dir: SortDir::Desc }),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp_desc.items.len(), 2);
+    assert_eq!(resp_desc.items[0].id, b2.id, "b2 newest → first in Desc");
+    assert_eq!(resp_desc.items[1].id, b1.id, "b1 oldest → second in Desc");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_with_sort_property() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        format!("low [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        "priority".into(),
+        None,
+        Some(1.0),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone(),
+        format!("high [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone(),
+        "priority".into(),
+        None,
+        Some(10.0),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Sort by priority Desc (highest first)
+    let resp = query_backlinks_filtered_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        Some(BacklinkSort::PropertyNum {
+            key: "priority".into(),
+            dir: SortDir::Desc,
+        }),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp.items.len(), 2);
+    assert_eq!(resp.items[0].id, b2.id, "priority=10 first in Desc");
+    assert_eq!(resp.items[1].id, b1.id, "priority=1 second in Desc");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_pagination() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Create 7 backlinks
+    let mut block_ids = Vec::new();
+    for i in 0..7 {
+        let b = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "placeholder".into(),
+            None,
+            Some(i + 10),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        edit_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            b.id.clone(),
+            format!("link {} [[{}]]", i, target.id),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        block_ids.push(b.id);
+    }
+
+    // First page: limit=3
+    let resp1 = query_backlinks_filtered_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        Some(BacklinkSort::Created { dir: SortDir::Asc }),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp1.items.len(), 3, "first page has 3 items");
+    assert!(resp1.has_more, "more pages expected");
+    assert!(resp1.next_cursor.is_some(), "cursor must be present");
+    assert_eq!(resp1.total_count, 7, "total_count reflects all backlinks");
+
+    // Second page
+    let resp2 = query_backlinks_filtered_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        Some(BacklinkSort::Created { dir: SortDir::Asc }),
+        resp1.next_cursor,
+        Some(3),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp2.items.len(), 3, "second page has 3 items");
+    assert!(resp2.has_more, "still more pages");
+    assert!(resp2.next_cursor.is_some(), "cursor for third page");
+
+    // Third page (last)
+    let resp3 = query_backlinks_filtered_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        Some(BacklinkSort::Created { dir: SortDir::Asc }),
+        resp2.next_cursor,
+        Some(3),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp3.items.len(), 1, "third page has remaining 1 item");
+    assert!(!resp3.has_more, "no more pages");
+    assert!(resp3.next_cursor.is_none(), "no cursor on last page");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_total_count_matches() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Create 5 backlinks
+    for i in 0..5 {
+        let b = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "placeholder".into(),
+            None,
+            Some(i + 10),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        edit_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            b.id.clone(),
+            format!("link {} [[{}]]", i, target.id),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+    }
+
+    // Query with limit=2 — total_count should still be 5
+    let resp = query_backlinks_filtered_inner(&pool, target.id.clone(), None, None, None, Some(2))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.items.len(), 2, "page has 2 items");
+    assert_eq!(
+        resp.total_count, 5,
+        "total_count reflects all 5 matches, not just page"
+    );
+    assert!(resp.has_more, "more pages available");
+}
+
+// ======================================================================
+// query_backlinks_filtered — error paths
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_empty_block_id_returns_error() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = query_backlinks_filtered_inner(&pool, "".into(), None, None, None, None).await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "empty block_id must return Validation error, got: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_nonexistent_block_id_returns_empty() {
+    let (pool, _dir) = test_pool().await;
+
+    let resp = query_backlinks_filtered_inner(
+        &pool,
+        "NONEXISTENT_BLOCK_XYZ".into(),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        resp.items.is_empty(),
+        "nonexistent block_id returns empty, not error"
+    );
+    assert_eq!(resp.total_count, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_and_filter_intersection() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // b1: content type, status=active
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        format!("b1 [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        "status".into(),
+        Some("active".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // b2: content type, status=archived
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone(),
+        format!("b2 [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone(),
+        "status".into(),
+        Some("archived".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // b3: page type, status=active
+    let b3 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "placeholder".into(),
+        None,
+        Some(4),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b3.id.clone(),
+        format!("b3 [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b3.id.clone(),
+        "status".into(),
+        Some("active".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // AND filter: content type AND status=active → only b1
+    let filters = vec![BacklinkFilter::And {
+        filters: vec![
+            BacklinkFilter::BlockType {
+                block_type: "content".into(),
+            },
+            BacklinkFilter::PropertyText {
+                key: "status".into(),
+                op: CompareOp::Eq,
+                value: "active".into(),
+            },
+        ],
+    }];
+
+    let resp =
+        query_backlinks_filtered_inner(&pool, target.id.clone(), Some(filters), None, None, None)
+            .await
+            .unwrap();
+
+    assert_eq!(resp.items.len(), 1, "AND intersection must return 1 block");
+    assert_eq!(resp.items[0].id, b1.id, "only b1 matches both conditions");
+}
+
+// ======================================================================
+// query_backlinks_filtered — edge cases
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_unicode_content() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let unicode_content = format!("日本語テスト 🚀 [[{}]]", target.id);
+    edit_block_inner(&pool, DEV, &mat, b1.id.clone(), unicode_content.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let resp = query_backlinks_filtered_inner(&pool, target.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.items.len(), 1, "unicode backlink must be returned");
+    assert_eq!(
+        resp.items[0].content.as_deref(),
+        Some(unicode_content.as_str()),
+        "unicode content preserved"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_self_referencing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Block references itself
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        format!("self-ref [[{}]]", b1.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let resp = query_backlinks_filtered_inner(&pool, b1.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        1,
+        "self-referencing block returned as backlink"
+    );
+    assert_eq!(resp.items[0].id, b1.id);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_multiple_refs_same_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Block has [[target]] twice in content
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        format!("first [[{}]] second [[{}]]", target.id, target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let resp = query_backlinks_filtered_inner(&pool, target.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.items.len(),
+        1,
+        "duplicate refs produce only one backlink entry"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_filtered_created_in_range() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        format!("link [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Use a range that covers "now" — blocks just created should match
+    let filters = vec![BacklinkFilter::CreatedInRange {
+        after: Some("2020-01-01".into()),
+        before: Some("2099-12-31".into()),
+    }];
+    let resp =
+        query_backlinks_filtered_inner(&pool, target.id.clone(), Some(filters), None, None, None)
+            .await
+            .unwrap();
+
+    assert_eq!(resp.items.len(), 1, "block within date range is returned");
+
+    // Use a range in the past — no blocks should match
+    let filters_past = vec![BacklinkFilter::CreatedInRange {
+        after: Some("2000-01-01".into()),
+        before: Some("2001-01-01".into()),
+    }];
+    let resp_past = query_backlinks_filtered_inner(
+        &pool,
+        target.id.clone(),
+        Some(filters_past),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(resp_past.items.is_empty(), "no blocks in past date range");
+}
+
+// ======================================================================
+// list_property_keys — integration
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_list_property_keys_returns_distinct_sorted() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block one".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block two".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Set properties: b1 has "zebra" and "alpha", b2 has "alpha"
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        "zebra".into(),
+        Some("z".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        "alpha".into(),
+        Some("a".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone(),
+        "alpha".into(),
+        Some("a2".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let keys = list_property_keys_inner(&pool).await.unwrap();
+
+    assert_eq!(
+        keys,
+        vec!["alpha", "zebra"],
+        "keys must be distinct and sorted"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_list_property_keys_empty_when_no_properties() {
+    let (pool, _dir) = test_pool().await;
+
+    let keys = list_property_keys_inner(&pool).await.unwrap();
+
+    assert!(keys.is_empty(), "no properties → empty vec");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backlinks_list_property_keys_includes_all_types() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "block".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Set text property
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        "note".into(),
+        Some("hello".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Set numeric property
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        "count".into(),
+        None,
+        Some(42.0),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Set date property
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone(),
+        "due".into(),
+        None,
+        None,
+        Some("2025-06-15".into()),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let keys = list_property_keys_inner(&pool).await.unwrap();
+
+    assert_eq!(keys.len(), 3, "three distinct keys");
+    assert!(keys.contains(&"note".to_string()), "text key included");
+    assert!(keys.contains(&"count".to_string()), "num key included");
+    assert!(keys.contains(&"due".to_string()), "date key included");
 }

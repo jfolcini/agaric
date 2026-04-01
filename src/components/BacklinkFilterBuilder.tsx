@@ -7,7 +7,8 @@
 
 import { ArrowUpDown, Filter, Plus, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -27,7 +28,17 @@ export interface BacklinkFilterBuilderProps {
   propertyKeys: string[]
 }
 
-type FilterCategory = 'type' | 'status' | 'priority' | 'contains' | 'property' | 'date'
+type FilterCategory =
+  | 'type'
+  | 'status'
+  | 'priority'
+  | 'contains'
+  | 'property'
+  | 'date'
+  | 'property-set'
+  | 'property-empty'
+  | 'has-tag'
+  | 'tag-prefix'
 
 // ---------------------------------------------------------------------------
 // Human-readable filter summary
@@ -58,6 +69,7 @@ function filterSummary(filter: BacklinkFilter): string {
       return `created ${parts.join(' ')}`
     }
     case 'HasTag':
+      // TODO: resolve tag name from tag_id via Tauri command
       return `has tag ${filter.tag_id.slice(0, 8)}...`
     case 'HasTagPrefix':
       return `tag prefix "${filter.prefix}"`
@@ -102,8 +114,13 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
   const [propKey, setPropKey] = useState(propertyKeys[0] ?? '')
   const [propOp, setPropOp] = useState<CompareOp>('Eq')
   const [propValue, setPropValue] = useState('')
+  const [propType, setPropType] = useState<'text' | 'num' | 'date'>('text')
   const [dateAfter, setDateAfter] = useState('')
   const [dateBefore, setDateBefore] = useState('')
+  const [propSetKey, setPropSetKey] = useState(propertyKeys[0] ?? '')
+  const [propEmptyKey, setPropEmptyKey] = useState(propertyKeys[0] ?? '')
+  const [tagValue, setTagValue] = useState('')
+  const [prefixValue, setPrefixValue] = useState('')
 
   const handleApply = useCallback(() => {
     switch (category) {
@@ -117,21 +134,72 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
         onApply({ type: 'PropertyText', key: 'priority', op: 'Eq', value: priorityValue })
         break
       case 'contains':
-        if (containsQuery.trim()) {
-          onApply({ type: 'Contains', query: containsQuery.trim() })
+        if (!containsQuery.trim()) {
+          toast.error('Search text is required')
+          return
         }
+        onApply({ type: 'Contains', query: containsQuery.trim() })
         break
       case 'property':
-        if (propKey.trim()) {
+        if (!propKey.trim()) {
+          toast.error('Property key is required')
+          return
+        }
+        if (propType === 'num') {
+          const numVal = Number.parseFloat(propValue)
+          if (Number.isNaN(numVal)) {
+            toast.error('Invalid number')
+            return
+          }
+          onApply({ type: 'PropertyNum', key: propKey, op: propOp, value: numVal })
+        } else if (propType === 'date') {
+          if (!propValue) {
+            toast.error('Date value is required')
+            return
+          }
+          onApply({ type: 'PropertyDate', key: propKey, op: propOp, value: propValue })
+        } else {
           onApply({ type: 'PropertyText', key: propKey, op: propOp, value: propValue })
         }
         break
       case 'date':
+        if (!dateAfter && !dateBefore) {
+          toast.error('At least one date boundary is required')
+          return
+        }
         onApply({
           type: 'CreatedInRange',
           after: dateAfter || null,
           before: dateBefore || null,
         })
+        break
+      case 'property-set':
+        if (!propSetKey.trim()) {
+          toast.error('Property key is required')
+          return
+        }
+        onApply({ type: 'PropertyIsSet', key: propSetKey })
+        break
+      case 'property-empty':
+        if (!propEmptyKey.trim()) {
+          toast.error('Property key is required')
+          return
+        }
+        onApply({ type: 'PropertyIsEmpty', key: propEmptyKey })
+        break
+      case 'has-tag':
+        if (!tagValue.trim()) {
+          toast.error('Tag ID is required')
+          return
+        }
+        onApply({ type: 'HasTag', tag_id: tagValue.trim() })
+        break
+      case 'tag-prefix':
+        if (!prefixValue.trim()) {
+          toast.error('Tag prefix is required')
+          return
+        }
+        onApply({ type: 'HasTagPrefix', prefix: prefixValue.trim() })
         break
     }
   }, [
@@ -143,15 +211,27 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
     propKey,
     propOp,
     propValue,
+    propType,
     dateAfter,
     dateBefore,
+    propSetKey,
+    propEmptyKey,
+    tagValue,
+    prefixValue,
     onApply,
   ])
 
   return (
-    <div className="add-filter-row flex flex-wrap items-center gap-1.5 rounded-md border bg-muted/50 p-2">
+    <form
+      className="add-filter-row flex flex-wrap items-center gap-1.5 rounded-md border bg-muted/50 p-2"
+      aria-label="Add filter"
+      onSubmit={(e) => e.preventDefault()}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onCancel()
+      }}
+    >
       <select
-        className="h-7 rounded-md border bg-background px-2 text-xs"
+        className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
         value={category}
         onChange={(e) => setCategory(e.target.value as FilterCategory | '')}
         aria-label="Filter category"
@@ -163,11 +243,15 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
         <option value="contains">Contains</option>
         <option value="property">Property</option>
         <option value="date">Created Date</option>
+        <option value="property-set">Property Is Set</option>
+        <option value="property-empty">Property Is Empty</option>
+        <option value="has-tag">Has Tag</option>
+        <option value="tag-prefix">Tag Prefix</option>
       </select>
 
       {category === 'type' && (
         <select
-          className="h-7 rounded-md border bg-background px-2 text-xs"
+          className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
           value={blockType}
           onChange={(e) => setBlockType(e.target.value)}
           aria-label="Block type value"
@@ -180,7 +264,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
 
       {category === 'status' && (
         <select
-          className="h-7 rounded-md border bg-background px-2 text-xs"
+          className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
           value={statusValue}
           onChange={(e) => setStatusValue(e.target.value)}
           aria-label="Status value"
@@ -193,7 +277,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
 
       {category === 'priority' && (
         <select
-          className="h-7 rounded-md border bg-background px-2 text-xs"
+          className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
           value={priorityValue}
           onChange={(e) => setPriorityValue(e.target.value)}
           aria-label="Priority value"
@@ -218,7 +302,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
         <>
           {propertyKeys.length > 0 ? (
             <select
-              className="h-7 rounded-md border bg-background px-2 text-xs"
+              className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
               value={propKey}
               onChange={(e) => setPropKey(e.target.value)}
               aria-label="Property key"
@@ -239,7 +323,17 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
             />
           )}
           <select
-            className="h-7 rounded-md border bg-background px-2 text-xs"
+            className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+            value={propType}
+            onChange={(e) => setPropType(e.target.value as 'text' | 'num' | 'date')}
+            aria-label="Property type"
+          >
+            <option value="text">Text</option>
+            <option value="num">Number</option>
+            <option value="date">Date</option>
+          </select>
+          <select
+            className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
             value={propOp}
             onChange={(e) => setPropOp(e.target.value as CompareOp)}
             aria-label="Comparison operator"
@@ -281,6 +375,74 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
         </>
       )}
 
+      {category === 'property-set' &&
+        (propertyKeys.length > 0 ? (
+          <select
+            className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+            value={propSetKey}
+            onChange={(e) => setPropSetKey(e.target.value)}
+            aria-label="Property key"
+          >
+            {propertyKeys.map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <Input
+            className="h-7 w-24 text-xs"
+            placeholder="key"
+            value={propSetKey}
+            onChange={(e) => setPropSetKey(e.target.value)}
+            aria-label="Property key"
+          />
+        ))}
+
+      {category === 'property-empty' &&
+        (propertyKeys.length > 0 ? (
+          <select
+            className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+            value={propEmptyKey}
+            onChange={(e) => setPropEmptyKey(e.target.value)}
+            aria-label="Property key"
+          >
+            {propertyKeys.map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <Input
+            className="h-7 w-24 text-xs"
+            placeholder="key"
+            value={propEmptyKey}
+            onChange={(e) => setPropEmptyKey(e.target.value)}
+            aria-label="Property key"
+          />
+        ))}
+
+      {category === 'has-tag' && (
+        <Input
+          className="h-7 w-40 text-xs"
+          placeholder="Tag ID..."
+          value={tagValue}
+          onChange={(e) => setTagValue(e.target.value)}
+          aria-label="Tag ID"
+        />
+      )}
+
+      {category === 'tag-prefix' && (
+        <Input
+          className="h-7 w-40 text-xs"
+          placeholder="Tag prefix..."
+          value={prefixValue}
+          onChange={(e) => setPrefixValue(e.target.value)}
+          aria-label="Tag prefix"
+        />
+      )}
+
       {category && (
         <Button
           variant="default"
@@ -301,7 +463,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
       >
         Cancel
       </Button>
-    </div>
+    </form>
   )
 }
 
@@ -319,11 +481,20 @@ export function BacklinkFilterBuilder({
   propertyKeys,
 }: BacklinkFilterBuilderProps): React.ReactElement {
   const [showAddRow, setShowAddRow] = useState(false)
+  const addFilterButtonRef = useRef<HTMLButtonElement>(null)
 
   const handleAddFilter = useCallback(
     (filter: BacklinkFilter) => {
+      const summary = filterSummary(filter)
+      const isDuplicate = filters.some((f) => filterSummary(f) === summary)
+      if (isDuplicate) {
+        toast.error('Filter already applied')
+        setShowAddRow(false)
+        return
+      }
       onFiltersChange([...filters, filter])
       setShowAddRow(false)
+      requestAnimationFrame(() => addFilterButtonRef.current?.focus())
     },
     [filters, onFiltersChange],
   )
@@ -332,6 +503,7 @@ export function BacklinkFilterBuilder({
     (index: number) => {
       const next = filters.filter((_, i) => i !== index)
       onFiltersChange(next)
+      requestAnimationFrame(() => addFilterButtonRef.current?.focus())
     },
     [filters, onFiltersChange],
   )
@@ -339,6 +511,7 @@ export function BacklinkFilterBuilder({
   const handleClearAll = useCallback(() => {
     onFiltersChange([])
     onSortChange(null)
+    requestAnimationFrame(() => addFilterButtonRef.current?.focus())
   }, [onFiltersChange, onSortChange])
 
   const handleSortTypeChange = useCallback(
@@ -366,16 +539,22 @@ export function BacklinkFilterBuilder({
   const hasFilters = filters.length > 0 || sort !== null
 
   return (
-    <div className="backlink-filter-builder space-y-2" role="toolbar" aria-label="Backlink filters">
+    <fieldset
+      className="backlink-filter-builder space-y-2 border-0 p-0 m-0"
+      aria-label="Backlink filters"
+    >
       {/* Filter pills + Add button row */}
       <div className="flex flex-wrap items-center gap-1.5">
         <Filter className="h-3.5 w-3.5 text-muted-foreground" />
 
         {filters.map((filter, index) => (
           <Badge
-            key={filterSummary(filter)}
+            // biome-ignore lint/suspicious/noArrayIndexKey: filterSummary can produce duplicates for structurally different filters
+            key={index}
             variant="secondary"
             className="filter-pill gap-1 text-xs"
+            tabIndex={0}
+            aria-label={`Filter: ${filterSummary(filter)}`}
           >
             {filterSummary(filter)}
             <button
@@ -390,9 +569,10 @@ export function BacklinkFilterBuilder({
         ))}
 
         <Button
+          ref={addFilterButtonRef}
           variant="outline"
           size="xs"
-          className="add-filter-button h-6 gap-1 text-xs"
+          className="add-filter-button h-7 gap-1 text-xs"
           onClick={() => setShowAddRow(true)}
           aria-label="Add filter"
         >
@@ -404,14 +584,12 @@ export function BacklinkFilterBuilder({
         <span className="ml-auto flex items-center gap-1">
           <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
           <select
-            className="h-6 rounded-md border bg-background px-1.5 text-xs"
-            value={
-              sort ? (sort.type === 'Created' ? 'Created' : 'key' in sort ? sort.key : '') : ''
-            }
+            className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-1.5 text-xs"
+            value={sort ? (sort.type === 'Created' ? 'Created' : sort.key) : ''}
             onChange={(e) => handleSortTypeChange(e.target.value)}
             aria-label="Sort by"
           >
-            <option value="">Default sort</option>
+            <option value="">Sort by creation date (default)</option>
             <option value="Created">Created</option>
             {propertyKeys.map((k) => (
               <option key={k} value={k}>
@@ -423,7 +601,7 @@ export function BacklinkFilterBuilder({
             <Button
               variant="ghost"
               size="xs"
-              className="h-6 px-1 text-xs"
+              className="h-7 px-1 text-xs"
               onClick={handleSortDirToggle}
               aria-label={`Toggle sort direction (currently ${sort.dir === 'Asc' ? 'ascending' : 'descending'})`}
             >
@@ -436,7 +614,7 @@ export function BacklinkFilterBuilder({
           <Button
             variant="ghost"
             size="xs"
-            className="clear-all-button h-6 text-xs text-muted-foreground"
+            className="clear-all-button h-7 text-xs text-muted-foreground"
             onClick={handleClearAll}
           >
             Clear all
@@ -455,10 +633,14 @@ export function BacklinkFilterBuilder({
 
       {/* Count display */}
       {hasFilters && (
-        <p className="filter-count text-xs text-muted-foreground">
+        <p
+          className="filter-count text-xs text-muted-foreground"
+          aria-live="polite"
+          aria-atomic="true"
+        >
           Showing {filteredCount} of {totalCount} backlinks
         </p>
       )}
-    </div>
+    </fieldset>
   )
 }
