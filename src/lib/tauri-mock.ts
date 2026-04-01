@@ -75,6 +75,7 @@ export const SEED_IDS = {
   TAG_WORK: '000000000000000000000TAG01',
   TAG_PERSONAL: '000000000000000000000TAG02',
   TAG_IDEA: '000000000000000000000TAG03',
+  CONFLICT_01: '0000000000000000CONFLICT01',
 } as const
 
 function makeBlock(
@@ -195,6 +196,17 @@ function seedBlocks(): void {
   blocks.set(SEED_IDS.TAG_WORK, makeBlock(SEED_IDS.TAG_WORK, 'tag', 'work', null, 0))
   blocks.set(SEED_IDS.TAG_PERSONAL, makeBlock(SEED_IDS.TAG_PERSONAL, 'tag', 'personal', null, 1))
   blocks.set(SEED_IDS.TAG_IDEA, makeBlock(SEED_IDS.TAG_IDEA, 'tag', 'idea', null, 2))
+
+  // Conflict seed data — a conflict copy of BLOCK_GS_1 (edited on another device)
+  const conflict1 = makeBlock(
+    SEED_IDS.CONFLICT_01,
+    'content',
+    'Conflict version of block 1 (edited on another device)',
+    SEED_IDS.BLOCK_GS_1,
+    0,
+  )
+  conflict1.is_conflict = true
+  blocks.set(SEED_IDS.CONFLICT_01, conflict1)
 
   // Content blocks — children of "Quick Notes" (with backlink to Getting Started)
   blocks.set(
@@ -447,7 +459,8 @@ export function setupMock(): void {
       }
 
       case 'get_conflicts': {
-        return { items: [], next_cursor: null, has_more: false }
+        const items = [...blocks.values()].filter((b) => b.is_conflict === true && !b.deleted_at)
+        return { items, next_cursor: null, has_more: false }
       }
 
       case 'search_blocks': {

@@ -2,8 +2,12 @@ import { getSchema } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { AtTagPicker } from '../extensions/at-tag-picker'
 import { BlockLink } from '../extensions/block-link'
+import { BlockLinkPicker } from '../extensions/block-link-picker'
+import { ExternalLink } from '../extensions/external-link'
+import { SlashCommand } from '../extensions/slash-command'
 import { TagRef } from '../extensions/tag-ref'
 
 // Build a ProseMirror schema from our extensions to inspect their specs.
@@ -153,5 +157,142 @@ describe('Schema integration', () => {
     ]
     const para = schema.nodes.paragraph.create(null, nodes)
     expect(para.content.childCount).toBe(5)
+  })
+})
+
+// -- BlockLinkPicker ----------------------------------------------------------
+
+describe('BlockLinkPicker extension', () => {
+  it('has the correct extension name', () => {
+    const ext = BlockLinkPicker.configure({ items: async () => [] })
+    expect(ext.name).toBe('blockLinkPicker')
+  })
+
+  it('is an Extension type (not Node or Mark)', () => {
+    expect(BlockLinkPicker.type).toBe('extension')
+  })
+
+  it('accepts items option with a custom callback', () => {
+    const mockItems = vi.fn().mockReturnValue([])
+    const ext = BlockLinkPicker.configure({ items: mockItems })
+    expect(ext.options.items).toBe(mockItems)
+  })
+
+  it('accepts optional onCreate callback', () => {
+    const mockCreate = vi.fn().mockResolvedValue('NEW_ULID')
+    const ext = BlockLinkPicker.configure({
+      items: async () => [],
+      onCreate: mockCreate,
+    })
+    expect(ext.options.onCreate).toBe(mockCreate)
+  })
+
+  it('provides default items option that returns empty array', () => {
+    const ext = BlockLinkPicker.configure({})
+    expect(ext.options.items).toBeDefined()
+    expect(typeof ext.options.items).toBe('function')
+    expect(ext.options.items('')).toEqual([])
+  })
+
+  it('has onCreate undefined by default', () => {
+    const ext = BlockLinkPicker.configure({})
+    expect(ext.options.onCreate).toBeUndefined()
+  })
+})
+
+// -- SlashCommand -------------------------------------------------------------
+
+describe('SlashCommand extension', () => {
+  it('has the correct extension name', () => {
+    const ext = SlashCommand.configure({ items: async () => [], onCommand: vi.fn() })
+    expect(ext.name).toBe('slashCommand')
+  })
+
+  it('is an Extension type (not Node or Mark)', () => {
+    expect(SlashCommand.type).toBe('extension')
+  })
+
+  it('accepts items option with a custom callback', () => {
+    const mockItems = vi.fn().mockReturnValue([])
+    const ext = SlashCommand.configure({ items: mockItems, onCommand: vi.fn() })
+    expect(ext.options.items).toBe(mockItems)
+  })
+
+  it('accepts onCommand callback', () => {
+    const mockOnCommand = vi.fn()
+    const ext = SlashCommand.configure({ items: async () => [], onCommand: mockOnCommand })
+    expect(ext.options.onCommand).toBe(mockOnCommand)
+  })
+
+  it('provides default items option that returns empty array', () => {
+    const ext = SlashCommand.configure({})
+    expect(ext.options.items).toBeDefined()
+    expect(typeof ext.options.items).toBe('function')
+    expect(ext.options.items('')).toEqual([])
+  })
+
+  it('provides default onCommand as a no-op function', () => {
+    const ext = SlashCommand.configure({})
+    expect(ext.options.onCommand).toBeDefined()
+    expect(typeof ext.options.onCommand).toBe('function')
+  })
+})
+
+// -- AtTagPicker --------------------------------------------------------------
+
+describe('AtTagPicker extension', () => {
+  it('has the correct extension name', () => {
+    const ext = AtTagPicker.configure({ items: async () => [] })
+    expect(ext.name).toBe('atTagPicker')
+  })
+
+  it('is an Extension type (not Node or Mark)', () => {
+    expect(AtTagPicker.type).toBe('extension')
+  })
+
+  it('accepts items option with a custom callback', () => {
+    const mockItems = vi.fn().mockReturnValue([])
+    const ext = AtTagPicker.configure({ items: mockItems })
+    expect(ext.options.items).toBe(mockItems)
+  })
+
+  it('provides default items option that returns empty array', () => {
+    const ext = AtTagPicker.configure({})
+    expect(ext.options.items).toBeDefined()
+    expect(typeof ext.options.items).toBe('function')
+    expect(ext.options.items('')).toEqual([])
+  })
+})
+
+// -- ExternalLink -------------------------------------------------------------
+
+describe('ExternalLink extension', () => {
+  it('has the correct extension name (inherits from Link)', () => {
+    expect(ExternalLink.name).toBe('link')
+  })
+
+  it('is a Mark type', () => {
+    expect(ExternalLink.type).toBe('mark')
+  })
+
+  it('has autolink enabled', () => {
+    expect(ExternalLink.options.autolink).toBe(true)
+  })
+
+  it('has openOnClick disabled', () => {
+    expect(ExternalLink.options.openOnClick).toBe(false)
+  })
+
+  it('has linkOnPaste enabled', () => {
+    expect(ExternalLink.options.linkOnPaste).toBe(true)
+  })
+
+  it('has external-link CSS class in HTMLAttributes', () => {
+    expect(ExternalLink.options.HTMLAttributes).toBeDefined()
+    expect(ExternalLink.options.HTMLAttributes.class).toBe('external-link')
+  })
+
+  it('has noopener noreferrer rel attribute', () => {
+    expect(ExternalLink.options.HTMLAttributes.rel).toBe('noopener noreferrer')
   })
 })

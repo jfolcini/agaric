@@ -487,6 +487,63 @@ test.describe('Block interactions', () => {
     await expect(dragHandle).toBeVisible({ timeout: 3000 })
   })
 
+  test('drag-and-drop reorders blocks', async ({ page }) => {
+    // Use Quick Notes (2 blocks — simpler)
+    await openPage(page, 'Quick Notes')
+
+    const blocks = page.locator('.sortable-block')
+    await expect(blocks).toHaveCount(2, { timeout: 3000 })
+
+    // Capture original order
+    const firstText = await blocks.nth(0).locator('.block-static').innerText()
+    const secondText = await blocks.nth(1).locator('.block-static').innerText()
+
+    // Drag second block to first position
+    const source = blocks.nth(1).locator('.drag-handle')
+    const target = blocks.nth(0)
+
+    // Hover to reveal drag handle
+    await blocks.nth(1).hover()
+    await expect(source).toBeVisible({ timeout: 3000 })
+
+    // Perform drag using manual pointer events
+    // (dnd-kit PointerSensor needs delay ≥ 250ms with tolerance ≤ 5px)
+    const sourceBox = await source.boundingBox()
+    const targetBox = await target.boundingBox()
+
+    if (!sourceBox || !targetBox) throw new Error('Could not get bounding boxes')
+
+    const sx = sourceBox.x + sourceBox.width / 2
+    const sy = sourceBox.y + sourceBox.height / 2
+    // Keep same X to avoid horizontal offset (which dnd-kit interprets as indent/dedent)
+    const tx = sx
+    const ty = targetBox.y + targetBox.height / 2
+
+    // pointerdown on the drag handle
+    await page.mouse.move(sx, sy)
+    await page.mouse.down()
+
+    // Hold still for the delay activation constraint (250ms delay, 5px tolerance)
+    await page.waitForTimeout(350)
+
+    // Move vertically to target in small increments
+    const moveSteps = 20
+    for (let i = 1; i <= moveSteps; i++) {
+      const x = sx + (tx - sx) * (i / moveSteps)
+      const y = sy + (ty - sy) * (i / moveSteps)
+      await page.mouse.move(x, y)
+      if (i % 5 === 0) await page.waitForTimeout(50)
+    }
+
+    // Pause for dnd-kit to process the over state, then drop
+    await page.waitForTimeout(150)
+    await page.mouse.up()
+
+    // Verify order swapped
+    await expect(blocks.nth(0).locator('.block-static')).toHaveText(secondText, { timeout: 5000 })
+    await expect(blocks.nth(1).locator('.block-static')).toHaveText(firstText, { timeout: 5000 })
+  })
+
   test('context menu appears on right-click', async ({ page }) => {
     await openPage(page, 'Getting Started')
 

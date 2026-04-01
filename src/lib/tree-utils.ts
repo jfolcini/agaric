@@ -226,7 +226,7 @@ export function computePosition(
   if (!insertAfterSibling) {
     // Inserting before all siblings
     const firstPos = siblings[0].position ?? 1
-    return Math.max(1, firstPos - 1)
+    return firstPos - 1
   }
 
   const afterPos = insertAfterSibling.position ?? 0

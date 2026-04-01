@@ -294,6 +294,16 @@ describe('computePosition', () => {
     expect(computePosition(items, 'P', 1, 'dragged')).toBe(4)
   })
 
+  it('returns negative position when first sibling is at position 0', () => {
+    const items: FlatBlock[] = [
+      mkFlat('P', null, 1, 0),
+      mkFlat('C1', 'P', 0, 1),
+      mkFlat('C2', 'P', 1, 1),
+    ]
+    // Drop before C1 (which is at position 0) — must go negative
+    expect(computePosition(items, 'P', 1, 'dragged')).toBe(-1)
+  })
+
   it('uses gap between siblings when available', () => {
     const items: FlatBlock[] = [
       mkFlat('P', null, 1, 0),
