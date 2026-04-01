@@ -14,7 +14,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BacklinkFilter, BacklinkSort, BlockRow } from '../lib/tauri'
-import { batchResolve, listPropertyKeys, queryBacklinksFiltered } from '../lib/tauri'
+import {
+  batchResolve,
+  listPropertyKeys,
+  listTagsByPrefix,
+  queryBacklinksFiltered,
+} from '../lib/tauri'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { EmptyState } from './EmptyState'
 import { renderRichContent } from './StaticBlock'
@@ -39,6 +44,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
   const [sort, setSort] = useState<BacklinkSort | null>(null)
   const [propertyKeys, setPropertyKeys] = useState<string[]>([])
+  const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
   // Load property keys on mount
   useEffect(() => {
@@ -46,6 +52,15 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
       .then(setPropertyKeys)
       .catch((err) => {
         console.error('Failed to load property keys:', err)
+      })
+  }, [])
+
+  // Load tags on mount
+  useEffect(() => {
+    listTagsByPrefix({ prefix: '' })
+      .then((result) => setTags(result.map((t) => ({ id: t.tag_id, name: t.name }))))
+      .catch((err) => {
+        console.error('Failed to load tags:', err)
       })
   }, [])
 
@@ -138,6 +153,17 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
     batchResolve([...idsToResolve])
       .then((resolved) => {
         if (cancelled) return
+        // Cap resolve cache at 1000 entries to prevent unbounded growth
+        const MAX_CACHE_SIZE = 1000
+        if (resolveCache.current.size + idsToResolve.size > MAX_CACHE_SIZE) {
+          const overflow = resolveCache.current.size + idsToResolve.size - MAX_CACHE_SIZE
+          const keys = resolveCache.current.keys()
+          for (let i = 0; i < overflow; i++) {
+            const next = keys.next()
+            if (next.done) break
+            resolveCache.current.delete(next.value)
+          }
+        }
         for (const r of resolved) {
           resolveCache.current.set(r.id, {
             title:
@@ -207,15 +233,19 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
   return (
     <div className="backlinks-panel space-y-3">
       {/* Filter builder */}
-      <BacklinkFilterBuilder
-        filters={filters}
-        sort={sort}
-        onFiltersChange={handleFiltersChange}
-        onSortChange={handleSortChange}
-        totalCount={totalCount}
-        filteredCount={blocks.length}
-        propertyKeys={propertyKeys}
-      />
+      <div className="[@media(pointer:coarse)]:max-h-[40vh] [@media(pointer:coarse)]:overflow-y-auto">
+        <BacklinkFilterBuilder
+          filters={filters}
+          sort={sort}
+          onFiltersChange={handleFiltersChange}
+          onSortChange={handleSortChange}
+          totalCount={totalCount}
+          filteredCount={totalCount}
+          propertyKeys={propertyKeys}
+          tags={tags}
+          tagResolver={resolveTagName}
+        />
+      </div>
 
       {loading && blocks.length === 0 && (
         <div className="backlinks-panel-loading space-y-2" aria-busy="true" role="status">
@@ -250,7 +280,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
         {blocks.map((block) => (
           <li
             key={block.id}
-            className="backlink-item flex items-center gap-3 border-b py-2 px-1 last:border-b-0"
+            className="backlink-item flex items-center gap-3 border-b py-2 px-1 last:border-b-0 [@media(pointer:coarse)]:flex-col [@media(pointer:coarse)]:items-start [@media(pointer:coarse)]:gap-1"
           >
             <Badge variant="secondary" className="backlink-item-type shrink-0">
               {block.block_type}
@@ -264,7 +294,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
                   })
                 : '(empty)'}
             </span>
-            <span className="backlink-item-id text-xs text-muted-foreground font-mono">
+            <span className="backlink-item-id text-xs text-muted-foreground font-mono [@media(pointer:coarse)]:self-end">
               {block.id.slice(0, 8)}...
             </span>
           </li>
@@ -278,6 +308,8 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
           className="backlinks-load-more w-full"
           onClick={loadMore}
           disabled={loading}
+          aria-busy={loading}
+          aria-label={loading ? 'Loading more backlinks' : `Load more backlinks (${blocks.length} of ${totalCount} loaded)`}
         >
           {loading ? 'Loading...' : 'Load more'}
         </Button>

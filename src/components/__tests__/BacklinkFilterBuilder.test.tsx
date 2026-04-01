@@ -41,6 +41,7 @@ const defaultProps: BacklinkFilterBuilderProps = {
   totalCount: 10,
   filteredCount: 10,
   propertyKeys: ['todo', 'priority', 'due'],
+  tags: [],
 }
 
 function renderBuilder(overrides?: Partial<BacklinkFilterBuilderProps>) {

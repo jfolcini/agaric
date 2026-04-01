@@ -26,6 +26,8 @@ export interface BacklinkFilterBuilderProps {
   totalCount: number
   filteredCount: number
   propertyKeys: string[]
+  tags: Array<{ id: string; name: string }>
+  tagResolver?: (id: string) => string
 }
 
 type FilterCategory =
@@ -132,11 +134,12 @@ function opLabel(op: CompareOp): string {
 
 interface AddFilterRowProps {
   propertyKeys: string[]
+  tags: Array<{ id: string; name: string }>
   onApply: (filter: BacklinkFilter) => void
   onCancel: () => void
 }
 
-function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): React.ReactElement {
+function AddFilterRow({ propertyKeys, tags, onApply, onCancel }: AddFilterRowProps): React.ReactElement {
   const [category, setCategory] = useState<FilterCategory | ''>('')
   const [blockType, setBlockType] = useState('content')
   const [statusValue, setStatusValue] = useState('TODO')
@@ -150,7 +153,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
   const [dateBefore, setDateBefore] = useState('')
   const [propSetKey, setPropSetKey] = useState(propertyKeys[0] ?? '')
   const [propEmptyKey, setPropEmptyKey] = useState(propertyKeys[0] ?? '')
-  const [tagValue, setTagValue] = useState('')
+  const [tagValue, setTagValue] = useState(tags[0]?.id ?? '')
   const [prefixValue, setPrefixValue] = useState('')
 
   const handleApply = useCallback(() => {
@@ -178,7 +181,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
         }
         if (propType === 'num') {
           const numVal = Number.parseFloat(propValue)
-          if (Number.isNaN(numVal)) {
+          if (!Number.isFinite(numVal)) {
             toast.error('Invalid number')
             return
           }
@@ -225,7 +228,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
         }
         // Basic ULID format check (26 uppercase alphanumeric). Accepts I/L/O/U
         // which strict Crockford base32 excludes; backend handles gracefully.
-        if (!/^[0-9A-Z]{26}$/.test(tagValue.trim())) {
+        if (tags.length === 0 && !/^[0-9A-Z]{26}$/.test(tagValue.trim())) {
           toast.error('Invalid ULID format (expected 26 uppercase characters)')
           return
         }
@@ -255,6 +258,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
     propEmptyKey,
     tagValue,
     prefixValue,
+    tags,
     onApply,
   ])
 
@@ -262,13 +266,16 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
     <form
       className="add-filter-row flex flex-wrap items-center gap-1.5 rounded-md border bg-muted/50 p-2 [@media(pointer:coarse)]:flex-col [@media(pointer:coarse)]:items-stretch"
       aria-label="Add filter"
-      onSubmit={(e) => e.preventDefault()}
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (category) handleApply()
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') onCancel()
       }}
     >
       <select
-        className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+        className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
         value={category}
         onChange={(e) => setCategory(e.target.value as FilterCategory | '')}
         aria-label="Filter category"
@@ -288,7 +295,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
 
       {category === 'type' && (
         <select
-          className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+          className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
           value={blockType}
           onChange={(e) => setBlockType(e.target.value)}
           aria-label="Block type value"
@@ -301,7 +308,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
 
       {category === 'status' && (
         <select
-          className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+          className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
           value={statusValue}
           onChange={(e) => setStatusValue(e.target.value)}
           aria-label="Status value"
@@ -314,7 +321,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
 
       {category === 'priority' && (
         <select
-          className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+          className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
           value={priorityValue}
           onChange={(e) => setPriorityValue(e.target.value)}
           aria-label="Priority value"
@@ -339,7 +346,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
         <>
           {propertyKeys.length > 0 ? (
             <select
-              className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+              className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
               value={propKey}
               onChange={(e) => setPropKey(e.target.value)}
               aria-label="Property key"
@@ -360,7 +367,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
             />
           )}
           <select
-            className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+            className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
             value={propOp}
             onChange={(e) => setPropOp(e.target.value as CompareOp)}
             aria-label="Comparison operator"
@@ -373,7 +380,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
             <option value="Gte">&gt;=</option>
           </select>
           <select
-            className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+            className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
             value={propType}
             onChange={(e) => setPropType(e.target.value as 'text' | 'num' | 'date')}
             aria-label="Property type"
@@ -415,7 +422,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
       {category === 'property-set' &&
         (propertyKeys.length > 0 ? (
           <select
-            className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+            className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
             value={propSetKey}
             onChange={(e) => setPropSetKey(e.target.value)}
             aria-label="Property key"
@@ -439,7 +446,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
       {category === 'property-empty' &&
         (propertyKeys.length > 0 ? (
           <select
-            className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+            className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
             value={propEmptyKey}
             onChange={(e) => setPropEmptyKey(e.target.value)}
             aria-label="Property key"
@@ -460,15 +467,29 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
           />
         ))}
 
-      {category === 'has-tag' && (
-        <Input
-          className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
-          placeholder="Tag ID..."
-          value={tagValue}
-          onChange={(e) => setTagValue(e.target.value)}
-          aria-label="Tag ID"
-        />
-      )}
+      {category === 'has-tag' &&
+        (tags.length > 0 ? (
+          <select
+            className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-2 text-xs"
+            value={tagValue}
+            onChange={(e) => setTagValue(e.target.value)}
+            aria-label="Tag"
+          >
+            {tags.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <Input
+            className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
+            placeholder="Tag ID..."
+            value={tagValue}
+            onChange={(e) => setTagValue(e.target.value)}
+            aria-label="Tag ID"
+          />
+        ))}
 
       {category === 'tag-prefix' && (
         <Input
@@ -517,6 +538,8 @@ export function BacklinkFilterBuilder({
   totalCount,
   filteredCount,
   propertyKeys,
+  tags,
+  tagResolver,
 }: BacklinkFilterBuilderProps): React.ReactElement {
   const [showAddRow, setShowAddRow] = useState(false)
   const addFilterButtonRef = useRef<HTMLButtonElement>(null)
@@ -583,6 +606,10 @@ export function BacklinkFilterBuilder({
     >
       <legend className="sr-only">Backlink filters</legend>
 
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {filters.length} filter{filters.length === 1 ? '' : 's'} applied
+      </div>
+
       {/* Filter pills + Add button row */}
       <div className="flex flex-wrap items-center gap-1.5">
         <Filter className="h-3.5 w-3.5 text-muted-foreground" />
@@ -601,7 +628,9 @@ export function BacklinkFilterBuilder({
                   role="group"
                   aria-label={`Filter: ${filterSummary(filter)}`}
                 >
-                  {filterSummary(filter)}
+                  {filter.type === 'HasTag' && tagResolver
+                    ? `has tag ${tagResolver(filter.tag_id)}`
+                    : filterSummary(filter)}
                   <button
                     type="button"
                     className="ml-0.5 inline-flex items-center justify-center rounded-full p-1 hover:bg-muted active:bg-muted active:scale-95 focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px]"
@@ -650,12 +679,12 @@ export function BacklinkFilterBuilder({
         <span className="ml-auto flex items-center gap-1">
           <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
           <select
-            className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-1.5 text-xs"
+            className="h-7 [@media(pointer:coarse)]:h-11 rounded-md border bg-background px-1.5 text-xs"
             value={sort ? (sort.type === 'Created' ? 'Created' : sort.key) : ''}
             onChange={(e) => handleSortTypeChange(e.target.value)}
             aria-label="Sort by"
           >
-            <option value="">Sort by creation date (default)</option>
+            <option value="">Default order</option>
             <option value="Created">Created</option>
             {propertyKeys.map((k) => (
               <option key={k} value={k}>
@@ -684,8 +713,12 @@ export function BacklinkFilterBuilder({
       {showAddRow && (
         <AddFilterRow
           propertyKeys={propertyKeys}
+          tags={tags}
           onApply={handleAddFilter}
-          onCancel={() => setShowAddRow(false)}
+          onCancel={() => {
+            setShowAddRow(false)
+            requestAnimationFrame(() => addFilterButtonRef.current?.focus())
+          }}
         />
       )}
 

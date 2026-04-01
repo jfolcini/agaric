@@ -16,6 +16,7 @@
 //! 4. **Paginate** — keyset cursor pagination on the sorted list.
 //! 5. **Fetch** — load full `BlockRow` data for the page.
 
+use futures_util::future::try_join_all;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -446,6 +447,18 @@ fn resolve_filter<'a>(
             }
 
             BacklinkFilter::BlockType { block_type } => {
+                // Note (#321): This scans all blocks of the given type even though the
+                // result is later intersected with a smaller base/candidate set.  For
+                // common types like "content" this can return 10K+ rows.  Mitigations:
+                //   • And/Or combinators now resolve sub-filters in parallel (#319),
+                //     so the wall-clock cost overlaps with other concurrent filter
+                //     queries.
+                //   • The FxHashSet intersection in And/eval_backlink_query keeps
+                //     memory bounded to the smaller set.
+                //   • Pushing the candidate set into this query would require changing
+                //     resolve_filter's signature (invasive); a covering index on
+                //     (block_type, deleted_at, is_conflict) would also help but
+                //     requires a migration.
                 let rows = sqlx::query_scalar::<_, String>(
                     "SELECT id FROM blocks \
                      WHERE block_type = ?1 AND deleted_at IS NULL AND is_conflict = 0",
@@ -460,22 +473,30 @@ fn resolve_filter<'a>(
                 if filters.is_empty() {
                     return Ok(FxHashSet::default());
                 }
-                let mut iter = filters.iter();
-                let mut result = resolve_filter(pool, iter.next().unwrap(), depth + 1).await?;
-                for f in iter {
-                    let set = resolve_filter(pool, f, depth + 1).await?;
-                    result.retain(|id| set.contains(id));
+                // Resolve all sub-filters concurrently (#319) instead of
+                // sequentially, turning N serial DB round-trips into N
+                // concurrent ones.
+                let futures = filters.iter().map(|f| resolve_filter(pool, f, depth + 1));
+                let results = try_join_all(futures).await?;
+                let mut iter = results.into_iter();
+                let mut result = iter.next().unwrap();
+                for set in iter {
+                    result.retain(|id| set.contains(&*id));
                 }
                 Ok(result)
             }
 
             BacklinkFilter::Or { filters } => {
-                let mut result = FxHashSet::default();
-                for f in filters {
-                    let set = resolve_filter(pool, f, depth + 1).await?;
-                    result.extend(set);
+                // Resolve all sub-filters concurrently (#319) instead of
+                // sequentially, turning N serial DB round-trips into N
+                // concurrent ones.
+                let futures = filters.iter().map(|f| resolve_filter(pool, f, depth + 1));
+                let results = try_join_all(futures).await?;
+                let mut combined = FxHashSet::default();
+                for set in results {
+                    combined.extend(set);
                 }
-                Ok(result)
+                Ok(combined)
             }
 
             BacklinkFilter::Not { filter } => {
@@ -589,9 +610,13 @@ pub async fn eval_backlink_query(
         if filter_list.is_empty() {
             base_ids.clone()
         } else {
+            // Resolve all top-level filters concurrently (#319)
+            let futures = filter_list
+                .iter()
+                .map(|f| resolve_filter(pool, f, 0));
+            let results = try_join_all(futures).await?;
             let mut result = base_ids.clone();
-            for filter in filter_list {
-                let set = resolve_filter(pool, filter, 0).await?;
+            for set in results {
                 result.retain(|id| set.contains(id));
             }
             result
@@ -724,30 +749,25 @@ async fn sort_ids(
 /// Sort block IDs by a text property value.  Blocks without the property
 /// are placed at the end.
 ///
-/// Fetches all property values for `key` (not filtered to `ids`) because a dynamic
-/// IN clause would require runtime query building, losing compile-time SQL validation.
-/// Acceptable trade-off: the HashMap lookup is O(1), and property tables are small for
-/// personal note-taking use cases.
+/// Uses a dynamic IN clause (or `json_each` for large sets) to fetch only the
+/// property values for the given `ids`, avoiding a full table scan (#320).
 async fn sort_by_property_text(
     pool: &SqlitePool,
     ids: &FxHashSet<String>,
     key: &str,
     dir: &SortDir,
 ) -> Result<Vec<String>, AppError> {
-    let all_props = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT block_id, value_text FROM block_properties WHERE key = ?1",
-    )
-    .bind(key)
-    .fetch_all(pool)
-    .await?;
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
 
-    let prop_map: std::collections::HashMap<String, Option<String>> =
-        all_props.into_iter().collect();
+    let id_vec: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    let prop_map = fetch_text_props_for_ids(pool, key, &id_vec).await?;
 
     let mut sorted: Vec<String> = ids.iter().cloned().collect();
     sorted.sort_by(|a, b| {
-        let va = prop_map.get(a).and_then(|v| v.as_deref());
-        let vb = prop_map.get(b).and_then(|v| v.as_deref());
+        let va = prop_map.get(a.as_str()).and_then(|v| v.as_deref());
+        let vb = prop_map.get(b.as_str()).and_then(|v| v.as_deref());
         match (va, vb) {
             (Some(va), Some(vb)) => {
                 let directed = match dir {
@@ -764,31 +784,63 @@ async fn sort_by_property_text(
     Ok(sorted)
 }
 
+/// Fetch text property values for a set of block IDs.
+/// Uses bind-parameter IN clause for ≤500 IDs, `json_each` for larger sets.
+async fn fetch_text_props_for_ids(
+    pool: &SqlitePool,
+    key: &str,
+    ids: &[&str],
+) -> Result<std::collections::HashMap<String, Option<String>>, AppError> {
+    if ids.len() <= 500 {
+        let placeholders: String = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT block_id, value_text FROM block_properties \
+             WHERE key = ? AND block_id IN ({placeholders})"
+        );
+        let mut query = sqlx::query_as::<_, (String, Option<String>)>(&sql);
+        query = query.bind(key);
+        for id in ids {
+            query = query.bind(*id);
+        }
+        let rows = query.fetch_all(pool).await?;
+        Ok(rows.into_iter().collect())
+    } else {
+        let json_ids = serde_json::to_string(&ids)?;
+        let rows = sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT block_id, value_text FROM block_properties \
+             WHERE key = ? AND block_id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(key)
+        .bind(&json_ids)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
+}
+
 /// Sort block IDs by a numeric property value.
 ///
-/// Fetches all property values for `key` (not filtered to `ids`) because a dynamic
-/// IN clause would require runtime query building, losing compile-time SQL validation.
-/// Acceptable trade-off: the HashMap lookup is O(1), and property tables are small for
-/// personal note-taking use cases.
+/// Uses a dynamic IN clause (or `json_each` for large sets) to fetch only the
+/// property values for the given `ids`, avoiding a full table scan (#320).
 async fn sort_by_property_num(
     pool: &SqlitePool,
     ids: &FxHashSet<String>,
     key: &str,
     dir: &SortDir,
 ) -> Result<Vec<String>, AppError> {
-    let all_props = sqlx::query_as::<_, (String, Option<f64>)>(
-        "SELECT block_id, value_num FROM block_properties WHERE key = ?1",
-    )
-    .bind(key)
-    .fetch_all(pool)
-    .await?;
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
 
-    let prop_map: std::collections::HashMap<String, Option<f64>> = all_props.into_iter().collect();
+    let id_vec: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    let prop_map = fetch_num_props_for_ids(pool, key, &id_vec).await?;
 
     let mut sorted: Vec<String> = ids.iter().cloned().collect();
     sorted.sort_by(|a, b| {
-        let va = prop_map.get(a).and_then(|v| *v);
-        let vb = prop_map.get(b).and_then(|v| *v);
+        let va = prop_map.get(a.as_str()).and_then(|v| *v);
+        let vb = prop_map.get(b.as_str()).and_then(|v| *v);
         match (va, vb) {
             (Some(va), Some(vb)) => {
                 let directed = match dir {
@@ -805,32 +857,63 @@ async fn sort_by_property_num(
     Ok(sorted)
 }
 
+/// Fetch numeric property values for a set of block IDs.
+/// Uses bind-parameter IN clause for ≤500 IDs, `json_each` for larger sets.
+async fn fetch_num_props_for_ids(
+    pool: &SqlitePool,
+    key: &str,
+    ids: &[&str],
+) -> Result<std::collections::HashMap<String, Option<f64>>, AppError> {
+    if ids.len() <= 500 {
+        let placeholders: String = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT block_id, value_num FROM block_properties \
+             WHERE key = ? AND block_id IN ({placeholders})"
+        );
+        let mut query = sqlx::query_as::<_, (String, Option<f64>)>(&sql);
+        query = query.bind(key);
+        for id in ids {
+            query = query.bind(*id);
+        }
+        let rows = query.fetch_all(pool).await?;
+        Ok(rows.into_iter().collect())
+    } else {
+        let json_ids = serde_json::to_string(&ids)?;
+        let rows = sqlx::query_as::<_, (String, Option<f64>)>(
+            "SELECT block_id, value_num FROM block_properties \
+             WHERE key = ? AND block_id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(key)
+        .bind(&json_ids)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
+}
+
 /// Sort block IDs by a date property value.
 ///
-/// Fetches all property values for `key` (not filtered to `ids`) because a dynamic
-/// IN clause would require runtime query building, losing compile-time SQL validation.
-/// Acceptable trade-off: the HashMap lookup is O(1), and property tables are small for
-/// personal note-taking use cases.
+/// Uses a dynamic IN clause (or `json_each` for large sets) to fetch only the
+/// property values for the given `ids`, avoiding a full table scan (#320).
 async fn sort_by_property_date(
     pool: &SqlitePool,
     ids: &FxHashSet<String>,
     key: &str,
     dir: &SortDir,
 ) -> Result<Vec<String>, AppError> {
-    let all_props = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT block_id, value_date FROM block_properties WHERE key = ?1",
-    )
-    .bind(key)
-    .fetch_all(pool)
-    .await?;
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
 
-    let prop_map: std::collections::HashMap<String, Option<String>> =
-        all_props.into_iter().collect();
+    let id_vec: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+    let prop_map = fetch_date_props_for_ids(pool, key, &id_vec).await?;
 
     let mut sorted: Vec<String> = ids.iter().cloned().collect();
     sorted.sort_by(|a, b| {
-        let va = prop_map.get(a).and_then(|v| v.as_deref());
-        let vb = prop_map.get(b).and_then(|v| v.as_deref());
+        let va = prop_map.get(a.as_str()).and_then(|v| v.as_deref());
+        let vb = prop_map.get(b.as_str()).and_then(|v| v.as_deref());
         match (va, vb) {
             (Some(va), Some(vb)) => {
                 let directed = match dir {
@@ -845,6 +928,42 @@ async fn sort_by_property_date(
         }
     });
     Ok(sorted)
+}
+
+/// Fetch date property values for a set of block IDs.
+/// Uses bind-parameter IN clause for ≤500 IDs, `json_each` for larger sets.
+async fn fetch_date_props_for_ids(
+    pool: &SqlitePool,
+    key: &str,
+    ids: &[&str],
+) -> Result<std::collections::HashMap<String, Option<String>>, AppError> {
+    if ids.len() <= 500 {
+        let placeholders: String = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT block_id, value_date FROM block_properties \
+             WHERE key = ? AND block_id IN ({placeholders})"
+        );
+        let mut query = sqlx::query_as::<_, (String, Option<String>)>(&sql);
+        query = query.bind(key);
+        for id in ids {
+            query = query.bind(*id);
+        }
+        let rows = query.fetch_all(pool).await?;
+        Ok(rows.into_iter().collect())
+    } else {
+        let json_ids = serde_json::to_string(&ids)?;
+        let rows = sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT block_id, value_date FROM block_properties \
+             WHERE key = ? AND block_id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(key)
+        .bind(&json_ids)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
 }
 
 // ---------------------------------------------------------------------------
