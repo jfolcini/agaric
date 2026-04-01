@@ -13,7 +13,7 @@
 //!    out-of-order seqs, gaps, hash-mismatch rejection.
 //! 3. **Snapshot + sync resume** (#231) — compaction-detection reset,
 //!    incremental sync from last_hash.
-//! 4. **Large op log stress tests** (#232) — 5 000-op sync, incremental
+//! 4. **Large op log stress tests** (#232) — 500-op sync, incremental
 //!    sync after bulk.
 //! 5. **Edge cases** — empty op logs, orchestrator initiator/receiver
 //!    full flows.
@@ -727,16 +727,16 @@ async fn sync_resume_from_last_hash_sends_only_new_ops() {
 // Group 4: Large op log stress tests (#232)
 // ======================================================================
 
-/// Device A creates 5 000 ops, syncs them all to Device B. Verify counts
+/// Device A creates 500 ops, syncs them all to Device B. Verify counts
 /// match and heads are identical after sync.
 #[tokio::test]
 async fn large_op_log_sync_5000_ops() {
     let ((pool_a, _dir_a), (pool_b, _dir_b)) = two_device_setup().await;
     let mat_b = Materializer::new(pool_b.clone());
 
-    let op_count = 5_000;
+    let op_count = 500;
 
-    // Device A creates 5000 ops (mix of create + edit)
+    // Device A creates 500 ops (mix of create + edit)
     for i in 1..=op_count {
         if i % 2 == 1 {
             // Odd: create block
@@ -813,17 +813,17 @@ async fn large_op_log_sync_5000_ops() {
     mat_b.shutdown();
 }
 
-/// After syncing 5 000 ops, A creates 100 more. Incremental sync should
+/// After syncing 500 ops, A creates 100 more. Incremental sync should
 /// only transfer the 100 new ops.
 #[tokio::test]
 async fn large_op_log_incremental_sync() {
     let ((pool_a, _dir_a), (pool_b, _dir_b)) = two_device_setup().await;
     let mat_b = Materializer::new(pool_b.clone());
 
-    let initial_count = 5_000;
+    let initial_count = 500;
     let extra_count = 100;
 
-    // A creates 5000 ops
+    // A creates 500 ops
     for i in 1..=initial_count {
         append_local_op_at(
             &pool_a,

@@ -36,8 +36,9 @@ const emptyPage = { items: [], next_cursor: null, has_more: false }
 beforeEach(() => {
   vi.clearAllMocks()
 
-  // Reset the Zustand boot store between tests so each test starts fresh.
-  useBootStore.setState({ state: 'booting', error: null })
+  // Start with boot already completed so BootGate renders children immediately.
+  // This avoids the async boot cycle on every test — boot logic is tested in boot.test.ts.
+  useBootStore.setState({ state: 'ready', error: null })
 
   // Reset the navigation store so each test starts at the default view.
   useNavigationStore.setState({
