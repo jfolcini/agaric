@@ -19,6 +19,31 @@ const blocks: Map<string, Record<string, unknown>> = new Map()
 // Property store: block_id → key → PropertyRow
 const properties: Map<string, Map<string, Record<string, unknown>>> = new Map()
 
+// Op log for undo/redo/history
+interface MockOpLogEntry {
+  [key: string]: unknown
+  device_id: string
+  seq: number
+  op_type: string
+  payload: string
+  created_at: string
+}
+const opLog: MockOpLogEntry[] = []
+let opSeqCounter = 0
+
+function pushOp(opType: string, payload: Record<string, unknown>): MockOpLogEntry {
+  opSeqCounter += 1
+  const entry: MockOpLogEntry = {
+    device_id: 'mock-device',
+    seq: opSeqCounter,
+    op_type: opType,
+    payload: JSON.stringify(payload),
+    created_at: new Date().toISOString(),
+  }
+  opLog.push(entry)
+  return entry
+}
+
 // ---------------------------------------------------------------------------
 // Seed data IDs — exported for tests and external reference
 // ---------------------------------------------------------------------------
@@ -72,6 +97,8 @@ function seedBlocks(): void {
   blocks.clear()
   properties.clear()
   counter = 0
+  opLog.length = 0
+  opSeqCounter = 0
 
   const today = todayDate()
 
@@ -240,6 +267,13 @@ export function setupMock(): void {
           is_conflict: false,
         }
         blocks.set(id, row)
+        pushOp('create_block', {
+          block_id: id,
+          content: row.content,
+          parent_id: parentId,
+          block_type: row.block_type,
+          position,
+        })
         return row
       }
 
@@ -247,7 +281,9 @@ export function setupMock(): void {
         const a = args as Record<string, unknown>
         const b = blocks.get(a.blockId as string)
         if (!b) throw new Error('not found')
+        const oldContent = b.content as string | null
         b.content = a.toText as string
+        pushOp('edit_block', { block_id: a.blockId, to_text: a.toText, from_text: oldContent })
         return b
       }
 
@@ -255,6 +291,7 @@ export function setupMock(): void {
         const a = args as Record<string, unknown>
         const b = blocks.get(a.blockId as string)
         if (b) b.deleted_at = new Date().toISOString()
+        pushOp('delete_block', { block_id: a.blockId })
         return {
           block_id: a.blockId,
           deleted_at: new Date().toISOString(),
@@ -266,6 +303,7 @@ export function setupMock(): void {
         const a = args as Record<string, unknown>
         const b = blocks.get(a.blockId as string)
         if (b) b.deleted_at = null
+        pushOp('restore_block', { block_id: a.blockId })
         return { block_id: a.blockId, restored_count: 1 }
       }
 
@@ -289,10 +327,10 @@ export function setupMock(): void {
           .map((id) => blocks.get(id))
           .filter(Boolean)
           .map((b) => ({
-            id: b!.id as string,
-            title: (b!.content as string | null) ?? null,
-            block_type: b!.block_type as string,
-            deleted: b!.deleted_at !== null,
+            id: b?.id as string,
+            title: (b?.content as string | null) ?? null,
+            block_type: b?.block_type as string,
+            deleted: b?.deleted_at !== null,
           }))
       }
 
@@ -300,8 +338,17 @@ export function setupMock(): void {
         const a = args as Record<string, unknown>
         const b = blocks.get(a.blockId as string)
         if (!b) throw new Error('not found')
+        const oldParentId = b.parent_id
+        const oldPosition = b.position
         b.parent_id = a.newParentId as string | null
         b.position = a.newPosition as number
+        pushOp('move_block', {
+          block_id: a.blockId,
+          new_parent_id: b.parent_id,
+          new_position: b.position,
+          old_parent_id: oldParentId,
+          old_position: oldPosition,
+        })
         return { block_id: a.blockId, new_parent_id: b.parent_id, new_position: b.position }
       }
 
@@ -336,11 +383,54 @@ export function setupMock(): void {
       }
 
       case 'list_page_history': {
-        return { items: [], next_cursor: null, has_more: false }
+        const items = [...opLog].reverse().map((o) => ({
+          device_id: o.device_id,
+          seq: o.seq,
+          op_type: o.op_type,
+          payload: o.payload,
+          created_at: o.created_at,
+        }))
+        return { items, next_cursor: null, has_more: false }
       }
 
       case 'revert_ops': {
-        return []
+        const a = args as Record<string, unknown>
+        const ops = a.ops as Array<{ device_id: string; seq: number }>
+        const results: Array<Record<string, unknown>> = []
+
+        const sorted = [...ops].sort((x, y) => y.seq - x.seq)
+
+        for (const opRef of sorted) {
+          const target = opLog.find((o) => o.device_id === opRef.device_id && o.seq === opRef.seq)
+          if (!target) continue
+
+          const payload = JSON.parse(target.payload) as Record<string, unknown>
+
+          if (target.op_type === 'create_block') {
+            const b = blocks.get(payload.block_id as string)
+            if (b) b.deleted_at = new Date().toISOString()
+          } else if (target.op_type === 'delete_block') {
+            const b = blocks.get(payload.block_id as string)
+            if (b) b.deleted_at = null
+          } else if (target.op_type === 'edit_block') {
+            const b = blocks.get(payload.block_id as string)
+            if (b) b.content = (payload.from_text as string | null) ?? null
+          } else if (target.op_type === 'move_block') {
+            const b = blocks.get(payload.block_id as string)
+            if (b) {
+              b.parent_id = payload.old_parent_id as string | null
+              b.position = payload.old_position as number
+            }
+          } else if (target.op_type === 'restore_block') {
+            const b = blocks.get(payload.block_id as string)
+            if (b) b.deleted_at = new Date().toISOString()
+          }
+
+          const newOp = pushOp(`revert_${target.op_type}`, { reverted: target })
+          results.push(newOp)
+        }
+
+        return results
       }
 
       case 'get_conflicts': {
@@ -406,7 +496,7 @@ export function setupMock(): void {
         if (!properties.has(blockId)) {
           properties.set(blockId, new Map())
         }
-        properties.get(blockId)!.set(key, {
+        properties.get(blockId)?.set(key, {
           key,
           value_text: (a.valueText as string | null) ?? null,
           value_num: (a.valueNum as number | null) ?? null,
@@ -445,28 +535,103 @@ export function setupMock(): void {
       }
 
       case 'undo_page_op': {
+        const a = args as Record<string, unknown>
+        const undoDepth = (a.undoDepth as number) ?? 0
+
+        const undoableOps = opLog.filter(
+          (o) => !o.op_type.startsWith('undo_') && !o.op_type.startsWith('redo_'),
+        )
+        const targetIndex = undoableOps.length - 1 - undoDepth
+        if (targetIndex < 0) throw new Error('no undoable op found')
+        const target = undoableOps[targetIndex]
+
+        const payload = JSON.parse(target.payload) as Record<string, unknown>
+        let reverseOpType = 'edit_block'
+        if (target.op_type === 'create_block') {
+          const b = blocks.get(payload.block_id as string)
+          if (b) b.deleted_at = new Date().toISOString()
+          reverseOpType = 'delete_block'
+        } else if (target.op_type === 'delete_block') {
+          const b = blocks.get(payload.block_id as string)
+          if (b) b.deleted_at = null
+          reverseOpType = 'restore_block'
+        } else if (target.op_type === 'edit_block') {
+          const b = blocks.get(payload.block_id as string)
+          if (b) b.content = (payload.from_text as string | null) ?? null
+          reverseOpType = 'edit_block'
+        } else if (target.op_type === 'move_block') {
+          const b = blocks.get(payload.block_id as string)
+          if (b) {
+            b.parent_id = payload.old_parent_id as string | null
+            b.position = payload.old_position as number
+          }
+          reverseOpType = 'move_block'
+        } else if (target.op_type === 'restore_block') {
+          const b = blocks.get(payload.block_id as string)
+          if (b) b.deleted_at = new Date().toISOString()
+          reverseOpType = 'delete_block'
+        }
+
+        const newOp = pushOp(`undo_${reverseOpType}`, { reversed: target })
         return {
-          reversed_op: { device_id: 'mock', seq: 1 },
+          reversed_op: { device_id: target.device_id, seq: target.seq },
           new_op: {
-            device_id: 'mock',
-            seq: 2,
-            op_type: 'edit_block',
-            payload: '{}',
-            created_at: new Date().toISOString(),
+            device_id: newOp.device_id,
+            seq: newOp.seq,
+            op_type: reverseOpType,
+            payload: newOp.payload,
+            created_at: newOp.created_at,
           },
           is_redo: false,
         }
       }
 
       case 'redo_page_op': {
+        const a = args as Record<string, unknown>
+        const undoSeq = a.undoSeq as number
+
+        // The frontend stores reversed_op (the original op's ref) in the redo
+        // stack, so undoSeq is the original op's seq. Find and re-apply it.
+        const originalOp = opLog.find((o) => o.seq === undoSeq)
+        if (!originalOp) throw new Error('op not found for redo')
+
+        const payload = JSON.parse(originalOp.payload) as Record<string, unknown>
+
+        let redoOpType = 'edit_block'
+        if (originalOp.op_type === 'create_block') {
+          const b = blocks.get(payload.block_id as string)
+          if (b) b.deleted_at = null
+          redoOpType = 'create_block'
+        } else if (originalOp.op_type === 'delete_block') {
+          const b = blocks.get(payload.block_id as string)
+          if (b) b.deleted_at = new Date().toISOString()
+          redoOpType = 'delete_block'
+        } else if (originalOp.op_type === 'edit_block') {
+          const b = blocks.get(payload.block_id as string)
+          if (b) b.content = (payload.to_text as string | null) ?? null
+          redoOpType = 'edit_block'
+        } else if (originalOp.op_type === 'move_block') {
+          const b = blocks.get(payload.block_id as string)
+          if (b) {
+            b.parent_id = payload.new_parent_id as string | null
+            b.position = payload.new_position as number
+          }
+          redoOpType = 'move_block'
+        } else if (originalOp.op_type === 'restore_block') {
+          const b = blocks.get(payload.block_id as string)
+          if (b) b.deleted_at = null
+          redoOpType = 'restore_block'
+        }
+
+        const newOp = pushOp(`redo_${redoOpType}`, { re_applied: originalOp })
         return {
-          reversed_op: { device_id: 'mock', seq: 2 },
+          reversed_op: { device_id: originalOp.device_id, seq: originalOp.seq },
           new_op: {
-            device_id: 'mock',
-            seq: 3,
-            op_type: 'edit_block',
-            payload: '{}',
-            created_at: new Date().toISOString(),
+            device_id: newOp.device_id,
+            seq: newOp.seq,
+            op_type: redoOpType,
+            payload: newOp.payload,
+            created_at: newOp.created_at,
           },
           is_redo: true,
         }

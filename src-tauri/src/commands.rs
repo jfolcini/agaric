@@ -8061,4 +8061,159 @@ mod tests {
             "property should be removed after undo"
         );
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_undo_from_multiple_devices() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a page and two child blocks
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Concurrent Undo Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child_a = create_block_inner(
+            &pool,
+            "device-A",
+            &mat,
+            "content".into(),
+            "Block from device-A".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child_b = create_block_inner(
+            &pool,
+            "device-B",
+            &mat,
+            "content".into(),
+            "Block from device-B".into(),
+            Some(page.id.clone()),
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Edit both blocks from their respective devices
+        edit_block_inner(
+            &pool,
+            "device-A",
+            &mat,
+            child_a.id.clone(),
+            "A-edited".into(),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        edit_block_inner(
+            &pool,
+            "device-B",
+            &mat,
+            child_b.id.clone(),
+            "B-edited".into(),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify pre-undo state
+        let a_before = get_block_inner(&pool, child_a.id.clone()).await.unwrap();
+        let b_before = get_block_inner(&pool, child_b.id.clone()).await.unwrap();
+        assert_eq!(a_before.content, Some("A-edited".into()));
+        assert_eq!(b_before.content, Some("B-edited".into()));
+
+        // Spawn concurrent undo from device-A (depth=0) and device-B (depth=0)
+        // Both target the most recent op on the page, but since they run
+        // concurrently one will see depth=0 as the edit_block from device-B
+        // and the other will also try depth=0. SQLite serializes via
+        // BEGIN IMMEDIATE, so both should succeed without corruption.
+        let pool_a = pool.clone();
+        let mat_a = Materializer::new(pool.clone());
+        let page_id_a = page.id.clone();
+
+        let pool_b = pool.clone();
+        let mat_b = Materializer::new(pool.clone());
+        let page_id_b = page.id.clone();
+
+        let h_a = tokio::spawn(async move {
+            undo_page_op_inner(&pool_a, "device-A", &mat_a, page_id_a, 0).await
+        });
+        let h_b = tokio::spawn(async move {
+            undo_page_op_inner(&pool_b, "device-B", &mat_b, page_id_b, 0).await
+        });
+
+        let (r_a, r_b) = tokio::join!(h_a, h_b);
+
+        // Both tasks should complete without panicking
+        let result_a = r_a.expect("device-A undo task should not panic");
+        let result_b = r_b.expect("device-B undo task should not panic");
+
+        // At least one should succeed. Due to SQLite serialization,
+        // both may succeed (each sees a different "most recent" op
+        // after the first commits), or one may fail if both see the
+        // same op before serialization kicks in.
+        let a_ok = result_a.is_ok();
+        let b_ok = result_b.is_ok();
+        assert!(a_ok || b_ok, "at least one concurrent undo should succeed");
+
+        // If both succeeded, verify the page has 2 new undo ops
+        if a_ok && b_ok {
+            let ra = result_a.unwrap();
+            let rb = result_b.unwrap();
+
+            // Both should be undo (not redo)
+            assert!(!ra.is_redo);
+            assert!(!rb.is_redo);
+
+            // They should have different op refs (no duplicate ops)
+            assert_ne!(
+                ra.new_op_ref, rb.new_op_ref,
+                "concurrent undos should produce distinct ops"
+            );
+        }
+
+        // Verify database integrity: no duplicate seqs, all blocks readable
+        let a_after = get_block_inner(&pool, child_a.id.clone()).await.unwrap();
+        let b_after = get_block_inner(&pool, child_b.id.clone()).await.unwrap();
+
+        // At least one block should have been reverted to its pre-edit state
+        let a_reverted = a_after.content == Some("Block from device-A".into());
+        let b_reverted = b_after.content == Some("Block from device-B".into());
+        assert!(
+            a_reverted || b_reverted,
+            "at least one block should be reverted; a={:?}, b={:?}",
+            a_after.content,
+            b_after.content
+        );
+
+        // Verify op_log integrity: count total ops
+        let total_ops: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM op_log WHERE json_extract(payload, '$.block_id') IN \
+             (SELECT id FROM blocks WHERE parent_id = ?)",
+            page.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // We have: 2 create + 2 edit + (1 or 2) undo = 5 or 6 ops
+        assert!(
+            total_ops >= 5,
+            "expected at least 5 ops (2 creates + 2 edits + 1 undo), got {total_ops}"
+        );
+    }
 }

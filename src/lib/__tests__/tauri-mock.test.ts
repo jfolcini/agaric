@@ -567,6 +567,13 @@ describe('get_batch_properties', () => {
 
 describe('undo_page_op', () => {
   it('returns UndoResult shape', () => {
+    // Create an op first so there's something to undo
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'undo-target',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+
     const result = invoke('undo_page_op', {
       pageId: SEED_IDS.PAGE_GETTING_STARTED,
       undoDepth: 0,
@@ -583,9 +590,20 @@ describe('undo_page_op', () => {
 
 describe('redo_page_op', () => {
   it('returns UndoResult shape with is_redo true', () => {
-    const result = invoke('redo_page_op', {
+    // Create an op, then undo it, so there's an op to redo
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'redo-target',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    const undoResult = invoke('undo_page_op', {
       pageId: SEED_IDS.PAGE_GETTING_STARTED,
-      redoDepth: 0,
+      undoDepth: 0,
+    }) as { reversed_op: { device_id: string; seq: number } }
+
+    const result = invoke('redo_page_op', {
+      undoDeviceId: undoResult.reversed_op.device_id,
+      undoSeq: undoResult.reversed_op.seq,
     }) as Record<string, unknown>
     expect(result).toHaveProperty('reversed_op')
     expect(result).toHaveProperty('new_op')
