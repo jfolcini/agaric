@@ -1,6 +1,6 @@
 # Block Notes (Agaric)
 
-A local-first, block-based note-taking app for Linux desktop and Android. Inspired by Org-mode and Logseq — journal-first, with powerful tagging and emergent structure. No cloud, no accounts. Your data lives on your machine.
+A local-first, block-based note-taking app for **Linux**, **Windows**, **macOS**, and **Android**. Inspired by Org-mode and Logseq — journal-first, with powerful tagging and emergent structure. No cloud, no accounts. Your data lives on your machine.
 
 ## What is it?
 
@@ -67,7 +67,20 @@ Append-only operation log with CRDT-style conflict resolution. Designed for peer
 - **Node.js** (v20+) and npm
 - **Rust** (stable) — install via [rustup](https://rustup.rs/)
 - **Tauri CLI** — `cargo install tauri-cli`
-- **System deps** (Linux): `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev` (see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
+
+#### Linux
+
+- System packages: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev` (see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/))
+
+#### Windows
+
+- **WebView2** — ships with Windows 10/11 (nothing to install)
+- **Visual Studio Build Tools** or full Visual Studio with the "Desktop development with C++" workload (provides the MSVC toolchain). See [Tauri prerequisites for Windows](https://v2.tauri.app/start/prerequisites/#windows)
+
+#### macOS
+
+- **Xcode Command Line Tools** — `xcode-select --install`
+- **CLang and macOS development dependencies** are included with Xcode CLT. See [Tauri prerequisites for macOS](https://v2.tauri.app/start/prerequisites/#macos)
 
 ### Running the App
 
@@ -78,7 +91,7 @@ cargo tauri dev
 
 This starts:
 1. Vite dev server on `http://localhost:5173`
-2. Rust backend compiled and launched with a WebKit webview
+2. Rust backend compiled and launched with the platform's native webview (WebKitGTK on Linux, WebView2 on Windows, WKWebView on macOS)
 
 ### Running Tests
 
@@ -100,9 +113,19 @@ npm run test:e2e
 ```bash
 # Linux desktop (.deb + .AppImage)
 cargo tauri build
+
+# Windows (.msi + .exe via NSIS)
+cargo tauri build
+
+# macOS (.dmg + .app bundle)
+cargo tauri build
+# Universal binary (Intel + Apple Silicon):
+cargo tauri build --target universal-apple-darwin
 ```
 
-Produces a `.deb` and `.AppImage` in `src-tauri/target/release/bundle/`.
+Each platform must be built **on** that platform (no cross-compilation — Tauri links the native webview at build time). CI handles this via a build matrix across Linux, Windows, and macOS runners.
+
+Bundles land in `src-tauri/target/release/bundle/`.
 
 ### Android Development
 
@@ -321,7 +344,14 @@ The hooks cover: trailing whitespace, EOF fixer, YAML/TOML/JSON validation, Biom
 
 ## Database
 
-SQLite database stored at `~/.local/share/com.blocknotes.app/notes.db`. WAL mode with foreign keys enforced. 1 writer + 4 reader connection pool.
+SQLite database stored at the platform's app data directory. WAL mode with foreign keys enforced. 1 writer + 4 reader connection pool.
+
+| Platform | Path |
+|----------|------|
+| Linux | `~/.local/share/com.blocknotes.app/notes.db` |
+| Windows | `C:\Users\<User>\AppData\Local\com.blocknotes.app\notes.db` |
+| macOS | `~/Library/Application Support/com.blocknotes.app/notes.db` |
+| Android | `/data/data/com.blocknotes.app/notes.db` |
 
 ## License
 

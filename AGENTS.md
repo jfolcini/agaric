@@ -21,9 +21,12 @@ cd src-tauri && cargo nextest run   # Rust tests
 cd src-tauri && cargo fmt --check   # Formatting
 cd src-tauri && cargo clippy -- -D warnings  # Lint
 
-# Full Tauri app
+# Full Tauri app (build on each target platform — no cross-compilation)
 cargo tauri dev          # Dev mode with hot reload
-cargo tauri build        # Production build (.deb + .AppImage)
+cargo tauri build        # Production build
+# Linux → .deb + .AppImage
+# Windows → .msi + .exe (NSIS)
+# macOS → .dmg + .app (universal binary: --target universal-apple-darwin)
 
 # Android (requires Android SDK + NDK 27 + emulator)
 cargo tauri android init                          # First-time project setup
@@ -70,7 +73,7 @@ cd src-tauri && cargo test -- specta_tests --ignored
 ## Pre-commit & CI
 
 - **Pre-commit:** `prek.toml` — file-type-aware hooks (Rust hooks skip when no `.rs` staged, etc.)
-- **CI:** `.github/workflows/ci.yml`
+- **CI:** `.github/workflows/ci.yml` — 3 jobs: `check` (lint/test on Linux), `build` (matrix: Linux + Windows + macOS), `android-build`
 
 ## Android
 
