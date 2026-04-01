@@ -278,6 +278,8 @@ These tasks block everything downstream. Ship them before moving on.
 **ADRs:** ADR-09, ADR-10, ADR-07, ADR-02
 
 > The most complex phase. DAG log, diffy merge, mDNS pairing, snapshot protocol, full Android. XState + TanStack Query enter.
+>
+> **Prerequisite resolved:** 18 Tier 1 sync blockers from REVIEW-LATER.md fixed in commit `a3a38a5` (2026-04-01). Canonical JSON, BlockId newtypes, DeviceId encapsulation, expression indexes, WAL checkpoint, compaction guards, merge conflict semantics, and ADR-09 design decisions for delete+edit / move conflicts / tag dedup.
 
 ### State Management Upgrade
 

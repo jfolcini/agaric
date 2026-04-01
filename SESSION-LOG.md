@@ -1,5 +1,40 @@
 # Session Log
 
+## Session 28 — 2026-04-01 — Fix all 18 Tier 1 sync blockers
+
+Resolved all 18 sync blocker items (#1-#13, #67-#70, #130) from REVIEW-LATER.md.
+Commit: `a3a38a5` on branch `feat/undo-redo-history`. 32 files changed, 1098 insertions, 463 deletions.
+
+### Wave 1 — 3 parallel build subagents
+
+| Agent | Items | Key changes |
+|-------|-------|-------------|
+| Build A | #1, #8, #9 | Canonical JSON via `to_value` → BTreeMap; null-byte debug_asserts in hash.rs; constant_time_eq doc |
+| Build B | #5, #10, #12, #13 | Expression index migration 0003; WAL autocheckpoint pragma; `cleanup_old_snapshots()`; foreground task docs |
+| Build C | #6, #11, #67 | find_lca compaction guard; MAX_CHAIN_WALK 10K→1K + cycle detection; conflict merge keeps ours |
+| Orchestrator | #68, #69, #70 | ADR-09 design decisions for delete+edit, move conflicts, tag dedup |
+
+### Wave 2 — 1 large build subagent
+
+| Agent | Items | Key changes |
+|-------|-------|-------------|
+| Build D | #2, #3, #4, #7, #130 | BlockId newtype in 15 OpPayload fields; find_prev_edit Phase 4 docs; MAX_CONTENT_LENGTH=256KB; DeviceId private field; reverse_edit prev_edit chain fix |
+
+### Reviews
+
+- Build A: Conditional pass → fixed doc comment (hash.rs: "serde's derive order" → "alphabetically via serde_json::to_value")
+- Build B: Fail → fixed SQL in `cleanup_old_snapshots` (also delete pending snapshots)
+- Build C: Pass
+- Build D: Pass
+- E2E audit: 18/18 verified complete
+- UX audit: No breaking frontend changes; noted pre-existing silent error handling → REVIEW-LATER.md #131
+
+### Test results
+
+- 925 Rust tests passed (`cargo nextest run`)
+- 1541 frontend tests passed (`npx vitest run`)
+- All pre-commit hooks passed
+
 ## Session 27 — 2026-03-31 — REVIEW-LATER.md cleanup: verify and remove resolved items
 
 167 resolved items verified by 5 parallel subagents, then deleted from REVIEW-LATER.md.
