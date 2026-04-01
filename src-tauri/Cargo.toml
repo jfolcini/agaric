@@ -107,3 +107,7 @@ harness = false
 [[bench]]
 name = "undo_redo"
 harness = false
+
+[[bench]]
+name = "backlink_query_bench"
+harness = false

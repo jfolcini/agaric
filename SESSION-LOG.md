@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 35 — 2026-04-01 — Backlink query benchmark (#251)
+
+Resolved #251 (last remaining backlink filter item). All 37 backlink filter REVIEW-LATER items now resolved.
+1 build subagent + 1 review subagent. 2 files changed.
+
+### Build — backlink_query_bench.rs
+- New Criterion benchmark file with 6 groups, 16 benchmarks:
+  - **eval_query**: Parameterized at 10/100/1K backlinks, no filters
+  - **filter**: 14 benchmarks covering all 13 BacklinkFilter variants + empty result
+  - **sort**: 5 benchmarks covering Created (Asc/Desc), PropertyText, PropertyNum, PropertyDate
+  - **pagination**: First page + 3-page cursor walk with 500 backlinks
+  - **list_property_keys**: Parameterized at 100/1K blocks
+  - **scale**: Full pipeline (Contains filter + Created sort) at 100/1K/10K backlinks
+- Seed helpers: `seed_backlinks_full` (blocks + links + FTS + props + tags), `seed_backlinks_minimal`, `seed_blocks_with_properties`
+- Cargo.toml: Added `[[bench]]` entry
+
+### Review findings (applied)
+- Added 8 missing filter benchmarks (PropertyNum, PropertyDate, PropertyIsSet, PropertyIsEmpty, Not, HasTagPrefix, CreatedInRange, empty result)
+- Added PropertyDate sort benchmark
+- Added `due_date` (value_date) property to seed data
+- Enhanced doc comments on seed helpers with data distribution notes
+
+**Files:** `src-tauri/benches/backlink_query_bench.rs` (new), `src-tauri/Cargo.toml`
+
 ## Session 34 — 2026-04-01 — Backlink filter fixes (36 REVIEW-LATER items)
 
 Resolved #238-#250, #252-#274 (36 of 37 backlink filter items). #251 (benchmark) deferred.
