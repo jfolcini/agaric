@@ -82,6 +82,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     try {
       await deleteBlock(tagId)
       setTags((prev) => prev.filter((t) => t.id !== tagId))
+      useResolveStore.getState().set(tagId, '(deleted)', true)
     } catch (error) {
       toast.error(`Failed to delete tag: ${String(error)}`)
     }

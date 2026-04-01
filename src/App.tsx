@@ -224,6 +224,7 @@ function App() {
         e.preventDefault()
         createBlock({ blockType: 'page', content: 'Untitled' })
           .then((resp) => {
+            useResolveStore.getState().set(resp.id, 'Untitled', false)
             useNavigationStore.getState().navigateToPage(resp.id, 'Untitled')
             announce('New page created')
           })

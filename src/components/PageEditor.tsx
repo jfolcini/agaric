@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { editBlock } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { useNavigationStore } from '../stores/navigation'
+import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
 import { BacklinksPanel } from './BacklinksPanel'
 import { BlockTree } from './BlockTree'
@@ -115,6 +116,7 @@ export function PageEditor({
       await editBlock(pageId, newTitle)
       useUndoStore.getState().onNewAction(pageId)
       useNavigationStore.getState().replacePage(pageId, newTitle)
+      useResolveStore.getState().set(pageId, newTitle, false)
     }
   }, [editableTitle, title, pageId])
 

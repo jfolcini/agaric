@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
+import { useResolveStore } from '../stores/resolve'
 
 interface PageBrowserProps {
   /** Called when a page is selected. */
@@ -97,6 +98,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     try {
       await deleteBlock(pageId)
       setPages((prev) => prev.filter((p) => p.id !== pageId))
+      useResolveStore.getState().set(pageId, '(deleted)', true)
     } catch (error) {
       toast.error(`Failed to delete page: ${String(error)}`, {
         action: { label: 'Retry', onClick: () => handleDeletePage(pageId) },

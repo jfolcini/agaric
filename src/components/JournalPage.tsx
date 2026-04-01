@@ -50,6 +50,7 @@ import type { BlockRow } from '../lib/tauri'
 import { createBlock, getBlock, listBlocks, queryByProperty } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
+import { useResolveStore } from '../stores/resolve'
 import { BlockTree } from './BlockTree'
 import { EmptyState } from './EmptyState'
 
@@ -415,6 +416,7 @@ export function JournalPage({
         pageId = page.id
         setCreatedPages((prev) => new Map(prev).set(dateStr, pageId as string))
         setPageMap((prev) => new Map(prev).set(dateStr, pageId as string))
+        useResolveStore.getState().set(page.id, dateStr, false)
       }
 
       await createBlock({
