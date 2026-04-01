@@ -201,6 +201,13 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       }),
     ],
     editable: true,
+    editorProps: {
+      attributes: {
+        role: 'textbox',
+        'aria-multiline': 'true',
+        'aria-label': 'Block editor',
+      },
+    },
     content: { type: 'doc', content: [{ type: 'paragraph' }] },
   })
 

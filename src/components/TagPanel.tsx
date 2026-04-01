@@ -9,6 +9,7 @@
 import { Plus, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -39,7 +40,9 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
       .then((resp) => {
         setAllTags(resp.items.map((t: BlockRow) => ({ id: t.id, name: t.content ?? '' })))
       })
-      .catch(() => {})
+      .catch(() => {
+        toast.error('Failed to load tags')
+      })
   }, [])
 
   useEffect(() => {
@@ -49,7 +52,9 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
     if (blockId) {
       listTagsForBlock(blockId)
         .then((tagIds) => setAppliedTagIds(new Set(tagIds)))
-        .catch(() => {})
+        .catch(() => {
+          toast.error('Failed to load tags')
+        })
     }
   }, [blockId])
 
@@ -62,7 +67,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
         setQuery('')
         setShowPicker(false)
       } catch {
-        // Silently fail (e.g., already applied)
+        toast.error('Failed to load tags')
       }
     },
     [blockId],
@@ -79,7 +84,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
           return next
         })
       } catch {
-        // Silently fail
+        toast.error('Failed to delete tag')
       }
     },
     [blockId],
@@ -99,7 +104,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
         setAppliedTagIds((prev) => new Set([...prev, resp.id]))
       }
     } catch {
-      // Silently fail
+      toast.error('Failed to create tag')
     }
   }, [newTagName, blockId])
 

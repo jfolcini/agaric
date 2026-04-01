@@ -14,9 +14,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { ConflictList } from '../ConflictList'
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}))
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -323,13 +331,101 @@ describe('ConflictList', () => {
 
     render(<ConflictList />)
 
-    // Should render empty state (error silently caught), not crash
+    // Should render empty state (error caught), not crash
     await waitFor(() => {
       expect(
         screen.getByText(
           /No conflicts\. Conflicts appear when the same block is edited on multiple devices\./,
         ),
       ).toBeInTheDocument()
+    })
+
+    // Should show error toast
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to load conflicts')
+    })
+  })
+
+  it('shows toast on failed Keep action', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    mockedInvoke
+      .mockResolvedValueOnce({ items: [conflict], next_cursor: null, has_more: false })
+      .mockRejectedValueOnce(new Error('fail'))
+
+    render(<ConflictList />)
+
+    const keepBtn = await screen.findByRole('button', { name: /Keep/i })
+    await user.click(keepBtn)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to resolve conflict')
+    })
+  })
+
+  it('shows toast on failed Discard action', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'conflict text')
+    mockedInvoke
+      .mockResolvedValueOnce({ items: [conflict], next_cursor: null, has_more: false })
+      .mockRejectedValueOnce(new Error('fail'))
+
+    render(<ConflictList />)
+
+    const discardBtn = await screen.findByRole('button', { name: /Discard/i })
+    await user.click(discardBtn)
+
+    const yesBtn = screen.getByRole('button', { name: /Yes/i })
+    await user.click(yesBtn)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to resolve conflict')
+    })
+  })
+
+  it('shows success toast after successful Keep', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    mockedInvoke
+      .mockResolvedValueOnce({ items: [conflict], next_cursor: null, has_more: false })
+      .mockResolvedValueOnce({ id: 'ORIG001', block_type: 'content', content: 'conflict text' })
+      .mockResolvedValueOnce({
+        block_id: 'C1',
+        deleted_at: '2025-01-15T00:00:00Z',
+        descendants_affected: 0,
+      })
+
+    render(<ConflictList />)
+
+    const keepBtn = await screen.findByRole('button', { name: /Keep/i })
+    await user.click(keepBtn)
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Kept selected version')
+    })
+  })
+
+  it('shows success toast after successful Discard', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'conflict text')
+    mockedInvoke
+      .mockResolvedValueOnce({ items: [conflict], next_cursor: null, has_more: false })
+      .mockResolvedValueOnce({
+        block_id: 'C1',
+        deleted_at: '2025-01-15T00:00:00Z',
+        descendants_affected: 0,
+      })
+
+    render(<ConflictList />)
+
+    const discardBtn = await screen.findByRole('button', { name: /Discard/i })
+    await user.click(discardBtn)
+
+    const yesBtn = screen.getByRole('button', { name: /Yes/i })
+    await user.click(yesBtn)
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Conflict discarded')
     })
   })
 

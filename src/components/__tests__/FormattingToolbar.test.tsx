@@ -6,7 +6,7 @@
  *  - Active marks get aria-pressed=true + bg-accent
  *  - Undo/Redo disabled state reflects editor.can()
  *  - Clicking buttons calls the correct editor chain commands
- *  - Uses onMouseDown (not onClick) with preventDefault
+ *  - Uses onPointerDown (not onClick) with preventDefault
  *  - Separator between formatting and history groups
  *  - External link button toggles LinkEditPopover inside a Popover
  *  - Ctrl+K custom event opens the link popover
@@ -261,11 +261,11 @@ describe('FormattingToolbar', () => {
   // ── Button actions ───────────────────────────────────────────────────
 
   describe('button actions', () => {
-    it('toggles bold via editor chain on mousedown', () => {
+    it('toggles bold via editor chain on pointerdown', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const btn = screen.getByRole('button', { name: 'Bold' })
 
-      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const preventSpy = vi.spyOn(event, 'preventDefault')
       fireEvent(btn, event)
 
@@ -276,35 +276,35 @@ describe('FormattingToolbar', () => {
       expect(mockRun).toHaveBeenCalled()
     })
 
-    it('toggles italic via editor chain on mousedown', () => {
+    it('toggles italic via editor chain on pointerdown', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'Italic' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Italic' }))
 
       expect(mockToggleItalic).toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalled()
     })
 
-    it('toggles code via editor chain on mousedown', () => {
+    it('toggles code via editor chain on pointerdown', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'Code' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Code' }))
 
       expect(mockToggleCode).toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalled()
     })
 
-    it('triggers undo via editor chain on mousedown', () => {
+    it('triggers undo via editor chain on pointerdown', () => {
       mockEditorState.canUndo = true
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'Undo' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Undo' }))
 
       expect(mockUndo).toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalled()
     })
 
-    it('triggers redo via editor chain on mousedown', () => {
+    it('triggers redo via editor chain on pointerdown', () => {
       mockEditorState.canRedo = true
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'Redo' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Redo' }))
 
       expect(mockRedo).toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalled()
@@ -320,7 +320,7 @@ describe('FormattingToolbar', () => {
       const popover = screen.getByTestId('link-popover')
       expect(popover).toHaveAttribute('data-open', 'false')
 
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'External link' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'External link' }))
 
       expect(popover).toHaveAttribute('data-open', 'true')
     })
@@ -347,7 +347,7 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       // Open the popover first
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'External link' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'External link' }))
       const popover = screen.getByTestId('link-popover')
       expect(popover).toHaveAttribute('data-open', 'true')
 
@@ -381,7 +381,7 @@ describe('FormattingToolbar', () => {
 
     it('toggles code block via editor chain', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'Code block' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Code block' }))
 
       expect(mockToggleCodeBlock).toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalled()
@@ -420,7 +420,7 @@ describe('FormattingToolbar', () => {
       const spy = vi.fn()
       document.addEventListener('set-priority-1', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'Priority 1 (high)' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Priority 1 (high)' }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('set-priority-1', spy)
     })
@@ -429,7 +429,7 @@ describe('FormattingToolbar', () => {
       const spy = vi.fn()
       document.addEventListener('set-priority-2', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'Priority 2 (medium)' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Priority 2 (medium)' }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('set-priority-2', spy)
     })
@@ -438,7 +438,7 @@ describe('FormattingToolbar', () => {
       const spy = vi.fn()
       document.addEventListener('set-priority-3', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'Priority 3 (low)' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Priority 3 (low)' }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('set-priority-3', spy)
     })
@@ -447,7 +447,7 @@ describe('FormattingToolbar', () => {
       const spy = vi.fn()
       document.addEventListener('open-date-picker', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'Insert date' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Insert date' }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('open-date-picker', spy)
     })
@@ -455,7 +455,7 @@ describe('FormattingToolbar', () => {
     it('priority buttons prevent default to preserve editor focus', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const btn = screen.getByRole('button', { name: 'Priority 1 (high)' })
-      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const prevented = !btn.dispatchEvent(event)
       expect(prevented).toBe(true)
     })
@@ -463,7 +463,7 @@ describe('FormattingToolbar', () => {
     it('date button prevents default to preserve editor focus', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const btn = screen.getByRole('button', { name: 'Insert date' })
-      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const prevented = !btn.dispatchEvent(event)
       expect(prevented).toBe(true)
     })
@@ -474,14 +474,14 @@ describe('FormattingToolbar', () => {
   describe('internal link button', () => {
     it('inserts [[ into the editor to trigger the block link picker', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'Internal link' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Internal link' }))
       expect(mockInsertContent).toHaveBeenCalledWith('[[')
     })
 
-    it('prevents default on mousedown to preserve editor focus', () => {
+    it('prevents default on pointerdown to preserve editor focus', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const btn = screen.getByRole('button', { name: 'Internal link' })
-      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const prevented = !btn.dispatchEvent(event)
       expect(prevented).toBe(true)
     })
@@ -492,14 +492,14 @@ describe('FormattingToolbar', () => {
   describe('tag button', () => {
     it('inserts @ into the editor to trigger the tag picker', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.mouseDown(screen.getByRole('button', { name: 'Insert tag' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Insert tag' }))
       expect(mockInsertContent).toHaveBeenCalledWith('@')
     })
 
-    it('prevents default on mousedown to preserve editor focus', () => {
+    it('prevents default on pointerdown to preserve editor focus', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const btn = screen.getByRole('button', { name: 'Insert tag' })
-      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const prevented = !btn.dispatchEvent(event)
       expect(prevented).toBe(true)
     })

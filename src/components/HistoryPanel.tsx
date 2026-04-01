@@ -8,6 +8,7 @@
 import { Clock, Loader2, RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -42,7 +43,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
       } catch {
-        // Silently fail
+        toast.error('Failed to load history')
       }
       setLoading(false)
     },
@@ -70,8 +71,9 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         if (parsed.to_text != null) {
           await editBlock(blockId, parsed.to_text)
         }
+        toast.success('Reverted successfully')
       } catch {
-        // Silently fail
+        toast.error('Failed to revert')
       }
       setRestoringSeq(null)
     },

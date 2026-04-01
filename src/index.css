@@ -142,9 +142,14 @@
 
 /* Match static block padding so text doesn't jump on focus/blur. */
 .ProseMirror {
-  @apply px-3 py-1.5 text-sm outline-none;
+  @apply px-3 py-1.5 text-base outline-none;
   min-height: 1.75rem;
   line-height: 1.5;
+}
+@media (min-width: 768px) {
+  .ProseMirror {
+    @apply text-sm;
+  }
 }
 
 /* Remove default paragraph margins inside the editor */
@@ -219,7 +224,8 @@
 .block-link-chip {
   @apply inline-flex items-center rounded-md bg-primary/10 text-primary px-1.5 py-0.5 text-xs font-medium;
 }
-.block-link-chip:hover {
+.block-link-chip:hover,
+.block-link-chip:active {
   @apply bg-primary/20;
 }
 
@@ -227,7 +233,8 @@
 .tag-ref-chip {
   @apply inline-flex items-center rounded-md bg-accent px-1.5 py-0.5 text-xs font-medium text-accent-foreground;
 }
-.tag-ref-chip:hover {
+.tag-ref-chip:hover,
+.tag-ref-chip:active {
   @apply bg-accent/80;
 }
 
@@ -235,7 +242,8 @@
 .external-link {
   @apply text-primary underline decoration-primary/50 underline-offset-1 transition-colors;
 }
-.external-link:hover {
+.external-link:hover,
+.external-link:active {
   @apply decoration-primary text-primary/80;
 }
 
@@ -319,4 +327,16 @@
 .dark .hljs-deletion {
   color: #ffd8d3;
   background-color: #78191b;
+}
+
+/* ── Accessibility: prefers-reduced-motion ─────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

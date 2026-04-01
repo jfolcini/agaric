@@ -8,6 +8,7 @@
 import { RotateCcw, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,7 +47,7 @@ export function TrashView(): React.ReactElement {
       setNextCursor(resp.next_cursor)
       setHasMore(resp.has_more)
     } catch {
-      // Silently fail
+      toast.error('Failed to load trash')
     }
     setLoading(false)
   }, [])
@@ -60,8 +61,9 @@ export function TrashView(): React.ReactElement {
     try {
       await restoreBlock(block.id, block.deleted_at)
       setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+      toast.success('Block restored')
     } catch {
-      // Silently fail
+      toast.error('Failed to restore block')
     }
   }, [])
 
@@ -70,8 +72,9 @@ export function TrashView(): React.ReactElement {
       await purgeBlock(blockId)
       setBlocks((prev) => prev.filter((b) => b.id !== blockId))
       setConfirmPurgeId(null)
+      toast.success('Block permanently deleted')
     } catch {
-      // Silently fail
+      toast.error('Failed to purge block')
     }
   }, [])
 
@@ -169,7 +172,9 @@ export function TrashView(): React.ReactElement {
             <AlertDialogCancel className="trash-purge-no">No</AlertDialogCancel>
             <AlertDialogAction
               className="trash-purge-yes"
-              onClick={() => handlePurge(confirmPurgeId!)}
+              onClick={() => {
+                if (confirmPurgeId) handlePurge(confirmPurgeId)
+              }}
             >
               Yes, delete
             </AlertDialogAction>

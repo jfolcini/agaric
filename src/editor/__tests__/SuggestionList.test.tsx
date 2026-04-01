@@ -6,7 +6,7 @@
  *  - Default selection state (first item)
  *  - Empty state ("No results")
  *  - Click to select an item
- *  - Mouse enter updates selection
+ *  - Pointer enter updates selection
  *  - Imperative ref keyboard navigation (ArrowDown, ArrowUp, Enter)
  *  - Wrap-around navigation (last→first, first→last)
  *  - "Create" item styling with isCreate flag
@@ -78,7 +78,7 @@ describe('SuggestionList', () => {
     expect(command).toHaveBeenCalledWith(sampleItems[1])
   })
 
-  it('mouse enter updates selected index', async () => {
+  it('pointer enter updates selected index', async () => {
     const user = userEvent.setup()
     const command = vi.fn()
     render(<SuggestionList items={sampleItems} command={command} />)
@@ -247,12 +247,7 @@ describe('SuggestionList', () => {
     const command = vi.fn()
     const { container } = render(<SuggestionList items={sampleItems} command={command} />)
 
-    // The listbox lacks an aria-label (rendered outside the main React tree
-    // by ReactRenderer, so the parent Suggestion plugin owns labelling).
-    // Disable that rule here; a separate issue can track adding aria-label.
-    const results = await axe(container, {
-      rules: { 'aria-input-field-name': { enabled: false } },
-    })
+    const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 
@@ -274,5 +269,23 @@ describe('SuggestionList', () => {
 
     // The newly selected item (Beta) should have scrollIntoView called
     expect(options[1].scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+  })
+
+  // -- ARIA label ---------------------------------------------------------------
+
+  it('renders default aria-label "Suggestions" on the listbox when no label prop is passed', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={sampleItems} command={command} />)
+
+    const listbox = screen.getByRole('listbox')
+    expect(listbox).toHaveAttribute('aria-label', 'Suggestions')
+  })
+
+  it('renders custom aria-label on the listbox when label prop is provided', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={sampleItems} command={command} label="Tags" />)
+
+    const listbox = screen.getByRole('listbox')
+    expect(listbox).toHaveAttribute('aria-label', 'Tags')
   })
 })

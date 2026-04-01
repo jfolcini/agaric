@@ -9,6 +9,7 @@
 import { Link } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -79,7 +80,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
       } catch {
-        // Silently fail
+        toast.error('Failed to load backlinks')
       }
       setLoading(false)
     },

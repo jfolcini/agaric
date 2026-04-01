@@ -572,4 +572,14 @@ describe('StaticBlock', () => {
       expect(await axe(container)).toHaveNoViolations()
     })
   })
+
+  // -- ARIA attributes --------------------------------------------------------
+
+  describe('ARIA attributes', () => {
+    it('has aria-label="Edit block" on the button', () => {
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+      const button = screen.getByRole('button', { name: 'Edit block' })
+      expect(button).toBeInTheDocument()
+    })
+  })
 })

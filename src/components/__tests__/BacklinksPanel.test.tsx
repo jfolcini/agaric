@@ -12,9 +12,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { BacklinksPanel } from '../BacklinksPanel'
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}))
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -215,9 +223,14 @@ describe('BacklinksPanel', () => {
 
     render(<BacklinksPanel blockId="BLOCK001" />)
 
-    // Should render empty state (error silently caught), not crash
+    // Should render empty state (error caught), not crash
     await waitFor(() => {
       expect(screen.getByText('No backlinks found')).toBeInTheDocument()
+    })
+
+    // Should show error toast
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to load backlinks')
     })
   })
 

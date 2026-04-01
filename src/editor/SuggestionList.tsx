@@ -20,6 +20,8 @@ export interface PickerItem {
 export interface SuggestionListProps {
   items: PickerItem[]
   command: (item: PickerItem) => void
+  /** Accessible label for the suggestion listbox (e.g. "Tags", "Block links"). */
+  label?: string
 }
 
 export interface SuggestionListRef {
@@ -27,7 +29,7 @@ export interface SuggestionListRef {
 }
 
 export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>(
-  ({ items, command }, ref) => {
+  ({ items, command, label }, ref) => {
     const [selectedIndex, setSelectedIndex] = useState(0)
     const listRef = useRef<HTMLDivElement>(null)
 
@@ -84,6 +86,7 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
         ref={listRef}
         className="suggestion-list flex flex-col gap-0.5 overflow-y-auto rounded-lg border bg-popover p-1 shadow-md"
         role="listbox"
+        aria-label={label ?? 'Suggestions'}
       >
         {items.map((item, index) => (
           <button
@@ -94,7 +97,7 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
               item.isCreate && 'border-t border-border',
             )}
             onClick={() => selectItem(index)}
-            onMouseEnter={() => setSelectedIndex(index)}
+            onPointerEnter={() => setSelectedIndex(index)}
             type="button"
             role="option"
             aria-selected={index === selectedIndex}

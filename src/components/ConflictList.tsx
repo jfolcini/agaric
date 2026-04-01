@@ -9,6 +9,7 @@
 import { Check, GitMerge, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -45,7 +46,7 @@ export function ConflictList(): React.ReactElement {
       setNextCursor(resp.next_cursor)
       setHasMore(resp.has_more)
     } catch {
-      // Silently fail
+      toast.error('Failed to load conflicts')
     }
     setLoading(false)
   }, [])
@@ -63,8 +64,9 @@ export function ConflictList(): React.ReactElement {
       // Delete the conflict block
       await deleteBlock(block.id)
       setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+      toast.success('Kept selected version')
     } catch {
-      // Silently fail
+      toast.error('Failed to resolve conflict')
     }
   }, [])
 
@@ -73,8 +75,9 @@ export function ConflictList(): React.ReactElement {
       await deleteBlock(blockId)
       setBlocks((prev) => prev.filter((b) => b.id !== blockId))
       setConfirmDiscardId(null)
+      toast.success('Conflict discarded')
     } catch {
-      // Silently fail
+      toast.error('Failed to resolve conflict')
     }
   }, [])
 
@@ -166,7 +169,9 @@ export function ConflictList(): React.ReactElement {
             <AlertDialogCancel className="conflict-discard-no">No</AlertDialogCancel>
             <AlertDialogAction
               className="conflict-discard-yes"
-              onClick={() => handleDiscard(confirmDiscardId!)}
+              onClick={() => {
+                if (confirmDiscardId) handleDiscard(confirmDiscardId)
+              }}
             >
               Yes, discard
             </AlertDialogAction>

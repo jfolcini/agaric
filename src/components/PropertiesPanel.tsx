@@ -1,6 +1,7 @@
 import { Plus, Settings2, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -28,25 +29,35 @@ export function PropertiesPanel({ blockId }: PropertiesPanelProps): React.ReactE
     setLoading(true)
     getProperties(blockId)
       .then(setProperties)
-      .catch(() => {})
+      .catch(() => {
+        toast.error('Failed to load properties')
+      })
       .finally(() => setLoading(false))
   }, [blockId])
 
   const handleAdd = useCallback(async () => {
     if (!blockId || !newKey.trim()) return
-    await setProperty({ blockId, key: newKey.trim(), valueText: newValue })
-    const updated = await getProperties(blockId)
-    setProperties(updated)
-    setNewKey('')
-    setNewValue('')
-    setShowAddForm(false)
+    try {
+      await setProperty({ blockId, key: newKey.trim(), valueText: newValue })
+      const updated = await getProperties(blockId)
+      setProperties(updated)
+      setNewKey('')
+      setNewValue('')
+      setShowAddForm(false)
+    } catch {
+      toast.error('Failed to add property')
+    }
   }, [blockId, newKey, newValue])
 
   const handleDelete = useCallback(
     async (key: string) => {
       if (!blockId) return
-      await deleteProperty(blockId, key)
-      setProperties((prev) => prev.filter((p) => p.key !== key))
+      try {
+        await deleteProperty(blockId, key)
+        setProperties((prev) => prev.filter((p) => p.key !== key))
+      } catch {
+        toast.error('Failed to delete property')
+      }
     },
     [blockId],
   )

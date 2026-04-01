@@ -19,8 +19,16 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}))
 
 vi.mock('lucide-react', () => ({
   Plus: (props: { className?: string }) => (
@@ -354,8 +362,56 @@ describe('TagPanel', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_blocks', expect.anything())
     })
 
+    // Should show error toast
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to load tags')
+    })
+
     // Component should still render without crashing
     expect(screen.getByText(/Applied tags/i)).toBeInTheDocument()
+  })
+
+  it('shows toast on failed tag removal', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: mockTags, next_cursor: null, has_more: false }
+      if (cmd === 'list_tags_for_block') return ['TAG1']
+      if (cmd === 'remove_tag') throw new Error('fail')
+      return null
+    })
+    const user = userEvent.setup()
+
+    render(<TagPanel blockId="BLOCK1" />)
+
+    const removeBtn = await screen.findByLabelText('Remove tag work')
+    await user.click(removeBtn)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to delete tag')
+    })
+  })
+
+  it('shows toast on failed tag creation', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: mockTags, next_cursor: null, has_more: false }
+      if (cmd === 'list_tags_for_block') return ['TAG1']
+      if (cmd === 'create_block') throw new Error('fail')
+      return null
+    })
+    const user = userEvent.setup()
+
+    render(<TagPanel blockId="BLOCK1" />)
+
+    await screen.findByText('work')
+
+    await user.click(screen.getByRole('button', { name: /Add tag/i }))
+    const searchInput = screen.getByPlaceholderText('Search tags...')
+    await user.type(searchInput, 'newstuff')
+    await user.click(screen.getByText(/Create "newstuff"/))
+    await user.click(screen.getByRole('button', { name: 'Create tag' }))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to create tag')
+    })
   })
 
   // -----------------------------------------------------------------------

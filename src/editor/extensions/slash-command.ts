@@ -47,7 +47,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
           editor.chain().focus().deleteRange(range).run()
           extensionOptions.onCommand(props as PickerItem, editor)
         },
-        render: createSuggestionRenderer,
+        render: () => createSuggestionRenderer('Slash commands'),
       }),
     ]
   },

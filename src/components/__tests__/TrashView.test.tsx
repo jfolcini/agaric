@@ -14,9 +14,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { TrashView } from '../TrashView'
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}))
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -277,11 +285,16 @@ describe('TrashView', () => {
 
     render(<TrashView />)
 
-    // Component silently catches the error, loading ends, blocks stays empty
+    // Component catches the error, loading ends, blocks stays empty
     // so the empty state is shown
     expect(
       await screen.findByText(/Nothing in trash\. Deleted items will appear here\./),
     ).toBeInTheDocument()
+
+    // Should show error toast
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to load trash')
+    })
   })
 
   it('handles failed restore gracefully', async () => {
@@ -296,9 +309,14 @@ describe('TrashView', () => {
     const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
     await user.click(restoreBtn)
 
-    // Block should still be in the list (restore failed silently, so don't remove it)
+    // Block should still be in the list (restore failed, so don't remove it)
     await waitFor(() => {
       expect(screen.getByText('item')).toBeInTheDocument()
+    })
+
+    // Should show error toast
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to restore block')
     })
   })
 
@@ -319,9 +337,51 @@ describe('TrashView', () => {
     const yesBtn = screen.getByRole('button', { name: /Yes/i })
     await user.click(yesBtn)
 
-    // Block should still be in the list (purge failed silently)
+    // Block should still be in the list (purge failed)
     await waitFor(() => {
       expect(screen.getByText('item')).toBeInTheDocument()
+    })
+
+    // Should show error toast
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to purge block')
+    })
+  })
+
+  it('shows success toast after successful restore', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock('B1', 'to restore', '2025-01-15T00:00:00Z')
+    mockedInvoke
+      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
+      .mockResolvedValueOnce({ block_id: 'B1', restored_count: 1 })
+
+    render(<TrashView />)
+
+    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    await user.click(restoreBtn)
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Block restored')
+    })
+  })
+
+  it('shows success toast after successful purge', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock('B1', 'to purge', '2025-01-15T00:00:00Z')
+    mockedInvoke
+      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
+      .mockResolvedValueOnce({ block_id: 'B1', purged_count: 1 })
+
+    render(<TrashView />)
+
+    const purgeBtn = await screen.findByRole('button', { name: /Purge/i })
+    await user.click(purgeBtn)
+
+    const yesBtn = screen.getByRole('button', { name: /Yes/i })
+    await user.click(yesBtn)
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Block permanently deleted')
     })
   })
 

@@ -1,13 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createSuggestionRenderer } from '../suggestion-renderer'
 
-vi.mock('@tiptap/react', () => ({
-  ReactRenderer: vi.fn().mockImplementation(function (this: any) {
+const { mockReactRenderer } = vi.hoisted(() => {
+  // biome-ignore lint/suspicious/noExplicitAny: mock constructor requires dynamic this
+  const mockReactRenderer = vi.fn().mockImplementation(function (this: any) {
     this.element = document.createElement('div')
     this.ref = null
     this.updateProps = vi.fn()
     this.destroy = vi.fn()
-  }),
+  })
+  return { mockReactRenderer }
+})
+
+vi.mock('@tiptap/react', () => ({
+  ReactRenderer: mockReactRenderer,
 }))
 
 describe('createSuggestionRenderer', () => {
@@ -17,6 +23,31 @@ describe('createSuggestionRenderer', () => {
     expect(renderer.onUpdate).toBeTypeOf('function')
     expect(renderer.onKeyDown).toBeTypeOf('function')
     expect(renderer.onExit).toBeTypeOf('function')
+  })
+
+  it('passes label prop to ReactRenderer when label is provided', () => {
+    const renderer = createSuggestionRenderer('Tags')
+    const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
+
+    renderer.onStart({
+      items: [],
+      command: vi.fn(),
+      clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: {} as any,
+      query: '',
+      range: { from: 0, to: 1 },
+      text: '@',
+      decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+    } as any)
+
+    expect(mockReactRenderer).toHaveBeenCalled()
+    const lastCall = mockReactRenderer.mock.calls[mockReactRenderer.mock.calls.length - 1]
+    expect(lastCall[1].props.label).toBe('Tags')
+
+    // Clean up popup
+    renderer.onExit()
   })
 
   it('onKeyDown returns false for non-Escape keys when no renderer exists', () => {
@@ -53,11 +84,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 2 },
       text: '[[',
       decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -74,11 +107,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 1 },
       text: '@',
       decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -95,11 +130,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 2 },
       text: '[[',
       decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -116,11 +153,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 2 },
       text: '[[',
       decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -137,11 +176,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 2 },
       text: '[[',
       decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
     } as any)
 
     expect(document.querySelector('.suggestion-popup')).toBeTruthy()
@@ -157,11 +198,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect1 as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 2 },
       text: '[[',
       decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -173,11 +216,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect2 as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
       editor: {} as any,
       query: 'a',
       range: { from: 0, to: 3 },
       text: '[[a',
       decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
     } as any)
 
     expect(popup.style.left).toBe('220px')

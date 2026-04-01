@@ -18,10 +18,18 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { useNavigationStore } from '../../stores/navigation'
 import { SearchPanel } from '../SearchPanel'
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}))
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -309,7 +317,12 @@ describe('SearchPanel', () => {
       expect(mockedInvoke).toHaveBeenCalledOnce()
     })
 
-    // No results shown and no error banner — silent failure
+    // Should show error toast
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to search')
+    })
+
+    // No results shown
     expect(screen.queryByText(/No results found/)).not.toBeInTheDocument()
   })
 
@@ -439,6 +452,40 @@ describe('SearchPanel', () => {
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('search')
     expect(navState.pageStack).toHaveLength(0)
+  })
+
+  it('shows toast when parent lookup fails on result click', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        makeSearchResult({
+          id: 'CHILD1',
+          parent_id: 'PARENT1',
+          content: 'child block',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'child')
+
+    await waitFor(() => {
+      expect(screen.getByText('child block')).toBeInTheDocument()
+    })
+
+    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+
+    await user.click(screen.getByText('child block'))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to load search results')
+    })
   })
 
   // =========================================================================

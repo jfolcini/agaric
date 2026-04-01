@@ -43,14 +43,14 @@ function updatePosition(
   el.style.zIndex = '100'
 }
 
-export function createSuggestionRenderer() {
+export function createSuggestionRenderer(label?: string) {
   let renderer: ReactRenderer<SuggestionListRef> | null = null
   let popup: HTMLDivElement | null = null
 
   return {
     onStart(props: SuggestionProps) {
       renderer = new ReactRenderer(SuggestionList, {
-        props,
+        props: { ...props, label },
         editor: props.editor,
       })
 

@@ -11,6 +11,7 @@
 import { Loader2, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -52,7 +53,7 @@ export function SearchPanel(): React.ReactElement {
       setHasMore(resp.has_more)
       setSearched(true)
     } catch {
-      // Silently fail
+      toast.error('Failed to search')
     }
     setLoading(false)
   }, [])
@@ -120,7 +121,7 @@ export function SearchPanel(): React.ReactElement {
             const parent = await getBlock(block.parent_id)
             navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
           } catch {
-            // Silently fail — parent lookup failed
+            toast.error('Failed to load search results')
           }
         }
       } finally {

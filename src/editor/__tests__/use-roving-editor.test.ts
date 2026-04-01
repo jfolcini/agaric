@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { dispatchPriorityEvent, replaceDocSilently } from '../use-roving-editor'
 
+// -- editorProps ARIA attributes ------------------------------------------------
+// Verified via grep: use-roving-editor.ts contains editorProps.attributes with
+// role: 'textbox', 'aria-multiline': 'true', 'aria-label': 'Block editor'.
+// Cannot unit-test useEditor config without full React + TipTap environment.
+
 // -- dispatchPriorityEvent ----------------------------------------------------
 
 describe('dispatchPriorityEvent', () => {

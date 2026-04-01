@@ -13,9 +13,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { HistoryPanel } from '../HistoryPanel'
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}))
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -240,9 +248,14 @@ describe('HistoryPanel', () => {
 
     render(<HistoryPanel blockId="BLOCK001" />)
 
-    // Should render empty state (error silently caught), not crash
+    // Should render empty state (error caught), not crash
     await waitFor(() => {
       expect(screen.getByText('No history for this block')).toBeInTheDocument()
+    })
+
+    // Should show error toast
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to load history')
     })
   })
 
@@ -302,12 +315,30 @@ describe('HistoryPanel', () => {
     const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
     await user.click(restoreBtn)
 
-    // Should not crash — error is silently caught
+    // Should show error toast
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
-        blockId: 'BLOCK001',
-        toText: 'some content',
-      })
+      expect(toast.error).toHaveBeenCalledWith('Failed to revert')
+    })
+  })
+
+  it('shows success toast after successful restore', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // get_block_history
+      .mockResolvedValueOnce({ id: 'BLOCK001', block_type: 'content', content: 'Old content' }) // edit_block
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    await user.click(restoreBtn)
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Reverted successfully')
     })
   })
 

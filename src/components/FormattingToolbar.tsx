@@ -2,7 +2,7 @@
  * FormattingToolbar — always-visible toolbar rendered above the active editor.
  *
  * Buttons: Bold, Italic, Code | External Link, Code Block | Priority 1/2/3, Date | Undo, Redo.
- * Uses onMouseDown + preventDefault so clicks never steal focus from TipTap.
+ * Uses onPointerDown + preventDefault so clicks never steal focus from TipTap.
  * Active marks are highlighted via aria-pressed + bg-accent.
  *
  * The External Link button opens a LinkEditPopover (shadcn Popover) instead
@@ -102,7 +102,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             aria-label="Bold"
             aria-pressed={state.bold}
             className={state.bold ? 'bg-accent text-accent-foreground' : ''}
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               editor.chain().focus().toggleBold().run()
             }}
@@ -117,7 +117,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             aria-label="Italic"
             aria-pressed={state.italic}
             className={state.italic ? 'bg-accent text-accent-foreground' : ''}
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               editor.chain().focus().toggleItalic().run()
             }}
@@ -132,7 +132,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             aria-label="Code"
             aria-pressed={state.code}
             className={state.code ? 'bg-accent text-accent-foreground' : ''}
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               editor.chain().focus().toggleCode().run()
             }}
@@ -152,7 +152,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
                 aria-label="External link"
                 aria-pressed={state.link}
                 className={state.link ? 'bg-accent text-accent-foreground' : ''}
-                onMouseDown={(e) => {
+                onPointerDown={(e) => {
                   e.preventDefault()
                   setLinkPopoverOpen((prev) => !prev)
                 }}
@@ -176,7 +176,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             variant="ghost"
             size="icon-xs"
             aria-label="Internal link"
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               editor.chain().focus().insertContent('[[').run()
             }}
@@ -190,7 +190,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             variant="ghost"
             size="icon-xs"
             aria-label="Insert tag"
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               editor.chain().focus().insertContent('@').run()
             }}
@@ -206,7 +206,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             aria-label="Code block"
             aria-pressed={state.codeBlock}
             className={state.codeBlock ? 'bg-accent text-accent-foreground' : ''}
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               editor.chain().focus().toggleCodeBlock().run()
             }}
@@ -222,7 +222,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             variant="ghost"
             size="icon-xs"
             aria-label="Priority 1 (high)"
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('set-priority-1'))
             }}
@@ -235,7 +235,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             variant="ghost"
             size="icon-xs"
             aria-label="Priority 2 (medium)"
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('set-priority-2'))
             }}
@@ -248,7 +248,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             variant="ghost"
             size="icon-xs"
             aria-label="Priority 3 (low)"
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('set-priority-3'))
             }}
@@ -261,7 +261,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             variant="ghost"
             size="icon-xs"
             aria-label="Insert date"
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('open-date-picker'))
             }}
@@ -278,7 +278,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             size="icon-xs"
             aria-label="Undo"
             disabled={!state.canUndo}
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               editor.chain().focus().undo().run()
             }}
@@ -292,7 +292,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
             size="icon-xs"
             aria-label="Redo"
             disabled={!state.canRedo}
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               e.preventDefault()
               editor.chain().focus().redo().run()
             }}

@@ -223,6 +223,7 @@ export function StaticBlock({
       type="button"
       className="block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left text-sm transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
       data-block-id={blockId}
+      aria-label="Edit block"
       onClick={() => onFocus(blockId)}
     >
       {content ? (

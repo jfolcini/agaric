@@ -16,10 +16,18 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { PropertyRow } from '../../lib/tauri'
 import { PropertiesPanel } from '../PropertiesPanel'
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}))
 
 // Mock lucide-react icons with simple SVGs
 vi.mock('lucide-react', () => ({
@@ -223,6 +231,31 @@ describe('PropertiesPanel', () => {
     expect(screen.getByText('due')).toBeInTheDocument()
   })
 
+  it('shows toast on failed delete property', async () => {
+    const user = userEvent.setup()
+
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'get_properties') return [makeProp({ key: 'priority', value_text: 'A' })]
+      if (cmd === 'delete_property') throw new Error('fail')
+      return null
+    })
+
+    render(<PropertiesPanel blockId="BLOCK001" />)
+
+    expect(await screen.findByText('priority')).toBeInTheDocument()
+
+    const deleteBtn = screen.getByRole('button', { name: 'Delete property priority' })
+    await user.click(deleteBtn)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to delete property')
+    })
+
+    // Property should NOT be removed from the list on failure
+    expect(screen.getByText('priority')).toBeInTheDocument()
+  })
+
   // -- Add property -----------------------------------------------------------
 
   it('"Add property" button shows the add form', async () => {
@@ -356,8 +389,50 @@ describe('PropertiesPanel', () => {
       expect(container.querySelector('.properties-panel-loading')).not.toBeInTheDocument()
     })
 
+    // Should show error toast
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to load properties')
+    })
+
     // Should show empty state since error results in no properties
     expect(screen.getByText('No properties set')).toBeInTheDocument()
+  })
+
+  it('shows toast on failed add property', async () => {
+    const user = userEvent.setup()
+
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'get_properties') return []
+      if (cmd === 'set_property') throw new Error('fail')
+      return null
+    })
+
+    const { container } = render(<PropertiesPanel blockId="BLOCK001" />)
+
+    // Wait for loading to finish
+    await waitFor(() => {
+      expect(container.querySelector('.properties-panel-loading')).not.toBeInTheDocument()
+    })
+
+    // Open add form
+    const addPropertyBtn = screen.getByRole('button', { name: /Add property/i })
+    await user.click(addPropertyBtn)
+
+    // Fill in key and value
+    const keyInput = screen.getByPlaceholderText('Key')
+    const valueInput = screen.getByPlaceholderText('Value')
+    await user.type(keyInput, 'status')
+    await user.type(valueInput, 'active')
+
+    // Click Add
+    const addBtn = screen.getByRole('button', { name: 'Add' })
+    await user.click(addBtn)
+
+    // Should show error toast
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to add property')
+    })
   })
 
   // -- a11y -------------------------------------------------------------------

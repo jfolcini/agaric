@@ -42,7 +42,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
           const item = props as PickerItem
           editor.chain().focus().deleteRange(range).insertTagRef(item.id).run()
         },
-        render: createSuggestionRenderer,
+        render: () => createSuggestionRenderer('Tags'),
       }),
     ]
   },
