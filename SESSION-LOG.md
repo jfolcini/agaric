@@ -1164,3 +1164,41 @@ Resolved the last Tier 4 item: added swipe-from-left-edge gesture to open the mo
 ### Stats
 - 7 new tests, 55 test files, 1529 total tests
 - 1 build subagent + 1 review subagent (conditional pass, fixes applied)
+
+---
+
+## Session 23 — Batch Tier 4 fixes (#27, #55, #56, #57, #59, #63-#65)
+
+**Date:** 2026-03-31
+**Branch:** `feat/undo-redo-history`
+**Commit:** `68448c4`
+
+### Summary
+Resolved 7 Tier 4 items across 3 parallel build subagents: CSS/HTML viewport fixes, Android link opening, and Android config hardening.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `index.html` | #27: viewport-fit=cover in viewport meta |
+| `src/index.css` | #27: safe-area-inset padding on body; #57: min-height 100vh → 100dvh |
+| `src/components/BlockTree.tsx` | #59: calendar popup responsive max-[479px] with scroll |
+| `src/lib/open-url.ts` | #56: new openUrl helper (shell.open + window.open fallback) |
+| `src/components/StaticBlock.tsx` | #56: window.open → openUrl |
+| `src/components/__tests__/StaticBlock.test.tsx` | Mock + test for openUrl invocation |
+| `src/lib/__tests__/open-url.test.ts` | 2 tests: shell.open path + window.open fallback |
+| `package.json` | @tauri-apps/plugin-shell added |
+| `src-tauri/tauri.conf.json` | #55: CSP set (was null) |
+| `src-tauri/gen/android/app/proguard-rules.pro` | #63: keep rules for JNI/Tauri/WebView |
+| `src-tauri/gen/android/app/src/main/res/xml/file_paths.xml` | #64: restricted from root to subdirs |
+| `src-tauri/gen/android/app/src/main/res/xml/network_security_config.xml` | #65: new, localhost-only cleartext |
+| `src-tauri/gen/android/app/src/main/AndroidManifest.xml` | #65: networkSecurityConfig ref |
+| `REVIEW-LATER.md` | 7 items marked resolved |
+
+### Review findings applied
+- Added missing test: openUrl invocation verified in StaticBlock tests (reviewer finding)
+- Build C reviewer couldn't access gen/ files (gitignored) — verified manually, all correct
+
+### Stats
+- 3 new tests, 56 test files, 1532 total tests
+- 3 build subagents + 1 review subagent (A: pass, B: conditional pass, C: false-fail)
