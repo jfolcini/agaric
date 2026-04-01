@@ -110,6 +110,31 @@ describe('preload', () => {
 
     expect(versionAfter).toBe(versionBefore + 1)
   })
+
+  it('preserves concurrent set() calls (merge, not replace)', async () => {
+    // Simulate a set() call that lands before preload finishes
+    useResolveStore.getState().set('NEW_PAGE', 'Created During Preload', false)
+
+    const mockPages = [
+      { id: 'PAGE_1', content: 'Page One', deleted_at: null },
+      // DB also has an older version of NEW_PAGE
+      { id: 'NEW_PAGE', content: 'Old DB Title', deleted_at: null },
+    ]
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
+      if (cmd === 'list_tags_by_prefix') return []
+      return null
+    })
+
+    await useResolveStore.getState().preload()
+
+    const state = useResolveStore.getState()
+    // The concurrent set() entry must win over fetched data
+    expect(state.cache.get('NEW_PAGE')).toEqual({ title: 'Created During Preload', deleted: false })
+    // Other fetched entries should still be present
+    expect(state.cache.get('PAGE_1')).toEqual({ title: 'Page One', deleted: false })
+  })
 })
 
 // ---------------------------------------------------------------------------

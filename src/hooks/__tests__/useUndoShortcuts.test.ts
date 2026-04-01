@@ -62,6 +62,7 @@ vi.mock('../../lib/tauri', () => ({
 }))
 
 import { useNavigationStore } from '@/stores/navigation'
+import { useResolveStore } from '@/stores/resolve'
 import { useUndoStore } from '@/stores/undo'
 
 const mockedNavGetState = vi.mocked(useNavigationStore.getState)
@@ -106,6 +107,7 @@ beforeEach(async () => {
   // biome-ignore lint/suspicious/noExplicitAny: act typing varies across React versions
   act = (React as any).act
   vi.clearAllMocks()
+  useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })
 
   // Reset default mock return values
   mockedNavGetState.mockReturnValue({
@@ -492,6 +494,40 @@ describe('refresh after undo/redo', () => {
 
     // replacePage should NOT have been called since getBlock failed
     expect(mockReplacePage).not.toHaveBeenCalled()
+
+    unmount()
+  })
+
+  it('updates resolve cache after successful undo', async () => {
+    mockUndo.mockResolvedValueOnce({ type: 'undo' })
+    mockGetBlock.mockResolvedValueOnce({ id: 'PAGE_1', content: 'Reverted Title' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      const entry = useResolveStore.getState().cache.get('PAGE_1')
+      expect(entry).toEqual({ title: 'Reverted Title', deleted: false })
+    })
+
+    unmount()
+  })
+
+  it('does not update resolve cache when getBlock fails', async () => {
+    mockUndo.mockResolvedValueOnce({ type: 'undo' })
+    mockGetBlock.mockRejectedValueOnce(new Error('not found'))
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockLoad).toHaveBeenCalledWith('PAGE_1')
+    })
+
+    // Resolve cache should remain empty (getBlock failed, so set() was never called)
+    expect(useResolveStore.getState().cache.size).toBe(0)
 
     unmount()
   })

@@ -57,6 +57,16 @@ vi.mock('@/stores/blocks', () => ({
   },
 }))
 
+const mockPreload = vi.fn().mockResolvedValue(undefined)
+
+vi.mock('@/stores/resolve', () => ({
+  useResolveStore: {
+    getState: vi.fn(() => ({
+      preload: mockPreload,
+    })),
+  },
+}))
+
 // -- Minimal renderHook (matches project pattern) -----------------------------
 
 // biome-ignore lint/suspicious/noExplicitAny: act typing varies across React versions
@@ -426,6 +436,50 @@ describe('useSyncEvents', () => {
       })
 
       expect(mockLoad).not.toHaveBeenCalled()
+
+      unmount()
+    })
+
+    it('preloads resolve cache when ops_received > 0', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 5,
+          ops_sent: 0,
+        },
+      })
+
+      expect(mockPreload).toHaveBeenCalled()
+
+      unmount()
+    })
+
+    it('does NOT preload resolve cache when ops_received === 0', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 0,
+          ops_sent: 3,
+        },
+      })
+
+      expect(mockPreload).not.toHaveBeenCalled()
 
       unmount()
     })

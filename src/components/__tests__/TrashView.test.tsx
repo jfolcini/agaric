@@ -17,6 +17,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { useResolveStore } from '../../stores/resolve'
 import { TrashView } from '../TrashView'
 
 vi.mock('sonner', () => ({
@@ -45,6 +46,7 @@ const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })
 })
 
 describe('TrashView', () => {
@@ -383,6 +385,52 @@ describe('TrashView', () => {
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('Block permanently deleted')
     })
+  })
+
+  // ── Resolve cache updates ───────────────────────────────────────────
+
+  it('updates resolve cache when restoring a page block', async () => {
+    const user = userEvent.setup()
+    const block = {
+      ...makeBlock('P1', 'My Page', '2025-01-15T12:00:00Z'),
+      block_type: 'page',
+    }
+    mockedInvoke
+      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
+      .mockResolvedValueOnce({ block_id: 'P1', restored_count: 1 })
+
+    render(<TrashView />)
+
+    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    await user.click(restoreBtn)
+
+    await waitFor(() => {
+      const entry = useResolveStore.getState().cache.get('P1')
+      expect(entry).toEqual({ title: 'My Page', deleted: false })
+    })
+  })
+
+  it('does not update resolve cache when restoring a content block', async () => {
+    const user = userEvent.setup()
+    const block = makeBlock('C1', 'content text', '2025-01-15T12:00:00Z')
+    mockedInvoke
+      .mockResolvedValueOnce({ items: [block], next_cursor: null, has_more: false })
+      .mockResolvedValueOnce({ block_id: 'C1', restored_count: 1 })
+
+    const versionBefore = useResolveStore.getState().version
+
+    render(<TrashView />)
+
+    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    await user.click(restoreBtn)
+
+    // Wait for the block to be removed from the list (restore succeeded)
+    await waitFor(() => {
+      expect(screen.queryByText('content text')).not.toBeInTheDocument()
+    })
+
+    // Cache version should not have changed (no set() called for content blocks)
+    expect(useResolveStore.getState().version).toBe(versionBefore)
   })
 
   // ── a11y ────────────────────────────────────────────────────────────
