@@ -1047,7 +1047,7 @@ async fn purge_block_removes_tags_properties_attachments_links() {
     .bind("text/plain")
     .bind("readme.txt")
     .bind(256_i64)
-    .bind("/tmp/readme.txt")
+    .bind("attachments/readme.txt")
     .bind("2024-01-01T00:00:00Z")
     .execute(&pool)
     .await

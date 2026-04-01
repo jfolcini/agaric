@@ -153,6 +153,22 @@ pub async fn restore_block(
     Ok(result.rows_affected())
 }
 
+/// Validate that an attachment `fs_path` is safe for file-system deletion.
+///
+/// Rejects absolute paths and `..` traversal components to prevent a
+/// compromised or corrupt DB row from causing deletion of arbitrary files.
+fn is_safe_attachment_path(path: &str) -> bool {
+    use std::path::Path;
+    let p = Path::new(path);
+    // Reject absolute paths (e.g. "/etc/passwd", "C:\...")
+    if p.is_absolute() {
+        return false;
+    }
+    // Reject any component that is ".."
+    p.components()
+        .all(|c| !matches!(c, std::path::Component::ParentDir))
+}
+
 /// Permanently delete a block and all its descendants (physical removal).
 ///
 /// Uses batch CTE-based DELETEs to clean every FK-referencing table in ~12
@@ -383,6 +399,10 @@ pub async fn purge_block(pool: &SqlitePool, block_id: &str) -> Result<u64, AppEr
     // Worst case here: orphan files on disk (better than dangling DB refs).
     for r in &attachment_rows {
         let path = &r.fs_path;
+        if !is_safe_attachment_path(path) {
+            tracing::warn!(path, "skipping attachment deletion: unsafe path");
+            continue;
+        }
         if let Err(e) = std::fs::remove_file(path) {
             // Log but don't fail — the DB rows are already gone.
             // NotFound is expected if the file was already cleaned up.
@@ -1133,7 +1153,7 @@ mod tests {
             "image/png",
             "photo.png",
             1024_i64,
-            "/tmp/photo.png",
+            "attachments/photo.png",
             "2025-01-01T00:00:00Z",
         )
         .execute(&pool)
@@ -1154,22 +1174,41 @@ mod tests {
 
     #[tokio::test]
     async fn purge_block_deletes_attachment_files_on_disk() {
-        let (pool, dir) = test_pool().await;
+        let (pool, _dir) = test_pool().await;
 
-        // Create two real files in the temp directory.
-        let file1 = dir.path().join("att_file1.png");
-        let file2 = dir.path().join("att_file2.jpg");
-        std::fs::write(&file1, b"fake png data").unwrap();
-        std::fs::write(&file2, b"fake jpg data").unwrap();
-        assert!(file1.exists(), "precondition: file1 exists");
-        assert!(file2.exists(), "precondition: file2 exists");
+        // Create real files at *relative* paths — the validation rejects
+        // absolute paths, so we use a per-test subdirectory in the CWD.
+        let test_dir = "_test_att_disk_purge";
+        std::fs::create_dir_all(test_dir).unwrap();
+        let file1_rel = format!("{}/att_file1.png", test_dir);
+        let file2_rel = format!("{}/att_file2.jpg", test_dir);
+        std::fs::write(&file1_rel, b"fake png data").unwrap();
+        std::fs::write(&file2_rel, b"fake jpg data").unwrap();
+
+        // Guard removes the directory even if the test panics.
+        struct Cleanup(&'static str);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(self.0);
+            }
+        }
+        let _cleanup = Cleanup(test_dir);
+
+        assert!(
+            std::path::Path::new(&file1_rel).exists(),
+            "precondition: file1 exists"
+        );
+        assert!(
+            std::path::Path::new(&file2_rel).exists(),
+            "precondition: file2 exists"
+        );
 
         insert_block(&pool, BLOCK_A, "content", "has attachments", None, None).await;
 
-        // Two attachment rows pointing at real files.
+        // Two attachment rows pointing at real (relative) files.
         for (att_id, path) in [
-            ("ATT_F1", file1.to_str().unwrap()),
-            ("ATT_F2", file2.to_str().unwrap()),
+            ("ATT_F1", file1_rel.as_str()),
+            ("ATT_F2", file2_rel.as_str()),
         ] {
             sqlx::query!(
                 "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
@@ -1190,11 +1229,11 @@ mod tests {
         purge_block(&pool, BLOCK_A).await.unwrap();
 
         assert!(
-            !file1.exists(),
+            !std::path::Path::new(&file1_rel).exists(),
             "attachment file1 should be deleted from disk after purge"
         );
         assert!(
-            !file2.exists(),
+            !std::path::Path::new(&file2_rel).exists(),
             "attachment file2 should be deleted from disk after purge"
         );
     }
@@ -1235,7 +1274,7 @@ mod tests {
             "application/pdf",
             "report.pdf",
             2048_i64,
-            "/tmp/definitely_does_not_exist_12345.pdf",
+            "attachments/nonexistent_report.pdf",
             "2025-01-01T00:00:00Z",
         )
         .execute(&pool)
@@ -1259,6 +1298,90 @@ mod tests {
         assert_eq!(
             att_count, 0,
             "attachment DB rows should be purged regardless"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // is_safe_attachment_path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn safe_path_accepts_simple_relative() {
+        assert!(super::is_safe_attachment_path("attachments/photo.png"));
+    }
+
+    #[test]
+    fn safe_path_accepts_nested_relative() {
+        assert!(super::is_safe_attachment_path(
+            "attachments/2025/01/photo.png"
+        ));
+    }
+
+    #[test]
+    fn safe_path_accepts_filename_only() {
+        assert!(super::is_safe_attachment_path("photo.png"));
+    }
+
+    #[test]
+    fn safe_path_rejects_absolute_unix() {
+        assert!(!super::is_safe_attachment_path("/etc/passwd"));
+    }
+
+    #[test]
+    fn safe_path_rejects_absolute_tmp() {
+        assert!(!super::is_safe_attachment_path("/tmp/photo.png"));
+    }
+
+    #[test]
+    fn safe_path_rejects_parent_traversal() {
+        assert!(!super::is_safe_attachment_path("../../../etc/passwd"));
+    }
+
+    #[test]
+    fn safe_path_rejects_embedded_parent_traversal() {
+        assert!(!super::is_safe_attachment_path(
+            "attachments/../../secret.txt"
+        ));
+    }
+
+    #[test]
+    fn safe_path_rejects_dot_dot_only() {
+        assert!(!super::is_safe_attachment_path(".."));
+    }
+
+    #[tokio::test]
+    async fn purge_block_skips_unsafe_attachment_path() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, BLOCK_A, "content", "unsafe attachment", None, None).await;
+        sqlx::query!(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "ATT_UNSAFE",
+            BLOCK_A,
+            "image/png",
+            "photo.png",
+            1024_i64,
+            "/etc/important_file",
+            "2025-01-01T00:00:00Z",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Should succeed — unsafe path is skipped, not attempted.
+        let count = purge_block(&pool, BLOCK_A).await.unwrap();
+        assert_eq!(count, 1, "block should be purged");
+        let att_count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM attachments WHERE block_id = ?",
+            BLOCK_A,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            att_count, 0,
+            "attachment DB row should be purged regardless"
         );
     }
 
