@@ -1,19 +1,27 @@
 import { invoke } from '@tauri-apps/api/core'
 
 export type {
+  BacklinkFilter,
+  BacklinkQueryResponse,
+  BacklinkSort,
   BlockRow,
+  CompareOp,
   DeleteResponse,
   HistoryEntry,
   MoveResponse,
   PageResponse,
   PurgeResponse,
   RestoreResponse,
+  SortDir,
   StatusInfo,
   TagCacheRow,
   TagResponse,
 } from './bindings'
 
 import type {
+  BacklinkFilter,
+  BacklinkQueryResponse,
+  BacklinkSort,
   BlockRow,
   DeleteResponse,
   HistoryEntry,
@@ -330,4 +338,30 @@ export async function redoPageOp(params: {
     undoDeviceId: params.undoDeviceId,
     undoSeq: params.undoSeq,
   })
+}
+
+// ---------------------------------------------------------------------------
+// Filtered backlink query commands
+// ---------------------------------------------------------------------------
+
+/** Query backlinks with composable filters, sort, and pagination. */
+export async function queryBacklinksFiltered(params: {
+  blockId: string
+  filters?: BacklinkFilter[]
+  sort?: BacklinkSort
+  cursor?: string
+  limit?: number
+}): Promise<BacklinkQueryResponse> {
+  return invoke('query_backlinks_filtered', {
+    blockId: params.blockId,
+    filters: params.filters ?? null,
+    sort: params.sort ?? null,
+    cursor: params.cursor ?? null,
+    limit: params.limit ?? null,
+  })
+}
+
+/** List all distinct property keys currently in use. */
+export async function listPropertyKeys(): Promise<string[]> {
+  return invoke('list_property_keys')
 }

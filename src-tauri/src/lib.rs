@@ -1,3 +1,4 @@
+pub mod backlink_query;
 pub mod cache;
 pub mod commands;
 pub mod dag;
@@ -72,6 +73,8 @@ mod specta_tests {
             crate::commands::revert_ops,
             crate::commands::undo_page_op,
             crate::commands::redo_page_op,
+            crate::commands::query_backlinks_filtered,
+            crate::commands::list_property_keys,
         ])
     }
 
@@ -191,6 +194,8 @@ pub fn run() {
         commands::revert_ops,
         commands::undo_page_op,
         commands::redo_page_op,
+        commands::query_backlinks_filtered,
+        commands::list_property_keys,
     ]);
 
     tauri::Builder::default()

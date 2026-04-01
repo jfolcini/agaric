@@ -16,6 +16,7 @@ use specta::Type;
 use sqlx::SqlitePool;
 use tauri::State;
 
+use crate::backlink_query::{self, BacklinkFilter, BacklinkQueryResponse, BacklinkSort};
 use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
@@ -1509,6 +1510,34 @@ pub async fn list_tags_for_block_inner(
     tag_query::list_tags_for_block(pool, &block_id).await
 }
 
+/// Query backlinks for a block with optional filters, sorting, and pagination.
+///
+/// When no filters are supplied, returns all backlinks (backward compatible).
+/// Filters use AND semantics at the top level; use `And`/`Or`/`Not` filter
+/// variants for compound boolean logic.
+///
+/// # Errors
+/// - [`AppError::Validation`] — `block_id` is empty
+pub async fn query_backlinks_filtered_inner(
+    pool: &SqlitePool,
+    block_id: String,
+    filters: Option<Vec<BacklinkFilter>>,
+    sort: Option<BacklinkSort>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<BacklinkQueryResponse, AppError> {
+    if block_id.trim().is_empty() {
+        return Err(AppError::Validation("block_id must not be empty".into()));
+    }
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    backlink_query::eval_backlink_query(pool, &block_id, filters, sort, &page).await
+}
+
+/// List all distinct property keys currently in use across all blocks.
+pub async fn list_property_keys_inner(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
+    backlink_query::list_property_keys(pool).await
+}
+
 /// Set (upsert) a property on a block.
 ///
 /// Validates the block exists and is not deleted, validates the property
@@ -2410,6 +2439,33 @@ pub async fn list_tags_for_block(
     block_id: String,
 ) -> Result<Vec<String>, AppError> {
     list_tags_for_block_inner(&pool, block_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: filtered backlink query. Delegates to [`query_backlinks_filtered_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn query_backlinks_filtered(
+    read_pool: State<'_, ReadPool>,
+    block_id: String,
+    filters: Option<Vec<BacklinkFilter>>,
+    sort: Option<BacklinkSort>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<BacklinkQueryResponse, AppError> {
+    query_backlinks_filtered_inner(&read_pool.0, block_id, filters, sort, cursor, limit)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: list distinct property keys. Delegates to [`list_property_keys_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_property_keys(read_pool: State<'_, ReadPool>) -> Result<Vec<String>, AppError> {
+    list_property_keys_inner(&read_pool.0)
         .await
         .map_err(sanitize_internal_error)
 }

@@ -313,6 +313,28 @@ async redoPageOp(undoDeviceId: string, undoSeq: number) : Promise<Result<UndoRes
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: filtered backlink query. Delegates to [`query_backlinks_filtered_inner`].
+ */
+async queryBacklinksFiltered(blockId: string, filters: BacklinkFilter[] | null, sort: BacklinkSort | null, cursor: string | null, limit: number | null) : Promise<Result<BacklinkQueryResponse, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("query_backlinks_filtered", { blockId, filters, sort, cursor, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: list distinct property keys. Delegates to [`list_property_keys_inner`].
+ */
+async listPropertyKeys() : Promise<Result<string[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_property_keys") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -327,9 +349,28 @@ async redoPageOp(undoDeviceId: string, undoSeq: number) : Promise<Result<UndoRes
 /** user-defined types **/
 
 /**
+ * Tagged union of filter predicates for backlink queries.
+ *
+ * Filters are combined with AND semantics at the top level.
+ * Use `And`/`Or`/`Not` variants for compound boolean logic.
+ */
+export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } | { type: "And"; filters: BacklinkFilter[] } | { type: "Or"; filters: BacklinkFilter[] } | { type: "Not"; filter: BacklinkFilter }
+/**
+ * Response for a filtered backlink query, including total count.
+ */
+export type BacklinkQueryResponse = { items: BlockRow[]; next_cursor: string | null; has_more: boolean; total_count: number }
+/**
+ * Tagged union of sort modes for backlink queries.
+ */
+export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir }
+/**
  * Row returned by paginated block queries.
  */
 export type BlockRow = { id: string; block_type: string; content: string | null; parent_id: string | null; position: number | null; deleted_at: string | null; archived_at: string | null; is_conflict: boolean }
+/**
+ * Comparison operators for property filters.
+ */
+export type CompareOp = "Eq" | "Neq" | "Lt" | "Gt" | "Lte" | "Gte"
 export type DeleteResponse = { block_id: string; deleted_at: string; descendants_affected: number }
 /**
  * Row returned by block history queries (op_log entries for a block).
@@ -357,6 +398,10 @@ export type ResolvedBlock = { id: string;
  */
 title: string | null; block_type: string; deleted: boolean }
 export type RestoreResponse = { block_id: string; restored_count: number }
+/**
+ * Sort direction.
+ */
+export type SortDir = "Asc" | "Desc"
 /**
  * Serializable status snapshot of the materializer queues.
  *

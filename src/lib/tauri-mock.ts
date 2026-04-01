@@ -670,6 +670,70 @@ export function setupMock(): void {
         }
       }
 
+      case 'query_backlinks_filtered': {
+        const a = args as Record<string, unknown>
+        const targetId = a.blockId as string
+        const filterList = (a.filters as Array<Record<string, unknown>> | null) ?? []
+
+        // Scan all blocks for [[ULID]] tokens matching the target
+        const LINK_RE_F = /\[\[([0-9A-Z]{26})\]\]/g
+        let backlinkItems = [...blocks.values()].filter((b) => {
+          if (b.deleted_at) return false
+          const content = (b.content as string) ?? ''
+          for (const m of content.matchAll(LINK_RE_F)) {
+            if (m[1] === targetId) return true
+          }
+          return false
+        })
+
+        // Apply simple filter support
+        for (const filter of filterList) {
+          const type = filter.type as string
+          if (type === 'BlockType') {
+            const bt = filter.block_type as string
+            backlinkItems = backlinkItems.filter((b) => b.block_type === bt)
+          } else if (type === 'Contains') {
+            const query = ((filter.query as string) ?? '').toLowerCase()
+            backlinkItems = backlinkItems.filter((b) =>
+              ((b.content as string) ?? '').toLowerCase().includes(query),
+            )
+          } else if (type === 'PropertyText') {
+            const key = filter.key as string
+            const value = filter.value as string
+            backlinkItems = backlinkItems.filter((b) => {
+              const blockProps = properties.get(b.id as string)
+              if (!blockProps) return false
+              const prop = blockProps.get(key)
+              if (!prop) return false
+              return (prop.value_text as string | null) === value
+            })
+          }
+          // Unsupported filter types are ignored (graceful degradation)
+        }
+
+        const totalCount = backlinkItems.length
+        return {
+          items: backlinkItems,
+          next_cursor: null,
+          has_more: false,
+          total_count: totalCount,
+        }
+      }
+
+      case 'list_property_keys': {
+        // Collect all distinct property keys from mock data
+        const keys = new Set<string>()
+        for (const blockProps of properties.values()) {
+          for (const key of blockProps.keys()) {
+            keys.add(key)
+          }
+        }
+        // Always include common keys
+        keys.add('todo')
+        keys.add('priority')
+        return [...keys].sort()
+      }
+
       default:
         return null
     }
