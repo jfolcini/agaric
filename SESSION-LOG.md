@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 39 — 2026-04-01 — Test Suite Performance Optimization
+
+Optimized slowest tests in both Rust and frontend suites. Commit `10faf36`.
+
+### Changes
+- **Rust sync tests (5k→500 ops):** `large_op_log_sync_5000_ops` and `large_op_log_incremental_sync` reduced from 5,000 to 500 ops. Tests validate sync correctness, not volume. Combined time dropped from ~46s to ~0.6s.
+- **App.test.tsx boot skip:** Set `useBootStore` to `state: 'ready'` in `beforeEach` instead of `'booting'`. Eliminates async BootGate cycle on all 30 tests (boot logic covered by boot-store.test.ts and BootGate.test.tsx). Isolated file time: 11.3s → 1.85s.
+
+### Analysis Performed (not acted on — diminishing returns)
+- **FormattingToolbar.test.tsx** (40 tests, 5.2s): All synchronous, one render per test. No async bottleneck to eliminate. `it.each()` wouldn't reduce render count. Shared render would require disabling RTL auto-cleanup.
+- **TagPanel.test.tsx** (24 tests, 5.2s): 13 `waitFor()` calls, some redundant. ~2-3s savings possible but code churn outweighs benefit.
+- **HistoryView.test.tsx** (32 tests, 4.6s): 17 `waitFor()` calls, several redundant. ~1-2s savings possible.
+
+### Test Results
+- Rust: 1175 tests pass (cargo nextest run, 16.7s wall)
+- Frontend: 1820 tests pass across 64 files (vitest, 19.3s wall)
+- Pre-commit: all hooks pass
+
 ## Session 38 — 2026-04-01 — Tier 2 REVIEW-LATER Implementation
 
 Implemented 10 Tier 2 REVIEW-LATER items across Rust backend and frontend. Two commits: `009c897` (undo/redo hardening, error injection, block_type triggers) from Session 36 continuation, and `1029e1e` (depth limits, FTS reindex, error toasts).
