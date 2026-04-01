@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { BlockRow } from '../lib/tauri'
 import { addTag, createBlock, listBlocks, listTagsForBlock, removeTag } from '../lib/tauri'
+import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 
 interface TagPanelProps {
@@ -99,6 +100,8 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
       const entry = { id: resp.id, name }
       setAllTags((prev) => [...prev, entry])
       setNewTagName('')
+      // Update resolve cache so tag_ref nodes display the name, not ULID
+      useResolveStore.getState().set(resp.id, name, false)
       // Auto-apply to current block if one is focused
       if (blockId) {
         await addTag(blockId, resp.id)

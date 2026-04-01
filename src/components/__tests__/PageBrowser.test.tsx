@@ -296,6 +296,121 @@ describe('PageBrowser', () => {
     })
   })
 
+  // Page creation via name input form
+  describe('page creation form', () => {
+    it('renders an input field and submit button', async () => {
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser />)
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('New page name...')).toBeInTheDocument()
+      })
+      expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
+    })
+
+    it('creates page with the typed name on form submit', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
+      })
+
+      // Mock create_block response
+      mockedInvoke.mockResolvedValueOnce(makePage('P_NEW', 'My Custom Page'))
+
+      const input = screen.getByPlaceholderText('New page name...')
+      await user.type(input, 'My Custom Page')
+      await user.click(screen.getByRole('button', { name: /New Page/i }))
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: 'My Custom Page',
+          parentId: null,
+          position: null,
+        })
+      })
+
+      // The new page appears in the list
+      expect(await screen.findByText('My Custom Page')).toBeInTheDocument()
+    })
+
+    it('clears input after successful creation', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
+      })
+
+      mockedInvoke.mockResolvedValueOnce(makePage('P_NEW', 'Temp Name'))
+
+      const input = screen.getByPlaceholderText('New page name...')
+      await user.type(input, 'Temp Name')
+      await user.click(screen.getByRole('button', { name: /New Page/i }))
+
+      await waitFor(() => {
+        expect(input).toHaveValue('')
+      })
+    })
+
+    it('creates page with "Untitled" when input is empty', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
+      })
+
+      mockedInvoke.mockResolvedValueOnce(makePage('P_NEW', 'Untitled'))
+
+      // Submit without typing anything
+      await user.click(screen.getByRole('button', { name: /New Page/i }))
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: 'Untitled',
+          parentId: null,
+          position: null,
+        })
+      })
+    })
+
+    it('submits via Enter key in the input', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
+      })
+
+      mockedInvoke.mockResolvedValueOnce(makePage('P_ENTER', 'Enter Page'))
+
+      const input = screen.getByPlaceholderText('New page name...')
+      await user.type(input, 'Enter Page{Enter}')
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: 'Enter Page',
+          parentId: null,
+          position: null,
+        })
+      })
+    })
+  })
+
   // UX #8: Error feedback on failed operations
   describe('error feedback', () => {
     it('shows toast on failed page load', async () => {

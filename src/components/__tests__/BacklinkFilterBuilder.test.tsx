@@ -328,5 +328,143 @@ describe('BacklinkFilterBuilder', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+
+    it('renders sr-only legend inside fieldset (#336)', () => {
+      const { container } = renderBuilder()
+      const legend = container.querySelector('fieldset legend')
+      expect(legend).toBeInTheDocument()
+      expect(legend).toHaveTextContent('Backlink filters')
+      expect(legend).toHaveClass('sr-only')
+    })
+
+    it('wraps filter pills in a semantic list (#332)', () => {
+      const { container } = renderBuilder({
+        filters: [
+          { type: 'BlockType', block_type: 'content' },
+          { type: 'Contains', query: 'test' },
+        ],
+      })
+      const list = container.querySelector('ul[aria-label="Applied filters"]')
+      expect(list).toBeInTheDocument()
+      const items = list?.querySelectorAll('li')
+      expect(items).toHaveLength(2)
+    })
+
+    it('does not render applied filters list when no filters active (#332)', () => {
+      const { container } = renderBuilder()
+      expect(container.querySelector('ul[aria-label="Applied filters"]')).not.toBeInTheDocument()
+    })
+
+    it('Clear all button has explicit aria-label (#331)', () => {
+      renderBuilder({
+        filters: [{ type: 'BlockType', block_type: 'page' }],
+      })
+      expect(screen.getByRole('button', { name: 'Clear all filters and sort' })).toBeInTheDocument()
+    })
+  })
+
+  describe('sort direction always visible (#333)', () => {
+    it('renders sort direction button even when sort is null', () => {
+      renderBuilder()
+      const btn = screen.getByRole('button', { name: /Toggle sort direction/i })
+      expect(btn).toBeInTheDocument()
+      expect(btn).toBeDisabled()
+    })
+
+    it('enables sort direction button when sort is active', () => {
+      renderBuilder({ sort: { type: 'Created', dir: 'Desc' } })
+      const btn = screen.getByRole('button', { name: /Toggle sort direction/i })
+      expect(btn).not.toBeDisabled()
+    })
+  })
+
+  describe('structural duplicate detection (#329)', () => {
+    it('detects duplicates using full filter structure, not display summary', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      // Two HasTag filters with same 8-char prefix but different full IDs
+      // Old string-based comparison would consider these duplicates
+      const TAG_A = '01ABCDEFGHIJKLMNOPQRSTUVWX'
+      const TAG_B = '01ABCDEFZZZZZZZZZZZZZZZZZZ'
+      renderBuilder({
+        filters: [{ type: 'HasTag', tag_id: TAG_A }],
+        onFiltersChange,
+      })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
+      await user.type(screen.getByLabelText('Tag ID'), TAG_B)
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      // Should NOT be flagged as duplicate since full tag_ids differ
+      expect(toast.error).not.toHaveBeenCalledWith('Filter already applied')
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        { type: 'HasTag', tag_id: TAG_A },
+        { type: 'HasTag', tag_id: TAG_B },
+      ])
+    })
+
+    it('still detects true duplicates', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({
+        filters: [{ type: 'BlockType', block_type: 'content' }],
+        onFiltersChange,
+      })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
+      await user.selectOptions(screen.getByLabelText('Block type value'), 'content')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(toast.error).toHaveBeenCalledWith('Filter already applied')
+      expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('ULID validation (#339)', () => {
+    it('rejects invalid ULID format in HasTag filter', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
+      await user.type(screen.getByLabelText('Tag ID'), 'not-a-ulid')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(toast.error).toHaveBeenCalledWith(
+        'Invalid ULID format (expected 26 uppercase characters)',
+      )
+      expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+
+    it('accepts valid ULID in HasTag filter', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
+      await user.type(screen.getByLabelText('Tag ID'), '01ARZ3NDEKTSV4RRFFQ69G5FAV')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        { type: 'HasTag', tag_id: '01ARZ3NDEKTSV4RRFFQ69G5FAV' },
+      ])
+    })
+  })
+
+  describe('tag prefix maxLength (#340)', () => {
+    it('has maxLength attribute on tag prefix input', async () => {
+      const user = userEvent.setup()
+      renderBuilder()
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'tag-prefix')
+
+      const input = screen.getByLabelText('Tag prefix')
+      expect(input).toHaveAttribute('maxLength', '100')
+    })
   })
 })

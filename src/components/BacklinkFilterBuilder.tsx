@@ -41,6 +41,37 @@ type FilterCategory =
   | 'tag-prefix'
 
 // ---------------------------------------------------------------------------
+// Structural filter key (for duplicate detection — #329)
+// ---------------------------------------------------------------------------
+
+function getFilterKey(filter: BacklinkFilter): string {
+  switch (filter.type) {
+    case 'BlockType':
+      return `BlockType:${filter.block_type}`
+    case 'PropertyText':
+      return `PropertyText:${filter.key}:${filter.op}:${filter.value}`
+    case 'PropertyNum':
+      return `PropertyNum:${filter.key}:${filter.op}:${filter.value}`
+    case 'PropertyDate':
+      return `PropertyDate:${filter.key}:${filter.op}:${filter.value}`
+    case 'PropertyIsSet':
+      return `PropertyIsSet:${filter.key}`
+    case 'PropertyIsEmpty':
+      return `PropertyIsEmpty:${filter.key}`
+    case 'Contains':
+      return `Contains:${filter.query}`
+    case 'CreatedInRange':
+      return `CreatedInRange:${filter.after ?? ''}:${filter.before ?? ''}`
+    case 'HasTag':
+      return `HasTag:${filter.tag_id}`
+    case 'HasTagPrefix':
+      return `HasTagPrefix:${filter.prefix}`
+    default:
+      return JSON.stringify(filter)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Human-readable filter summary
 // ---------------------------------------------------------------------------
 
@@ -192,6 +223,12 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
           toast.error('Tag ID is required')
           return
         }
+        // Basic ULID format check (26 uppercase alphanumeric). Accepts I/L/O/U
+        // which strict Crockford base32 excludes; backend handles gracefully.
+        if (!/^[0-9A-Z]{26}$/.test(tagValue.trim())) {
+          toast.error('Invalid ULID format (expected 26 uppercase characters)')
+          return
+        }
         onApply({ type: 'HasTag', tag_id: tagValue.trim() })
         break
       case 'tag-prefix':
@@ -324,16 +361,6 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
           )}
           <select
             className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
-            value={propType}
-            onChange={(e) => setPropType(e.target.value as 'text' | 'num' | 'date')}
-            aria-label="Property type"
-          >
-            <option value="text">Text</option>
-            <option value="num">Number</option>
-            <option value="date">Date</option>
-          </select>
-          <select
-            className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
             value={propOp}
             onChange={(e) => setPropOp(e.target.value as CompareOp)}
             aria-label="Comparison operator"
@@ -344,6 +371,16 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
             <option value="Gt">&gt;</option>
             <option value="Lte">&lt;=</option>
             <option value="Gte">&gt;=</option>
+          </select>
+          <select
+            className="h-7 [@media(pointer:coarse)]:h-10 rounded-md border bg-background px-2 text-xs"
+            value={propType}
+            onChange={(e) => setPropType(e.target.value as 'text' | 'num' | 'date')}
+            aria-label="Property type"
+          >
+            <option value="text">Text</option>
+            <option value="num">Number</option>
+            <option value="date">Date</option>
           </select>
           <Input
             className="h-7 w-24 text-xs"
@@ -440,6 +477,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
           value={prefixValue}
           onChange={(e) => setPrefixValue(e.target.value)}
           aria-label="Tag prefix"
+          maxLength={100}
         />
       )}
 
@@ -485,8 +523,8 @@ export function BacklinkFilterBuilder({
 
   const handleAddFilter = useCallback(
     (filter: BacklinkFilter) => {
-      const summary = filterSummary(filter)
-      const isDuplicate = filters.some((f) => filterSummary(f) === summary)
+      const key = getFilterKey(filter)
+      const isDuplicate = filters.some((f) => getFilterKey(f) === key)
       if (isDuplicate) {
         toast.error('Filter already applied')
         setShowAddRow(false)
@@ -543,30 +581,35 @@ export function BacklinkFilterBuilder({
       className="backlink-filter-builder space-y-2 border-0 p-0 m-0"
       aria-label="Backlink filters"
     >
+      <legend className="sr-only">Backlink filters</legend>
+
       {/* Filter pills + Add button row */}
       <div className="flex flex-wrap items-center gap-1.5">
         <Filter className="h-3.5 w-3.5 text-muted-foreground" />
 
-        {filters.map((filter, index) => (
-          <Badge
-            // biome-ignore lint/suspicious/noArrayIndexKey: filterSummary can produce duplicates for structurally different filters
-            key={index}
-            variant="secondary"
-            className="filter-pill gap-1 text-xs"
-            tabIndex={0}
-            aria-label={`Filter: ${filterSummary(filter)}`}
-          >
-            {filterSummary(filter)}
-            <button
-              type="button"
-              className="ml-0.5 rounded-full hover:bg-muted"
-              onClick={() => handleRemoveFilter(index)}
-              aria-label={`Remove filter ${filterSummary(filter)}`}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </Badge>
-        ))}
+        {filters.length > 0 && (
+          <ul aria-label="Applied filters" className="contents list-none m-0 p-0">
+            {filters.map((filter, index) => (
+              <li
+                // biome-ignore lint/suspicious/noArrayIndexKey: getFilterKey can produce duplicates for structurally different filters with same key
+                key={index}
+                className="contents"
+              >
+                <Badge variant="secondary" className="filter-pill shrink-0 gap-1 text-xs">
+                  {filterSummary(filter)}
+                  <button
+                    type="button"
+                    className="ml-0.5 rounded-full hover:bg-muted"
+                    onClick={() => handleRemoveFilter(index)}
+                    aria-label={`Remove filter ${filterSummary(filter)}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        )}
 
         <Button
           ref={addFilterButtonRef}
@@ -579,6 +622,18 @@ export function BacklinkFilterBuilder({
           <Plus className="h-3 w-3" />
           Add filter
         </Button>
+
+        {hasFilters && (
+          <Button
+            variant="ghost"
+            size="xs"
+            className="clear-all-button h-7 text-xs"
+            onClick={handleClearAll}
+            aria-label="Clear all filters and sort"
+          >
+            Clear all
+          </Button>
+        )}
 
         {/* Sort control */}
         <span className="ml-auto flex items-center gap-1">
@@ -597,29 +652,21 @@ export function BacklinkFilterBuilder({
               </option>
             ))}
           </select>
-          {sort && (
-            <Button
-              variant="ghost"
-              size="xs"
-              className="h-7 px-1 text-xs"
-              onClick={handleSortDirToggle}
-              aria-label={`Toggle sort direction (currently ${sort.dir === 'Asc' ? 'ascending' : 'descending'})`}
-            >
-              {sort.dir === 'Asc' ? 'Asc' : 'Desc'}
-            </Button>
-          )}
-        </span>
-
-        {hasFilters && (
           <Button
             variant="ghost"
             size="xs"
-            className="clear-all-button h-7 text-xs text-muted-foreground"
-            onClick={handleClearAll}
+            className="h-7 px-1 text-xs"
+            onClick={handleSortDirToggle}
+            disabled={!sort}
+            aria-label={
+              sort
+                ? `Toggle sort direction (currently ${sort.dir === 'Asc' ? 'ascending' : 'descending'})`
+                : 'Toggle sort direction'
+            }
           >
-            Clear all
+            {sort?.dir === 'Asc' ? 'Asc' : 'Desc'}
           </Button>
-        )}
+        </span>
       </div>
 
       {/* Add filter row */}

@@ -866,8 +866,8 @@ describe('BacklinksPanel', () => {
     })
   })
 
-  describe('loading skeleton accessibility (#264)', () => {
-    it('loading skeleton has aria-busy and role="status"', async () => {
+  describe('loading skeleton accessibility (#264, #338)', () => {
+    it('loading skeleton has aria-busy and role=status (no redundant aria-label)', async () => {
       // Make the query hang so loading state persists
       // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
       mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
@@ -884,8 +884,9 @@ describe('BacklinksPanel', () => {
         const loadingDiv = container.querySelector('.backlinks-panel-loading')
         expect(loadingDiv).toBeInTheDocument()
         expect(loadingDiv).toHaveAttribute('aria-busy', 'true')
-        expect(loadingDiv).toHaveAttribute('aria-label', 'Loading backlinks')
         expect(loadingDiv).toHaveAttribute('role', 'status')
+        // aria-label was removed (#338) to avoid redundant screen reader announcements
+        expect(loadingDiv).not.toHaveAttribute('aria-label')
       })
     })
   })
@@ -910,7 +911,7 @@ describe('BacklinksPanel', () => {
       const list = container.querySelector('ul.backlinks-list')
       expect(list).toBeInTheDocument()
 
-      const items = list!.querySelectorAll('li.backlink-item')
+      const items = list?.querySelectorAll('li.backlink-item')
       expect(items).toHaveLength(2)
     })
   })
@@ -1041,6 +1042,104 @@ describe('BacklinksPanel', () => {
       })
 
       consoleSpy.mockRestore()
+    })
+  })
+
+  describe('backlinks list aria-label (#337)', () => {
+    it('backlinks ul has aria-label="Backlinks"', async () => {
+      mockInvokeWith({
+        items: [makeBlock('B1', 'some block')],
+        next_cursor: null,
+        has_more: false,
+        total_count: 1,
+      })
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('some block')
+
+      const list = container.querySelector('ul.backlinks-list')
+      expect(list).toHaveAttribute('aria-label', 'Backlinks')
+    })
+  })
+
+  describe('no flash of empty state on filter change (#341)', () => {
+    it('keeps stale results visible while filter query is in flight', async () => {
+      const user = userEvent.setup()
+      let queryCount = 0
+      let resolveFilterQuery!: (value: unknown) => void
+
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+        if (cmd === 'query_backlinks_filtered') {
+          queryCount++
+          if (queryCount === 1) {
+            // Initial load — resolves immediately
+            return {
+              items: [makeBlock('B1', 'original result')],
+              next_cursor: null,
+              has_more: false,
+              total_count: 1,
+            }
+          }
+          // Filter query — hangs until resolved
+          return new Promise((resolve) => {
+            resolveFilterQuery = resolve
+          })
+        }
+        if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'batch_resolve') return []
+        return emptyResponse
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      // Wait for initial results
+      await screen.findByText('original result')
+
+      // Add a filter — triggers a new query that hangs
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
+      await user.selectOptions(screen.getByLabelText('Block type value'), 'page')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      // Stale results should still be visible (not flash of empty state)
+      expect(screen.getByText('original result')).toBeInTheDocument()
+
+      // Resolve the filter query
+      resolveFilterQuery({
+        items: [makeBlock('B2', 'filtered result')],
+        next_cursor: null,
+        has_more: false,
+        total_count: 1,
+      })
+
+      // New results should replace stale ones
+      await screen.findByText('filtered result')
+      expect(screen.queryByText('original result')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('backlink item styling (#345)', () => {
+    it('renders backlink items with list-style (not card-style)', async () => {
+      mockInvokeWith({
+        items: [makeBlock('B1', 'some block')],
+        next_cursor: null,
+        has_more: false,
+        total_count: 1,
+      })
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('some block')
+
+      const item = container.querySelector('.backlink-item')
+      expect(item).toBeInTheDocument()
+      // Should use border-b separator style, not card-like styling
+      expect(item?.className).toContain('border-b')
+      expect(item?.className).not.toContain('bg-card')
+      expect(item?.className).not.toContain('rounded-lg')
+      expect(item?.className).not.toContain('cursor-default')
     })
   })
 })

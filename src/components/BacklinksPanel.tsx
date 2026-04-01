@@ -86,17 +86,23 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
 
   // Reset and reload when blockId changes
   useEffect(() => {
-    setBlocks([])
-    setNextCursor(null)
-    setHasMore(false)
-    setTotalCount(0)
-    // Only reset filters/sort when the blockId itself changes (not on filter/sort-triggered rebuilds)
+    // Only clear blocks + filters when navigating to a different block (#341)
+    // When filters/sort change (same block), keep stale results visible
+    // until the new query response replaces them — avoids flash of empty state.
+    // Design choice (#343): re-navigating to the same blockId preserves filters
+    // since they're tied to the view, not the navigation event.
     if (prevBlockIdRef.current !== blockId) {
+      setBlocks([])
       setFilters([])
       setSort(null)
+      resolveCache.current.clear()
       prevBlockIdRef.current = blockId
     }
-    resolveCache.current.clear()
+    // Always reset pagination when re-querying (blockId or filter/sort change)
+    setNextCursor(null)
+    setHasMore(false)
+    // total_count is updated by the response; not cleared here to avoid
+    // a stale "0 of 0" flash. Acceptable for a personal app (#342).
     loadBacklinks()
   }, [blockId, loadBacklinks])
 
@@ -212,12 +218,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
       />
 
       {loading && blocks.length === 0 && (
-        <div
-          className="backlinks-panel-loading space-y-2"
-          aria-busy="true"
-          aria-label="Loading backlinks"
-          role="status"
-        >
+        <div className="backlinks-panel-loading space-y-2" aria-busy="true" role="status">
           <Skeleton className="h-12 w-full rounded-lg" />
           <Skeleton className="h-12 w-full rounded-lg" />
         </div>
@@ -245,11 +246,11 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
         />
       )}
 
-      <ul className="backlinks-list space-y-2">
+      <ul className="backlinks-list space-y-2" aria-label="Backlinks">
         {blocks.map((block) => (
           <li
             key={block.id}
-            className="backlink-item flex items-center gap-3 rounded-lg border bg-card p-3 cursor-default"
+            className="backlink-item flex items-center gap-3 border-b py-2 px-1 last:border-b-0"
           >
             <Badge variant="secondary" className="backlink-item-type shrink-0">
               {block.block_type}

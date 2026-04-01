@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
@@ -37,6 +38,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [hasMore, setHasMore] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [isCreating, setIsCreating] = useState(false)
+  const [newPageName, setNewPageName] = useState('')
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
 
   const loadPages = useCallback(async (cursor?: string) => {
@@ -67,9 +69,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   }, [nextCursor, loadPages])
 
   const handleCreatePage = useCallback(async () => {
+    const name = newPageName.trim() || 'Untitled'
     setIsCreating(true)
     try {
-      const resp = await createBlock({ blockType: 'page', content: 'Untitled' })
+      const resp = await createBlock({ blockType: 'page', content: name })
       const newPage: BlockRow = {
         id: resp.id,
         block_type: resp.block_type,
@@ -81,13 +84,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         is_conflict: false,
       }
       setPages((prev) => [newPage, ...prev])
+      setNewPageName('')
     } catch (error) {
       toast.error(`Failed to create page: ${String(error)}`, {
         action: { label: 'Retry', onClick: () => handleCreatePage() },
       })
     }
     setIsCreating(false)
-  }, [])
+  }, [newPageName])
 
   const handleDeletePage = useCallback(async (pageId: string) => {
     try {
@@ -109,12 +113,25 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   return (
     <div className="page-browser space-y-4">
-      <div className="flex items-center justify-end">
-        <Button variant="outline" size="sm" onClick={handleCreatePage} disabled={isCreating}>
+      {/* Create page form */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          handleCreatePage()
+        }}
+        className="flex items-center gap-2"
+      >
+        <Input
+          value={newPageName}
+          onChange={(e) => setNewPageName(e.target.value)}
+          placeholder="New page name..."
+          className="flex-1"
+        />
+        <Button type="submit" variant="outline" disabled={isCreating}>
           {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
           New Page
         </Button>
-      </div>
+      </form>
 
       {loading && pages.length === 0 && (
         <div className="page-browser-loading space-y-1">

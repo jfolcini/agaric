@@ -79,6 +79,13 @@ export function useBlockResolve(): UseBlockResolveReturn {
   // ── Picker callbacks ────────────────────────────────────────────────
   const searchTags = useCallback(async (query: string): Promise<PickerItem[]> => {
     const tags = await listTagsByPrefix({ prefix: query })
+    // Populate the resolve cache so tag_ref nodes can resolve the name
+    // after the block is saved (serialized as #[ULID]) and reloaded.
+    if (tags.length > 0) {
+      useResolveStore
+        .getState()
+        .batchSet(tags.map((t) => ({ id: t.tag_id, title: t.name, deleted: false })))
+    }
     return tags.map((tag) => ({
       id: tag.tag_id,
       label: tag.name,

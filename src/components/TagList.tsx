@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
+import { useResolveStore } from '../stores/resolve'
 
 interface TagListProps {
   /** Called when a tag name is clicked. */
@@ -70,6 +71,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       }
       setTags((prev) => [newTag, ...prev])
       setNewTagName('')
+      // Update resolve cache so tag_ref nodes display the name, not ULID
+      useResolveStore.getState().set(resp.id, name, false)
     } catch (error) {
       toast.error(`Failed to create tag: ${String(error)}`)
     }

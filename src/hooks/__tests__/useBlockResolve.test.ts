@@ -218,6 +218,39 @@ describe('searchTags', () => {
 
     expect(items).toEqual([])
   })
+
+  it('populates the resolve cache with fetched tags', async () => {
+    mockedListTagsByPrefix.mockResolvedValue([
+      { tag_id: 'T10', name: 'important', usage_count: 2, updated_at: '2024-01-01' },
+      { tag_id: 'T11', name: 'urgent', usage_count: 1, updated_at: '2024-01-02' },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('imp')
+    })
+
+    // Verify the resolve store cache was populated
+    const cache = useResolveStore.getState().cache
+    expect(cache.get('T10')).toEqual({ title: 'important', deleted: false })
+    expect(cache.get('T11')).toEqual({ title: 'urgent', deleted: false })
+  })
+
+  it('does not call batchSet when no tags match', async () => {
+    mockedListTagsByPrefix.mockResolvedValue([])
+
+    const initialVersion = useResolveStore.getState().version
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('zzz')
+    })
+
+    // Version should not change — no batchSet call
+    expect(useResolveStore.getState().version).toBe(initialVersion)
+  })
 })
 
 // ── searchPages ─────────────────────────────────────────────────────────
