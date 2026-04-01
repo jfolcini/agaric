@@ -1,5 +1,34 @@
 # Session Log
 
+## Session 38 — 2026-04-01 — Tier 2 REVIEW-LATER Implementation
+
+Implemented 10 Tier 2 REVIEW-LATER items across Rust backend and frontend. Two commits: `009c897` (undo/redo hardening, error injection, block_type triggers) from Session 36 continuation, and `1029e1e` (depth limits, FTS reindex, error toasts).
+
+### Resolved Items
+- **#72** FTS stale after rename → `reindex_fts_references()` + materializer task
+- **#73** No CHECK on block_type → BEFORE INSERT/UPDATE triggers (migration 0005)
+- **#74** No max nesting depth → `MAX_BLOCK_DEPTH=20` with ancestor+subtree CTE
+- **#75** Last block deletion undefined → `blocks.length<=1` guard + toast.error
+- **#128** Attachment reversal asymmetry → `reverse_delete_attachment` via op-log lookup
+- **#129** rows_affected checks → EditBlock, MoveBlock, RemoveTag, DeleteProperty, DeleteAttachment
+- **#131** Silent error swallowing → toast.error on all catch blocks with specific messages
+- **#132** Async .catch() missing → App.tsx + JournalPage.tsx error handling
+- **#133** Untestable hook → extracted computeContentDelta + shouldSplitOnBlur
+- **#134** E2E error scenarios → injectMockError + error-scenarios.spec.ts
+
+### Review Findings Fixed
+- **CRITICAL:** Depth check now accounts for moved block's subtree depth (not just parent depth)
+- **CRITICAL:** Last-block guard uses `blocks.length` (not `collapsedVisible.length`)
+- **MEDIUM:** `toast()` → `toast.error()` for consistency
+- **MEDIUM:** Added `toast.error('Failed to load blocks')` to load() catch
+- **MEDIUM:** Added dedup test for ReindexFtsReferences materializer task
+- **LOW:** Replaced generic "Operation failed" with specific messages
+
+### Test Results
+- Rust: 1174 tests pass (cargo nextest run)
+- Frontend: 1820 tests pass across 64 files (vitest)
+- Pre-commit: all hooks pass
+
 ## Session 37 — 2026-04-01 — Sync UX Review (31 new REVIEW-LATER items)
 
 Comprehensive UX review of the sync feature. 6 parallel review subagents examined pairing flow, sync status, device management, conflict resolution, accessibility, and backend integration. 4 verification subagents confirmed/rejected findings against actual code.
