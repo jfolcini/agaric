@@ -159,26 +159,33 @@ function marksEqual(a: readonly PMMark[] | undefined, b: readonly PMMark[] | und
  */
 function normalizeDoc(doc: DocNode): DocNode {
   if (!doc.content) return doc
-  const paragraphs = doc.content.map((p) => {
-    if (!p.content || p.content.length === 0) return p
-    const merged: InlineNode[] = []
-    for (const node of p.content) {
-      const last = merged.length > 0 ? merged[merged.length - 1] : null
-      if (node.type === 'text' && last?.type === 'text' && marksEqual(last.marks, node.marks)) {
-        // Merge into previous text node
-        const combined: TextNode = { type: 'text', text: last.text + node.text }
-        if (last.marks && last.marks.length > 0) {
-          merged[merged.length - 1] = { ...combined, marks: [...last.marks] }
+  const paragraphs = doc.content
+    .map((p) => {
+      if (!p.content || p.content.length === 0) return p
+      const merged: InlineNode[] = []
+      for (const node of p.content) {
+        const last = merged.length > 0 ? merged[merged.length - 1] : null
+        if (node.type === 'text' && last?.type === 'text' && marksEqual(last.marks, node.marks)) {
+          // Merge into previous text node
+          const combined: TextNode = { type: 'text', text: last.text + node.text }
+          if (last.marks && last.marks.length > 0) {
+            merged[merged.length - 1] = { ...combined, marks: [...last.marks] }
+          } else {
+            merged[merged.length - 1] = combined
+          }
         } else {
-          merged[merged.length - 1] = combined
+          merged.push(node)
         }
-      } else {
-        merged.push(node)
       }
-    }
-    if (merged.length === 0) return { type: 'paragraph' as const }
-    return { type: 'paragraph' as const, content: merged }
-  })
+      if (merged.length === 0) return { type: 'paragraph' as const }
+      return { type: 'paragraph' as const, content: merged }
+    })
+    // Strip empty paragraphs — these serialize to "" which parses back as
+    // no content at all, so they must be removed for structural equality.
+    // e.g. "****" parses to an empty paragraph, serializes to "", and
+    // re-parses as { type: 'doc' } with no content property.
+    .filter((p) => p.content && p.content.length > 0)
+  if (paragraphs.length === 0) return { type: 'doc' }
   return { type: 'doc', content: paragraphs }
 }
 

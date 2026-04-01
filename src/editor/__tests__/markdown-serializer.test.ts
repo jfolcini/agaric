@@ -549,6 +549,13 @@ describe('mark coalescing: nested marks across adjacent text nodes', () => {
     expect(md3).toBe(md1)
   })
 
+  it('empty-bold **** round-trip stabilizes to empty string', () => {
+    const md1 = serialize(parse('****'))
+    expect(md1).toBe('')
+    const md2 = serialize(parse(md1))
+    expect(md2).toBe(md1)
+  })
+
   it('three-segment bold-inside-italic with longer text', () => {
     const input = doc(paragraph(italic('hello '), boldItalic('world'), italic(' end')))
     const md = serialize(input)
