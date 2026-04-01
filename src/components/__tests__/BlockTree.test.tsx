@@ -51,8 +51,27 @@ vi.mock('../../editor/use-roving-editor', () => ({
   },
 }))
 
+// Capture useBlockKeyboard callbacks to test focus/delete handlers
+let capturedBlockKeyboardOpts:
+  | {
+      onFocusPrev?: () => void
+      onFocusNext?: () => void
+      onDeleteBlock?: () => void
+      [key: string]: unknown
+    }
+  | undefined
+
 vi.mock('../../editor/use-block-keyboard', () => ({
-  useBlockKeyboard: vi.fn(),
+  useBlockKeyboard: (
+    _editor: unknown,
+    opts: {
+      onFocusPrev?: () => void
+      onFocusNext?: () => void
+      onDeleteBlock?: () => void
+    },
+  ) => {
+    capturedBlockKeyboardOpts = opts
+  },
 }))
 
 vi.mock('sonner', () => ({ toast: vi.fn() }))
@@ -117,6 +136,10 @@ vi.mock('../SortableBlock', () => ({
   INDENT_WIDTH: 24,
 }))
 
+vi.mock('../../lib/announcer', () => ({
+  announce: vi.fn(),
+}))
+
 // Minimal mock for @dnd-kit
 vi.mock('@dnd-kit/core', () => ({
   DndContext: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -134,6 +157,7 @@ vi.mock('@dnd-kit/sortable', () => ({
   verticalListSortingStrategy: vi.fn(),
 }))
 
+import { announce } from '../../lib/announcer'
 import { BlockTree, processCheckboxSyntax } from '../BlockTree'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -148,6 +172,7 @@ beforeEach(() => {
   capturedOnNavigate = undefined
   capturedSearchSlashCommands = undefined
   capturedOnSlashCommand = undefined
+  capturedBlockKeyboardOpts = undefined
   useBlockStore.setState({
     blocks: [],
     focusedBlockId: null,
@@ -1908,5 +1933,213 @@ describe('BlockTree heading slash command execution', () => {
     expect(ids).toContain('h1')
     expect(ids).toContain('h2')
     expect(ids).toContain('h3')
+  })
+})
+
+// =========================================================================
+// Aria-live announcements (#41, #47, #48)
+// =========================================================================
+
+const mockedAnnounce = vi.mocked(announce)
+
+describe('BlockTree aria-live announcements', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  // ── #41 — Focus change announcements ──────────────────────────────
+
+  it('announces block content when navigating to previous block', async () => {
+    const tree = [makeBlock('A', null, 0, 'First block'), makeBlock('B', null, 0, 'Second block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onFocusPrev).toBeDefined()
+    })
+
+    act(() => {
+      capturedBlockKeyboardOpts?.onFocusPrev?.()
+    })
+
+    expect(mockedAnnounce).toHaveBeenCalledWith('Editing block: First block')
+  })
+
+  it('announces block content when navigating to next block', async () => {
+    const tree = [makeBlock('A', null, 0, 'First block'), makeBlock('B', null, 0, 'Second block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onFocusNext).toBeDefined()
+    })
+
+    act(() => {
+      capturedBlockKeyboardOpts?.onFocusNext?.()
+    })
+
+    expect(mockedAnnounce).toHaveBeenCalledWith('Editing block: Second block')
+  })
+
+  it('announces "empty block" when navigating to a block with no content', async () => {
+    const tree = [makeBlock('A', null, 0, ''), makeBlock('B', null, 0, 'Has content')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onFocusPrev).toBeDefined()
+    })
+
+    act(() => {
+      capturedBlockKeyboardOpts?.onFocusPrev?.()
+    })
+
+    expect(mockedAnnounce).toHaveBeenCalledWith('Editing block: empty block')
+  })
+
+  it('truncates long content to 50 characters in focus announcement', async () => {
+    const longContent = 'A'.repeat(80)
+    const tree = [makeBlock('A', null, 0, longContent), makeBlock('B', null, 0, 'Short')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onFocusPrev).toBeDefined()
+    })
+
+    act(() => {
+      capturedBlockKeyboardOpts?.onFocusPrev?.()
+    })
+
+    expect(mockedAnnounce).toHaveBeenCalledWith(`Editing block: ${'A'.repeat(50)}`)
+  })
+
+  // ── #48 — Delete block announcement ───────────────────────────────
+
+  it('announces "Block deleted" when a block is deleted', async () => {
+    const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onDeleteBlock).toBeDefined()
+    })
+
+    act(() => {
+      capturedBlockKeyboardOpts?.onDeleteBlock?.()
+    })
+
+    expect(mockedAnnounce).toHaveBeenCalledWith('Block deleted')
+  })
+
+  // ── #47 — Task state change announcement ──────────────────────────
+
+  it('announces task state when cycling from none to TODO via button click', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Task block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    // Initially no properties
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('todo-toggle-A')).toBeInTheDocument()
+    })
+
+    // Mock set_property for the cycling call
+    mockedInvoke.mockResolvedValue(null)
+
+    await user.click(screen.getByTestId('todo-toggle-A'))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Task state: To do')
+    })
+  })
+
+  it('announces task state when cycling from TODO to DOING', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Task block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    // Block A starts with TODO property
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_properties' && args?.blockId === 'A') {
+        return [
+          { key: 'todo', value_text: 'TODO', value_num: null, value_date: null, value_ref: null },
+        ]
+      }
+      return []
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'TODO')
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await user.click(screen.getByTestId('todo-toggle-A'))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Task state: In progress')
+    })
+  })
+
+  it('announces "Task state: none" when cycling from DONE to none', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Task block')]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    // Block A starts with DONE property
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_properties' && args?.blockId === 'A') {
+        return [
+          { key: 'todo', value_text: 'DONE', value_num: null, value_date: null, value_ref: null },
+        ]
+      }
+      return []
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'DONE')
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await user.click(screen.getByTestId('todo-toggle-A'))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Task state: none')
+    })
   })
 })

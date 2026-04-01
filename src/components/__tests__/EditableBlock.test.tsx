@@ -28,7 +28,9 @@ vi.mock('@tiptap/react', () => ({
 
 // Mock FormattingToolbar — tested separately in FormattingToolbar.test.tsx
 vi.mock('../FormattingToolbar', () => ({
-  FormattingToolbar: () => <div data-testid="formatting-toolbar" />,
+  FormattingToolbar: ({ blockId }: { blockId?: string }) => (
+    <div data-testid="formatting-toolbar" data-block-id={blockId} />
+  ),
 }))
 
 // Mock StaticBlock to keep tests focused on EditableBlock logic
@@ -82,6 +84,10 @@ function makeRovingEditor(
 describe('EditableBlock', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // jsdom does not implement scrollIntoView — stub it globally
+    if (!HTMLElement.prototype.scrollIntoView) {
+      HTMLElement.prototype.scrollIntoView = vi.fn()
+    }
   })
 
   // ── Conditional rendering ────────────────────────────────────────────
@@ -457,6 +463,86 @@ describe('EditableBlock', () => {
       expect(mockUnmount).not.toHaveBeenCalled()
 
       document.body.removeChild(portal)
+    })
+  })
+
+  // ── #40: scrollIntoView on editor focus ──────────────────────────────
+
+  describe('scrollIntoView on focus', () => {
+    it('calls scrollIntoView with block: nearest when focused', async () => {
+      const scrollIntoViewMock = vi.fn()
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="Hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('.block-editor') as HTMLElement
+      wrapper.scrollIntoView = scrollIntoViewMock
+
+      // The useEffect with requestAnimationFrame fires after render.
+      // Flush the rAF callback.
+      await vi.waitFor(() => {
+        expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: 'nearest' })
+      })
+    })
+
+    it('does not call scrollIntoView when not focused', () => {
+      const scrollIntoViewMock = vi.fn()
+      // Mock scrollIntoView on HTMLElement prototype for unfocused case
+      const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
+      HTMLElement.prototype.scrollIntoView = scrollIntoViewMock
+
+      render(
+        <EditableBlock
+          blockId="B1"
+          content="Hello"
+          isFocused={false}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      // StaticBlock renders instead — no section wrapper, no scrollIntoView
+      expect(scrollIntoViewMock).not.toHaveBeenCalled()
+
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView
+    })
+  })
+
+  // ── #46: editor wrapper id and toolbar blockId ───────────────────────
+
+  describe('aria-controls linking', () => {
+    it('applies id="editor-{blockId}" on the editor wrapper section', () => {
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="Hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const wrapper = container.querySelector('#editor-B1')
+      expect(wrapper).not.toBeNull()
+      expect(wrapper?.tagName).toBe('SECTION')
+    })
+
+    it('passes blockId to FormattingToolbar', () => {
+      render(
+        <EditableBlock
+          blockId="B1"
+          content="Hello"
+          isFocused={true}
+          rovingEditor={makeRovingEditor() as never}
+        />,
+      )
+
+      const toolbar = screen.getByTestId('formatting-toolbar')
+      expect(toolbar).toHaveAttribute('data-block-id', 'B1')
     })
   })
 })

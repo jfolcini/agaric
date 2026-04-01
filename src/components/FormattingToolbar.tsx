@@ -37,6 +37,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/t
 
 interface FormattingToolbarProps {
   editor: Editor
+  /** Block ID used to associate toolbar with its editor via aria-controls. */
+  blockId?: string
 }
 
 function Tip({
@@ -56,7 +58,7 @@ function Tip({
   )
 }
 
-export function FormattingToolbar({ editor }: FormattingToolbarProps): React.ReactElement {
+export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): React.ReactElement {
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
 
   const state = useEditorState({
@@ -93,6 +95,7 @@ export function FormattingToolbar({ editor }: FormattingToolbarProps): React.Rea
       <div
         role="toolbar"
         aria-label="Formatting"
+        aria-controls={blockId ? `editor-${blockId}` : undefined}
         className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px"
       >
         <Tip label="Bold (Ctrl+B)">

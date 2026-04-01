@@ -12,11 +12,15 @@
  */
 
 import { useCallback, useState } from 'react'
+import { announce } from '../lib/announcer'
 import type { PropertyRow } from '../lib/tauri'
 import { deleteProperty, setProperty } from '../lib/tauri'
 
 /** Task state cycle: none -> TODO -> DOING -> DONE -> none. */
 const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE']
+
+/** Display labels for screen reader announcements. */
+const STATE_LABELS: Record<string, string> = { TODO: 'To do', DOING: 'In progress', DONE: 'Done' }
 
 /** Priority cycle: none -> A -> B -> C -> none. */
 const PRIORITY_CYCLE: readonly (string | null)[] = [null, 'A', 'B', 'C']
@@ -55,6 +59,9 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
       } else {
         await setProperty({ blockId, key: 'todo', valueText: nextState })
       }
+
+      // Announce to screen readers
+      announce(`Task state: ${nextState ? (STATE_LABELS[nextState] ?? nextState) : 'none'}`)
 
       // Update local cache
       setBlockProperties((prev) => {

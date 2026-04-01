@@ -26,6 +26,7 @@ import { useBlockDnD } from '../hooks/useBlockDnD'
 import { useBlockProperties } from '../hooks/useBlockProperties'
 import { useBlockResolve } from '../hooks/useBlockResolve'
 import { useViewportObserver } from '../hooks/useViewportObserver'
+import { announce } from '../lib/announcer'
 import type { PropertyRow } from '../lib/tauri'
 import {
   batchResolve,
@@ -589,6 +590,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       const prevBlock = collapsedVisible[idx - 1]
       setFocused(prevBlock.id)
       rovingEditor.mount(prevBlock.id, prevBlock.content ?? '')
+      const preview = prevBlock.content?.slice(0, 50) ?? ''
+      announce(`Editing block: ${preview || 'empty block'}`)
     }
   }, [collapsedVisible, focusedBlockId, setFocused, rovingEditor])
 
@@ -598,6 +601,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       const nextBlock = collapsedVisible[idx + 1]
       setFocused(nextBlock.id)
       rovingEditor.mount(nextBlock.id, nextBlock.content ?? '')
+      const preview = nextBlock.content?.slice(0, 50) ?? ''
+      announce(`Editing block: ${preview || 'empty block'}`)
     }
   }, [collapsedVisible, focusedBlockId, setFocused, rovingEditor])
 
@@ -606,6 +611,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     rovingEditor.unmount()
     remove(focusedBlockId)
+    announce('Block deleted')
     // Focus previous block, or next, or nothing
     if (idx > 0) {
       const prevBlock = collapsedVisible[idx - 1]

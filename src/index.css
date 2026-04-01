@@ -200,7 +200,7 @@
 
 /* Placeholder text (via TipTap Placeholder extension) */
 .ProseMirror p.is-editor-empty:first-child::before {
-  @apply text-muted-foreground/60 pointer-events-none float-left h-0;
+  @apply text-muted-foreground pointer-events-none float-left h-0;
   content: attr(data-placeholder);
 }
 
@@ -327,6 +327,18 @@
 .dark .hljs-deletion {
   color: #ffd8d3;
   background-color: #78191b;
+}
+
+/* ── Accessibility: prefers-contrast ───────────────────────────────── */
+@media (prefers-contrast: more) {
+  * {
+    --border: oklch(0.7 0 0) !important;
+  }
+
+  :focus-visible {
+    outline: 3px solid currentColor !important;
+    outline-offset: 2px !important;
+  }
 }
 
 /* ── Accessibility: prefers-reduced-motion ─────────────────────────── */

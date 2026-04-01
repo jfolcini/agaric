@@ -8,7 +8,7 @@
 
 import { EditorContent } from '@tiptap/react'
 import type React from 'react'
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { useBlockStore } from '../stores/blocks'
 import { FormattingToolbar } from './FormattingToolbar'
@@ -43,6 +43,17 @@ export function EditableBlock({
   resolveTagStatus,
 }: EditableBlockProps): React.ReactElement {
   const { setFocused, edit, splitBlock } = useBlockStore()
+  const wrapperRef = useRef<HTMLElement>(null)
+
+  // Scroll the editor wrapper into view when the block becomes focused.
+  // Uses requestAnimationFrame to avoid layout thrashing after mount.
+  useEffect(() => {
+    if (isFocused) {
+      requestAnimationFrame(() => {
+        wrapperRef.current?.scrollIntoView({ block: 'nearest' })
+      })
+    }
+  }, [isFocused])
 
   const handleFocus = useCallback(
     (id: string) => {
@@ -121,11 +132,13 @@ export function EditableBlock({
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: wrapper div catches blur from TipTap contenteditable
     <section
+      ref={wrapperRef}
+      id={`editor-${blockId}`}
       className="block-editor rounded-md ring-1 ring-ring/30 bg-accent/[0.06] shadow-sm"
       data-block-id={blockId}
       onBlur={handleBlur}
     >
-      {rovingEditor.editor && <FormattingToolbar editor={rovingEditor.editor} />}
+      {rovingEditor.editor && <FormattingToolbar editor={rovingEditor.editor} blockId={blockId} />}
       <EditorContent editor={rovingEditor.editor} />
     </section>
   )

@@ -526,4 +526,20 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Redo' })).toBeInTheDocument()
     })
   })
+
+  // ── #46: aria-controls linking ────────────────────────────────────────
+
+  describe('aria-controls', () => {
+    it('sets aria-controls to editor-{blockId} when blockId is provided', () => {
+      render(<FormattingToolbar editor={makeEditor()} blockId="B1" />)
+      const toolbar = screen.getByRole('toolbar', { name: 'Formatting' })
+      expect(toolbar).toHaveAttribute('aria-controls', 'editor-B1')
+    })
+
+    it('does not set aria-controls when blockId is omitted', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const toolbar = screen.getByRole('toolbar', { name: 'Formatting' })
+      expect(toolbar).not.toHaveAttribute('aria-controls')
+    })
+  })
 })
