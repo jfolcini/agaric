@@ -1332,3 +1332,349 @@ async fn orchestrator_rejects_snapshot_offer() {
 
     mat.shutdown();
 }
+
+// ======================================================================
+// Group 6: Event emission (#sync_events)
+// ======================================================================
+
+/// Verify that SyncOrchestrator emits events in the correct order during
+/// a full receiver-side sync flow: start → OpBatch → Complete.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_emits_events_in_order() {
+    use crate::sync_events::{RecordingEventSink, SyncEvent};
+    use std::sync::Arc;
+
+    let ((pool_a, _dir_a), (pool_b, _dir_b)) = two_device_setup().await;
+    let mat_b = Materializer::new(pool_b.clone());
+
+    // A has 3 ops
+    for i in 1..=3 {
+        append_local_op_at(
+            &pool_a,
+            DEV_A,
+            create_payload(&format!("BLK{i}")),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+    }
+
+    let sink = Arc::new(RecordingEventSink::new());
+    let mut orch = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_event_sink(Box::new(Arc::clone(&sink)));
+
+    // Step 1: start() → ExchangingHeads
+    let _msg1 = orch.start().await.unwrap();
+
+    // Step 2: Receive OpBatch from A (simulating A's response to B's
+    //         empty HeadExchange — A computed all ops to send)
+    let a_transfers = ops_as_transfers(&pool_a, DEV_A).await;
+    let a_batch = SyncMessage::OpBatch {
+        ops: a_transfers,
+        is_last: true,
+    };
+    let response = orch.handle_message(a_batch).await.unwrap();
+    assert!(
+        matches!(response, Some(SyncMessage::SyncComplete { .. })),
+        "should produce SyncComplete"
+    );
+    assert!(orch.is_complete(), "orchestrator should be complete");
+
+    let events = sink.events();
+    // Expected: Progress(exchanging_heads), Progress(applying_ops),
+    //           Progress(merging), Complete
+    assert!(
+        events.len() >= 4,
+        "should emit at least 4 events, got {}",
+        events.len()
+    );
+
+    // First event: Progress with exchanging_heads
+    match &events[0] {
+        SyncEvent::Progress { state, .. } => {
+            assert_eq!(
+                state, "exchanging_heads",
+                "first event should be exchanging_heads"
+            );
+        }
+        other => panic!("expected Progress, got {:?}", other),
+    }
+
+    // Verify applying_ops appears somewhere
+    let has_applying = events
+        .iter()
+        .any(|e| matches!(e, SyncEvent::Progress { state, .. } if state == "applying_ops"));
+    assert!(has_applying, "should have an applying_ops progress event");
+
+    // Verify merging appears somewhere
+    let has_merging = events
+        .iter()
+        .any(|e| matches!(e, SyncEvent::Progress { state, .. } if state == "merging"));
+    assert!(has_merging, "should have a merging progress event");
+
+    // Last event: Complete with correct counts
+    match events.last().unwrap() {
+        SyncEvent::Complete {
+            ops_received,
+            ops_sent,
+            ..
+        } => {
+            assert_eq!(*ops_received, 3, "should have received 3 ops");
+            assert_eq!(*ops_sent, 0, "receiver sent 0 ops");
+        }
+        other => panic!("expected Complete as last event, got {:?}", other),
+    }
+
+    mat_b.shutdown();
+}
+
+/// Verify that SyncOrchestrator emits an Error event on protocol violation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_emits_error_event_on_protocol_violation() {
+    use crate::sync_events::{RecordingEventSink, SyncEvent};
+    use std::sync::Arc;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let sink = Arc::new(RecordingEventSink::new());
+    let mut orch = SyncOrchestrator::new(pool, DEV_A.into(), mat.clone())
+        .with_event_sink(Box::new(Arc::clone(&sink)));
+
+    // Don't call start() — state is Idle. Sending OpBatch should fail.
+    let result = orch
+        .handle_message(SyncMessage::OpBatch {
+            ops: vec![],
+            is_last: true,
+        })
+        .await;
+    assert!(result.is_err(), "OpBatch from Idle should be rejected");
+
+    let events = sink.events();
+    assert_eq!(
+        events.len(),
+        1,
+        "should emit exactly 1 error event for protocol violation"
+    );
+    match &events[0] {
+        SyncEvent::Error { message, .. } => {
+            assert!(
+                message.contains("OpBatch"),
+                "error message should mention OpBatch, got: {message}"
+            );
+        }
+        other => panic!("expected Error event, got {:?}", other),
+    }
+
+    mat.shutdown();
+}
+
+/// Verify that SyncOrchestrator emits an Error event when the remote
+/// sends an Error message.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_emits_error_event_on_remote_error() {
+    use crate::sync_events::{RecordingEventSink, SyncEvent};
+    use std::sync::Arc;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let sink = Arc::new(RecordingEventSink::new());
+    let mut orch = SyncOrchestrator::new(pool, DEV_A.into(), mat.clone())
+        .with_event_sink(Box::new(Arc::clone(&sink)));
+
+    orch.start().await.unwrap();
+
+    let error_msg = SyncMessage::Error {
+        message: "remote peer crashed".to_string(),
+    };
+    let _response = orch.handle_message(error_msg).await.unwrap();
+
+    let events = sink.events();
+    // First event: Progress(exchanging_heads) from start(), second: Error
+    assert!(
+        events.len() >= 2,
+        "should emit at least 2 events (progress + error), got {}",
+        events.len()
+    );
+    match events.last().unwrap() {
+        SyncEvent::Error { message, .. } => {
+            assert_eq!(message, "remote peer crashed", "error message should match");
+        }
+        other => panic!("expected Error event, got {:?}", other),
+    }
+
+    mat.shutdown();
+}
+
+/// Verify events for the full initiator-side flow (start → HeadExchange
+/// → send ops → receive SyncComplete).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_emits_events_initiator_side() {
+    use crate::sync_events::{RecordingEventSink, SyncEvent};
+    use std::sync::Arc;
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+
+    // A has some ops
+    for i in 1..=3 {
+        append_local_op_at(
+            &pool_a,
+            DEV_A,
+            create_payload(&format!("BLK{i}")),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+    }
+
+    let sink = Arc::new(RecordingEventSink::new());
+    let mut orch = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_event_sink(Box::new(Arc::clone(&sink)));
+
+    // Step 1: start() → HeadExchange
+    let _msg1 = orch.start().await.unwrap();
+
+    // Step 2: HeadExchange from B (empty)
+    let _response = orch
+        .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+        .await
+        .unwrap();
+
+    // Step 3: SyncComplete from B
+    peer_refs::upsert_peer_ref(&pool_a, "").await.unwrap();
+    let _final = orch
+        .handle_message(SyncMessage::SyncComplete {
+            last_hash: "hash-from-b".into(),
+        })
+        .await
+        .unwrap();
+
+    assert!(orch.is_complete(), "orchestrator should be complete");
+
+    let events = sink.events();
+    // Expected: Progress(exchanging_heads), Progress(streaming_ops), Complete
+    assert!(
+        events.len() >= 3,
+        "should emit at least 3 events, got {}",
+        events.len()
+    );
+
+    // First: exchanging_heads
+    match &events[0] {
+        SyncEvent::Progress { state, .. } => {
+            assert_eq!(
+                state, "exchanging_heads",
+                "first event should be exchanging_heads"
+            );
+        }
+        other => panic!("expected Progress, got {:?}", other),
+    }
+
+    // Second: streaming_ops
+    match &events[1] {
+        SyncEvent::Progress {
+            state, ops_sent, ..
+        } => {
+            assert_eq!(
+                state, "streaming_ops",
+                "second event should be streaming_ops"
+            );
+            assert_eq!(*ops_sent, 3, "should report 3 ops sent");
+        }
+        other => panic!("expected Progress, got {:?}", other),
+    }
+
+    // Last: Complete
+    match events.last().unwrap() {
+        SyncEvent::Complete { ops_sent, .. } => {
+            assert_eq!(*ops_sent, 3, "complete should report 3 ops sent");
+        }
+        other => panic!("expected Complete as last event, got {:?}", other),
+    }
+
+    mat_a.shutdown();
+}
+
+/// Verify that SyncOrchestrator emits an Error event when reset_required
+/// is detected during HeadExchange (remote references compacted ops).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_emits_error_event_on_reset_required() {
+    use crate::sync_events::{RecordingEventSink, SyncEvent};
+    use std::sync::Arc;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create ops with old timestamps that will be compacted
+    let past_ts = "2020-01-01T00:00:00.000Z";
+    for i in 1..=5 {
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            create_payload(&format!("BLK{i}")),
+            past_ts.into(),
+        )
+        .await
+        .unwrap();
+    }
+
+    // Create recent ops that survive compaction
+    let future_ts = "2099-01-01T00:00:00.000Z";
+    for i in 6..=10 {
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            create_payload(&format!("BLK{i}")),
+            future_ts.into(),
+        )
+        .await
+        .unwrap();
+    }
+
+    // Compact — purges old ops
+    snapshot::compact_op_log(&pool, DEV_A, 0).await.unwrap();
+
+    let sink = Arc::new(RecordingEventSink::new());
+    let mut orch = SyncOrchestrator::new(pool.clone(), DEV_A.into(), mat.clone())
+        .with_event_sink(Box::new(Arc::clone(&sink)));
+
+    // start() → ExchangingHeads (emits Progress)
+    orch.start().await.unwrap();
+
+    // Remote claims seq 3 which was compacted → triggers reset_required
+    let remote_exchange = SyncMessage::HeadExchange {
+        heads: vec![DeviceHead {
+            device_id: DEV_A.to_string(),
+            seq: 3,
+            hash: "old-hash".to_string(),
+        }],
+    };
+    let response = orch.handle_message(remote_exchange).await.unwrap();
+    assert!(
+        matches!(response, Some(SyncMessage::ResetRequired { .. })),
+        "should return ResetRequired when remote references compacted ops"
+    );
+
+    let events = sink.events();
+    // Expected: Progress(exchanging_heads) from start(), Error from reset detection
+    assert!(
+        events.len() >= 2,
+        "should emit at least 2 events (progress + error), got {}",
+        events.len()
+    );
+
+    // Last event should be Error mentioning the reset condition
+    match events.last().unwrap() {
+        SyncEvent::Error { message, .. } => {
+            assert!(
+                message.contains("missing"),
+                "error message should mention missing ops, got: {message}"
+            );
+        }
+        other => panic!("expected Error event for reset_required, got {:?}", other),
+    }
+
+    mat.shutdown();
+}

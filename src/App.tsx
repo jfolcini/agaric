@@ -42,6 +42,7 @@ import {
   useSidebar,
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
+import { useSyncEvents } from './hooks/useSyncEvents'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { announce } from './lib/announcer'
 import { createBlock, getConflicts } from './lib/tauri'
@@ -164,6 +165,9 @@ function App() {
 
   // ── Op-level undo/redo shortcuts (Ctrl+Z / Ctrl+Y) ─────────────────
   useUndoShortcuts()
+
+  // ── Sync event listeners (Tauri → store) ───────────────────────────
+  useSyncEvents()
 
   // ── Journal navigation shortcuts (Alt+Arrow, Alt+T) ────────────────
   useEffect(() => {

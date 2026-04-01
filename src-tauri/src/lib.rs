@@ -19,6 +19,7 @@ pub mod recovery;
 pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;
+pub mod sync_events;
 pub mod sync_net;
 pub mod sync_protocol;
 pub mod tag_query;

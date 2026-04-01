@@ -132,6 +132,38 @@ describe('useSyncStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // setOpsReceived
+  // ---------------------------------------------------------------------------
+  describe('setOpsReceived', () => {
+    it('sets an absolute value for opsReceived', () => {
+      useSyncStore.getState().setOpsReceived(42)
+      expect(useSyncStore.getState().opsReceived).toBe(42)
+    })
+
+    it('overwrites previous value (not incremental)', () => {
+      useSyncStore.getState().setOpsReceived(10)
+      useSyncStore.getState().setOpsReceived(3)
+      expect(useSyncStore.getState().opsReceived).toBe(3)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // setOpsSent
+  // ---------------------------------------------------------------------------
+  describe('setOpsSent', () => {
+    it('sets an absolute value for opsSent', () => {
+      useSyncStore.getState().setOpsSent(17)
+      expect(useSyncStore.getState().opsSent).toBe(17)
+    })
+
+    it('overwrites previous value (not incremental)', () => {
+      useSyncStore.getState().setOpsSent(10)
+      useSyncStore.getState().setOpsSent(5)
+      expect(useSyncStore.getState().opsSent).toBe(5)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // reset
   // ---------------------------------------------------------------------------
   describe('reset', () => {

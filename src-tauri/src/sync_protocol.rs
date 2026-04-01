@@ -581,6 +581,7 @@ pub struct SyncOrchestrator {
     pending_ops_to_send: Vec<OpRecord>,
     received_ops: Vec<OpTransfer>,
     remote_device_id: Option<String>,
+    event_sink: Option<Box<dyn crate::sync_events::SyncEventSink>>,
 }
 
 impl SyncOrchestrator {
@@ -600,6 +601,21 @@ impl SyncOrchestrator {
             pending_ops_to_send: Vec::new(),
             received_ops: Vec::new(),
             remote_device_id: None,
+            event_sink: None,
+        }
+    }
+
+    /// Attach an event sink that will be notified on every state transition.
+    pub fn with_event_sink(mut self, sink: Box<dyn crate::sync_events::SyncEventSink>) -> Self {
+        self.event_sink = Some(sink);
+        self
+    }
+
+    /// Emit a [`SyncEvent`](crate::sync_events::SyncEvent) if a sink is
+    /// attached.
+    fn emit(&self, event: crate::sync_events::SyncEvent) {
+        if let Some(sink) = &self.event_sink {
+            sink.on_sync_event(event);
         }
     }
 
@@ -608,6 +624,12 @@ impl SyncOrchestrator {
         let heads = get_local_heads(&self.pool).await?;
         self.state = SyncState::ExchangingHeads;
         self.session.state = SyncState::ExchangingHeads;
+        self.emit(crate::sync_events::SyncEvent::Progress {
+            state: crate::sync_events::sync_state_label(&self.state).to_string(),
+            remote_device_id: self.session.remote_device_id.clone(),
+            ops_received: self.session.ops_received,
+            ops_sent: self.session.ops_sent,
+        });
         Ok(SyncMessage::HeadExchange { heads })
     }
 
@@ -639,6 +661,10 @@ impl SyncOrchestrator {
                 let msg_str = "HeadExchange received in wrong state";
                 self.state = SyncState::Failed(msg_str.into());
                 self.session.state = self.state.clone();
+                self.emit(crate::sync_events::SyncEvent::Error {
+                    message: msg_str.into(),
+                    remote_device_id: self.session.remote_device_id.clone(),
+                });
                 return Err(AppError::InvalidOperation(msg_str.into()));
             }
             // OpBatch valid in StreamingOps or ExchangingHeads (receiver gets ops right after head exchange)
@@ -648,6 +674,10 @@ impl SyncOrchestrator {
                 let msg_str = "OpBatch received before HeadExchange";
                 self.state = SyncState::Failed(msg_str.into());
                 self.session.state = self.state.clone();
+                self.emit(crate::sync_events::SyncEvent::Error {
+                    message: msg_str.into(),
+                    remote_device_id: self.session.remote_device_id.clone(),
+                });
                 return Err(AppError::InvalidOperation(msg_str.into()));
             }
             // SyncComplete valid in StreamingOps (Complete is terminal, already caught above)
@@ -656,6 +686,10 @@ impl SyncOrchestrator {
                 let msg_str = "SyncComplete received in wrong state";
                 self.state = SyncState::Failed(msg_str.into());
                 self.session.state = self.state.clone();
+                self.emit(crate::sync_events::SyncEvent::Error {
+                    message: msg_str.into(),
+                    remote_device_id: self.session.remote_device_id.clone(),
+                });
                 return Err(AppError::InvalidOperation(msg_str.into()));
             }
             // Snapshot messages accepted in any non-terminal state
@@ -683,6 +717,10 @@ impl SyncOrchestrator {
                 if check_reset_required(&self.pool, &heads).await? {
                     self.state = SyncState::ResetRequired;
                     self.session.state = SyncState::ResetRequired;
+                    self.emit(crate::sync_events::SyncEvent::Error {
+                        message: "local op log missing ops claimed by remote".into(),
+                        remote_device_id: self.session.remote_device_id.clone(),
+                    });
                     return Ok(Some(SyncMessage::ResetRequired {
                         reason: "local op log missing ops claimed by remote".into(),
                     }));
@@ -696,6 +734,12 @@ impl SyncOrchestrator {
                 self.pending_ops_to_send = ops;
                 self.state = SyncState::StreamingOps;
                 self.session.state = SyncState::StreamingOps;
+                self.emit(crate::sync_events::SyncEvent::Progress {
+                    state: crate::sync_events::sync_state_label(&self.state).to_string(),
+                    remote_device_id: self.session.remote_device_id.clone(),
+                    ops_received: self.session.ops_received,
+                    ops_sent: self.session.ops_sent,
+                });
 
                 Ok(Some(SyncMessage::OpBatch {
                     ops: transfers,
@@ -714,6 +758,12 @@ impl SyncOrchestrator {
                 // Apply all buffered ops
                 self.state = SyncState::ApplyingOps;
                 self.session.state = SyncState::ApplyingOps;
+                self.emit(crate::sync_events::SyncEvent::Progress {
+                    state: crate::sync_events::sync_state_label(&self.state).to_string(),
+                    remote_device_id: self.session.remote_device_id.clone(),
+                    ops_received: self.session.ops_received,
+                    ops_sent: self.session.ops_sent,
+                });
                 let to_apply = std::mem::take(&mut self.received_ops);
                 let count = to_apply.len();
                 let _apply_result =
@@ -723,6 +773,12 @@ impl SyncOrchestrator {
                 // Merge diverged blocks
                 self.state = SyncState::Merging;
                 self.session.state = SyncState::Merging;
+                self.emit(crate::sync_events::SyncEvent::Progress {
+                    state: crate::sync_events::sync_state_label(&self.state).to_string(),
+                    remote_device_id: self.session.remote_device_id.clone(),
+                    ops_received: self.session.ops_received,
+                    ops_sent: self.session.ops_sent,
+                });
                 let remote_id = self.remote_device_id.clone().unwrap_or_default();
                 let _merge_results = merge_diverged_blocks(
                     &self.pool,
@@ -742,6 +798,11 @@ impl SyncOrchestrator {
 
                 self.state = SyncState::Complete;
                 self.session.state = SyncState::Complete;
+                self.emit(crate::sync_events::SyncEvent::Complete {
+                    remote_device_id: self.session.remote_device_id.clone(),
+                    ops_received: self.session.ops_received,
+                    ops_sent: self.session.ops_sent,
+                });
                 Ok(Some(SyncMessage::SyncComplete { last_hash }))
             }
 
@@ -760,20 +821,33 @@ impl SyncOrchestrator {
 
                 self.state = SyncState::Complete;
                 self.session.state = SyncState::Complete;
+                self.emit(crate::sync_events::SyncEvent::Complete {
+                    remote_device_id: self.session.remote_device_id.clone(),
+                    ops_received: self.session.ops_received,
+                    ops_sent: self.session.ops_sent,
+                });
                 Ok(None)
             }
 
             // ---- ResetRequired ----------------------------------------------
-            SyncMessage::ResetRequired { .. } => {
+            SyncMessage::ResetRequired { reason } => {
                 self.state = SyncState::ResetRequired;
                 self.session.state = SyncState::ResetRequired;
+                self.emit(crate::sync_events::SyncEvent::Error {
+                    message: reason,
+                    remote_device_id: self.session.remote_device_id.clone(),
+                });
                 Ok(None)
             }
 
             // ---- Error ------------------------------------------------------
             SyncMessage::Error { message } => {
                 self.state = SyncState::Failed(message.clone());
-                self.session.state = SyncState::Failed(message);
+                self.session.state = SyncState::Failed(message.clone());
+                self.emit(crate::sync_events::SyncEvent::Error {
+                    message,
+                    remote_device_id: self.session.remote_device_id.clone(),
+                });
                 Ok(None)
             }
 

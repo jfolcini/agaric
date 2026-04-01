@@ -30,6 +30,8 @@ interface SyncStore {
   updateLastSynced: (timestamp: string) => void
   incrementOpsReceived: (count: number) => void
   incrementOpsSent: (count: number) => void
+  setOpsReceived: (count: number) => void
+  setOpsSent: (count: number) => void
   reset: () => void
 }
 
@@ -63,6 +65,14 @@ export const useSyncStore = create<SyncStore>((set) => ({
 
   incrementOpsSent: (count: number) => {
     set((s) => ({ opsSent: s.opsSent + count }))
+  },
+
+  setOpsReceived: (count: number) => {
+    set({ opsReceived: count })
+  },
+
+  setOpsSent: (count: number) => {
+    set({ opsSent: count })
   },
 
   reset: () => {
