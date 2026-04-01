@@ -1,5 +1,49 @@
 # Session Log
 
+## Session 18 — 2026-03-31 — Tier 5 a11y & UX items #36, #38, #39, #42, #43, #49, #50, #60, #120, #122
+
+### Build 1: CSS a11y fixes (#43 + #38 + #39)
+- **Files:** `src/index.css`
+- **Changes:**
+  - #43: Added `@media (prefers-reduced-motion: reduce)` block disabling animations/transitions
+  - #38: `.ProseMirror` font changed from `text-sm` (14px) to mobile-first `text-base` (16px) with `md:text-sm` breakpoint
+  - #39: Added `:active` counterparts to `.block-link-chip:hover`, `.tag-ref-chip:hover`, `.external-link:hover`
+- **Review:** PASS
+
+### Build 2: Touch event fixes (#36 + #60)
+- **Files:** `src/components/FormattingToolbar.tsx`, `src/editor/SuggestionList.tsx` + tests
+- **Changes:**
+  - #36: All 14 `onMouseDown` → `onPointerDown` in FormattingToolbar
+  - #60: `onMouseEnter` → `onPointerEnter` in SuggestionList
+  - Tests updated: `fireEvent.mouseDown` → `fireEvent.pointerDown`, `MouseEvent` → `PointerEvent`
+- **Review:** PASS
+
+### Build 3: ARIA attribute fixes (#42 + #50 + #49)
+- **Files:** `src/editor/use-roving-editor.ts`, `src/components/StaticBlock.tsx`, `src/editor/SuggestionList.tsx`, `src/editor/suggestion-renderer.ts`, 3 extension files + tests
+- **Changes:**
+  - #42: `editorProps.attributes` with `role: 'textbox'`, `aria-multiline`, `aria-label` on TipTap editor
+  - #50: `aria-label="Edit block"` on StaticBlock button
+  - #49: `label` prop threaded from extensions → renderer → SuggestionList (`aria-label` on listbox)
+- **Review:** PASS
+
+### Build 4: Error/success feedback (#120 + #122)
+- **Files:** 7 panels (SearchPanel, TagPanel, BacklinksPanel, HistoryPanel, TrashView, ConflictList, PropertiesPanel) + tests
+- **Changes:**
+  - #120: `toast.error()` in all 17 previously-silent catch blocks
+  - #122: `toast.success()` after restore, purge, keep, discard, revert operations
+  - PropertiesPanel: added try/catch to `handleAdd` and `handleDelete`
+- **Review:** FAIL — PropertiesPanel `handleDelete` missing try/catch. Fixed manually, test added. Re-review: PASS.
+
+### Post-review fixes
+- ConflictList.tsx + TrashView.tsx: replaced `confirmId!` non-null assertions with runtime `if` guards (biome `noNonNullAssertion`)
+- suggestion-renderer.test.ts: added `biome-ignore` for `noExplicitAny` on mock patterns
+- use-roving-editor.test.ts: removed `node:fs`/`__dirname` source-reading test (not available in tsconfig), replaced with comment
+
+### Commit
+- **Hash:** `5ea0aec`
+- **Tests:** 1443 passing (51 files) — test count reduced by 1 (removed source-reading ARIA test)
+- **Prek:** all hooks pass
+
 ## Session 17 — 2026-03-31 — Items #127, #131, #132, #133, #149, #184
 
 ### Build 1: Frontend undo fixes (#127 + #132 + #133)
