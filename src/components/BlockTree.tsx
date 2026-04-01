@@ -71,7 +71,7 @@ function DatePickerOverlay({
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
       <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div className="date-picker-popup fixed left-1/2 top-1/3 z-50 -translate-x-1/2 rounded-md border bg-popover p-2 shadow-lg">
+      <div className="date-picker-popup fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 max-[479px]:left-2 max-[479px]:right-2 max-[479px]:translate-x-0 max-[479px]:max-h-[70vh] max-[479px]:overflow-y-auto">
         <Calendar mode="single" weekStartsOn={1} showOutsideDays onSelect={onSelect} />
       </div>
     </>

@@ -18,6 +18,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { StaticBlock } from '../StaticBlock'
 
+vi.mock('../../lib/open-url', () => ({ openUrl: vi.fn() }))
+
 // Valid 26-char ULID-format test IDs (parser requires [0-9A-Z]{26}).
 const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 const BLOCK_ID_2 = '01BRZ3NDEKTSV4RRFFQ69G5FAV'
@@ -317,6 +319,20 @@ describe('StaticBlock', () => {
     const link = screen.getByText('link')
     await user.click(link)
     expect(onFocus).not.toHaveBeenCalled()
+  })
+
+  it('external link click calls openUrl with the href', async () => {
+    const { openUrl } = await import('../../lib/open-url')
+    const mockedOpenUrl = vi.mocked(openUrl)
+    mockedOpenUrl.mockClear()
+    const user = userEvent.setup()
+    const content = '[click here](https://example.com)'
+
+    render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
+
+    const link = screen.getByText('click here')
+    await user.click(link)
+    expect(mockedOpenUrl).toHaveBeenCalledWith('https://example.com')
   })
 
   it('renders text mixed with external link and block_link', () => {

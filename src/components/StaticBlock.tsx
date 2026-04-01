@@ -13,6 +13,7 @@ import { common, createLowlight } from 'lowlight'
 import type React from 'react'
 import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
+import { openUrl } from '../lib/open-url'
 
 const lowlight = createLowlight(common)
 
@@ -73,7 +74,7 @@ export function renderRichContent(
                 data-href={linkMark.attrs.href}
                 onClick={(e) => {
                   e.stopPropagation()
-                  window.open(linkMark.attrs.href, '_blank', 'noopener,noreferrer')
+                  openUrl(linkMark.attrs.href)
                 }}
               >
                 {node.text}
