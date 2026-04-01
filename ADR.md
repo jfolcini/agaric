@@ -41,8 +41,8 @@ auto-split, keyboard handling, viewport observer. See ARCHITECTURE.md §1, §7.
 ## ADR-02 — State Management (Remaining)
 
 **Implemented:** Zustand with explicit state enums for boot (`booting → recovering → ready | error`)
-and editor lifecycle. Undo strategy (TipTap history within session, no cross-flush Ctrl+Z). See
-ARCHITECTURE.md §7, §8.
+and editor lifecycle. Two-tier undo: TipTap history within session, page-level op reversal via
+`useUndoStore` + `reverse.rs` for cross-flush Ctrl+Z/Y. See ARCHITECTURE.md §7, §8.
 
 **Pending:**
 
@@ -298,50 +298,3 @@ On export, the serializer emits the storage Markdown string with ULIDs replaced 
 
 This produces standard Markdown + Obsidian-style wikilinks, readable in any Markdown editor.
 Round-trip import (Markdown → blocks with ULID tokens) is deferred to Phase 5.
-
----
-
-## UX Review Notes (2026-03-31)
-
-Comprehensive UX review of the Journal and Outliner identified architectural issues. Decisions
-recorded here after user review.
-
-### Auto-split on blur — KEEP AS IS
-
-**Decision:** Keep current auto-split behavior. Accept paste-split as a trade-off for the
-"write prose freely, get structure on exit" mechanic. No ADR amendment needed.
-
-### Cross-block undo — KEEP AS IS (per ADR-02)
-
-**Decision:** Keep undo scoped per block mount. Op-level undo/redo as designed in ADR-02.
-History panel remains the deliberate revert mechanism for cross-block changes.
-
-### Collapse state persistence — KEEP AS IS
-
-**Decision:** Keep ephemeral collapse state. Not a priority.
-
-### Monthly journal view — OPTIMIZE PERFORMANCE, KEEP STACKED LAYOUT
-
-**Decision:** Keep the stacked day-section layout but optimize performance. Do NOT replace with
-calendar grid. Lazy-load BlockTree components for off-screen days. The resolve cache
-centralization (see below) eliminates the per-BlockTree preload overhead.
-
-### BlockTree component size — DECOMPOSE
-
-**Decision: Approved.** Extract into smaller hooks:
-- `useBlockResolve()` — resolve cache management
-- `useBlockDnD()` — DnD state and handlers
-- `useBlockProperties()` — property fetch and task state
-- Keep BlockTree as the orchestrator.
-
-### N+1 property fetch — ADD BATCH COMMAND
-
-**Decision: Approved.** Add `get_batch_properties` Tauri command accepting `Vec<String>` block
-IDs, returning `HashMap<String, Vec<PropertyRow>>`. Uses `json_each()` pattern from
-`batch_resolve_inner`. Include benchmark tests matching existing command bench coverage.
-
-### Resolve cache duplication — CENTRALIZE TO ZUSTAND STORE
-
-**Decision: Approved.** Move the resolve cache to a Zustand store (`stores/resolve.ts`). Fetch
-once on boot via `preload()`. Update incrementally on block creation/edit/delete. Both
-JournalPage and BlockTree consume from the same store — no more duplicate `listBlocks` calls.

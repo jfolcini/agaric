@@ -25,6 +25,8 @@ Anytype, faster than Logseq.
 13. [Type Safety & Bindings](#13-type-safety--bindings)
 14. [Dev Tooling & CI](#14-dev-tooling--ci)
 15. [Security](#15-security)
+16. [Query System](#16-query-system)
+17. [Android Platform](#17-android-platform)
 
 ---
 
@@ -421,7 +423,7 @@ dependencies. Converts between ProseMirror document nodes and the storage format
 **Parse (Markdown → ProseMirror):** Hand-rolled single-pass parser. Regex for token ID only. Mark
 stack with unclosed-mark revert (becomes plain text, never errors).
 
-**Test suite:** 50+ unit tests, property-based tests (fast-check) for round-trip identity and
+**Test suite:** 200+ unit tests, property-based tests (fast-check) for round-trip identity and
 idempotence. Mark coalescing avoids ambiguous sequences like `*a****b****c*`.
 
 **Why not `tiptap-markdown`:** Has known edge cases, doesn't support `#[ULID]` / `[[ULID]]`
@@ -797,13 +799,13 @@ CI doesn't need a live database. `cargo sqlx prepare --check` is a CI gate.
 
 | Layer | Tool | Scope |
 |-------|------|-------|
-| Rust unit tests | cargo nextest | Inline `#[cfg(test)] mod tests` in every module (~890 tests) |
+| Rust unit tests | cargo nextest | Inline `#[cfg(test)] mod tests` in every module (~945 tests) |
 | Rust integration | cargo nextest | Pipeline tests, API contract tests |
 | Rust snapshots | insta (22 YAML snapshots) | Op payload serialization, command responses |
 | Frontend unit | Vitest (jsdom) | Pure functions, store logic, hooks |
 | Frontend component | Vitest + @testing-library/react | Render, interaction, a11y (vitest-axe) |
 | Frontend property | Vitest + fast-check | Markdown serializer fuzzing, round-trip stability |
-| E2E | Playwright (Chromium, 8 spec files) | Smoke, editor lifecycle, links, keyboard, Markdown syntax, slash commands, toolbar |
+| E2E | Playwright (Chromium, 12 spec files) | Smoke, editor lifecycle, links, keyboard, Markdown syntax, slash commands, toolbar, tags, undo/redo, conflicts, history, features coverage |
 | Benchmarks | Criterion (9 bench files) | Cache, commands, drafts, FTS, hash, op log, pagination, soft delete, undo/redo (manual only) |
 
 ### Pre-commit hooks (prek)
@@ -852,3 +854,100 @@ the frontend. Original errors are logged server-side for debugging. The frontend
 No secrets or API keys in the codebase. No cloud services. Device UUID is the only persistent
 identity, stored locally. Pre-commit hooks include `npm audit` and `cargo deny` for dependency
 vulnerability scanning.
+
+---
+
+## 16. Query System
+
+### Tag boolean queries
+
+The tag query engine (`tag_query.rs`) evaluates composable boolean expressions over the tag graph:
+
+```rust
+pub enum TagExpr {
+    Tag(String),           // blocks tagged with this tag_id
+    Prefix(String),        // blocks tagged with any tag matching name prefix
+    And(Vec<TagExpr>),     // intersection
+    Or(Vec<TagExpr>),      // union
+    Not(Box<TagExpr>),     // complement
+}
+```
+
+**Evaluation strategy:** In-memory set operations. Each leaf resolves to a `FxHashSet<block_id>`
+via SQL. AND = retain intersection. OR = extend union. NOT = complement against all non-deleted
+blocks. Acceptable for <100k blocks (sub-millisecond). Future optimization: push NOT into SQL
+CTEs.
+
+**Prefix matching:** `LIKE 'name%'` on `tags_cache.name` with proper escape handling (`%`, `_`,
+`\`). Single JOIN query — no N+1 per-tag.
+
+**Frontend:** `TagFilterPanel` exposes AND/OR mode selection with tag_id and prefix inputs. The
+`query_by_tags` command accepts `tag_ids[]`, `prefixes[]`, and `mode` (`"and"` / `"or"`).
+
+### Property queries
+
+`query_by_property(key, value_text)` filters blocks by property key with optional text value
+matching. Keyset-paginated on `block_id ASC`. Excludes soft-deleted and conflict blocks.
+
+`block_properties` supports four typed value columns — `value_text`, `value_num`, `value_date`,
+`value_ref` — but the current query API only supports text matching. Numeric, date, and reference
+filtering is a planned extension.
+
+### Backlinks
+
+`get_backlinks(blockId)` returns blocks whose content contains `[[blockId]]` tokens. The
+`block_links` table (materializer-maintained) is joined with `blocks` to produce paginated
+results. Excludes soft-deleted and conflict blocks.
+
+**Client-side filters (current):** The BacklinksPanel applies type, TODO status, priority, and
+creation-date filters in JavaScript after loading. Properties are fetched per-block via
+`getProperties()`.
+
+**Planned:** Server-side compound filter expression (AND/OR/NOT over property, tag, date, and
+text predicates) pushed to SQL. See the backlinks filter plan for details.
+
+### Batch operations
+
+Two commands avoid N+1 patterns in the frontend:
+
+- `batch_resolve(ids[])` → `ResolvedBlock[]` — lightweight metadata (id, title, block_type,
+  deleted) for rendering `[[ULID]]` and `#[ULID]` tokens in StaticBlock.
+- `get_batch_properties(blockIds[])` → `HashMap<blockId, PropertyRow[]>` — all properties for
+  multiple blocks in a single query using `json_each()`.
+
+Both accept a `Vec<String>` of IDs and return validation errors on empty input.
+
+---
+
+## 17. Android Platform
+
+### Build and deployment
+
+Android support via Tauri 2's mobile target. The generated Android project lives at
+`src-tauri/gen/android/`. Same Rust backend, same React frontend — the WebView hosts the
+identical UI.
+
+**Build targets:**
+- `x86_64` — emulator (AVD `spike_test`, API 34)
+- `aarch64` — physical ARM64 devices
+
+**DB path:** `/data/data/com.blocknotes.app/notes.db` (via `app.path().app_data_dir()`). Same
+SQLite WAL mode, same pool configuration, same migrations.
+
+**SDK requirements:** Min SDK 24, Target SDK 36, NDK 27.
+
+### Status
+
+All IPC commands (read + write) confirmed working. Block creation, editing, and persistence
+across restarts verified on emulator. Debug APK builds, installs, and runs correctly.
+
+**Known limitation:** ProGuard `isMinifyEnabled = true` for release builds, but keep rules are
+empty — release APK will crash. Debug builds work correctly.
+
+### Headless testing
+
+AI agents and CI can interact with the Android app entirely via ADB — no display needed:
+- `adb exec-out screencap -p` for screenshots
+- `adb shell input tap/text/swipe` for interaction
+- `adb logcat -s RustStdoutStderr:V` for Rust logs
+- Chrome DevTools Protocol via `adb forward` for WebView inspection
