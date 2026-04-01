@@ -1202,3 +1202,33 @@ Resolved 7 Tier 4 items across 3 parallel build subagents: CSS/HTML viewport fix
 ### Stats
 - 3 new tests, 56 test files, 1532 total tests
 - 3 build subagents + 1 review subagent (A: pass, B: conditional pass, C: false-fail)
+
+---
+
+## Session 24 — Tier 4 batch (6 items)
+**Date:** 2026-03-31
+**Commit:** 4c20d70
+
+### Summary
+Resolved 6 Tier 4 items across 2 parallel build subagents: capability schema fix, DnD sensor tuning for mobile, Android build scripts, sidebar width clamping, virtual keyboard awareness, and screen orientation.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `src-tauri/capabilities/default.json` | #26: schema ref desktop-schema.json → capabilities.json |
+| `src/hooks/useBlockDnD.ts` | #28: split DnD sensor — mobile delay:250/tolerance:5, desktop distance:8 |
+| `src/hooks/__tests__/useBlockDnD.test.tsx` | #28: 1 new test for mobile sensor config |
+| `package.json` | #33: android:dev and android:build scripts |
+| `src/components/ui/sidebar.tsx` | #35: SIDEBAR_WIDTH_MOBILE 18rem → min(18rem, 85vw) |
+| `src/editor/suggestion-renderer.ts` | #58: visualViewport?.height/width with innerHeight/Width fallback |
+| `src-tauri/gen/android/app/src/main/AndroidManifest.xml` | #66: screenOrientation="unspecified" on Activity |
+| `REVIEW-LATER.md` | 6 items marked resolved |
+
+### Review findings applied
+- Biome import ordering fix in useBlockDnD.ts (useIsMobile import moved after ../lib/tree-utils)
+- Ternary formatting collapsed to single line per biome rules
+
+### Stats
+- 1 new test, 56 test files, 1533 total tests
+- 2 build subagents + review cycle
