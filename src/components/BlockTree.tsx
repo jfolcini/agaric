@@ -55,23 +55,57 @@ function DatePickerOverlay({
   onSelect: (day: Date | undefined) => void
   onClose: () => void
 }): React.ReactElement {
+  const dialogRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
       }
+      // Focus trap: keep Tab within the dialog
+      if (e.key === 'Tab') {
+        const dialog = dialogRef.current
+        if (!dialog) return
+        const focusable = dialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        )
+        if (focusable.length === 0) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
+
+  // Auto-focus the first button inside the calendar on mount
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    const firstBtn = dialog.querySelector<HTMLElement>('button')
+    firstBtn?.focus()
+  }, [])
 
   return (
     <>
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
       <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div className="date-picker-popup fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 max-[479px]:left-2 max-[479px]:right-2 max-[479px]:translate-x-0 max-[479px]:max-h-[70vh] max-[479px]:overflow-y-auto">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Date picker"
+        className="date-picker-popup fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 max-[479px]:left-2 max-[479px]:right-2 max-[479px]:translate-x-0 max-[479px]:max-h-[70vh] max-[479px]:overflow-y-auto"
+      >
         <Calendar mode="single" weekStartsOn={1} showOutsideDays onSelect={onSelect} />
       </div>
     </>

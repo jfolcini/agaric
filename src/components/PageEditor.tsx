@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { editBlock } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { useNavigationStore } from '../stores/navigation'
+import { useUndoStore } from '../stores/undo'
 import { BacklinksPanel } from './BacklinksPanel'
 import { BlockTree } from './BlockTree'
 import { HistoryPanel } from './HistoryPanel'
@@ -111,6 +112,8 @@ export function PageEditor({
     }
     if (newTitle !== title) {
       await editBlock(pageId, newTitle)
+      useUndoStore.getState().onNewAction(pageId)
+      useNavigationStore.getState().replacePage(pageId, newTitle)
     }
   }, [editableTitle, title, pageId])
 

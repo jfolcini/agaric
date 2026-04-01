@@ -324,11 +324,11 @@ export function SortableBlock({
                     className={cn(
                       'w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold',
                       priority === 'A' &&
-                        'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+                        'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 ring-2 ring-red-400 dark:ring-red-500',
                       priority === 'B' &&
                         'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
                       priority === 'C' &&
-                        'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+                        'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-dashed border-blue-400 dark:border-blue-500',
                     )}
                   >
                     {PRIORITY_DISPLAY[priority]}

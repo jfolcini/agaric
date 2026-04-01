@@ -26,12 +26,16 @@ const mockedToastError = vi.mocked(toast.error)
 
 const mockUndo = vi.fn().mockResolvedValue(null)
 const mockRedo = vi.fn().mockResolvedValue(null)
+const mockLoad = vi.fn().mockResolvedValue(undefined)
+const mockReplacePage = vi.fn()
+const mockGetBlock = vi.fn().mockResolvedValue(null)
 
 vi.mock('@/stores/navigation', () => ({
   useNavigationStore: {
     getState: vi.fn(() => ({
       currentView: 'page-editor',
       pageStack: [{ pageId: 'PAGE_1', title: 'Test Page' }],
+      replacePage: mockReplacePage,
     })),
   },
 }))
@@ -43,6 +47,18 @@ vi.mock('@/stores/undo', () => ({
       redo: mockRedo,
     })),
   },
+}))
+
+vi.mock('@/stores/blocks', () => ({
+  useBlockStore: {
+    getState: vi.fn(() => ({
+      load: mockLoad,
+    })),
+  },
+}))
+
+vi.mock('../../lib/tauri', () => ({
+  getBlock: (...args: unknown[]) => mockGetBlock(...args),
 }))
 
 import { useNavigationStore } from '@/stores/navigation'
@@ -95,12 +111,16 @@ beforeEach(async () => {
   mockedNavGetState.mockReturnValue({
     currentView: 'page-editor',
     pageStack: [{ pageId: 'PAGE_1', title: 'Test Page' }],
-  } as ReturnType<typeof useNavigationStore.getState>)
+    replacePage: mockReplacePage,
+  } as unknown as ReturnType<typeof useNavigationStore.getState>)
 
   mockedUndoGetState.mockReturnValue({
     undo: mockUndo,
     redo: mockRedo,
   } as unknown as ReturnType<typeof useUndoStore.getState>)
+
+  mockLoad.mockResolvedValue(undefined)
+  mockGetBlock.mockResolvedValue(null)
 })
 
 afterEach(() => {
@@ -136,6 +156,7 @@ describe('useUndoShortcuts', () => {
     mockedNavGetState.mockReturnValue({
       currentView: 'journal',
       pageStack: [],
+      replacePage: mockReplacePage,
     } as unknown as ReturnType<typeof useNavigationStore.getState>)
 
     const { unmount } = renderHook(() => useUndoShortcuts())
@@ -153,6 +174,7 @@ describe('useUndoShortcuts', () => {
     mockedNavGetState.mockReturnValue({
       currentView: 'page-editor',
       pageStack: [],
+      replacePage: mockReplacePage,
     } as unknown as ReturnType<typeof useNavigationStore.getState>)
 
     const { unmount } = renderHook(() => useUndoShortcuts())
@@ -272,7 +294,8 @@ describe('useUndoShortcuts', () => {
         { pageId: 'PAGE_2', title: 'Second' },
         { pageId: 'PAGE_3', title: 'Third' },
       ],
-    } as ReturnType<typeof useNavigationStore.getState>)
+      replacePage: mockReplacePage,
+    } as unknown as ReturnType<typeof useNavigationStore.getState>)
 
     const { unmount } = renderHook(() => useUndoShortcuts())
 
@@ -390,6 +413,85 @@ describe('toast feedback', () => {
     await new Promise((r) => setTimeout(r, 10))
 
     expect(mockedToast).not.toHaveBeenCalled()
+
+    unmount()
+  })
+})
+
+describe('refresh after undo/redo', () => {
+  it('reloads block store after successful undo', async () => {
+    mockUndo.mockResolvedValueOnce({ type: 'undo' })
+    mockGetBlock.mockResolvedValueOnce({ id: 'PAGE_1', content: 'Reverted Title' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockLoad).toHaveBeenCalledWith('PAGE_1')
+    })
+
+    unmount()
+  })
+
+  it('updates nav store page title after successful undo', async () => {
+    mockUndo.mockResolvedValueOnce({ type: 'undo' })
+    mockGetBlock.mockResolvedValueOnce({ id: 'PAGE_1', content: 'Reverted Title' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockReplacePage).toHaveBeenCalledWith('PAGE_1', 'Reverted Title')
+    })
+
+    unmount()
+  })
+
+  it('reloads block store after successful redo', async () => {
+    mockRedo.mockResolvedValueOnce({ type: 'redo' })
+    mockGetBlock.mockResolvedValueOnce({ id: 'PAGE_1', content: 'Re-applied Title' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockLoad).toHaveBeenCalledWith('PAGE_1')
+    })
+
+    unmount()
+  })
+
+  it('does not reload when undo returns null', async () => {
+    mockUndo.mockResolvedValueOnce(null)
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(mockLoad).not.toHaveBeenCalled()
+
+    unmount()
+  })
+
+  it('handles getBlock failure gracefully (best-effort title refresh)', async () => {
+    mockUndo.mockResolvedValueOnce({ type: 'undo' })
+    mockGetBlock.mockRejectedValueOnce(new Error('not found'))
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(mockLoad).toHaveBeenCalledWith('PAGE_1')
+    })
+
+    // replacePage should NOT have been called since getBlock failed
+    expect(mockReplacePage).not.toHaveBeenCalled()
 
     unmount()
   })

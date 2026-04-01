@@ -75,6 +75,8 @@ vi.mock('lucide-react', () => ({
 }))
 
 import { useBlockStore } from '../../stores/blocks'
+import { useNavigationStore } from '../../stores/navigation'
+import { useUndoStore } from '../../stores/undo'
 import { PageEditor } from '../PageEditor'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -99,11 +101,17 @@ beforeEach(() => {
   capturedBacklinksBlockId = null
   capturedHistoryBlockId = null
   capturedTagBlockId = null
-  // Reset the Zustand store to a clean state before each test
+  // Reset the Zustand stores to a clean state before each test
   useBlockStore.setState({
     blocks: [],
     focusedBlockId: null,
     loading: false,
+  })
+  useUndoStore.setState({ pages: new Map() })
+  useNavigationStore.setState({
+    currentView: 'page-editor',
+    pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }],
+    selectedBlockId: null,
   })
 })
 
@@ -591,5 +599,85 @@ describe('PageEditor empty title revert', () => {
 
     expect(titleEl).toHaveTextContent('Original Title')
     expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+  })
+})
+
+describe('PageEditor undo/redo integration', () => {
+  it('calls onNewAction on undo store after title edit', async () => {
+    const user = userEvent.setup()
+
+    // Pre-populate redo stack to verify it gets cleared
+    const pages = new Map()
+    pages.set('PAGE_1', { redoStack: [{ device_id: 'D1', seq: 1 }], undoDepth: 1 })
+    useUndoStore.setState({ pages })
+
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'PAGE_1',
+      block_type: 'page',
+      content: 'New Title',
+      parent_id: null,
+      position: null,
+    })
+
+    render(<PageEditor pageId="PAGE_1" title="Old Title" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+    await user.clear(titleEl)
+    await user.type(titleEl, 'New Title')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'PAGE_1',
+        toText: 'New Title',
+      })
+    })
+
+    // Redo stack should be cleared by onNewAction
+    const pageState = useUndoStore.getState().pages.get('PAGE_1')
+    expect(pageState?.redoStack).toEqual([])
+    expect(pageState?.undoDepth).toBe(0)
+  })
+
+  it('updates navigation store title after title edit', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'PAGE_1',
+      block_type: 'page',
+      content: 'Updated Title',
+      parent_id: null,
+      position: null,
+    })
+
+    render(<PageEditor pageId="PAGE_1" title="Old Title" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+    await user.clear(titleEl)
+    await user.type(titleEl, 'Updated Title')
+    await user.tab()
+
+    await waitFor(() => {
+      const { pageStack } = useNavigationStore.getState()
+      expect(pageStack[pageStack.length - 1].title).toBe('Updated Title')
+    })
+  })
+
+  it('does not call onNewAction when title is unchanged', async () => {
+    const user = userEvent.setup()
+
+    const pages = new Map()
+    pages.set('PAGE_1', { redoStack: [{ device_id: 'D1', seq: 1 }], undoDepth: 1 })
+    useUndoStore.setState({ pages })
+
+    render(<PageEditor pageId="PAGE_1" title="Same Title" />)
+
+    const titleEl = screen.getByRole('textbox', { name: /page title/i })
+    await user.click(titleEl)
+    await user.tab()
+
+    // Redo stack should remain untouched
+    const pageState = useUndoStore.getState().pages.get('PAGE_1')
+    expect(pageState?.redoStack).toHaveLength(1)
   })
 })

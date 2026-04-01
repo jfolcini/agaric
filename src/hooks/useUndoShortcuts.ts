@@ -8,8 +8,23 @@
 
 import { useEffect } from 'react'
 import { toast } from 'sonner'
+import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { useUndoStore } from '@/stores/undo'
+import { getBlock } from '../lib/tauri'
+
+/** Reload block store and refresh page title in nav store after undo/redo. */
+async function refreshAfterUndoRedo(pageId: string): Promise<void> {
+  await useBlockStore.getState().load(pageId)
+  try {
+    const pageBlock = await getBlock(pageId)
+    if (pageBlock?.content) {
+      useNavigationStore.getState().replacePage(pageId, pageBlock.content)
+    }
+  } catch {
+    // Page title refresh is best-effort
+  }
+}
 
 export function useUndoShortcuts(): void {
   useEffect(() => {
@@ -32,8 +47,11 @@ export function useUndoShortcuts(): void {
         useUndoStore
           .getState()
           .undo(pageId)
-          .then((result) => {
-            if (result) toast('Undone', { duration: 1500 })
+          .then(async (result) => {
+            if (result) {
+              toast('Undone', { duration: 1500 })
+              await refreshAfterUndoRedo(pageId)
+            }
           })
           .catch(() => toast.error('Undo failed'))
         return
@@ -45,8 +63,11 @@ export function useUndoShortcuts(): void {
         useUndoStore
           .getState()
           .redo(pageId)
-          .then((result) => {
-            if (result) toast('Redone', { duration: 1500 })
+          .then(async (result) => {
+            if (result) {
+              toast('Redone', { duration: 1500 })
+              await refreshAfterUndoRedo(pageId)
+            }
           })
           .catch(() => toast.error('Redo failed'))
         return
