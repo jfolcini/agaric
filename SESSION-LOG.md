@@ -1,5 +1,50 @@
 # Session Log
 
+## Session 29 — 2026-04-01 — Test coverage audit + 20 new tests + flaky fix
+
+Systematic coverage audit of all 16 Rust files changed by sync blockers (commit `a3a38a5`).
+4 parallel audit subagents identified gaps, 4 parallel build subagents fixed them.
+Commit: `6f8c682`. 11 files changed, 738 insertions, 4 deletions.
+
+### Audit methodology
+
+4 parallel read-only subagents audited every `#[cfg(test)] mod tests` block in the 16 changed files. Each produced: new/changed function inventory, test coverage matrix (happy/error/edge), false coverage flags, and missing test list.
+
+### New tests (20)
+
+| Module | Test | What it covers |
+|--------|------|----------------|
+| hash.rs | `null_byte_debug_assert_fires_for_parent_seqs` | `#[should_panic]` for parent_seqs null-byte assertion |
+| hash.rs | `null_byte_debug_assert_fires_for_op_type` | `#[should_panic]` for op_type null-byte assertion |
+| op.rs | `normalize_block_ids_is_no_op_for_all_payload_variants` | All 12 variants verified |
+| commands.rs | `create_block_accepts_content_at_max_length` | Boundary: exactly 256KB accepted |
+| commands.rs | `create_block_position_zero_returns_validation_error` | Position validation |
+| commands.rs | `create_block_position_negative_returns_validation_error` | Position validation |
+| commands.rs | `edit_block_accepts_content_at_max_length` | Boundary: exactly 256KB accepted |
+| ulid.rs | `from_trusted_normalizes_to_uppercase` | Lenient constructor behavior |
+| dag.rs | `find_lca_detects_cycle_in_chain` | Direct cycle detection via HashSet |
+| merge.rs | `max_chain_walk_iterations_is_bounded` | Constant guard (==1000) |
+| merge.rs | `merge_block_conflict_original_gets_ours_content` | blocks.content == ours after conflict |
+| recovery.rs | `find_prev_edit_returns_most_recent_across_all_devices` | Cross-device timestamp ordering |
+| reverse.rs | `reverse_edit_block_prev_edit_points_to_reversed_op_from_different_device` | Cross-device prev_edit linkage |
+| snapshot.rs | `cleanup_old_snapshots_deletes_pending_snapshots` | Critical: `WHERE status = 'pending'` clause |
+| snapshot.rs | `cleanup_old_snapshots_mixed_pending_and_complete` | Mixed states |
+| snapshot.rs | `cleanup_old_snapshots_with_zero_keep_deletes_all` | Edge case |
+| snapshot.rs | `cleanup_old_snapshots_empty_database_returns_zero` | Edge case |
+| materializer.rs | `handle_foreground_task_apply_op_is_noop_in_phase_1` | Phase 1 no-op |
+| materializer.rs | `handle_foreground_task_barrier_signals_notify` | Barrier task |
+| db.rs | `init_pools_wal_autocheckpoint_configured` | Both read+write pools |
+
+### Bug fix
+
+- **Flaky `undo_page_op_reverses_delete_block`** — Root cause: two `now_rfc3339()` calls in `delete_block_inner` could straddle a millisecond boundary, causing `reverse_delete`'s `deleted_at_ref` to not match `blocks.deleted_at`. Fix: hoist single `let now = now_rfc3339()` above both writes. 5/5 stable after fix.
+
+### Test results
+
+- 945 Rust tests passed (up from 925)
+- 1541 frontend tests passed
+- All pre-commit hooks passed
+
 ## Session 28 — 2026-04-01 — Fix all 18 Tier 1 sync blockers
 
 Resolved all 18 sync blocker items (#1-#13, #67-#70, #130) from REVIEW-LATER.md.
