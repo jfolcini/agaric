@@ -2360,18 +2360,21 @@ mod tests {
     async fn fts_contains_sanitises_bare_operators() {
         let (pool, _dir) = test_pool().await;
         setup_backlinks(&pool).await;
-        insert_fts(&pool, "SRC_A", "hello OR world").await;
+        insert_fts(&pool, "SRC_A", "hello NEAR world").await;
 
-        // A bare "OR" used to cause an FTS5 syntax error; sanitize_fts_query
+        // A bare "NEAR" used to cause an FTS5 syntax error; sanitize_fts_query
         // now wraps each token in double-quotes so it matches literally.
-        let filter = BacklinkFilter::Contains { query: "OR".into() };
+        // (Trigram tokenizer requires >= 3 chars, so we use "NEAR" not "OR".)
+        let filter = BacklinkFilter::Contains {
+            query: "NEAR".into(),
+        };
         let result = resolve_filter(&pool, &filter, 0).await;
         assert!(
             result.is_ok(),
             "sanitized FTS query should not produce a syntax error"
         );
         let set = result.unwrap();
-        assert!(set.contains("SRC_A"), "SRC_A contains literal 'OR'");
+        assert!(set.contains("SRC_A"), "SRC_A contains literal 'NEAR'");
     }
 
     // ======================================================================

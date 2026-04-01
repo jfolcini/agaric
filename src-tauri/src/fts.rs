@@ -1656,21 +1656,32 @@ mod tests {
         // Verify that blocks with very close (but not identical) ranks are
         // correctly paginated — the epsilon comparison should not conflate
         // truly different ranks.
+        //
+        // Trigram BM25 produces very small rank differences for similar-length
+        // documents, so we use drastically different document lengths to push
+        // the scores apart beyond the 1e-9 epsilon.
         let (pool, _dir) = test_pool().await;
 
-        // Create blocks with slightly different content so ranks differ.
-        // "searchterm" is the common keyword; extra unique words affect rank.
+        let long_padding = " filler".repeat(200); // ~1400 chars of padding
         insert_block(
             &pool,
             BLOCK_A,
             "content",
-            "searchterm extra extra extra",
+            &format!("pagination{long_padding}"),
             None,
             Some(0),
         )
         .await;
-        insert_block(&pool, BLOCK_B, "content", "searchterm extra", None, Some(1)).await;
-        insert_block(&pool, BLOCK_C, "content", "searchterm", None, Some(2)).await;
+        insert_block(
+            &pool,
+            BLOCK_B,
+            "content",
+            &format!("pagination{}", " filler".repeat(20)),
+            None,
+            Some(1),
+        )
+        .await;
+        insert_block(&pool, BLOCK_C, "content", "pagination", None, Some(2)).await;
         rebuild_fts_index(&pool).await.unwrap();
 
         // Walk all pages with limit=1
@@ -1680,7 +1691,7 @@ mod tests {
 
         loop {
             let page = PageRequest::new(cursor.clone(), Some(1)).unwrap();
-            let result = search_fts(&pool, "searchterm", &page).await.unwrap();
+            let result = search_fts(&pool, "pagination", &page).await.unwrap();
 
             for item in &result.items {
                 all_ids.push(item.id.clone());
