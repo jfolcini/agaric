@@ -1,5 +1,35 @@
 # Session Log
 
+## Session 26 — 2026-03-31 — Tier 4 Android/cross-platform cleanup
+
+8 items resolved, 1 deferred: #24, #25, #29, #31, #32, #34, #61, #62 (Tier 4). #30 deferred.
+Commit: `a83eadb`
+
+### Code changes
+
+- **#25 (security):** Added `is_safe_attachment_path()` validation in `soft_delete.rs` `purge_block()`. Rejects absolute paths and `..` traversal before `remove_file()`. Unsafe paths logged and skipped. 8 unit tests for validation function + 1 integration test for purge-with-unsafe-path.
+- **#32 (test fixtures):** Replaced 4 hardcoded `/tmp/` paths with relative `"attachments/..."` paths in `soft_delete.rs`, `command_integration_tests.rs`, `integration_tests.rs`. Adapted `purge_block_deletes_attachment_files_on_disk` test to use relative paths with `Cleanup` drop guard.
+- **#34 (CI):** Added `android-build` job to `.github/workflows/ci.yml` — JDK 17, Android SDK 36, NDK 27, Rust cross-compilation targets (aarch64/x86_64), x86_64 debug APK build.
+
+### Resolved as already-fixed or moot
+
+- **#24:** `group-focus-within:opacity-100` already present on drag handle and delete button in `SortableBlock.tsx`. Also has `focus-visible:opacity-100`, `[.block-active_&]:opacity-100`, and `[@media(pointer:coarse)]` 44px touch targets.
+- **#29:** Sidebar resize is mouse-only but moot on mobile — `SidebarRail` hidden (`sm:flex`), mobile sidebar uses `<Sheet>` offcanvas component.
+- **#31:** `tauri-plugin-shell` needed for `shell:allow-open` which works on Android. No `Command::new()` usage exists.
+- **#61:** `gen/android/` committed with correct config: `build.gradle.kts` sets minSdk=24, targetSdk=36. App uses internal storage only.
+- **#62:** `tracing_subscriber::fmt()` stdout/stderr redirected to logcat by Tauri runtime (confirmed via `adb logcat -s RustStdoutStderr:V`).
+
+### Deferred
+
+- **#30:** Keyboard shortcuts have no mobile alternatives — requires toolbar buttons, gesture handlers, significant feature work. Kept open in REVIEW-LATER.md.
+
+### Test results
+
+- `cargo test soft_delete` — 54 passed
+- `cargo test command_integration_tests` — 90 passed
+- `cargo test integration_tests` — 115 passed
+- All pre-commit hooks passed (cargo fmt, clippy, nextest)
+
 ## Session 21 — 2026-03-31 — Touch targets, responsive indent, mobile flash, focus trap
 
 11 items resolved: #103, #104, #105, #106, #107, #108, #109, #110, #111, #181 (Tier 4 + Tier 5).
