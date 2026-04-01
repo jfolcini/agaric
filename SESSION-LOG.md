@@ -1,5 +1,46 @@
 # Session Log
 
+## Session 37 — 2026-04-01 — Sync UX Review (31 new REVIEW-LATER items)
+
+Comprehensive UX review of the sync feature. 6 parallel review subagents examined pairing flow, sync status, device management, conflict resolution, accessibility, and backend integration. 4 verification subagents confirmed/rejected findings against actual code.
+
+**Result:** 24 confirmed findings + 7 additional issues found during verification = 31 new items (#275-#305). 8 findings dropped as false positives or non-issues.
+
+### Review Subagents (6 parallel)
+1. Pairing flow UX (PairingDialog.tsx, QrScanner.tsx)
+2. Sync status display & state feedback (StatusPanel.tsx, stores/sync.ts)
+3. Device management UI (DeviceManagement.tsx)
+4. Conflict resolution flow (ConflictList.tsx)
+5. Accessibility & error recovery (all sync components)
+6. Backend integration & data flow (lib.rs, commands.rs, sync_protocol.rs, sync_net.rs, pairing.rs)
+
+### Verification Subagents (4 parallel)
+- M1-M9 verification: 7 confirmed, 2 dropped (M3, M7)
+- M10-M17 verification: 8 confirmed, 0 dropped
+- A1-A6, P1-P10 verification: 12 confirmed, 6 dropped (A2, A6, P5, P6, P8 + C5 downgraded)
+- C1-C6 verification: 4 confirmed, 0 dropped (C5 moved to minor)
+
+### New REVIEW-LATER Items
+- **Tier 5 (Sync Critical):** #275-#278 — backend commands missing, store disconnected, no events, no reconnect
+- **Tier 5.5 (Sync Major):** #279-#289 — passphrase UX, stale peer lists, generic errors, no retry, no device names, stuck states, broken timestamps, partial failure, silent hash errors, focus management, no device verification
+- **Tier 6 (Sync Minor):** #290-#305 — QR mismatch, mDNS timeout, truncated conflicts, stale badges, hidden timeouts, responsive inputs, missing navigation, tooltip a11y, missing aria-labels, code duplication, raw timestamps, hardcoded badges, hidden help text, button proximity
+
+### Dropped Findings (8)
+- C5: QR encoding mismatch → downgraded to #290 (minor design issue, not functional bug)
+- M3: Keep button unclear → confirmation dialog provides sufficient clarity
+- M7: Sync dot incorrect → correctly checks hasPeers, not syncState
+- A2: Overlay button semantics → acceptable pattern
+- A6: Amber contrast → meets WCAG AA for large text
+- P5: Combined StatusPanel view → intentional design (materializer + sync in one panel)
+- P6: QR code size → reasonable at current dimensions
+- P8: No "Keep Both" option → by design, conflict resolution is Keep or Discard
+
+**REVIEW-LATER.md:** 68 open items across 9 tiers (was 37 across 6).
+
+## Session 36 — 2026-04-01 — REVIEW-LATER.md cleanup
+
+Cleaned up 49 resolved items from REVIEW-LATER.md: 18 sync blockers (Tier 1, Session 28) and 31 sync implementation items (Tier 5, Sessions 31-33). Updated summary to 37 open items across 6 tiers.
+
 ## Session 35 — 2026-04-01 — Backlink query benchmark (#251)
 
 Resolved #251 (last remaining backlink filter item). All 37 backlink filter REVIEW-LATER items now resolved.
