@@ -1358,4 +1358,62 @@ describe('BacklinksPanel', () => {
       ])
     })
   })
+
+  describe('Load More spinner (#391)', () => {
+    it('shows Loader2 spinner icon when Load More is loading', async () => {
+      const user = userEvent.setup()
+      const page1 = {
+        items: [makeBlock('B1', 'item 1')],
+        next_cursor: 'cursor_page2',
+        has_more: true,
+        total_count: 2,
+      }
+      let resolveLoadMore: (value: unknown) => void
+      let callCount = 0
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+        if (cmd === 'query_backlinks_filtered') {
+          callCount++
+          if (callCount === 1) return page1
+          // Second call (Load More) never resolves to keep loading state
+          return new Promise((resolve) => {
+            resolveLoadMore = resolve
+          })
+        }
+        if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
+        if (cmd === 'batch_resolve') return []
+        return emptyResponse
+      })
+
+      const { container } = render(<BacklinksPanel blockId="TARGET01" />)
+
+      // Wait for initial load
+      const loadMoreBtn = await screen.findByRole('button', { name: /Load more/i })
+      expect(loadMoreBtn).toBeInTheDocument()
+
+      // Click Load More
+      await user.click(loadMoreBtn)
+
+      // Button should now show spinner with animate-spin class
+      await waitFor(() => {
+        const spinner = container.querySelector('.backlinks-load-more svg.animate-spin')
+        expect(spinner).toBeInTheDocument()
+      })
+
+      // Button should also show "Loading..." text
+      expect(loadMoreBtn).toHaveTextContent('Loading...')
+
+      // Button should be disabled
+      expect(loadMoreBtn).toBeDisabled()
+
+      // Cleanup: resolve the pending promise to avoid act() warnings
+      resolveLoadMore!({
+        items: [makeBlock('B2', 'item 2')],
+        next_cursor: null,
+        has_more: false,
+        total_count: 2,
+      })
+    })
+  })
 })

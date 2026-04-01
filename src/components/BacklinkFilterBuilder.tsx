@@ -180,6 +180,11 @@ function AddFilterRow({ propertyKeys, tags, onApply, onCancel }: AddFilterRowPro
           toast.error('Property key is required')
           return
         }
+        // Warn if key doesn't exist in known property keys
+        if (propertyKeys.length > 0 && !propertyKeys.includes(propKey.trim())) {
+          toast.error(`No blocks have property "${propKey.trim()}"`)
+          return
+        }
         if (propType === 'num') {
           const numVal = Number.parseFloat(propValue)
           if (!Number.isFinite(numVal)) {
@@ -197,9 +202,19 @@ function AddFilterRow({ propertyKeys, tags, onApply, onCancel }: AddFilterRowPro
           onApply({ type: 'PropertyText', key: propKey, op: propOp, value: propValue })
         }
         break
-      case 'date':
+      case 'date': {
         if (!dateAfter && !dateBefore) {
           toast.error('At least one date boundary is required')
+          return
+        }
+        // Validate date format (YYYY-MM-DD)
+        const dateRe = /^\d{4}-\d{2}-\d{2}$/
+        if (dateAfter && !dateRe.test(dateAfter)) {
+          toast.error('Invalid date format for "after" (expected YYYY-MM-DD)')
+          return
+        }
+        if (dateBefore && !dateRe.test(dateBefore)) {
+          toast.error('Invalid date format for "before" (expected YYYY-MM-DD)')
           return
         }
         onApply({
@@ -208,6 +223,7 @@ function AddFilterRow({ propertyKeys, tags, onApply, onCancel }: AddFilterRowPro
           before: dateBefore || null,
         })
         break
+      }
       case 'property-set':
         if (!propSetKey.trim()) {
           toast.error('Property key is required')
@@ -260,6 +276,7 @@ function AddFilterRow({ propertyKeys, tags, onApply, onCancel }: AddFilterRowPro
     tagValue,
     prefixValue,
     tags,
+    propertyKeys,
     onApply,
   ])
 

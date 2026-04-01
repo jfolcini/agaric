@@ -6,7 +6,7 @@
  * Filters are server-side via `queryBacklinksFiltered`.
  */
 
-import { Link } from 'lucide-react'
+import { Link, Loader2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -346,7 +346,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
           aria-busy={loading}
           aria-label={loading ? 'Loading more backlinks' : `Load more backlinks (${blocks.length} of ${totalCount} loaded)`}
         >
-          {loading ? 'Loading...' : 'Load more'}
+          {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> Loading...</> : 'Load more'}
         </Button>
       )}
     </div>

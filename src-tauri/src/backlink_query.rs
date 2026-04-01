@@ -2894,4 +2894,203 @@ mod tests {
             "Not(Not(BlockType(\"content\"))) should equal BlockType(\"content\")"
         );
     }
+
+    // ======================================================================
+    // #411 — Non-finite f64 in PropertyNum filter (defense in depth)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn filter_property_num_non_finite_values() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TARGET", "page", "Target Page").await;
+        insert_block(&pool, "SRC_A", "content", "Source A").await;
+        insert_block(&pool, "SRC_B", "content", "Source B").await;
+        insert_property(&pool, "SRC_A", "score", None, Some(42.0), None).await;
+        insert_property(&pool, "SRC_B", "score", None, Some(100.0), None).await;
+        insert_block_link(&pool, "SRC_A", "TARGET").await;
+        insert_block_link(&pool, "SRC_B", "TARGET").await;
+        let page = default_page();
+
+        // Test 1: Eq with +Infinity → should match nothing
+        // (42.0 - Inf).abs() == Inf, which is not < EPSILON
+        let filters_inf_eq = vec![BacklinkFilter::PropertyNum {
+            key: "score".into(),
+            op: CompareOp::Eq,
+            value: f64::INFINITY,
+        }];
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters_inf_eq), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.total_count, 0,
+            "Eq with +Infinity should match no finite values"
+        );
+
+        // Test 2: Gt with -Infinity → both should match (42 > -Inf is true)
+        let filters_neg_inf_gt = vec![BacklinkFilter::PropertyNum {
+            key: "score".into(),
+            op: CompareOp::Gt,
+            value: f64::NEG_INFINITY,
+        }];
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters_neg_inf_gt), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.total_count, 2,
+            "Gt with -Infinity should match all finite values"
+        );
+        let ids: Vec<&str> = resp.items.iter().map(|i| i.id.as_str()).collect();
+        assert!(ids.contains(&"SRC_A"), "SRC_A (42.0) > -Inf");
+        assert!(ids.contains(&"SRC_B"), "SRC_B (100.0) > -Inf");
+
+        // Test 3: Eq with NaN → should match nothing (NaN comparisons are always false)
+        let filters_nan_eq = vec![BacklinkFilter::PropertyNum {
+            key: "score".into(),
+            op: CompareOp::Eq,
+            value: f64::NAN,
+        }];
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters_nan_eq), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.total_count, 0,
+            "Eq with NaN should match nothing (NaN - x is NaN, NaN.abs() is NaN, NaN < EPSILON is false)"
+        );
+    }
+
+    // ======================================================================
+    // #412 — HasTagPrefix LIKE escape chars (%, _, \)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn filter_has_tag_prefix_with_special_chars() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TARGET", "page", "Target Page").await;
+        insert_block(&pool, "SRC_A", "content", "Source A").await;
+        insert_block(&pool, "SRC_B", "content", "Source B").await;
+        insert_block(&pool, "SRC_C", "content", "Source C").await;
+        insert_block_link(&pool, "SRC_A", "TARGET").await;
+        insert_block_link(&pool, "SRC_B", "TARGET").await;
+        insert_block_link(&pool, "SRC_C", "TARGET").await;
+
+        // Create tag blocks (block_tags.tag_id FK → blocks.id)
+        insert_block(&pool, "TAG_PCT", "tag", "a%b").await;
+        insert_block(&pool, "TAG_AXB", "tag", "axb").await;
+        insert_block(&pool, "TAG_USC", "tag", "a_c").await;
+
+        // Create tags with special LIKE characters
+        insert_tag_cache(&pool, "TAG_PCT", "a%b", 1).await;
+        insert_tag_cache(&pool, "TAG_AXB", "axb", 1).await;
+        insert_tag_cache(&pool, "TAG_USC", "a_c", 1).await;
+
+        // Assign tags: SRC_A gets "a%b", SRC_B gets "axb", SRC_C gets "a_c"
+        insert_tag_assoc(&pool, "SRC_A", "TAG_PCT").await;
+        insert_tag_assoc(&pool, "SRC_B", "TAG_AXB").await;
+        insert_tag_assoc(&pool, "SRC_C", "TAG_USC").await;
+        let page = default_page();
+
+        // Test 1: HasTagPrefix with "a%" should match ONLY SRC_A (literal "a%" prefix)
+        // Without escaping, "a%" would be a LIKE wildcard matching "axb" too.
+        let filters_pct = vec![BacklinkFilter::HasTagPrefix {
+            prefix: "a%".into(),
+        }];
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters_pct), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.total_count, 1,
+            "HasTagPrefix 'a%' should match only the literal 'a%b' tag, not 'axb'"
+        );
+        assert_eq!(
+            resp.items[0].id, "SRC_A",
+            "only SRC_A has the 'a%b' tag matching literal prefix 'a%'"
+        );
+
+        // Test 2: HasTagPrefix with "a_" should match ONLY SRC_C (literal "a_" prefix)
+        // Without escaping, "a_" would be a LIKE wildcard matching "axb" too.
+        let filters_usc = vec![BacklinkFilter::HasTagPrefix {
+            prefix: "a_".into(),
+        }];
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters_usc), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.total_count, 1,
+            "HasTagPrefix 'a_' should match only the literal 'a_c' tag, not 'axb'"
+        );
+        assert_eq!(
+            resp.items[0].id, "SRC_C",
+            "only SRC_C has the 'a_c' tag matching literal prefix 'a_'"
+        );
+    }
+
+    // ======================================================================
+    // #413 — FTS Contains with mixed operators and valid terms
+    // ======================================================================
+
+    #[tokio::test]
+    async fn fts_contains_mixed_operators_and_terms() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TARGET", "page", "Target Page").await;
+        insert_block(&pool, "SRC_A", "content", "Source A").await;
+        insert_block(&pool, "SRC_B", "content", "Source B").await;
+        insert_block(&pool, "SRC_C", "content", "Source C").await;
+        insert_block_link(&pool, "SRC_A", "TARGET").await;
+        insert_block_link(&pool, "SRC_B", "TARGET").await;
+        insert_block_link(&pool, "SRC_C", "TARGET").await;
+
+        // Insert FTS entries with FTS5 operator keywords as literal words
+        insert_fts(&pool, "SRC_A", "AND hello world").await;
+        insert_fts(&pool, "SRC_B", "hello NOT goodbye").await;
+        insert_fts(&pool, "SRC_C", "just hello there").await;
+        let page = default_page();
+
+        // Test 1: "AND hello" should match SRC_A (both terms present as literal text)
+        let filters_and = vec![BacklinkFilter::Contains {
+            query: "AND hello".into(),
+        }];
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters_and), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.total_count, 1,
+            "'AND hello' should match only SRC_A which contains both literal words"
+        );
+        assert_eq!(
+            resp.items[0].id, "SRC_A",
+            "SRC_A has 'AND hello world' containing both 'AND' and 'hello' literally"
+        );
+
+        // Test 2: "NOT goodbye" should match SRC_B (both as literal text, not FTS5 NOT operator)
+        let filters_not = vec![BacklinkFilter::Contains {
+            query: "NOT goodbye".into(),
+        }];
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters_not), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.total_count, 1,
+            "'NOT goodbye' should match only SRC_B which contains both literal words"
+        );
+        assert_eq!(
+            resp.items[0].id, "SRC_B",
+            "SRC_B has 'hello NOT goodbye' containing both 'NOT' and 'goodbye' literally"
+        );
+
+        // Test 3: "hello" should match all three (SRC_A, SRC_B, SRC_C)
+        let filters_hello = vec![BacklinkFilter::Contains {
+            query: "hello".into(),
+        }];
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters_hello), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.total_count, 3,
+            "'hello' should match all three blocks that contain it"
+        );
+        let ids: Vec<&str> = resp.items.iter().map(|i| i.id.as_str()).collect();
+        assert!(ids.contains(&"SRC_A"), "SRC_A contains 'hello'");
+        assert!(ids.contains(&"SRC_B"), "SRC_B contains 'hello'");
+        assert!(ids.contains(&"SRC_C"), "SRC_C contains 'hello'");
+    }
 }

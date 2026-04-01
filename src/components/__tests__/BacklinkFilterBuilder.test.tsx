@@ -791,4 +791,140 @@ describe('BacklinkFilterBuilder', () => {
       expect(onFiltersChange).not.toHaveBeenCalled()
     })
   })
+
+  // ====================================================================
+  // #393 — Date format validation in CreatedInRange
+  // ====================================================================
+
+  describe('date format validation (#393)', () => {
+    it('accepts valid YYYY-MM-DD date for "after"', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'date')
+
+      const afterInput = screen.getByLabelText('Date after')
+      await user.clear(afterInput)
+      await user.type(afterInput, '2024-06-15')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        { type: 'CreatedInRange', after: '2024-06-15', before: null },
+      ])
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+
+    it('rejects invalid "after" date format', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'date')
+
+      const afterInput = screen.getByLabelText('Date after')
+      // Simulate pasting an invalid date format
+      await user.clear(afterInput)
+      // Use fireEvent to bypass native date picker validation
+      afterInput.setAttribute('type', 'text')
+      await user.type(afterInput, '06/15/2024')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(toast.error).toHaveBeenCalledWith(
+        'Invalid date format for "after" (expected YYYY-MM-DD)',
+      )
+      expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+
+    it('rejects invalid "before" date format', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'date')
+
+      const afterInput = screen.getByLabelText('Date after')
+      await user.clear(afterInput)
+      await user.type(afterInput, '2024-01-01')
+
+      const beforeInput = screen.getByLabelText('Date before')
+      beforeInput.setAttribute('type', 'text')
+      await user.clear(beforeInput)
+      await user.type(beforeInput, 'not-a-date')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(toast.error).toHaveBeenCalledWith(
+        'Invalid date format for "before" (expected YYYY-MM-DD)',
+      )
+      expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+
+    it('accepts valid dates for both "after" and "before"', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'date')
+
+      const afterInput = screen.getByLabelText('Date after')
+      await user.clear(afterInput)
+      await user.type(afterInput, '2024-01-01')
+
+      const beforeInput = screen.getByLabelText('Date before')
+      await user.clear(beforeInput)
+      await user.type(beforeInput, '2024-12-31')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        { type: 'CreatedInRange', after: '2024-01-01', before: '2024-12-31' },
+      ])
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+  })
+
+  // ====================================================================
+  // #394 — Property key existence check (defense-in-depth).
+  // When propertyKeys is populated, a <select> dropdown is shown — the user
+  // can only pick valid keys, so the error path (unknown key) is unreachable
+  // through normal UI interaction.  The validation guards against programmatic
+  // state bugs.  Tests below cover the two reachable UI paths.
+  describe('property key existence check (#394)', () => {
+    it('allows freeform property key when propertyKeys is empty', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange, propertyKeys: [] })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
+      await user.type(screen.getByLabelText('Property key'), 'custom_key')
+      await user.type(screen.getByLabelText('Property value'), 'val')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        { type: 'PropertyText', key: 'custom_key', op: 'Eq', value: 'val' },
+      ])
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+
+    it('allows valid key selected from dropdown', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange, propertyKeys: ['todo', 'priority', 'due'] })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
+      await user.selectOptions(screen.getByLabelText('Property key'), 'due')
+      await user.type(screen.getByLabelText('Property value'), 'tomorrow')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        { type: 'PropertyText', key: 'due', op: 'Eq', value: 'tomorrow' },
+      ])
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+  })
 })
