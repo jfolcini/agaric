@@ -4,12 +4,24 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React +
 
 > **No changes to this file (AGENTS.md) without explicit user approval. Ever.**
 
+## Documentation Map
+
+| Document | Purpose |
+|----------|---------|
+| **AGENTS.md** (this file) | Build commands, invariants, conventions |
+| **ARCHITECTURE.md** | Deep-dive: data model, op log, materializer, editor, sync, search (1080 lines) |
+| `src-tauri/tests/AGENTS.md` | Rust test patterns, fixtures, pitfalls |
+| `src/__tests__/AGENTS.md` | Frontend test patterns, mocking, a11y |
+| `.devin/rules/workflow.md` | Subagent workflow, worktrees, compilation costs |
+| `project-plan.md` | Master task list, ADRs (19 decisions), phase tracking |
+| `REVIEW-LATER.md` | Deferred items, tech debt backlog |
+
 ## Build Commands
 
 ```bash
 # Frontend
 npm run dev              # Vite dev server on :5173
-npm run build            # Production build
+npm run build            # Production build (tsc + vite)
 npm run lint             # Biome check
 npm run lint:fix         # Biome auto-fix
 npm run test             # Vitest run
@@ -24,42 +36,48 @@ cd src-tauri && cargo clippy -- -D warnings  # Lint
 # Full Tauri app (build on each target platform — no cross-compilation)
 cargo tauri dev          # Dev mode with hot reload
 cargo tauri build        # Production build
-# Linux → .deb + .AppImage
-# Windows → .msi + .exe (NSIS)
-# macOS → .dmg + .app (universal binary: --target universal-apple-darwin)
 
 # Android (requires Android SDK + NDK 27 + emulator)
-cargo tauri android init                          # First-time project setup
-cargo tauri android build --target x86_64 --debug # Debug APK for emulator
-cargo tauri android build --target aarch64 --debug # Debug APK for arm64 device
-cargo tauri android build --release               # Release APK (all archs)
-cargo tauri android dev --target x86_64           # Build + install + run on emulator
-cargo tauri android dev --target aarch64          # Build + install + run on device
-adb logcat -s RustStdoutStderr:V                  # View Rust logs on Android
+cargo tauri android build --target x86_64 --debug   # Debug APK for emulator
+cargo tauri android dev --target x86_64             # Build + install + run
 
 # Pre-commit (this IS the verification)
 prek run --all-files     # All hooks, entire repo
 prek run                 # Staged files only
 ```
 
-## Database
-
-- **File:** `notes.db` in `~/.local/share/com.blocknotes.app/`
-- **WAL mode**, `PRAGMA foreign_keys = ON` on every connection
-- **Pool:** max 5 connections (1 writer + 4 readers)
-- **Migrations:** `src-tauri/migrations/` — auto-run on pool init
-- **Schema:** 13 tables + 1 FTS5 virtual table, 8 indexes
-
-## Key Architectural Rules
+## Key Architectural Invariants
 
 1. **Op log is strictly append-only** — never mutate, never delete (except compaction)
-2. **Materializer CQRS split** — commands write ops, materializer writes derived state
-3. **Cursor-based pagination on ALL list queries** — no offset pagination anywhere
-4. **Single TipTap instance** — roving editor, static divs for everything else
-5. **Biome from day one** — no ESLint, no Prettier
-6. **sqlx compile-time queries** — `query!` / `query_as!` / `query_scalar!` for static SQL. `.sqlx/` offline cache committed. Run `cargo sqlx prepare` after changing any SQL.
-7. **PRAGMA foreign_keys = ON** — enforced on every connection
-8. **ULID case normalization** — always uppercase Crockford base32 for blake3 determinism
+2. **CQRS split** — commands write ops → materializer writes derived state
+3. **Cursor-based pagination** on ALL list queries — no offset pagination
+4. **Single TipTap instance** — roving editor, static divs for non-focused blocks
+5. **Biome only** — no ESLint, no Prettier
+6. **sqlx compile-time queries** — `query!` / `query_as!` / `query_scalar!`. `.sqlx/` cache committed. Run `cargo sqlx prepare` after SQL changes.
+7. **PRAGMA foreign_keys = ON** — enforced on every connection (both pools)
+8. **ULID uppercase normalization** — Crockford base32 for blake3 hash determinism (ADR-07)
+
+## Database
+
+- **File:** `notes.db` in `~/.local/share/com.blocknotes.app/` (Linux) or app data dir (Android)
+- **WAL mode**, foreign keys ON on every connection
+- **Pool:** 1 writer + 4 readers (5 total)
+- **Migrations:** `src-tauri/migrations/` (6 files) — auto-run on pool init
+- **Schema:** 12 tables + 1 FTS5 virtual table (trigram tokenizer), 13 indexes, 2 triggers
+
+## Frontend Architecture
+
+- **State:** 6 Zustand stores — `useBootStore`, `useBlockStore`, `useNavigationStore`, `useJournalStore`, `useResolveStore`, `useUndoStore`
+- **Editor:** Single roving TipTap instance with 6 custom extensions (TagRef, BlockLink, ExternalLink, AtTagPicker, BlockLinkPicker, SlashCommand)
+- **Serializer:** Custom Markdown serializer (`src/editor/markdown-serializer.ts`) — zero external deps, handles `#[ULID]` and `[[ULID]]` tokens
+- **Code style:** 2-space indent, single quotes, no semicolons, 100-char line width (Biome)
+
+## Backend Architecture
+
+- **Error handling:** `AppError` enum (11 variants) serializes to `{ kind, message }` for Tauri 2 IPC. Specta-derived TS bindings.
+- **Undo/redo:** Two-tier model. In-editor: TipTap/ProseMirror history (cleared on blur). Page-level: `reverse.rs` computes inverse ops from op log. Non-reversible: `purge_block`, `delete_attachment`.
+- **Materializer:** Foreground queue (256 cap, core tables) + background queue (1024 cap, caches/FTS). Auto-dedup, silent drop on backpressure.
+- **Commands:** 28 Tauri command handlers in `commands.rs`. Each has an `inner_*` function taking `&SqlitePool` for testability.
 
 ## TypeScript Bindings (specta)
 
@@ -72,90 +90,35 @@ cd src-tauri && cargo test -- specta_tests --ignored
 
 ## Pre-commit & CI
 
-- **Pre-commit:** `prek.toml` — file-type-aware hooks (Rust hooks skip when no `.rs` staged, etc.)
+- **Pre-commit:** `prek.toml` — 15 hooks, file-type-aware (Rust hooks skip when no `.rs` staged, etc.)
 - **CI:** `.github/workflows/ci.yml` — 3 jobs: `check` (lint/test on Linux), `build` (matrix: Linux + Windows + macOS), `android-build`
-
-## Android
-
-- **Status:** APK builds and launches. All IPC commands (read + write) confirmed working as of 2026-03-31. Block creation, editing, and persistence across restarts verified on emulator. Original write IPC failure (REVIEW-LATER.md #22) was a stale-migration issue, not a code bug.
-- **Generated project:** `src-tauri/gen/android/` — created by `cargo tauri android init`, committed to repo
-- **Min SDK:** 24, **Target SDK:** 36, **NDK:** 27 (set in `gen/android/app/build.gradle.kts`)
-- **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`
-- **DB path on Android:** `/data/data/com.blocknotes.app/notes.db` (via `app.path().app_data_dir()`)
-- **Known issues:** 24 open items in REVIEW-LATER.md Tier 4 (Android) + Tier 5 (A11y/UX)
-- **ProGuard:** `isMinifyEnabled = true` for release but keep rules are empty — release APK will crash (REVIEW-LATER.md #63)
-
-### Headless Android Testing (ADB)
-
-AI agents can build, install, run, and interact with the Android app entirely via CLI. No display needed.
-
-```bash
-# Boot emulator headless
-emulator -avd spike_test -gpu swiftshader_indirect -no-window -no-audio &
-adb wait-for-device
-adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
-
-# Build + install + launch
-cargo tauri android build --target x86_64 --debug
-adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
-adb shell am start -n com.blocknotes.app/.MainActivity
-sleep 3  # wait for WebView + Rust init
-
-# Observe
-adb exec-out screencap -p > /tmp/screenshot.png    # screenshot (read with image tool)
-adb logcat -s RustStdoutStderr:V -d                 # Rust backend logs
-adb shell dumpsys activity top | head -100          # activity/view state
-
-# Interact
-adb shell input tap 512 400                         # tap at (x,y)
-adb shell input text "hello"                        # type text
-adb shell input swipe 500 800 500 200               # swipe/scroll
-adb shell input keyevent KEYCODE_BACK               # back button
-adb shell input keyevent KEYCODE_ENTER              # enter key
-
-# Inspect app data (debug builds only)
-adb shell run-as com.blocknotes.app ls files/
-adb shell run-as com.blocknotes.app cat files/device-id
-
-# WebView JS execution via Chrome DevTools Protocol
-adb forward tcp:9222 localabstract:webview_devtools_remote_$(adb shell pidof com.blocknotes.app)
-curl -s http://localhost:9222/json                   # list pages
-
-# Cleanup
-adb shell am force-stop com.blocknotes.app
-adb emu kill
-```
-
-**Workflow for debugging Android issues:**
-1. Build + install + launch (commands above)
-2. Screenshot to see current state
-3. Read logcat for Rust errors or JS console errors
-4. Use `adb shell input` to interact (tap, type, swipe)
-5. Screenshot again to verify result
-6. Forward CDP port and `curl` the `/json` endpoint for WebView inspection
-7. Repeat as needed — `adb shell am force-stop` + relaunch to reset
-
-## Tooling Efficiency Rules
-
-**prek hooks ARE the verification.** Don't manually run the full suite before committing. Just `git add` + `git commit`. If hooks fail, fix and retry.
-
-During development iteration, run only the relevant check:
-- Editing Rust? → `cd src-tauri && cargo test specific_test_name`
-- Editing TS? → `npx vitest run`
-- Never run clippy/fmt/biome manually — hooks handle it
-- Frontend checks are irrelevant when only Rust changed (and vice versa)
 
 ## Testing Conventions
 
-- **vitest-axe, fast-check, insta snapshots** are all run by their respective test runners (vitest / cargo test). No separate hooks needed.
-- **Criterion benches** — manual only (`cd src-tauri && cargo bench`), never in CI or pre-commit.
-- **Tarpaulin** — expensive (~60s). Only run when working on coverage gaps.
 - **Minimum bar:** Every exported function gets happy-path + error-path tests. Components get render + interaction + `axe(container)` a11y tests.
 - **Test location:** `#[cfg(test)] mod tests` for Rust, `__tests__/` dirs for frontend.
+- **Frameworks:** vitest-axe, fast-check (property tests), insta (Rust snapshots)
+- **Benchmarks:** Criterion — manual only (`cd src-tauri && cargo bench`), never in CI.
+- **Tarpaulin:** Expensive (~60s). Only run when working on coverage gaps.
+- **Detailed conventions:** `src-tauri/tests/AGENTS.md` (Rust), `src/__tests__/AGENTS.md` (frontend)
 
-Detailed conventions, patterns, and pitfalls:
-- **Rust:** `src-tauri/tests/AGENTS.md`
-- **Frontend:** `src/__tests__/AGENTS.md`
+## Tooling Efficiency
+
+During development, run only the relevant check:
+- Editing Rust? → `cd src-tauri && cargo test specific_test_name`
+- Editing TS? → `npx vitest run`
+- Never run clippy/fmt/biome manually — prek hooks handle it at commit time
+- Frontend checks are irrelevant when only Rust changed (and vice versa)
+
+## Android
+
+- **Status:** APK builds and launches. All IPC confirmed working (2026-03-31).
+- **Generated project:** `src-tauri/gen/android/`
+- **Min SDK:** 24, **Target SDK:** 36, **NDK:** 27
+- **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`
+- **DB path:** `/data/data/com.blocknotes.app/notes.db` (via `app.path().app_data_dir()`)
+- **Known issues:** 24 open items in REVIEW-LATER.md Tier 4+5. ProGuard keep rules empty — release APK crashes (#63).
+- **Headless testing:** See `.devin/rules/android-testing.md` for ADB recipes and debugging workflow.
 
 ## Subagent Workflow
 
@@ -169,7 +132,7 @@ Detailed conventions, patterns, and pitfalls:
 7. LOG      — Update SESSION-LOG.md and project-plan.md
 ```
 
-Every step is mandatory. Build subagents write tests. Review subagents verify coverage and add missing tests. No self-reviewed commits. See `.devin/rules/workflow.md` for detailed subagent guidance.
+Every step is mandatory. No self-reviewed commits. See `.devin/rules/workflow.md` for worktree criteria, compilation costs, and prompt guidelines.
 
 ## State Files
 
@@ -177,19 +140,7 @@ Every step is mandatory. Build subagents write tests. Review subagents verify co
 |------|---------|---------------|
 | `SESSION-LOG.md` | Subagent activity log | After each subagent completes |
 | `REVIEW-LATER.md` | Deferred items, tech debt | When a fix is deferred |
-| `AGENTS.md` | This file | When project structure/workflow changes |
-| `project-plan.md` | Master task list | When task status changes |
-| `ADR.md` | Architecture decisions (20 ADRs) | Reference only |
+| `AGENTS.md` | This file | Only with explicit user approval |
+| `project-plan.md` | Master task list + ADRs | When task status changes |
 
-### REVIEW-LATER.md Format
-
-```markdown
-## [date] <title>
-- **Source:** <review session, task ID, or module>
-- **Issue:** <what and why>
-- **Priority:** low / medium / high
-- **Phase:** <when to address>
-- **Resolved:** no
-```
-
-When resolved: `- **Resolved:** yes — [commit hash] <note>`
+When resolving REVIEW-LATER items: `- **Resolved:** yes — [commit hash] <note>`
