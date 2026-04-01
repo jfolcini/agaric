@@ -210,7 +210,7 @@ peer_refs           — peer_id PK, last_hash, last_sent_hash, synced_at, reset_
 tags_cache          — tag_id PK, name, usage_count, updated_at
 pages_cache         — page_id PK, title, updated_at
 agenda_cache        — (date, block_id) composite PK, source
-fts_blocks          — FTS5 virtual table (block_id UNINDEXED, stripped), unicode61 tokenizer
+fts_blocks          — FTS5 virtual table (block_id UNINDEXED, stripped), trigram tokenizer
 ```
 
 **Indexes:** Covering indexes on `blocks(parent_id, deleted_at)`,
@@ -671,21 +671,18 @@ BlockTree's concerns are decomposed into focused hooks:
 
 ### FTS5 integration
 
-SQLite FTS5 virtual table (`fts_blocks`) with `unicode61` tokenizer.
+SQLite FTS5 virtual table (`fts_blocks`) with `trigram` tokenizer (`case_sensitive 0`).
 
 - **Index content:** Markdown-stripped text with tag names and page titles resolved from ULIDs.
 - **Search command:** `search_blocks` with cursor-based pagination on `(rank, rowid)`.
 - **Ranking:** BM25 (FTS5 default).
 - **UI:** `SearchPanel` with debounced input, paginated results.
+- **CJK support:** Trigram tokenizer indexes every 3-character substring, enabling CJK search without a dedicated morphological analyzer. Queries shorter than 3 characters fall back to a linear scan (acceptable for personal app scale).
 
-### CJK limitation (known, accepted)
+### Index size trade-off
 
-FTS5 `unicode61` tokenizer does not handle CJK word boundaries — searching CJK text returns noise.
-This is documented and accepted for v1. CJK text storage, rendering, and IME input all work
-correctly. Only FTS5 search is affected.
-
-If CJK search demand arises, FTS5's `trigram` tokenizer (SQLite 3.34+) can be enabled with a
-single virtual table recreation — no schema migration, no additional dependencies.
+Trigram indexes are ~3x larger than `unicode61` (each character position generates a trigram).
+For a personal notes app with <100k blocks this is negligible — the index stays well under 50 MB.
 
 ---
 
