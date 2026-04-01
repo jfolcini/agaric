@@ -24,6 +24,11 @@ vi.mock('../../lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
+// Mock DeviceManagement to prevent its own IPC calls from interfering
+vi.mock('../DeviceManagement', () => ({
+  DeviceManagement: () => <div data-testid="device-management">Device ID: mock-device</div>,
+}))
+
 const mockedInvoke = vi.mocked(invoke)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }

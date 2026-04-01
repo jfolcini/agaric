@@ -120,6 +120,9 @@ pub struct MergeResults {
     pub clean_merges: usize,
     pub conflicts: usize,
     pub already_up_to_date: usize,
+    pub property_lww: usize,
+    pub move_lww: usize,
+    pub delete_edit_resurrect: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -237,20 +240,19 @@ pub async fn apply_remote_ops(
 /// After receiving all ops, merge blocks that have diverged between two
 /// devices.
 ///
-/// 1. Finds blocks that have `edit_block` ops from both `device_id` and
-///    `remote_device_id`.
-/// 2. For each, calls [`dag::get_block_edit_heads`] and, if there are ≥ 2
-///    heads, [`merge::merge_block`].
+/// Handles four kinds of concurrent-edit conflicts:
 ///
-/// **TODO (sync-merge-coverage):** This currently only detects `edit_block`
-/// divergence.  The following conflict types are NOT yet handled:
-/// - `set_property` – concurrent property edits (needs LWW via
-///   `merge::resolve_property_conflict`)
-/// - `move_block` – concurrent reparenting
-/// - `delete_block` vs `edit_block` – resurrection / tombstone conflict
-///
-/// These require new queries and additional merge logic in `dag.rs` and
-/// `merge.rs`.
+/// 1. **`edit_block` divergence** — finds blocks with concurrent edits from
+///    both devices, performs three-way text merge via [`merge::merge_block`].
+/// 2. **`set_property` conflicts** — concurrent property changes on the same
+///    `(block_id, key)` pair are resolved via Last-Writer-Wins
+///    ([`merge::resolve_property_conflict`]).
+/// 3. **`move_block` conflicts** — concurrent reparenting of the same block
+///    is resolved via LWW (later `created_at` wins, with `device_id`
+///    tiebreaker).
+/// 4. **`delete_block` vs `edit_block`** — if one device deleted a block
+///    while the other edited it, the edit wins and the block is resurrected
+///    via a `restore_block` op.
 pub async fn merge_diverged_blocks(
     pool: &SqlitePool,
     device_id: &str,
@@ -263,8 +265,12 @@ pub async fn merge_diverged_blocks(
         clean_merges: 0,
         conflicts: 0,
         already_up_to_date: 0,
+        property_lww: 0,
+        move_lww: 0,
+        delete_edit_resurrect: 0,
     };
 
+    // ── 1. edit_block divergence ──────────────────────────────────────────
     let rows = sqlx::query(
         "SELECT json_extract(payload, '$.block_id') as block_id \
          FROM op_log WHERE device_id IN (?, ?) AND op_type = 'edit_block' \
@@ -315,6 +321,230 @@ pub async fn merge_diverged_blocks(
                 }
             }
         }
+    }
+
+    // ── 2. set_property conflicts (LWW) ──────────────────────────────────
+    let prop_rows = sqlx::query(
+        "SELECT json_extract(payload, '$.block_id') as block_id, \
+                json_extract(payload, '$.key') as prop_key \
+         FROM op_log \
+         WHERE device_id IN (?, ?) AND op_type = 'set_property' \
+         GROUP BY json_extract(payload, '$.block_id'), json_extract(payload, '$.key') \
+         HAVING COUNT(DISTINCT device_id) > 1",
+    )
+    .bind(device_id)
+    .bind(remote_device_id)
+    .fetch_all(pool)
+    .await?;
+
+    for row in prop_rows {
+        let block_id: String = row.try_get("block_id")?;
+        let prop_key: String = row.try_get("prop_key")?;
+
+        // Fetch latest set_property op from each device for this (block_id, key)
+        let op_a_row = sqlx::query(
+            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
+             FROM op_log \
+             WHERE device_id = ? AND op_type = 'set_property' \
+               AND json_extract(payload, '$.block_id') = ? \
+               AND json_extract(payload, '$.key') = ? \
+             ORDER BY seq DESC LIMIT 1",
+        )
+        .bind(device_id)
+        .bind(&block_id)
+        .bind(&prop_key)
+        .fetch_one(pool)
+        .await?;
+
+        let op_b_row = sqlx::query(
+            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
+             FROM op_log \
+             WHERE device_id = ? AND op_type = 'set_property' \
+               AND json_extract(payload, '$.block_id') = ? \
+               AND json_extract(payload, '$.key') = ? \
+             ORDER BY seq DESC LIMIT 1",
+        )
+        .bind(remote_device_id)
+        .bind(&block_id)
+        .bind(&prop_key)
+        .fetch_one(pool)
+        .await?;
+
+        let op_a = OpRecord {
+            device_id: op_a_row.try_get::<String, _>("device_id")?,
+            seq: op_a_row.try_get::<i64, _>("seq")?,
+            parent_seqs: op_a_row.try_get::<Option<String>, _>("parent_seqs")?,
+            hash: op_a_row.try_get::<String, _>("hash")?,
+            op_type: op_a_row.try_get::<String, _>("op_type")?,
+            payload: op_a_row.try_get::<String, _>("payload")?,
+            created_at: op_a_row.try_get::<String, _>("created_at")?,
+        };
+
+        let op_b = OpRecord {
+            device_id: op_b_row.try_get::<String, _>("device_id")?,
+            seq: op_b_row.try_get::<i64, _>("seq")?,
+            parent_seqs: op_b_row.try_get::<Option<String>, _>("parent_seqs")?,
+            hash: op_b_row.try_get::<String, _>("hash")?,
+            op_type: op_b_row.try_get::<String, _>("op_type")?,
+            payload: op_b_row.try_get::<String, _>("payload")?,
+            created_at: op_b_row.try_get::<String, _>("created_at")?,
+        };
+
+        let resolution = merge::resolve_property_conflict(&op_a, &op_b)?;
+
+        // Idempotent guard: skip if the local device already has the winning
+        // value (e.g. from a previous merge pass).  Without this check we
+        // would append a redundant resolution op on every subsequent sync
+        // because the historical ops still satisfy the HAVING clause.
+        let current_local: crate::op::SetPropertyPayload = serde_json::from_str(&op_a.payload)?;
+        if current_local == resolution.winner_value {
+            continue;
+        }
+
+        // Apply the winner by appending a new set_property op
+        let winning_payload = crate::op::OpPayload::SetProperty(resolution.winner_value);
+        let new_record =
+            op_log::append_local_op_at(pool, device_id, winning_payload, crate::now_rfc3339())
+                .await?;
+
+        materializer
+            .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
+            .await?;
+        results.property_lww += 1;
+    }
+
+    // ── 3. move_block conflicts (LWW) ────────────────────────────────────
+    let move_rows = sqlx::query(
+        "SELECT json_extract(payload, '$.block_id') as block_id \
+         FROM op_log \
+         WHERE device_id IN (?, ?) AND op_type = 'move_block' \
+         GROUP BY json_extract(payload, '$.block_id') \
+         HAVING COUNT(DISTINCT device_id) > 1",
+    )
+    .bind(device_id)
+    .bind(remote_device_id)
+    .fetch_all(pool)
+    .await?;
+
+    for row in move_rows {
+        let block_id: String = row.try_get("block_id")?;
+
+        let move_a_row = sqlx::query(
+            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
+             FROM op_log \
+             WHERE device_id = ? AND op_type = 'move_block' \
+               AND json_extract(payload, '$.block_id') = ? \
+             ORDER BY seq DESC LIMIT 1",
+        )
+        .bind(device_id)
+        .bind(&block_id)
+        .fetch_one(pool)
+        .await?;
+
+        let move_b_row = sqlx::query(
+            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
+             FROM op_log \
+             WHERE device_id = ? AND op_type = 'move_block' \
+               AND json_extract(payload, '$.block_id') = ? \
+             ORDER BY seq DESC LIMIT 1",
+        )
+        .bind(remote_device_id)
+        .bind(&block_id)
+        .fetch_one(pool)
+        .await?;
+
+        let ts_a: String = move_a_row.try_get("created_at")?;
+        let ts_b: String = move_b_row.try_get("created_at")?;
+        let dev_a: String = move_a_row.try_get("device_id")?;
+        let dev_b: String = move_b_row.try_get("device_id")?;
+
+        // LWW: later created_at wins, with device_id tiebreaker
+        let winner_row = match ts_a.cmp(&ts_b) {
+            std::cmp::Ordering::Greater => &move_a_row,
+            std::cmp::Ordering::Less => &move_b_row,
+            std::cmp::Ordering::Equal => {
+                if dev_a >= dev_b {
+                    &move_a_row
+                } else {
+                    &move_b_row
+                }
+            }
+        };
+
+        let winner_payload_json: String = winner_row.try_get("payload")?;
+        let winner_move: crate::op::MoveBlockPayload = serde_json::from_str(&winner_payload_json)?;
+
+        // Idempotent guard: skip if the local device's latest move already
+        // matches the winning move (avoids infinite re-resolution).
+        let local_payload_json: String = move_a_row.try_get("payload")?;
+        let local_move: crate::op::MoveBlockPayload = serde_json::from_str(&local_payload_json)?;
+        if local_move == winner_move {
+            continue;
+        }
+
+        let move_payload = crate::op::OpPayload::MoveBlock(winner_move);
+        let new_record =
+            op_log::append_local_op_at(pool, device_id, move_payload, crate::now_rfc3339()).await?;
+
+        materializer
+            .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
+            .await?;
+        results.move_lww += 1;
+    }
+
+    // ── 4. delete_block vs edit_block (edit wins → resurrect) ────────────
+    let del_edit_rows = sqlx::query(
+        "SELECT json_extract(payload, '$.block_id') as block_id \
+         FROM op_log \
+         WHERE device_id IN (?, ?) AND op_type IN ('delete_block', 'edit_block') \
+         GROUP BY json_extract(payload, '$.block_id') \
+         HAVING COUNT(DISTINCT op_type) > 1 AND COUNT(DISTINCT device_id) > 1",
+    )
+    .bind(device_id)
+    .bind(remote_device_id)
+    .fetch_all(pool)
+    .await?;
+
+    for row in del_edit_rows {
+        let block_id: String = row.try_get("block_id")?;
+
+        // Fetch the block's deleted_at to build the RestoreBlockPayload
+        let block_row = sqlx::query("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(&block_id)
+            .fetch_optional(pool)
+            .await?;
+
+        let deleted_at_value: String = match block_row {
+            Some(ref r) => r
+                .try_get::<Option<String>, _>("deleted_at")?
+                .unwrap_or_default(),
+            None => String::new(),
+        };
+
+        // Idempotent guard: only resurrect if the block is actually deleted
+        // in the materialized table.  On repeated syncs the delete_block and
+        // edit_block ops still sit in op_log (satisfying the HAVING clause)
+        // even after a previous restore.  Without this check we would emit
+        // a redundant restore_block op on every subsequent sync.
+        // This also handles the race where the delete hasn't been materialised
+        // yet — we correctly skip and let the materialiser process in order.
+        if deleted_at_value.is_empty() {
+            continue;
+        }
+
+        // Edit wins — resurrect the block
+        let restore_payload = crate::op::OpPayload::RestoreBlock(crate::op::RestoreBlockPayload {
+            block_id: crate::ulid::BlockId::from_trusted(&block_id),
+            deleted_at_ref: deleted_at_value,
+        });
+        let new_record =
+            op_log::append_local_op_at(pool, device_id, restore_payload, crate::now_rfc3339())
+                .await?;
+
+        materializer
+            .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
+            .await?;
+        results.delete_edit_resurrect += 1;
     }
 
     Ok(results)
@@ -377,14 +607,60 @@ impl SyncOrchestrator {
 
     /// Process a received message and optionally produce a response.
     ///
-    /// **TODO (sync-state-validation):** This currently accepts any message
-    /// in any state.  Add guards to reject out-of-order messages (e.g.
-    /// `OpBatch` before `HeadExchange`) and transition to `Failed` with a
-    /// descriptive error.
+    /// Validates that the incoming message is appropriate for the current
+    /// state before dispatching.  Out-of-order messages transition to
+    /// [`SyncState::Failed`] and return an error.
     pub async fn handle_message(
         &mut self,
         msg: SyncMessage,
     ) -> Result<Option<SyncMessage>, AppError> {
+        // ── State validation ─────────────────────────────────────────────
+        // Reject messages that don't match the current state.
+        match (&self.state, &msg) {
+            // Terminal states reject everything
+            (SyncState::Complete, _) | (SyncState::Failed(_), _) => {
+                return Err(AppError::InvalidOperation(format!(
+                    "sync session already in terminal state {:?}, cannot handle {:?}",
+                    self.state,
+                    std::mem::discriminant(&msg),
+                )));
+            }
+            // Error and ResetRequired are always accepted (protocol signals)
+            (_, SyncMessage::Error { .. }) | (_, SyncMessage::ResetRequired { .. }) => {}
+            // HeadExchange only valid in Idle or ExchangingHeads
+            (SyncState::Idle | SyncState::ExchangingHeads, SyncMessage::HeadExchange { .. }) => {}
+            (_, SyncMessage::HeadExchange { .. }) => {
+                let msg_str = "HeadExchange received in wrong state";
+                self.state = SyncState::Failed(msg_str.into());
+                self.session.state = self.state.clone();
+                return Err(AppError::InvalidOperation(msg_str.into()));
+            }
+            // OpBatch valid in StreamingOps or ExchangingHeads (receiver gets ops right after head exchange)
+            (SyncState::StreamingOps | SyncState::ExchangingHeads, SyncMessage::OpBatch { .. }) => {
+            }
+            (_, SyncMessage::OpBatch { .. }) => {
+                let msg_str = "OpBatch received before HeadExchange";
+                self.state = SyncState::Failed(msg_str.into());
+                self.session.state = self.state.clone();
+                return Err(AppError::InvalidOperation(msg_str.into()));
+            }
+            // SyncComplete valid in StreamingOps (Complete is terminal, already caught above)
+            (SyncState::StreamingOps, SyncMessage::SyncComplete { .. }) => {}
+            (_, SyncMessage::SyncComplete { .. }) => {
+                let msg_str = "SyncComplete received in wrong state";
+                self.state = SyncState::Failed(msg_str.into());
+                self.session.state = self.state.clone();
+                return Err(AppError::InvalidOperation(msg_str.into()));
+            }
+            // Snapshot messages accepted in any non-terminal state
+            (
+                _,
+                SyncMessage::SnapshotOffer { .. }
+                | SyncMessage::SnapshotAccept
+                | SyncMessage::SnapshotReject,
+            ) => {}
+        }
+
         match msg {
             // ---- HeadExchange ------------------------------------------------
             SyncMessage::HeadExchange { heads } => {
@@ -521,7 +797,10 @@ mod tests {
     use super::*;
     use crate::db::init_pool;
     use crate::materializer::Materializer;
-    use crate::op::{CreateBlockPayload, OpPayload};
+    use crate::op::{
+        CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
+        SetPropertyPayload,
+    };
     use crate::op_log::append_local_op_at;
     use crate::ulid::BlockId;
     use sqlx::SqlitePool;
@@ -1015,6 +1294,541 @@ mod tests {
             "ResetRequired should not produce a response"
         );
         assert_eq!(orch.session().state, SyncState::ResetRequired);
+
+        materializer.shutdown();
+    }
+
+    // ── State validation tests ──────────────────────────────────────────
+
+    /// Sending OpBatch from Idle (before start()) should fail because
+    /// Idle is not in the OpBatch-accepted set.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orchestrator_rejects_op_batch_before_head_exchange() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+        // Don't call start() — state is Idle
+        let result = orch
+            .handle_message(SyncMessage::OpBatch {
+                ops: vec![],
+                is_last: true,
+            })
+            .await;
+
+        assert!(result.is_err(), "OpBatch from Idle should be rejected");
+        assert_eq!(
+            orch.session().state,
+            SyncState::Failed("OpBatch received before HeadExchange".into()),
+        );
+
+        materializer.shutdown();
+    }
+
+    /// After a full sync completes, sending another HeadExchange should
+    /// fail because Complete is a terminal state.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orchestrator_rejects_messages_in_terminal_state() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+        // Drive to Complete
+        let _start = orch.start().await.unwrap();
+        orch.handle_message(SyncMessage::HeadExchange { heads: vec![] })
+            .await
+            .unwrap();
+        orch.handle_message(SyncMessage::OpBatch {
+            ops: vec![],
+            is_last: true,
+        })
+        .await
+        .unwrap();
+        assert_eq!(orch.session().state, SyncState::Complete);
+
+        // Now try sending another HeadExchange — should fail
+        let result = orch
+            .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+            .await;
+        assert!(
+            result.is_err(),
+            "messages in terminal state should be rejected"
+        );
+
+        materializer.shutdown();
+    }
+
+    /// Error messages should be accepted in any non-terminal state,
+    /// including Idle.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orchestrator_accepts_error_in_any_state() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+        // State is Idle — Error should still be accepted
+        let result = orch
+            .handle_message(SyncMessage::Error {
+                message: "test error".into(),
+            })
+            .await;
+        assert!(result.is_ok(), "Error should be accepted in Idle state");
+        assert_eq!(orch.session().state, SyncState::Failed("test error".into()),);
+
+        materializer.shutdown();
+    }
+
+    // ── Merge coverage tests ────────────────────────────────────────────
+
+    /// Device A and B both set_property on same block+key.
+    /// merge_diverged_blocks should detect and resolve via LWW.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn merge_resolves_property_conflict_lww() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00Z";
+        let ts_b = "2025-01-15T12:01:00Z";
+
+        // Create the block first (needed for materializer)
+        append_local_op_at(&pool, "device-A", test_create_payload("BLK1"), ts_a.into())
+            .await
+            .unwrap();
+
+        // Device A sets property "priority" = "high"
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("high".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B sets property "priority" = "low" (later timestamp)
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("low".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        let results = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+
+        assert!(
+            results.property_lww > 0,
+            "should resolve at least one property conflict"
+        );
+
+        materializer.shutdown();
+    }
+
+    /// Device A and B both move_block same block.
+    /// merge_diverged_blocks should detect and resolve via LWW.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn merge_resolves_move_conflict_lww() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00+00:00";
+        let ts_b = "2025-01-15T12:01:00+00:00";
+
+        // Create the block and parent blocks
+        append_local_op_at(&pool, "device-A", test_create_payload("BLK1"), ts_a.into())
+            .await
+            .unwrap();
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload("PARENT-A"),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload("PARENT-B"),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device A moves BLK1 to PARENT-A
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+                new_parent_id: Some(BlockId::test_id("PARENT-A")),
+                new_position: 0,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B moves BLK1 to PARENT-B (later timestamp)
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+                new_parent_id: Some(BlockId::test_id("PARENT-B")),
+                new_position: 1,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        let results = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+
+        assert!(
+            results.move_lww > 0,
+            "should resolve at least one move conflict"
+        );
+
+        materializer.shutdown();
+    }
+
+    /// Device A deletes a block, Device B edits it.
+    /// merge_diverged_blocks should resurrect the block (edit wins).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn merge_resurrects_deleted_edited_block() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00+00:00";
+        let ts_b = "2025-01-15T12:01:00+00:00";
+
+        // Create the block
+        append_local_op_at(&pool, "device-A", test_create_payload("BLK1"), ts_a.into())
+            .await
+            .unwrap();
+
+        // Insert the block into the blocks table (needed for deleted_at lookup)
+        sqlx::query("INSERT INTO blocks (id, block_type, content, deleted_at) VALUES (?, ?, ?, ?)")
+            .bind("BLK1")
+            .bind("content")
+            .bind("test")
+            .bind(ts_a)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Device A deletes the block
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B edits the block
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+                to_text: "updated content".into(),
+                prev_edit: None,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        let results = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+
+        assert!(
+            results.delete_edit_resurrect > 0,
+            "should resurrect at least one deleted+edited block"
+        );
+
+        materializer.shutdown();
+    }
+
+    // ── Idempotent guard tests ──────────────────────────────────────────
+
+    /// Calling merge_diverged_blocks twice with no new changes should not
+    /// create duplicate resolution ops.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn merge_property_idempotent_on_repeated_sync() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00Z";
+        let ts_b = "2025-01-15T12:01:00Z"; // B wins
+
+        append_local_op_at(&pool, "device-A", test_create_payload("BLK1"), ts_a.into())
+            .await
+            .unwrap();
+
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("high".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("low".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        // First merge — should create one resolution op
+        let r1 = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+        assert_eq!(
+            r1.property_lww, 1,
+            "first merge should resolve 1 property conflict"
+        );
+
+        // Second merge — idempotent guard should skip
+        let r2 = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+        assert_eq!(
+            r2.property_lww, 0,
+            "second merge should not re-resolve already-resolved property conflict"
+        );
+
+        materializer.shutdown();
+    }
+
+    /// Calling merge_diverged_blocks twice for move conflicts should be
+    /// idempotent.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn merge_move_idempotent_on_repeated_sync() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00+00:00";
+        let ts_b = "2025-01-15T12:01:00+00:00";
+
+        append_local_op_at(&pool, "device-A", test_create_payload("BLK1"), ts_a.into())
+            .await
+            .unwrap();
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload("PARENT-A"),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload("PARENT-B"),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+                new_parent_id: Some(BlockId::test_id("PARENT-A")),
+                new_position: 0,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+                new_parent_id: Some(BlockId::test_id("PARENT-B")),
+                new_position: 1,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        let r1 = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+        assert_eq!(r1.move_lww, 1, "first merge should resolve 1 move conflict");
+
+        let r2 = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+        assert_eq!(
+            r2.move_lww, 0,
+            "second merge should not re-resolve already-resolved move conflict"
+        );
+
+        materializer.shutdown();
+    }
+
+    /// No conflicting ops → all counters zero.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn merge_no_conflicts_returns_zeros() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        // Only device-A has ops — no conflicts possible
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload("BLK1"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        let results = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+
+        assert_eq!(results.clean_merges, 0);
+        assert_eq!(results.conflicts, 0);
+        assert_eq!(results.already_up_to_date, 0);
+        assert_eq!(results.property_lww, 0);
+        assert_eq!(results.move_lww, 0);
+        assert_eq!(results.delete_edit_resurrect, 0);
+
+        materializer.shutdown();
+    }
+
+    /// delete+edit resurrection should not re-fire if block is not deleted.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn merge_delete_edit_skips_when_not_deleted() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00+00:00";
+        let ts_b = "2025-01-15T12:01:00+00:00";
+
+        append_local_op_at(&pool, "device-A", test_create_payload("BLK1"), ts_a.into())
+            .await
+            .unwrap();
+
+        // Block exists in blocks table but is NOT deleted (deleted_at = NULL)
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)")
+            .bind("BLK1")
+            .bind("content")
+            .bind("test")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Device A has a delete_block op and device B has an edit_block op
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+                to_text: "updated content".into(),
+                prev_edit: None,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        // Block is not actually deleted in materialized table → should skip
+        let results = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            results.delete_edit_resurrect, 0,
+            "should NOT resurrect a block that is not deleted in materialized table"
+        );
+
+        materializer.shutdown();
+    }
+
+    /// OpBatch received in ExchangingHeads state should be accepted
+    /// (receiver gets ops right after sending its head exchange).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orchestrator_accepts_op_batch_in_exchanging_heads() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+        // start() → ExchangingHeads
+        let _start = orch.start().await.unwrap();
+        assert_eq!(orch.session().state, SyncState::ExchangingHeads);
+
+        // OpBatch should be accepted in ExchangingHeads
+        let result = orch
+            .handle_message(SyncMessage::OpBatch {
+                ops: vec![],
+                is_last: true,
+            })
+            .await;
+        assert!(
+            result.is_ok(),
+            "OpBatch should be accepted in ExchangingHeads state"
+        );
 
         materializer.shutdown();
     }

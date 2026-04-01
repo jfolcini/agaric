@@ -10,11 +10,13 @@ import { Activity, AlertTriangle, RefreshCw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { StatusInfo } from '../lib/tauri'
 import { getStatus } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
+import { DeviceManagement } from './DeviceManagement'
 
 const TOOLTIP_TEXT: Record<string, string> = {
   'Foreground Queue': 'Operations waiting to be applied to the database. Should stay near zero.',
@@ -252,6 +254,9 @@ export function StatusPanel(): React.ReactElement {
             )}
           </CardContent>
         </Card>
+
+        <Separator className="my-4" />
+        <DeviceManagement />
       </div>
     </TooltipProvider>
   )

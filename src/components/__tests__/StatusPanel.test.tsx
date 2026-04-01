@@ -20,6 +20,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { StatusPanel } from '../StatusPanel'
 
+// Mock DeviceManagement to prevent its own IPC calls from interfering
+vi.mock('../DeviceManagement', () => ({
+  DeviceManagement: () => <div data-testid="device-management">Device ID: mock-device</div>,
+}))
+
 const mockedInvoke = vi.mocked(invoke)
 
 const mockStatus = {
@@ -398,6 +403,17 @@ describe('StatusPanel', () => {
       expect(tooltipTriggers[1].textContent).toBe('Background Queue')
       expect(tooltipTriggers[2].textContent).toBe('Ops Dispatched')
       expect(tooltipTriggers[3].textContent).toBe('Background Dispatched')
+    })
+  })
+
+  it('renders DeviceManagement section', async () => {
+    mockedInvoke.mockResolvedValue(mockStatus)
+
+    render(<StatusPanel />)
+
+    // DeviceManagement shows local device ID after loading
+    await waitFor(() => {
+      expect(screen.getByText(/Device ID/i)).toBeInTheDocument()
     })
   })
 })

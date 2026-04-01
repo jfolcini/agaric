@@ -1,5 +1,61 @@
 # Session Log
 
+## Session 33 — 2026-04-01 — Sync merge coverage + state validation + E2E tests
+
+Resolved #229 (E2E sync tests). Fixed 2 sync_protocol.rs TODOs (merge coverage, state validation).
+2 build subagents (parallel) + 2 review subagents. 6 files changed.
+
+### Backend — sync_protocol.rs
+
+**merge_diverged_blocks extended for all conflict types:**
+- **Property conflicts (set_property):** Queries concurrent set_property ops on same (block_id, key). Calls `merge::resolve_property_conflict` (LWW). Applies winning value. Idempotent guard prevents re-resolution on repeated sync.
+- **Move conflicts (move_block):** Queries concurrent move_block ops. LWW by timestamp with device_id tiebreaker. Idempotent guard compares with local state.
+- **Delete+edit (delete_block vs edit_block):** Edit wins — creates restore_block op to resurrect. Skips if block not actually deleted in materialized table.
+- **MergeResults** extended with `property_lww`, `move_lww`, `delete_edit_resurrect` counters.
+
+**Orchestrator state validation:**
+- Added state guards in `handle_message`: rejects messages in terminal states, validates HeadExchange/OpBatch/SyncComplete against current state, transitions to Failed on rejection.
+- Error and ResetRequired always accepted (protocol signals).
+- Snapshot messages accepted in any non-terminal state.
+
+**Review A findings (critical fix):**
+- Infinite re-resolution bug: merge queries matched all historical ops, not just concurrent ones. Added idempotent guards comparing current local state with winner before creating new ops. 5 additional tests verify idempotency.
+
+**Tests:** 27 sync_protocol tests (16 existing + 6 build + 5 review)
+
+### Frontend — StatusPanel + E2E
+
+**StatusPanel.tsx:**
+- Wired DeviceManagement component into StatusPanel (after Sync Status card, with Separator)
+- StatusPanel.test.tsx: Added DeviceManagement mock + 1 new test
+- App.test.tsx: Added DeviceManagement mock (prevents IPC errors)
+
+**e2e/sync-ui.spec.ts (NEW — #229):**
+- 8 E2E Playwright tests covering sync UI:
+  - Status panel shows sync status section
+  - Status panel shows device management
+  - Device ID is displayed
+  - Pair New Device button opens dialog
+  - Pairing dialog shows QR code and passphrase
+  - Pairing dialog has 4 word entry inputs
+  - Pairing dialog close button works
+  - No paired devices shows empty state / not configured
+
+**Review B findings:**
+- Fixed E2E selector ambiguity: close button matched 2 elements (overlay + X button). Scoped to `page.getByRole('dialog')`.
+
+### Test results
+- Rust: 27 sync_protocol tests + 21 integration tests = all pass (1132 total)
+- Frontend: 64 files, 1779 tests = all pass
+- Total: 2911 tests passing
+
+### Items resolved
+- #229: E2E sync tests — 8 E2E tests for sync UI via mocks. True multi-device E2E deferred until backend Tauri commands for sync are implemented.
+- sync-merge-coverage TODO: merge_diverged_blocks now handles property/move/delete+edit conflicts
+- sync-state-validation TODO: orchestrator rejects out-of-order messages
+
+### Total remaining REVIEW-LATER items: 43 open
+
 ## Session 32 — 2026-04-01 — Full sync protocol implementation
 
 Resolved 18 sync REVIEW-LATER.md items (#210-#211, #214-#215, #217, #219-#220, #224, #227-#237).
