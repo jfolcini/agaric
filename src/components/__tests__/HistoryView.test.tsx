@@ -885,4 +885,38 @@ describe('HistoryView', () => {
       expect(mockedToastError).toHaveBeenCalledWith('Failed to revert operations')
     })
   })
+
+  // -- Device ID display --------------------------------------------------------
+
+  it('shows device_id for each entry', async () => {
+    const page = {
+      items: [
+        makeHistoryEntry(
+          1,
+          'edit_block',
+          { to_text: 'item 1' },
+          '2025-01-15T12:00:00Z',
+          'ABCDEF1234567890',
+        ),
+        makeHistoryEntry(
+          2,
+          'create_block',
+          { content: 'item 2' },
+          '2025-01-14T10:00:00Z',
+          'XY987654AABBCCDD',
+        ),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // device_id truncated to first 8 chars
+    expect(screen.getByText('dev:ABCDEF12')).toBeInTheDocument()
+    expect(screen.getByText('dev:XY987654')).toBeInTheDocument()
+  })
 })

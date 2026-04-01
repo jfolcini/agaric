@@ -129,6 +129,10 @@ describe('HistoryPanel', () => {
     const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
     await user.click(restoreBtn)
 
+    // Confirmation dialog opens — click confirm
+    const confirmBtn = await screen.findByRole('button', { name: /^Restore$/ })
+    await user.click(confirmBtn)
+
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'BLOCK001',
@@ -315,6 +319,10 @@ describe('HistoryPanel', () => {
     const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
     await user.click(restoreBtn)
 
+    // Confirmation dialog opens — click confirm
+    const confirmBtn = await screen.findByRole('button', { name: /^Restore$/ })
+    await user.click(confirmBtn)
+
     // Should show error toast
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to revert')
@@ -336,6 +344,10 @@ describe('HistoryPanel', () => {
 
     const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
     await user.click(restoreBtn)
+
+    // Confirmation dialog opens — click confirm
+    const confirmBtn = await screen.findByRole('button', { name: /^Restore$/ })
+    await user.click(confirmBtn)
 
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('Reverted successfully')
@@ -359,7 +371,116 @@ describe('HistoryPanel', () => {
     const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
     await user.click(restoreBtn)
 
+    // Confirmation dialog opens — click confirm
+    const confirmBtn = await screen.findByRole('button', { name: /^Restore$/ })
+    await user.click(confirmBtn)
+
     // Button should be disabled while restoring
-    expect(restoreBtn).toBeDisabled()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Restore/i })).toBeDisabled()
+    })
+  })
+
+  // -- Confirmation dialog tests ------------------------------------------------
+
+  it('confirmation dialog opens when Restore is clicked', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    await user.click(restoreBtn)
+
+    // Dialog should be visible
+    expect(screen.getByText('Restore to this version?')).toBeInTheDocument()
+    expect(
+      screen.getByText(/This will replace the current block content with the version from/),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/You can undo this change/)).toBeInTheDocument()
+  })
+
+  it('confirmation dialog completes the restore on confirm', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // get_block_history
+      .mockResolvedValueOnce({ id: 'BLOCK001', block_type: 'content', content: 'Old content' }) // edit_block
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    await user.click(restoreBtn)
+
+    // Click confirm in dialog
+    const confirmBtn = await screen.findByRole('button', { name: /^Restore$/ })
+    await user.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'BLOCK001',
+        toText: 'Old content',
+      })
+    })
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Reverted successfully')
+    })
+  })
+
+  it('confirmation dialog cancels without restoring', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Old content' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    const restoreBtn = await screen.findByRole('button', { name: /Restore/i })
+    await user.click(restoreBtn)
+
+    // Dialog should be visible
+    expect(screen.getByText('Restore to this version?')).toBeInTheDocument()
+
+    // Click Cancel
+    await user.click(screen.getByRole('button', { name: /Cancel/ }))
+
+    // Dialog should be closed
+    await waitFor(() => {
+      expect(screen.queryByText('Restore to this version?')).not.toBeInTheDocument()
+    })
+
+    // editBlock should NOT have been called (only get_block_history)
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+  })
+
+  // -- Device ID display --------------------------------------------------------
+
+  it('shows device_id for each entry', async () => {
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'content' }, '2025-01-15T12:00:00Z')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryPanel blockId="BLOCK001" />)
+
+    await screen.findByText('edit_block')
+
+    // device_id 'DEVICE01' truncated to 8 chars = 'DEVICE01'
+    expect(screen.getByText('dev:DEVICE01')).toBeInTheDocument()
   })
 })

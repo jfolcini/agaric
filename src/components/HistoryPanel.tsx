@@ -9,6 +9,16 @@ import { Clock, Loader2, RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -28,6 +38,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [restoringSeq, setRestoringSeq] = useState<number | null>(null)
+  const [confirmEntry, setConfirmEntry] = useState<HistoryEntry | null>(null)
 
   const loadHistory = useCallback(
     async (cursor?: string) => {
@@ -128,6 +139,10 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                   <span className="history-item-time text-xs text-muted-foreground">
                     {formatTimestamp(entry.created_at)}
                   </span>
+                  <span className="text-[10px] text-muted-foreground/60">&middot;</span>
+                  <span className="text-[10px] text-muted-foreground/60">
+                    dev:{entry.device_id.slice(0, 8)}
+                  </span>
                 </div>
                 {preview && (
                   <span className="history-item-preview text-sm text-muted-foreground truncate">
@@ -140,7 +155,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                   variant="outline"
                   size="sm"
                   className="history-restore-btn shrink-0"
-                  onClick={() => handleRestore(entry)}
+                  onClick={() => setConfirmEntry(entry)}
                   disabled={restoringSeq === entry.seq}
                 >
                   {restoringSeq === entry.seq ? (
@@ -167,6 +182,35 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
           {loading ? 'Loading...' : 'Load more'}
         </Button>
       )}
+
+      <AlertDialog
+        open={confirmEntry !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmEntry(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restore to this version?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will replace the current block content with the version from{' '}
+              {confirmEntry ? formatTimestamp(confirmEntry.created_at) : ''}. You can undo this
+              change.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (confirmEntry) handleRestore(confirmEntry)
+                setConfirmEntry(null)
+              }}
+            >
+              Restore
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

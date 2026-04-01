@@ -7,10 +7,15 @@
  *  - Polls every 5 seconds (uses fake timers)
  *  - Cleans up interval on unmount
  *  - a11y compliance
+ *  - Error/panic section renders when counts > 0 and hides when all zero
+ *  - High-water marks displayed under queue depth cards
+ *  - Health color classes applied based on queue depth (green/default/amber)
+ *  - Tooltip triggers present for all metric labels; content appears on hover
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { StatusPanel } from '../StatusPanel'
@@ -200,5 +205,199 @@ describe('StatusPanel', () => {
     expect(screen.getByText('Foreground Queue')).toBeInTheDocument()
 
     vi.useRealTimers()
+  })
+
+  describe('error/panic section', () => {
+    it('renders when error and panic counts are non-zero', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        fg_errors: 2,
+        bg_errors: 0,
+        fg_panics: 1,
+        bg_panics: 3,
+        fg_high_water: 0,
+        bg_high_water: 0,
+      })
+
+      render(<StatusPanel />)
+
+      expect(
+        await screen.findByText('2 foreground errors, 1 foreground panic, 3 background panics'),
+      ).toBeInTheDocument()
+    })
+
+    it('renders singular form for count of 1', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        fg_errors: 1,
+        bg_errors: 0,
+        fg_panics: 0,
+        bg_panics: 1,
+        fg_high_water: 0,
+        bg_high_water: 0,
+      })
+
+      render(<StatusPanel />)
+
+      expect(await screen.findByText('1 foreground error, 1 background panic')).toBeInTheDocument()
+    })
+
+    it('is hidden when all error and panic counts are zero', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        fg_errors: 0,
+        bg_errors: 0,
+        fg_panics: 0,
+        bg_panics: 0,
+        fg_high_water: 0,
+        bg_high_water: 0,
+      })
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      expect(screen.queryByText(/foreground error/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/background error/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/foreground panic/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/background panic/)).not.toBeInTheDocument()
+    })
+
+    it('is hidden when error fields are undefined (legacy mock)', async () => {
+      // mockStatus has no error/panic fields — component defaults to 0
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      expect(screen.queryByText(/foreground error/)).not.toBeInTheDocument()
+    })
+  })
+
+  describe('high-water marks', () => {
+    it('displays peak values under queue depth cards', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        fg_high_water: 15,
+        bg_high_water: 22,
+        fg_errors: 0,
+        bg_errors: 0,
+        fg_panics: 0,
+        bg_panics: 0,
+      })
+
+      render(<StatusPanel />)
+
+      expect(await screen.findByText(/Peak: 15/)).toBeInTheDocument()
+      expect(screen.getByText(/Peak: 22/)).toBeInTheDocument()
+    })
+
+    it('shows Peak: 0 when high-water fields are undefined', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      const peaks = screen.getAllByText(/Peak: 0/)
+      expect(peaks).toHaveLength(2)
+    })
+  })
+
+  describe('health color classes', () => {
+    it('applies green accent when queue depth is 0', async () => {
+      mockedInvoke.mockResolvedValue({
+        foreground_queue_depth: 0,
+        background_queue_depth: 0,
+        total_ops_dispatched: 5,
+        total_background_dispatched: 3,
+        fg_high_water: 0,
+        bg_high_water: 0,
+        fg_errors: 0,
+        bg_errors: 0,
+        fg_panics: 0,
+        bg_panics: 0,
+      })
+
+      const { container } = render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      const metricCards = container.querySelectorAll('.status-metric')
+      expect(metricCards[0].className).toContain('border-emerald-200')
+      expect(metricCards[0].className).toContain('text-emerald-600')
+      expect(metricCards[1].className).toContain('border-emerald-200')
+      expect(metricCards[1].className).toContain('text-emerald-600')
+    })
+
+    it('applies no health accent for queue depth 1-10', async () => {
+      // mockStatus has fg=3, bg=7 — both in the 1-10 range
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      const { container } = render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      const metricCards = container.querySelectorAll('.status-metric')
+      expect(metricCards[0].className).not.toContain('border-emerald')
+      expect(metricCards[0].className).not.toContain('border-amber')
+      expect(metricCards[1].className).not.toContain('border-emerald')
+      expect(metricCards[1].className).not.toContain('border-amber')
+    })
+
+    it('applies amber accent when queue depth exceeds 10', async () => {
+      mockedInvoke.mockResolvedValue({
+        foreground_queue_depth: 15,
+        background_queue_depth: 25,
+        total_ops_dispatched: 5,
+        total_background_dispatched: 3,
+        fg_high_water: 15,
+        bg_high_water: 25,
+        fg_errors: 0,
+        bg_errors: 0,
+        fg_panics: 0,
+        bg_panics: 0,
+      })
+
+      const { container } = render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      const metricCards = container.querySelectorAll('.status-metric')
+      expect(metricCards[0].className).toContain('border-amber-200')
+      expect(metricCards[0].className).toContain('text-amber-600')
+      expect(metricCards[1].className).toContain('border-amber-200')
+      expect(metricCards[1].className).toContain('text-amber-600')
+    })
+  })
+
+  describe('tooltips', () => {
+    it('shows tooltip content when hovering a metric label', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      render(<StatusPanel />)
+
+      const fgLabel = await screen.findByText('Foreground Queue')
+      await user.hover(fgLabel)
+
+      await waitFor(() => {
+        const matches = screen.getAllByText(
+          'Operations waiting to be applied to the database. Should stay near zero.',
+        )
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      })
+    })
+
+    it('has tooltip triggers for all four metric labels', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      const { container } = render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+
+      // All 4 labels should be wrapped in tooltip trigger spans with cursor-help
+      const tooltipTriggers = container.querySelectorAll('.cursor-help')
+      expect(tooltipTriggers).toHaveLength(4)
+      expect(tooltipTriggers[0].textContent).toBe('Foreground Queue')
+      expect(tooltipTriggers[1].textContent).toBe('Background Queue')
+      expect(tooltipTriggers[2].textContent).toBe('Ops Dispatched')
+      expect(tooltipTriggers[3].textContent).toBe('Background Dispatched')
+    })
   })
 })

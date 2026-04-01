@@ -43,7 +43,7 @@ import {
 import { Toaster } from './components/ui/sonner'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { announce } from './lib/announcer'
-import { createBlock } from './lib/tauri'
+import { createBlock, getConflicts } from './lib/tauri'
 import { useJournalStore } from './stores/journal'
 import { useNavigationStore, type View } from './stores/navigation'
 import { useResolveStore } from './stores/resolve'
@@ -84,9 +84,39 @@ function useHeaderLabel(): string {
   return NAV_ITEMS.find((item) => item.id === currentView)?.label ?? ''
 }
 
+/** Returns true when at least one unresolved conflict exists. Polls every 30 s. */
+function useHasConflicts(): boolean {
+  const [hasConflicts, setHasConflicts] = useState(false)
+  const currentView = useNavigationStore((s) => s.currentView)
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view changes (user may have resolved conflicts)
+  useEffect(() => {
+    let cancelled = false
+
+    async function poll() {
+      try {
+        const resp = await getConflicts({ limit: 1 })
+        if (!cancelled) setHasConflicts(resp.items.length > 0)
+      } catch {
+        if (!cancelled) setHasConflicts(false)
+      }
+    }
+
+    poll()
+    const id = setInterval(poll, 30_000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [currentView])
+
+  return hasConflicts
+}
+
 function App() {
   const { currentView, pageStack, setView, navigateToPage, goBack } = useNavigationStore()
   const headerLabel = useHeaderLabel()
+  const hasConflicts = useHasConflicts()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const mainContentRef = useRef<HTMLDivElement>(null)
 
@@ -206,6 +236,13 @@ function App() {
                       >
                         <item.icon />
                         <span>{item.label}</span>
+                        {item.id === 'conflicts' && hasConflicts && (
+                          <span
+                            role="status"
+                            className="ml-auto h-2 w-2 rounded-full bg-destructive"
+                            aria-label="Has unresolved conflicts"
+                          />
+                        )}
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ))}

@@ -545,6 +545,53 @@ describe('App', () => {
     })
   })
 
+  // ── Conflict dot indicator ────────────────────────────────────────────
+
+  describe('conflict dot indicator', () => {
+    it('shows conflict dot when getConflicts returns items', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_conflicts') {
+          return {
+            items: [
+              {
+                id: 'CONFLICT_1',
+                block_type: 'paragraph',
+                content: 'x',
+                parent_id: null,
+                position: 0,
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return emptyPage
+      })
+
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Has unresolved conflicts')).toBeInTheDocument()
+      })
+    })
+
+    it('hides conflict dot when getConflicts returns empty', async () => {
+      // Default mock already returns emptyPage for all commands
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByText('Agaric')).toBeInTheDocument()
+      })
+
+      // Give the hook time to resolve
+      await waitFor(() => {
+        expect(screen.queryByLabelText('Has unresolved conflicts')).not.toBeInTheDocument()
+      })
+    })
+  })
+
   // ── Keyboard shortcuts modal ─────────────────────────────────────────
 
   describe('keyboard shortcuts modal', () => {

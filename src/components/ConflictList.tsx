@@ -3,7 +3,7 @@
  *
  * Standalone view similar to TrashView. Paginated list of conflict blocks.
  * Supports "Keep" (edit original + delete conflict) and "Discard" (delete conflict)
- * with two-click confirmation on Discard.
+ * with two-click confirmation on both Keep and Discard.
  */
 
 import { Check, GitMerge, X } from 'lucide-react'
@@ -24,7 +24,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
-import { deleteBlock, editBlock, getConflicts } from '../lib/tauri'
+import { deleteBlock, editBlock, getBlock, getConflicts } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
 
 export function ConflictList(): React.ReactElement {
@@ -33,18 +33,35 @@ export function ConflictList(): React.ReactElement {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null)
+  const [confirmKeepBlock, setConfirmKeepBlock] = useState<BlockRow | null>(null)
+  const [originals, setOriginals] = useState<Map<string, BlockRow>>(new Map())
 
   const loadConflicts = useCallback(async (cursor?: string) => {
     setLoading(true)
     try {
       const resp = await getConflicts({ cursor, limit: 50 })
+      const items = resp?.items ?? []
       if (cursor) {
-        setBlocks((prev) => [...prev, ...resp.items])
+        setBlocks((prev) => [...prev, ...items])
       } else {
-        setBlocks(resp.items)
+        setBlocks(items)
       }
-      setNextCursor(resp.next_cursor)
-      setHasMore(resp.has_more)
+      setNextCursor(resp?.next_cursor ?? null)
+      setHasMore(resp?.has_more ?? false)
+
+      // Fetch original blocks for comparison
+      const parentIds = [
+        ...new Set(items.map((b) => b.parent_id).filter((pid): pid is string => pid != null)),
+      ]
+      const fetchedOriginals = new Map<string, BlockRow>()
+      await Promise.allSettled(
+        parentIds.map((pid) => getBlock(pid).then((orig) => fetchedOriginals.set(pid, orig))),
+      )
+      setOriginals((prev) => {
+        const next = new Map(prev)
+        for (const [k, v] of fetchedOriginals) next.set(k, v)
+        return next
+      })
     } catch {
       toast.error('Failed to load conflicts')
     }
@@ -64,6 +81,7 @@ export function ConflictList(): React.ReactElement {
       // Delete the conflict block
       await deleteBlock(block.id)
       setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+      setConfirmKeepBlock(null)
       toast.success('Kept selected version')
     } catch {
       toast.error('Failed to resolve conflict')
@@ -102,41 +120,49 @@ export function ConflictList(): React.ReactElement {
       )}
 
       <div className="conflict-items space-y-2">
-        {blocks.map((block) => (
-          <div
-            key={block.id}
-            className="conflict-item flex items-center justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
-          >
-            <div className="conflict-item-content flex min-w-0 items-center gap-3">
-              <Badge variant="secondary" className="conflict-item-type shrink-0">
-                {block.block_type}
-              </Badge>
-              <span className="conflict-item-text text-sm truncate">
-                {block.content ?? '(empty)'}
-              </span>
+        {blocks.map((block) => {
+          const original = block.parent_id ? originals.get(block.parent_id) : undefined
+          return (
+            <div
+              key={block.id}
+              className="conflict-item flex items-center justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
+            >
+              <div className="conflict-item-content flex min-w-0 flex-col gap-1">
+                <Badge variant="secondary" className="conflict-item-type shrink-0">
+                  {block.block_type}
+                </Badge>
+                <div className="conflict-original text-sm text-muted-foreground truncate">
+                  <span className="font-medium">Current:</span>{' '}
+                  {original ? (original.content ?? '(empty)') : '(original not available)'}
+                </div>
+                <div className="conflict-incoming text-sm truncate">
+                  <span className="font-medium">Incoming:</span>{' '}
+                  <span className="conflict-item-text">{block.content ?? '(empty)'}</span>
+                </div>
+              </div>
+              <div className="conflict-item-actions flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="conflict-keep-btn [@media(pointer:coarse)]:h-10"
+                  onClick={() => setConfirmKeepBlock(block)}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  Keep
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="conflict-discard-btn [@media(pointer:coarse)]:h-10"
+                  onClick={() => setConfirmDiscardId(block.id)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Discard
+                </Button>
+              </div>
             </div>
-            <div className="conflict-item-actions flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="conflict-keep-btn [@media(pointer:coarse)]:h-10"
-                onClick={() => handleKeep(block)}
-              >
-                <Check className="h-3.5 w-3.5" />
-                Keep
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                className="conflict-discard-btn [@media(pointer:coarse)]:h-10"
-                onClick={() => setConfirmDiscardId(block.id)}
-              >
-                <X className="h-3.5 w-3.5" />
-                Discard
-              </Button>
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {hasMore && (
@@ -150,6 +176,34 @@ export function ConflictList(): React.ReactElement {
           {loading ? 'Loading...' : 'Load more'}
         </Button>
       )}
+
+      {/* Keep confirmation dialog */}
+      <AlertDialog
+        open={!!confirmKeepBlock}
+        onOpenChange={(open) => {
+          if (!open) setConfirmKeepBlock(null)
+        }}
+      >
+        <AlertDialogContent className="conflict-keep-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Keep incoming version?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will replace the current content with the incoming version.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="conflict-keep-no">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="conflict-keep-yes"
+              onClick={() => {
+                if (confirmKeepBlock) handleKeep(confirmKeepBlock)
+              }}
+            >
+              Yes, keep
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Discard confirmation dialog */}
       <AlertDialog
