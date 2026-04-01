@@ -1,5 +1,43 @@
 # Session Log
 
+## Session 16 — 2026-03-31 — Tier 6 Items #84, #89, #100, #101
+
+### Build 1: DnD E2E test + computePosition fix (#84)
+- Added `drag-and-drop reorders blocks` E2E test to `toolbar-and-blocks.spec.ts`
+- Uses manual pointer events (mousedown → 350ms delay → incremental move → mouseup) because Playwright's dragTo doesn't work with dnd-kit's activation constraints
+- Fixed `computePosition()` bug in `tree-utils.ts`: `Math.max(1, firstPos - 1)` → `firstPos - 1` to allow negative positions when firstPos=0
+- Added unit test for firstPos=0 edge case (reviewer-requested)
+
+### Build 2: Editor picker extension tests (#89)
+- 22 new tests in `extensions.test.ts` (42 total, was 20)
+- BlockLinkPicker (6): name, type, options, defaults
+- SlashCommand (6): name, type, options, defaults
+- AtTagPicker (4): name, type, options, defaults
+- ExternalLink (7): name, type, autolink, openOnClick, linkOnPaste, HTMLAttributes
+
+### Build 3: Tag management E2E tests (#100)
+- Created `e2e/tag-management.spec.ts` with 14 tests across 5 groups
+- Tags view (2): seed tags visible, create-tag form
+- Tag creation (1): new tag appears in list
+- Tag deletion (3): confirmation dialog, cancel, confirm
+- Tag filter panel (4): prefix search, add from search, AND/OR toggle, feedback
+- Tag insertion via @ picker (4): suggestion list, insert chip, persistence, seed chips
+
+### Build 4: Conflict resolution E2E tests (#101)
+- Updated `tauri-mock.ts`: added CONFLICT_01 seed block with `is_conflict: true`, updated `get_conflicts` to filter real conflict blocks
+- Created `e2e/conflict-resolution.spec.ts` with 5 tests: view conflicts, keep, discard confirmation, discard no, discard yes
+
+### Reviews: 4 subagents
+- #84 review: REQUEST CHANGES — missing unit test for firstPos=0 edge case (fixed)
+- #89 review: APPROVE — all 22 tests accurate
+- #100 review: APPROVE — robust selectors, proper patterns
+- #101 review: APPROVE — selectors match component, mock correct
+
+### Commit: 85aaaca
+- All prek hooks pass
+- 1426 vitest tests, 20 new E2E tests (5 conflict + 14 tag + 1 DnD)
+- Tier 6 fully resolved (all items now have **Resolved** markers)
+
 ## Session 15 — 2026-03-31 — Tier 6 Items #81, #82, #83, #96, #97
 
 ### Build 1: Mock tag associations (#81 + #82)
