@@ -34,6 +34,27 @@ Review subagent found 3 issues:
 | `dc70aa20` | Phase A review | Found 3 issues, added 14 tests |
 | `8231642b` | Phase B build | Completed — BacklinkFilterBuilder + BacklinksPanel rewrite |
 
+### Phase C — Post-commit review (7 subagents)
+
+Thorough code review of the backlink filter system (commit `b7efa0e`). 4 parallel review subagents (Rust correctness, Rust test coverage, frontend code, frontend tests) + 3 parallel verification subagents. ~55 raw findings → 14 confirmed issues, 41 false positives eliminated.
+
+| ID | Role | Result |
+|----|------|--------|
+| `0f0e15ad` | Rust backend review | Found 8 issues in backlink_query.rs |
+| `26d4f36b` | Frontend code review | Found 7 issues in BacklinksPanel/BacklinkFilterBuilder |
+| `70afe0be` | Rust test coverage review | Found 9 test coverage gaps |
+| `98a6dc72` | Frontend test coverage review | Found issues in mock/contract tests |
+| `c13b1683` | Rust backend verification | Verified 8 findings |
+| `44461b18` | Frontend verification | Verified 7 findings |
+| `6c1e07cd` | Test coverage verification | Verified 9 claims about missing tests |
+
+Confirmed issues added to REVIEW-LATER.md as #238–#251:
+- **HIGH:** FTS5 injection (#238), race condition (#239), missing integration tests (#240)
+- **MEDIUM:** missing contract/mock tests (#241-#242), in-memory filter (#243), unfiltered sort (#244), empty date validation (#245), Desc sort gaps (#246), missing UI tests (#247)
+- **LOW:** no snapshots (#248), unbounded recursion (#249), dead code (#250), no benchmarks (#251)
+
+Commit: `576d09f`
+
 ## Session 29 — 2026-04-01 — Test coverage audit + 20 new tests + flaky fix
 
 Systematic coverage audit of all 16 Rust files changed by sync blockers (commit `a3a38a5`).
