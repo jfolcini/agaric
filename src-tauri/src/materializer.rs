@@ -2131,4 +2131,316 @@ mod tests {
             "bg_panics in StatusInfo should be 0 on fresh materializer"
         );
     }
+
+    // ======================================================================
+    // DB state verification: cache tables populated after flush (#97)
+    // ======================================================================
+
+    // -- Helpers for DB state verification tests --
+
+    /// Insert a block row directly into the blocks table (bypasses op log).
+    ///
+    /// The foreground `ApplyOp` handler is currently a stub, so blocks must
+    /// be inserted directly for cache-rebuild tests to find them.
+    async fn insert_block_direct(pool: &SqlitePool, id: &str, block_type: &str, content: &str) {
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)")
+            .bind(id)
+            .bind(block_type)
+            .bind(content)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Soft-delete a block using a fixed, deterministic timestamp.
+    async fn soft_delete_block_direct(pool: &SqlitePool, id: &str) {
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+            .bind(FIXED_TS)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Insert a `block_tags` association row directly.
+    async fn insert_block_tag(pool: &SqlitePool, block_id: &str, tag_id: &str) {
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(block_id)
+            .bind(tag_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Insert a `block_properties` row with a date value directly.
+    async fn insert_property_date(pool: &SqlitePool, block_id: &str, key: &str, value_date: &str) {
+        sqlx::query(
+            "INSERT OR REPLACE INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)",
+        )
+        .bind(block_id)
+        .bind(key)
+        .bind(value_date)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // -- Test 1: create tag → tags_cache populated --
+
+    #[tokio::test]
+    async fn flush_populates_tags_cache_after_create_tag() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Insert a tag block directly so the cache rebuild finds it.
+        insert_block_direct(&pool, "TAG_FLUSH_1", "tag", "urgent").await;
+
+        // Dispatch a create_block(tag) op — triggers RebuildTagsCache on bg queue.
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "TAG_FLUSH_1".into(),
+                block_type: "tag".into(),
+                parent_id: None,
+                position: None,
+                content: "urgent".into(),
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        // Verify tags_cache has the tag with correct name and zero usage.
+        let row = sqlx::query(
+            "SELECT tag_id, name, usage_count FROM tags_cache WHERE tag_id = 'TAG_FLUSH_1'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+
+        assert!(row.is_some(), "tags_cache should contain the new tag");
+        let row = row.unwrap();
+        assert_eq!(row.get::<String, _>("name"), "urgent");
+        assert_eq!(
+            row.get::<i32, _>("usage_count"),
+            0,
+            "new tag with no usages should have count 0"
+        );
+    }
+
+    // -- Test 2: create page → pages_cache populated --
+
+    #[tokio::test]
+    async fn flush_populates_pages_cache_after_create_page() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Insert a page block directly so the cache rebuild finds it.
+        insert_block_direct(&pool, "PAGE_FLUSH_1", "page", "My Test Page").await;
+
+        // Dispatch a create_block(page) op — triggers RebuildPagesCache on bg queue.
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "PAGE_FLUSH_1".into(),
+                block_type: "page".into(),
+                parent_id: None,
+                position: Some(0),
+                content: "My Test Page".into(),
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        // Verify pages_cache has the page with correct title.
+        let row =
+            sqlx::query("SELECT page_id, title FROM pages_cache WHERE page_id = 'PAGE_FLUSH_1'")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+
+        assert!(row.is_some(), "pages_cache should contain the new page");
+        let row = row.unwrap();
+        assert_eq!(row.get::<String, _>("title"), "My Test Page");
+    }
+
+    // -- Test 3: delete block → tag removed from tags_cache --
+
+    #[tokio::test]
+    async fn flush_removes_deleted_tag_from_tags_cache() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Step 1: Insert tag block, dispatch create, flush — verify in cache.
+        insert_block_direct(&pool, "TAG_DEL_1", "tag", "to-delete").await;
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "TAG_DEL_1".into(),
+                block_type: "tag".into(),
+                parent_id: None,
+                position: None,
+                content: "to-delete".into(),
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        let row = sqlx::query("SELECT tag_id FROM tags_cache WHERE tag_id = 'TAG_DEL_1'")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(
+            row.is_some(),
+            "tags_cache should contain the tag before deletion"
+        );
+
+        // Step 2: Soft-delete the block and dispatch a delete_block op.
+        soft_delete_block_direct(&pool, "TAG_DEL_1").await;
+
+        let del_record = make_op_record(
+            &pool,
+            OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: "TAG_DEL_1".into(),
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&del_record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        // Verify tags_cache no longer has the deleted tag.
+        let row = sqlx::query("SELECT tag_id FROM tags_cache WHERE tag_id = 'TAG_DEL_1'")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(
+            row.is_none(),
+            "tags_cache should not contain the deleted tag after flush"
+        );
+    }
+
+    // -- Test 4: add tag → tags_cache usage_count updated --
+
+    #[tokio::test]
+    async fn flush_updates_tags_cache_usage_count_after_add_tag() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Insert a tag block and a content block.
+        insert_block_direct(&pool, "TAG_USE_1", "tag", "important").await;
+        insert_block_direct(&pool, "BLK_USE_1", "content", "some note").await;
+
+        // Dispatch create_block(tag) to seed tags_cache.
+        let record = make_op_record(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "TAG_USE_1".into(),
+                block_type: "tag".into(),
+                parent_id: None,
+                position: None,
+                content: "important".into(),
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        // Verify initial usage_count is 0.
+        let row = sqlx::query("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG_USE_1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            row.get::<i32, _>("usage_count"),
+            0,
+            "initial usage_count should be 0"
+        );
+
+        // Add the tag to the content block (write directly + dispatch add_tag).
+        insert_block_tag(&pool, "BLK_USE_1", "TAG_USE_1").await;
+
+        let add_record = make_op_record(
+            &pool,
+            OpPayload::AddTag(AddTagPayload {
+                block_id: "BLK_USE_1".into(),
+                tag_id: "TAG_USE_1".into(),
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&add_record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        // Verify usage_count increased to 1.
+        let row = sqlx::query("SELECT usage_count FROM tags_cache WHERE tag_id = 'TAG_USE_1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            row.get::<i32, _>("usage_count"),
+            1,
+            "usage_count should be 1 after adding tag to one block"
+        );
+    }
+
+    // -- Test 5: set property with due date → agenda_cache populated --
+
+    #[tokio::test]
+    async fn flush_populates_agenda_cache_after_set_property_with_due_date() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Insert a content block and set a due_date property on it.
+        insert_block_direct(&pool, "BLK_AGD_1", "content", "task with deadline").await;
+        insert_property_date(&pool, "BLK_AGD_1", "due", "2025-03-15").await;
+
+        // Dispatch set_property op — triggers RebuildAgendaCache on bg queue.
+        let record = make_op_record(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: "BLK_AGD_1".into(),
+                key: "due".into(),
+                value_text: None,
+                value_num: None,
+                value_date: Some("2025-03-15".into()),
+                value_ref: None,
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        // Verify agenda_cache has the entry with correct date and source.
+        let row = sqlx::query(
+            "SELECT date, block_id, source FROM agenda_cache WHERE block_id = 'BLK_AGD_1'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            row.is_some(),
+            "agenda_cache should contain the block with due date property"
+        );
+        let row = row.unwrap();
+        assert_eq!(row.get::<String, _>("date"), "2025-03-15");
+        assert_eq!(row.get::<String, _>("source"), "property:due");
+    }
 }

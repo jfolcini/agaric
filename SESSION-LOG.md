@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 15 — 2026-03-31 — Tier 6 Items #81, #82, #83, #96, #97
+
+### Build 1: Mock tag associations (#81 + #82)
+- Added `blockTags` Map to `tauri-mock.ts` for tracking block-tag associations
+- `add_tag` / `remove_tag` now maintain the map + call pushOp
+- `query_by_tags` filters by actual tag associations (AND logic)
+- `list_tags_for_block` returns real tags with resolved names
+- `blockTags.clear()` added to seedBlocks/resetMock
+- 14 new tests in `tauri-mock.test.ts` (61 total)
+
+### Build 2: Reverse.rs undo chain tests (#96)
+- 6 new tests in `reverse.rs`: edit/move/create-delete undo chains, property value_num/value_date reversal, same-timestamp seq ordering
+- Undo chain tests verify reverse → apply → reverse again idempotence
+- 24 total reverse tests (was 18)
+
+### Build 3: Materializer DB state verification (#97)
+- 5 new tests + 4 helpers in `materializer.rs`
+- Helpers: insert_block_direct, soft_delete_block_direct, insert_block_tag, insert_property_date
+- Tests verify tags_cache, pages_cache, agenda_cache actually contain rows after dispatch + flush
+- 60 total materializer tests (was 55)
+
+### #83 marked resolved
+- list_page_history and revert_ops were already enhanced in 35b0ca7 (Session 12)
+- get_block_history remains a stub (minor gap)
+
+### Reviews: 2 subagents
+- Mock review: PASS, no changes needed
+- Rust review: PASS, no changes needed
+
+### Items resolved: 5 (#81, #82, #83, #96, #97)
+
 ## Session 14 — 2026-03-31 — Tier 6 Items #77, #78, #99
 
 ### Build 1a: useBlockDnD hook tests (#77)

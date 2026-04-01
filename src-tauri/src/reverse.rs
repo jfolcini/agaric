@@ -989,4 +989,371 @@ mod tests {
             "expected NotFound error for non-existent op seq, got: {err:?}"
         );
     }
+
+    // ── 19. Edit undo chain (reverse → apply → reverse again) ───────────
+
+    #[tokio::test]
+    async fn undo_chain_edit_round_trip() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create block with content "original"
+        let _create = append_op(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "BLK_UC1".into(),
+                block_type: "content".into(),
+                parent_id: Some("PAGE1".into()),
+                position: Some(0),
+                content: "original".into(),
+            }),
+            FIXED_TS,
+        )
+        .await;
+
+        // Edit to "modified"
+        let edit = append_op(
+            &pool,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: "BLK_UC1".into(),
+                to_text: "modified".into(),
+                prev_edit: None,
+            }),
+            "2025-01-15T12:01:00+00:00",
+        )
+        .await;
+
+        // Reverse the edit → should get EditBlock { to_text: "original" }
+        let rev1 = compute_reverse(&pool, TEST_DEVICE, edit.seq).await.unwrap();
+        match &rev1 {
+            OpPayload::EditBlock(p) => {
+                assert_eq!(p.to_text, "original");
+            }
+            other => panic!("Expected EditBlock, got {:?}", other),
+        }
+
+        // Apply the reverse (append it to op log)
+        let undo_op = append_op(&pool, rev1, "2025-01-15T12:02:00+00:00").await;
+
+        // Now reverse the undo → should get EditBlock { to_text: "modified" }
+        let rev2 = compute_reverse(&pool, TEST_DEVICE, undo_op.seq)
+            .await
+            .unwrap();
+        match &rev2 {
+            OpPayload::EditBlock(p) => {
+                assert_eq!(p.to_text, "modified");
+            }
+            other => panic!("Expected EditBlock, got {:?}", other),
+        }
+    }
+
+    // ── 20. Move undo chain (reverse → apply → reverse again) ───────────
+
+    #[tokio::test]
+    async fn undo_chain_move_round_trip() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create block at parent=PAGE1, position=0
+        let _create = append_op(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "BLK_UC2".into(),
+                block_type: "content".into(),
+                parent_id: Some("PAGE1".into()),
+                position: Some(0),
+                content: "moveable".into(),
+            }),
+            FIXED_TS,
+        )
+        .await;
+
+        // Move to parent=PAGE2, position=5
+        let move_op = append_op(
+            &pool,
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: "BLK_UC2".into(),
+                new_parent_id: Some("PAGE2".into()),
+                new_position: 5,
+            }),
+            "2025-01-15T12:01:00+00:00",
+        )
+        .await;
+
+        // Reverse → should get MoveBlock back to PAGE1, position=0
+        let rev1 = compute_reverse(&pool, TEST_DEVICE, move_op.seq)
+            .await
+            .unwrap();
+        match &rev1 {
+            OpPayload::MoveBlock(p) => {
+                assert_eq!(p.new_parent_id, Some("PAGE1".into()));
+                assert_eq!(p.new_position, 0);
+            }
+            other => panic!("Expected MoveBlock, got {:?}", other),
+        }
+
+        // Apply reverse
+        let undo_op = append_op(&pool, rev1, "2025-01-15T12:02:00+00:00").await;
+
+        // Reverse again → should get MoveBlock to PAGE2, position=5
+        let rev2 = compute_reverse(&pool, TEST_DEVICE, undo_op.seq)
+            .await
+            .unwrap();
+        match &rev2 {
+            OpPayload::MoveBlock(p) => {
+                assert_eq!(p.new_parent_id, Some("PAGE2".into()));
+                assert_eq!(p.new_position, 5);
+            }
+            other => panic!("Expected MoveBlock, got {:?}", other),
+        }
+    }
+
+    // ── 21. Create/Delete undo chain ────────────────────────────────────
+
+    #[tokio::test]
+    async fn undo_chain_create_delete_restore() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create block
+        let create = append_op(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "BLK_UC3".into(),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(0),
+                content: "ephemeral".into(),
+            }),
+            FIXED_TS,
+        )
+        .await;
+
+        // Reverse create → should be DeleteBlock
+        let rev1 = compute_reverse(&pool, TEST_DEVICE, create.seq)
+            .await
+            .unwrap();
+        match &rev1 {
+            OpPayload::DeleteBlock(p) => {
+                assert_eq!(p.block_id, "BLK_UC3");
+            }
+            other => panic!("Expected DeleteBlock, got {:?}", other),
+        }
+
+        // Apply the DeleteBlock
+        let delete_op = append_op(&pool, rev1, "2025-01-15T12:01:00+00:00").await;
+
+        // Reverse the delete → should be RestoreBlock
+        let rev2 = compute_reverse(&pool, TEST_DEVICE, delete_op.seq)
+            .await
+            .unwrap();
+        match &rev2 {
+            OpPayload::RestoreBlock(p) => {
+                assert_eq!(p.block_id, "BLK_UC3");
+                assert_eq!(
+                    p.deleted_at_ref, "2025-01-15T12:01:00+00:00",
+                    "deleted_at_ref should match the delete op's created_at"
+                );
+            }
+            other => panic!("Expected RestoreBlock, got {:?}", other),
+        }
+
+        // Apply the RestoreBlock
+        let restore_op = append_op(&pool, rev2, "2025-01-15T12:02:00+00:00").await;
+
+        // Reverse the restore → should be DeleteBlock again
+        let rev3 = compute_reverse(&pool, TEST_DEVICE, restore_op.seq)
+            .await
+            .unwrap();
+        match &rev3 {
+            OpPayload::DeleteBlock(p) => {
+                assert_eq!(p.block_id, "BLK_UC3");
+            }
+            other => panic!("Expected DeleteBlock, got {:?}", other),
+        }
+    }
+
+    // ── 22. Property reversal with value_num ────────────────────────────
+
+    #[tokio::test]
+    async fn reverse_set_property_value_num() {
+        let (pool, _dir) = test_pool().await;
+
+        // First set_property with value_num = 42
+        let set1 = append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: "BLK_PN".into(),
+                key: "score".into(),
+                value_text: None,
+                value_num: Some(42.0),
+                value_date: None,
+                value_ref: None,
+            }),
+            FIXED_TS,
+        )
+        .await;
+
+        // Reverse first set → should be DeleteProperty (no prior)
+        let rev1 = compute_reverse(&pool, TEST_DEVICE, set1.seq).await.unwrap();
+        match &rev1 {
+            OpPayload::DeleteProperty(p) => {
+                assert_eq!(p.block_id, "BLK_PN");
+                assert_eq!(p.key, "score");
+            }
+            other => panic!("Expected DeleteProperty, got {:?}", other),
+        }
+
+        // Second set_property with value_num = 99
+        let set2 = append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: "BLK_PN".into(),
+                key: "score".into(),
+                value_text: None,
+                value_num: Some(99.0),
+                value_date: None,
+                value_ref: None,
+            }),
+            "2025-01-15T12:01:00+00:00",
+        )
+        .await;
+
+        // Reverse second set → should be SetProperty with value_num = 42
+        let rev2 = compute_reverse(&pool, TEST_DEVICE, set2.seq).await.unwrap();
+        match &rev2 {
+            OpPayload::SetProperty(p) => {
+                assert_eq!(p.block_id, "BLK_PN");
+                assert_eq!(p.key, "score");
+                assert_eq!(p.value_num, Some(42.0), "should restore prior value_num");
+                assert_eq!(p.value_text, None, "other value fields should be None");
+                assert_eq!(p.value_date, None, "other value fields should be None");
+                assert_eq!(p.value_ref, None, "other value fields should be None");
+            }
+            other => panic!("Expected SetProperty, got {:?}", other),
+        }
+    }
+
+    // ── 23. Property reversal with value_date ───────────────────────────
+
+    #[tokio::test]
+    async fn reverse_set_property_value_date() {
+        let (pool, _dir) = test_pool().await;
+
+        // First set_property with value_date
+        let set1 = append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: "BLK_PD".into(),
+                key: "due-date".into(),
+                value_text: None,
+                value_num: None,
+                value_date: Some("2025-06-15".into()),
+                value_ref: None,
+            }),
+            FIXED_TS,
+        )
+        .await;
+
+        // Reverse first set → should be DeleteProperty (no prior)
+        let rev1 = compute_reverse(&pool, TEST_DEVICE, set1.seq).await.unwrap();
+        match &rev1 {
+            OpPayload::DeleteProperty(p) => {
+                assert_eq!(p.block_id, "BLK_PD");
+                assert_eq!(p.key, "due-date");
+            }
+            other => panic!("Expected DeleteProperty, got {:?}", other),
+        }
+
+        // Second set_property with a different value_date
+        let set2 = append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: "BLK_PD".into(),
+                key: "due-date".into(),
+                value_text: None,
+                value_num: None,
+                value_date: Some("2025-12-31".into()),
+                value_ref: None,
+            }),
+            "2025-01-15T12:01:00+00:00",
+        )
+        .await;
+
+        // Reverse second set → should be SetProperty with value_date = "2025-06-15"
+        let rev2 = compute_reverse(&pool, TEST_DEVICE, set2.seq).await.unwrap();
+        match &rev2 {
+            OpPayload::SetProperty(p) => {
+                assert_eq!(p.block_id, "BLK_PD");
+                assert_eq!(p.key, "due-date");
+                assert_eq!(
+                    p.value_date,
+                    Some("2025-06-15".into()),
+                    "should restore prior value_date"
+                );
+                assert_eq!(p.value_text, None, "other value fields should be None");
+                assert_eq!(p.value_num, None, "other value fields should be None");
+                assert_eq!(p.value_ref, None, "other value fields should be None");
+            }
+            other => panic!("Expected SetProperty, got {:?}", other),
+        }
+    }
+
+    // ── 24. Multiple edits with same timestamp (seq ordering) ───────────
+
+    #[tokio::test]
+    async fn reverse_edit_same_timestamp_uses_seq_ordering() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create block
+        let _create = append_op(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: "BLK_SEQ".into(),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(0),
+                content: "v0".into(),
+            }),
+            FIXED_TS,
+        )
+        .await;
+
+        // Edit 1 at T=12:01:00
+        let same_ts = "2025-01-15T12:01:00+00:00";
+        let _edit1 = append_op(
+            &pool,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: "BLK_SEQ".into(),
+                to_text: "v1".into(),
+                prev_edit: None,
+            }),
+            same_ts,
+        )
+        .await;
+
+        // Edit 2 at same T=12:01:00 (different seq, same timestamp)
+        let edit2 = append_op(
+            &pool,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: "BLK_SEQ".into(),
+                to_text: "v2".into(),
+                prev_edit: None,
+            }),
+            same_ts,
+        )
+        .await;
+
+        // Reverse edit 2 → should find edit 1 as prior (seq < edit2.seq,
+        // same timestamp). Tests the WHERE (created_at < ?2 OR (created_at = ?2 AND seq < ?3)) clause.
+        let rev = compute_reverse(&pool, TEST_DEVICE, edit2.seq)
+            .await
+            .unwrap();
+        match &rev {
+            OpPayload::EditBlock(p) => {
+                assert_eq!(
+                    p.to_text, "v1",
+                    "reverse of edit2 should use edit1's to_text, proving seq ordering within same timestamp"
+                );
+            }
+            other => panic!("Expected EditBlock, got {:?}", other),
+        }
+    }
 }

@@ -610,3 +610,153 @@ describe('redo_page_op', () => {
     expect(result).toHaveProperty('is_redo', true)
   })
 })
+
+// ---------------------------------------------------------------------------
+// tag association commands (add_tag / remove_tag / list_tags_for_block / query_by_tags)
+// ---------------------------------------------------------------------------
+
+describe('add_tag + list_tags_for_block', () => {
+  it('list_tags_for_block returns the tag after add_tag', () => {
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
+      Record<string, unknown>
+    >
+    expect(tags).toHaveLength(1)
+    expect(tags[0].tag_id).toBe(SEED_IDS.TAG_WORK)
+    expect(tags[0].name).toBe('work')
+  })
+
+  it('list_tags_for_block returns multiple tags', () => {
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_PERSONAL })
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_IDEA })
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
+      Record<string, unknown>
+    >
+    expect(tags).toHaveLength(3)
+    const tagIds = tags.map((t) => t.tag_id)
+    expect(tagIds).toContain(SEED_IDS.TAG_WORK)
+    expect(tagIds).toContain(SEED_IDS.TAG_PERSONAL)
+    expect(tagIds).toContain(SEED_IDS.TAG_IDEA)
+  })
+
+  it('adding the same tag twice does not duplicate', () => {
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
+      Record<string, unknown>
+    >
+    expect(tags).toHaveLength(1)
+  })
+
+  it('returns empty array for block with no tags', () => {
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_2 }) as Array<
+      Record<string, unknown>
+    >
+    expect(tags).toHaveLength(0)
+  })
+
+  it('returns TagCacheRow shape', () => {
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
+      Record<string, unknown>
+    >
+    expect(tags[0]).toHaveProperty('tag_id')
+    expect(tags[0]).toHaveProperty('name')
+    expect(tags[0]).toHaveProperty('usage_count')
+    expect(tags[0]).toHaveProperty('updated_at')
+  })
+})
+
+describe('remove_tag', () => {
+  it('removes a tag from a block', () => {
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_PERSONAL })
+    invoke('remove_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
+      Record<string, unknown>
+    >
+    expect(tags).toHaveLength(1)
+    expect(tags[0].tag_id).toBe(SEED_IDS.TAG_PERSONAL)
+  })
+
+  it('removing non-existent tag is a no-op', () => {
+    invoke('remove_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
+      Record<string, unknown>
+    >
+    expect(tags).toHaveLength(0)
+  })
+
+  it('removing the only tag leaves an empty list', () => {
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    invoke('remove_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
+      Record<string, unknown>
+    >
+    expect(tags).toHaveLength(0)
+  })
+})
+
+describe('query_by_tags', () => {
+  it('returns blocks that have the specified tag', () => {
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_2, tagId: SEED_IDS.TAG_WORK })
+    const result = invoke('query_by_tags', { tagIds: [SEED_IDS.TAG_WORK] }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items).toHaveLength(2)
+    const ids = result.items.map((b) => b.id)
+    expect(ids).toContain(SEED_IDS.BLOCK_GS_1)
+    expect(ids).toContain(SEED_IDS.BLOCK_GS_2)
+  })
+
+  it('returns empty when no blocks have the tag', () => {
+    const result = invoke('query_by_tags', { tagIds: [SEED_IDS.TAG_IDEA] }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items).toHaveLength(0)
+  })
+
+  it('uses AND logic for multiple tags', () => {
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_PERSONAL })
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_2, tagId: SEED_IDS.TAG_WORK })
+    // Only BLOCK_GS_1 has both tags
+    const result = invoke('query_by_tags', {
+      tagIds: [SEED_IDS.TAG_WORK, SEED_IDS.TAG_PERSONAL],
+    }) as { items: Record<string, unknown>[] }
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0].id).toBe(SEED_IDS.BLOCK_GS_1)
+  })
+
+  it('excludes deleted blocks', () => {
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
+    const result = invoke('query_by_tags', { tagIds: [SEED_IDS.TAG_WORK] }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items).toHaveLength(0)
+  })
+
+  it('returns PageResponse shape', () => {
+    const result = invoke('query_by_tags', { tagIds: [SEED_IDS.TAG_WORK] }) as Record<
+      string,
+      unknown
+    >
+    expect(result).toHaveProperty('items')
+    expect(result).toHaveProperty('next_cursor', null)
+    expect(result).toHaveProperty('has_more', false)
+  })
+})
+
+describe('resetMock clears tag associations', () => {
+  it('tag associations are cleared after resetMock', () => {
+    invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
+    resetMock()
+    const tags = invoke('list_tags_for_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Array<
+      Record<string, unknown>
+    >
+    expect(tags).toHaveLength(0)
+  })
+})

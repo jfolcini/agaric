@@ -19,6 +19,9 @@ const blocks: Map<string, Record<string, unknown>> = new Map()
 // Property store: block_id → key → PropertyRow
 const properties: Map<string, Map<string, Record<string, unknown>>> = new Map()
 
+// Block-tag associations: block_id → Set<tag_id>
+const blockTags: Map<string, Set<string>> = new Map()
+
 // Op log for undo/redo/history
 interface MockOpLogEntry {
   [key: string]: unknown
@@ -96,6 +99,7 @@ function makeBlock(
 function seedBlocks(): void {
   blocks.clear()
   properties.clear()
+  blockTags.clear()
   counter = 0
   opLog.length = 0
   opSeqCounter = 0
@@ -354,12 +358,21 @@ export function setupMock(): void {
 
       case 'add_tag': {
         const a = args as Record<string, unknown>
-        return { block_id: a.blockId, tag_id: a.tagId }
+        const blockId = a.blockId as string
+        const tagId = a.tagId as string
+        if (!blockTags.has(blockId)) blockTags.set(blockId, new Set())
+        blockTags.get(blockId)?.add(tagId)
+        pushOp('add_tag', { block_id: blockId, tag_id: tagId })
+        return { block_id: blockId, tag_id: tagId }
       }
 
       case 'remove_tag': {
         const a = args as Record<string, unknown>
-        return { block_id: a.blockId, tag_id: a.tagId }
+        const blockId = a.blockId as string
+        const tagId = a.tagId as string
+        blockTags.get(blockId)?.delete(tagId)
+        pushOp('remove_tag', { block_id: blockId, tag_id: tagId })
+        return { block_id: blockId, tag_id: tagId }
       }
 
       case 'get_backlinks': {
@@ -461,9 +474,15 @@ export function setupMock(): void {
       }
 
       case 'query_by_tags': {
-        // Simplified mock: return all non-deleted blocks as fallback
-        // (real backend filters by block_tags join table)
-        const items = [...blocks.values()].filter((b) => !(b.deleted_at as string | null))
+        const a = args as Record<string, unknown>
+        const tagIds = a.tagIds as string[]
+        // Find blocks that have ALL the specified tags
+        const items = [...blocks.values()].filter((b) => {
+          if (b.deleted_at) return false
+          const tags = blockTags.get(b.id as string)
+          if (!tags) return false
+          return tagIds.every((tid) => tags.has(tid))
+        })
         return { items, next_cursor: null, has_more: false }
       }
 
@@ -485,8 +504,19 @@ export function setupMock(): void {
       }
 
       case 'list_tags_for_block': {
-        // In-memory mock doesn't track tag associations
-        return []
+        const a = args as Record<string, unknown>
+        const blockId = a.blockId as string
+        const tagSet = blockTags.get(blockId)
+        if (!tagSet || tagSet.size === 0) return []
+        return [...tagSet].map((tagId) => {
+          const tagBlock = blocks.get(tagId)
+          return {
+            tag_id: tagId,
+            name: tagBlock ? ((tagBlock.content as string) ?? '') : tagId,
+            usage_count: 0,
+            updated_at: new Date().toISOString(),
+          }
+        })
       }
 
       case 'set_property': {
