@@ -1200,4 +1200,85 @@ mod tests {
             "edit_block should return its prev_edit"
         );
     }
+
+    // =====================================================================
+    // find_lca: cycle detection in prev_edit chain
+    // =====================================================================
+
+    /// Create a cyclic prev_edit chain via raw SQL and verify that
+    /// `find_lca` terminates gracefully (returns `Ok(None)` because the
+    /// cycle-break `visited.insert` check stops the walk before it can
+    /// loop forever).
+    ///
+    /// ```text
+    /// (A,1) create_block B1
+    /// (A,2) edit_block B1, prev_edit=(A,3)  ←── cycle
+    /// (A,3) edit_block B1, prev_edit=(A,2)  ←── cycle
+    /// (B,1) edit_block B1, prev_edit=(A,1)      (divergent)
+    /// ```
+    #[tokio::test]
+    async fn find_lca_detects_cycle_in_chain() {
+        let (pool, _dir) = test_pool().await;
+
+        // (A,1) create_block B1 — normal op
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        // (A,2) edit_block with prev_edit pointing FORWARD to (A,3) — forms cycle
+        let payload2 = r#"{"block_id":"B1","to_text":"v2","prev_edit":["device-A",3]}"#;
+        let hash2 = compute_op_hash(DEV_A, 2, None, "edit_block", payload2);
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES (?, ?, NULL, ?, 'edit_block', ?, ?)",
+        )
+        .bind(DEV_A)
+        .bind(2_i64)
+        .bind(&hash2)
+        .bind(payload2)
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // (A,3) edit_block with prev_edit pointing back to (A,2) — completes the cycle
+        let payload3 = r#"{"block_id":"B1","to_text":"v3","prev_edit":["device-A",2]}"#;
+        let hash3 = compute_op_hash(DEV_A, 3, None, "edit_block", payload3);
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES (?, ?, NULL, ?, 'edit_block', ?, ?)",
+        )
+        .bind(DEV_A)
+        .bind(3_i64)
+        .bind(&hash3)
+        .bind(payload3)
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // (B,1) edit_block divergent from (A,1) — normal chain
+        let b_payload = r#"{"block_id":"B1","to_text":"v-B","prev_edit":["device-A",1]}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        insert_remote_op(&pool, &b_record).await.unwrap();
+
+        // find_lca between the cyclic chain head (A,3) and the divergent (B,1).
+        // Chain A: (A,3)→(A,2)→(A,3) cycle — visited set breaks the loop.
+        // Chain B: (B,1)→(A,1) = create_block — terminates normally.
+        // The cycle prevents chain A from ever reaching (A,1), so no common
+        // ancestor is found. find_lca should return Ok(None), proving the
+        // cycle was detected and didn't cause an infinite loop.
+        let result = find_lca(&pool, &(DEV_A.into(), 3), &(DEV_B.into(), 1)).await;
+
+        assert!(
+            result.is_ok(),
+            "find_lca should not hang or error on cycle — it should break via visited set, got: {:?}",
+            result
+        );
+        assert_eq!(
+            result.unwrap(),
+            None,
+            "cyclic chain A never reaches (A,1), so no LCA with chain B"
+        );
+    }
 }

@@ -564,4 +564,24 @@ mod tests {
             "all 10 consecutive ULIDs should be unique"
         );
     }
+
+    // --- from_trusted normalization ---
+
+    #[test]
+    fn from_trusted_normalizes_to_uppercase() {
+        let id = BlockId::from_trusted("abc123");
+        assert_eq!(
+            id.as_str(),
+            "ABC123",
+            "from_trusted should normalize lowercase to uppercase"
+        );
+
+        let ulid_lower = FIXTURE_ULID_LOWER;
+        let id2 = BlockId::from_trusted(ulid_lower);
+        assert_eq!(
+            id2.as_str(),
+            FIXTURE_ULID,
+            "from_trusted should normalize a lowercase ULID to uppercase"
+        );
+    }
 }

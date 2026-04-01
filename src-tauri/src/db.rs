@@ -419,4 +419,31 @@ mod tests {
             .unwrap();
         assert_eq!(row, Some(1000), "wal_autocheckpoint should be 1000 pages");
     }
+
+    #[tokio::test]
+    async fn init_pools_wal_autocheckpoint_configured() {
+        let (pools, _dir) = test_pools().await;
+
+        // Verify write pool has wal_autocheckpoint = 1000
+        let write_val = sqlx::query_scalar!("PRAGMA wal_autocheckpoint")
+            .fetch_one(&pools.write)
+            .await
+            .unwrap();
+        assert_eq!(
+            write_val,
+            Some(1000),
+            "write pool wal_autocheckpoint should be 1000 pages"
+        );
+
+        // Verify read pool has wal_autocheckpoint = 1000
+        let read_val = sqlx::query_scalar!("PRAGMA wal_autocheckpoint")
+            .fetch_one(&pools.read)
+            .await
+            .unwrap();
+        assert_eq!(
+            read_val,
+            Some(1000),
+            "read pool wal_autocheckpoint should be 1000 pages"
+        );
+    }
 }

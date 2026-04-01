@@ -1373,4 +1373,70 @@ mod tests {
             other => panic!("Expected EditBlock, got {:?}", other),
         }
     }
+
+    // ── 25. Reverse edit_block from a different device ──────────────────
+
+    /// Create an `edit_block` op on device B, reverse it, and verify the
+    /// reverse op's `prev_edit` contains device B's `(device_id, seq)` —
+    /// NOT device A's. This exercises the cross-device case that existing
+    /// tests (which always use `TEST_DEVICE`) do not cover.
+    #[tokio::test]
+    async fn reverse_edit_block_prev_edit_points_to_reversed_op_from_different_device() {
+        let (pool, _dir) = test_pool().await;
+        let dev_b = "device-B";
+
+        // Create block on TEST_DEVICE (seq 1)
+        append_op(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("BLK_XD"),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(0),
+                content: "original".into(),
+            }),
+            FIXED_TS,
+        )
+        .await;
+
+        // Edit on device B (different device) at a later timestamp
+        let edit_b = append_local_op_at(
+            &pool,
+            dev_b,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id("BLK_XD"),
+                to_text: "edited by B".into(),
+                prev_edit: Some((TEST_DEVICE.to_owned(), 1)),
+            }),
+            "2025-01-15T12:01:00+00:00".to_owned(),
+        )
+        .await
+        .unwrap();
+
+        // Reverse device B's edit
+        let reverse = compute_reverse(&pool, dev_b, edit_b.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::EditBlock(ref p) => {
+                assert_eq!(p.block_id, "BLK_XD", "block_id mismatch");
+                assert_eq!(
+                    p.to_text, "original",
+                    "reverse should restore prior text from create_block"
+                );
+
+                // The critical assertion: prev_edit must point to device B's op,
+                // not TEST_DEVICE's.
+                let (ref dev, seq) = p.prev_edit.as_ref().expect("reverse should have prev_edit");
+                assert_eq!(
+                    dev, dev_b,
+                    "prev_edit device_id must be device B (the reversed op's device), not TEST_DEVICE"
+                );
+                assert_eq!(
+                    *seq, edit_b.seq,
+                    "prev_edit seq must match the reversed op's seq on device B"
+                );
+            }
+            _ => panic!("expected EditBlock, got: {reverse:?}"),
+        }
+    }
 }

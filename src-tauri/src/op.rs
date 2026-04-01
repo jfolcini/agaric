@@ -939,6 +939,25 @@ mod tests {
     }
 
     #[test]
+    fn normalize_block_ids_is_no_op_for_all_payload_variants() {
+        let payloads = all_test_payloads();
+        assert_eq!(payloads.len(), 12, "must cover all 12 variants");
+
+        for mut payload in payloads {
+            let tag = payload.op_type_str();
+            let json_before = serde_json::to_string(&payload)
+                .unwrap_or_else(|e| panic!("serialize before normalize {tag}: {e}"));
+            payload.normalize_block_ids();
+            let json_after = serde_json::to_string(&payload)
+                .unwrap_or_else(|e| panic!("serialize after normalize {tag}: {e}"));
+            assert_eq!(
+                json_before, json_after,
+                "normalize_block_ids must be a no-op for {tag}"
+            );
+        }
+    }
+
+    #[test]
     fn block_id_auto_normalizes_on_construction() {
         let lower = "01arz3ndektsv4rrffq69g5fav";
         let upper = "01ARZ3NDEKTSV4RRFFQ69G5FAV";

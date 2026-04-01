@@ -1934,4 +1934,201 @@ mod tests {
         let deleted = cleanup_old_snapshots(&pool, 5).await.unwrap();
         assert_eq!(deleted, 0, "should not delete when fewer than keep");
     }
+
+    #[tokio::test]
+    async fn cleanup_old_snapshots_deletes_pending_snapshots() {
+        let (pool, _dir) = test_pool().await;
+        let dev = "test-device";
+
+        // Create 3 complete snapshots
+        insert_block(&pool, "blk-pend", "pending test").await;
+        for i in 0..3 {
+            insert_op_at(
+                &pool,
+                dev,
+                &format!("blk-p{i}"),
+                &format!("2025-01-0{}T00:00:00Z", i + 1),
+            )
+            .await;
+            create_snapshot(&pool, dev).await.unwrap();
+        }
+
+        // Insert a pending snapshot directly via SQL (simulating a crash leftover)
+        sqlx::query(
+            "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
+             VALUES ('PENDING_SNAP_01', 'pending', 'h', '{}', X'00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Verify: 3 complete + 1 pending = 4 total
+        let total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(total, 4, "should have 3 complete + 1 pending");
+
+        // Cleanup keeping 3 — only the pending one should be deleted
+        let deleted = cleanup_old_snapshots(&pool, 3).await.unwrap();
+        assert_eq!(
+            deleted, 1,
+            "should delete only the pending snapshot when keep=3 and 3 complete exist"
+        );
+
+        // Verify all 3 complete snapshots remain
+        let remaining_complete: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            remaining_complete, 3,
+            "all 3 complete snapshots should be kept"
+        );
+
+        // Verify no pending snapshots remain
+        let remaining_pending: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            remaining_pending, 0,
+            "pending snapshot should be deleted by cleanup"
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_old_snapshots_mixed_pending_and_complete() {
+        let (pool, _dir) = test_pool().await;
+        let dev = "test-device";
+
+        // Create 5 complete snapshots
+        insert_block(&pool, "blk-mix", "mixed test").await;
+        for i in 0..5 {
+            insert_op_at(
+                &pool,
+                dev,
+                &format!("blk-m{i}"),
+                &format!("2025-01-0{}T00:00:00Z", i + 1),
+            )
+            .await;
+            create_snapshot(&pool, dev).await.unwrap();
+        }
+
+        // Insert 2 pending snapshots directly via SQL
+        sqlx::query(
+            "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
+             VALUES ('PENDING_MIX_01', 'pending', 'h1', '{}', X'00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
+             VALUES ('PENDING_MIX_02', 'pending', 'h2', '{}', X'00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Verify: 5 complete + 2 pending = 7 total
+        let total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(total, 7, "should have 5 complete + 2 pending");
+
+        // Cleanup keeping 3: should delete 2 oldest complete + 2 pending = 4
+        let deleted = cleanup_old_snapshots(&pool, 3).await.unwrap();
+        assert_eq!(
+            deleted, 4,
+            "should delete 2 oldest complete + 2 pending = 4 total"
+        );
+
+        // Verify exactly 3 complete snapshots remain
+        let remaining_complete: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            remaining_complete, 3,
+            "should keep the 3 newest complete snapshots"
+        );
+
+        // Verify no pending snapshots remain
+        let remaining_pending: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'pending'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            remaining_pending, 0,
+            "all pending snapshots should be deleted"
+        );
+
+        // Verify total remaining is 3
+        let remaining_total: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining_total, 3, "total remaining should be exactly 3");
+    }
+
+    #[tokio::test]
+    async fn cleanup_old_snapshots_with_zero_keep_deletes_all() {
+        let (pool, _dir) = test_pool().await;
+        let dev = "test-device";
+
+        // Create 3 complete snapshots
+        insert_block(&pool, "blk-zero", "zero keep test").await;
+        for i in 0..3 {
+            insert_op_at(
+                &pool,
+                dev,
+                &format!("blk-z{i}"),
+                &format!("2025-01-0{}T00:00:00Z", i + 1),
+            )
+            .await;
+            create_snapshot(&pool, dev).await.unwrap();
+        }
+
+        let before: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(before, 3, "should have 3 complete snapshots before cleanup");
+
+        // Cleanup with keep=0 should delete all
+        let deleted = cleanup_old_snapshots(&pool, 0).await.unwrap();
+        assert_eq!(deleted, 3, "keep=0 should delete all 3 snapshots");
+
+        let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining, 0, "no snapshots should remain after keep=0");
+    }
+
+    #[tokio::test]
+    async fn cleanup_old_snapshots_empty_database_returns_zero() {
+        let (pool, _dir) = test_pool().await;
+
+        // Call cleanup on empty database — should return 0, no error
+        let deleted = cleanup_old_snapshots(&pool, 3).await.unwrap();
+        assert_eq!(
+            deleted, 0,
+            "cleanup on empty database should return 0 deleted"
+        );
+
+        // Verify the table is still empty
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "log_snapshots should still be empty");
+    }
 }

@@ -400,4 +400,18 @@ mod tests {
     fn null_byte_debug_assert_fires_for_device_id() {
         let _ = compute_op_hash("dev\0ice", 1, None, "create_block", "{}");
     }
+
+    #[test]
+    #[should_panic(expected = "parent_seqs must not contain null bytes")]
+    #[cfg(debug_assertions)]
+    fn null_byte_debug_assert_fires_for_parent_seqs() {
+        let _ = compute_op_hash("dev", 1, Some("abc\0def"), "create_block", "{}");
+    }
+
+    #[test]
+    #[should_panic(expected = "op_type must not contain null bytes")]
+    #[cfg(debug_assertions)]
+    fn null_byte_debug_assert_fires_for_op_type() {
+        let _ = compute_op_hash("dev", 1, None, "create\0block", "{}");
+    }
 }

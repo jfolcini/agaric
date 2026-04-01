@@ -345,7 +345,7 @@ mod tests {
     use crate::db::init_pool;
     use crate::draft::save_draft;
     use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
-    use crate::op_log::append_local_op;
+    use crate::op_log::{append_local_op, append_local_op_at};
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -1198,5 +1198,78 @@ mod tests {
         // A normal alphanumeric ULID-like ID should not panic
         let result = find_prev_edit(&pool, "01ARZ3NDEKTSV4RRFFQ69G5FAV").await;
         assert!(result.is_ok(), "normal ULID block_id should be accepted");
+    }
+
+    // === 11. find_prev_edit: multi-device ordering ===
+
+    /// Insert `edit_block` ops from two different devices for the same
+    /// `block_id` with explicit timestamps. Verify that `find_prev_edit`
+    /// returns the one with the latest `created_at`, regardless of which
+    /// device produced it.
+    #[tokio::test]
+    async fn find_prev_edit_returns_most_recent_across_all_devices() {
+        let (pool, _dir) = test_pool().await;
+        let dev_a = "device-A";
+        let dev_b = "device-B";
+        let block_id = "block-multi-dev";
+
+        // Create the block row (needed so the block_id exists)
+        insert_test_block(&pool, block_id, "initial").await;
+
+        // Device A: create_block at T=12:00 (earliest)
+        append_local_op_at(
+            &pool,
+            dev_a,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(block_id),
+                block_type: "content".to_owned(),
+                parent_id: None,
+                position: Some(0),
+                content: "initial".to_owned(),
+            }),
+            "2025-01-15T12:00:00Z".to_owned(),
+        )
+        .await
+        .unwrap();
+
+        // Device A: edit_block at T=12:01
+        append_local_op_at(
+            &pool,
+            dev_a,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id(block_id),
+                to_text: "edit from A".to_owned(),
+                prev_edit: Some((dev_a.to_owned(), 1)),
+            }),
+            "2025-01-15T12:01:00Z".to_owned(),
+        )
+        .await
+        .unwrap();
+
+        // Device B: edit_block at T=12:02 (latest — should win)
+        let b_record = append_local_op_at(
+            &pool,
+            dev_b,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id(block_id),
+                to_text: "edit from B".to_owned(),
+                prev_edit: Some((dev_a.to_owned(), 1)),
+            }),
+            "2025-01-15T12:02:00Z".to_owned(),
+        )
+        .await
+        .unwrap();
+
+        let result = find_prev_edit(&pool, block_id).await.unwrap();
+
+        let (dev, seq) = result.expect("should find a prev_edit");
+        assert_eq!(
+            dev, dev_b,
+            "find_prev_edit should return device B's op (latest created_at)"
+        );
+        assert_eq!(
+            seq, b_record.seq,
+            "find_prev_edit should return device B's seq"
+        );
     }
 }

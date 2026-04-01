@@ -1810,6 +1810,62 @@ mod tests {
     // ======================================================================
 
     #[tokio::test]
+    async fn handle_foreground_task_apply_op_is_noop_in_phase_1() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert a block directly so we can verify it is NOT modified by ApplyOp
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('NOOP_BLK', 'content', 'original')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Build a fake OpRecord for an edit_block op targeting that block
+        let record = fake_op_record(
+            "edit_block",
+            r#"{"block_id":"NOOP_BLK","to_text":"modified","prev_edit":null}"#,
+        );
+
+        let task = MaterializeTask::ApplyOp(record);
+        let result = handle_foreground_task(&pool, &task).await;
+        assert!(
+            result.is_ok(),
+            "ApplyOp should return Ok in Phase 1 (no-op)"
+        );
+
+        // Verify the block content was NOT modified — Phase 1 is a no-op
+        let content: Option<String> =
+            sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'NOOP_BLK'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            content.as_deref(),
+            Some("original"),
+            "ApplyOp should not modify DB state in Phase 1"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_foreground_task_barrier_signals_notify() {
+        let (pool, _dir) = test_pool().await;
+
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let task = MaterializeTask::Barrier(Arc::clone(&notify));
+
+        let result = handle_foreground_task(&pool, &task).await;
+        assert!(result.is_ok(), "Barrier task should return Ok");
+
+        // Verify the Notify was signaled by checking if notified() resolves
+        // immediately (with a short timeout to avoid hanging if broken).
+        let signaled =
+            tokio::time::timeout(std::time::Duration::from_millis(100), notify.notified()).await;
+        assert!(
+            signaled.is_ok(),
+            "Barrier should have signaled the Notify, but notified() did not resolve"
+        );
+    }
+
+    #[tokio::test]
     async fn handle_foreground_task_unexpected_non_apply_op_returns_ok() {
         let (pool, _dir) = test_pool().await;
         let task = MaterializeTask::RebuildTagsCache;

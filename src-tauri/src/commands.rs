@@ -422,12 +422,14 @@ pub async fn delete_block_inner(
         )));
     }
 
+    // Single timestamp for both op_log and blocks — reverse_delete_block uses
+    // record.created_at as deleted_at_ref, so they must match exactly.
+    let now = now_rfc3339();
+
     // Append to op_log within transaction
-    let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+    let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
 
     // Cascade soft-delete within same transaction
-    let now = now_rfc3339();
     let result = sqlx::query(
         "WITH RECURSIVE descendants(id) AS ( \
              SELECT id FROM blocks WHERE id = ? \
@@ -2928,6 +2930,76 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_block_accepts_content_at_max_length() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let at_limit = "x".repeat(MAX_CONTENT_LENGTH);
+        let result =
+            create_block_inner(&pool, DEV, &mat, "content".into(), at_limit, None, None).await;
+
+        assert!(
+            result.is_ok(),
+            "content of exactly MAX_CONTENT_LENGTH bytes should be accepted, got: {:?}",
+            result.unwrap_err()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_block_position_zero_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "hello".into(),
+            None,
+            Some(0),
+        )
+        .await;
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "position=0 should return Validation error, got: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("position must be positive"),
+            "error message should mention position must be positive"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_block_position_negative_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "hello".into(),
+            None,
+            Some(-1),
+        )
+        .await;
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "position=-1 should return Validation error, got: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("position must be positive"),
+            "error message should mention position must be positive"
+        );
+    }
+
     // ======================================================================
     // edit_block
     // ======================================================================
@@ -3211,6 +3283,33 @@ mod tests {
         assert!(
             err.to_string().contains("exceeds maximum"),
             "error message should mention exceeds maximum"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn edit_block_accepts_content_at_max_length() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let created = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "original".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let at_limit = "x".repeat(MAX_CONTENT_LENGTH);
+        let result = edit_block_inner(&pool, DEV, &mat, created.id, at_limit).await;
+
+        assert!(
+            result.is_ok(),
+            "edit with exactly MAX_CONTENT_LENGTH bytes should be accepted, got: {:?}",
+            result.unwrap_err()
         );
     }
 
