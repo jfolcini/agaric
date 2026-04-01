@@ -502,4 +502,87 @@ describe('TagPanel', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // -----------------------------------------------------------------------
+  // Popover focus trap
+  // -----------------------------------------------------------------------
+  it('clicking "Add tag" opens the popover with picker content visible', async () => {
+    setupDefaultMock()
+    const user = userEvent.setup()
+
+    render(<TagPanel blockId="BLOCK1" />)
+
+    await screen.findByText('work')
+
+    const addBtn = screen.getByRole('button', { name: /Add tag/i })
+    await user.click(addBtn)
+
+    expect(screen.getByPlaceholderText('Search tags...')).toBeInTheDocument()
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+  })
+
+  it('pressing Escape closes the popover', async () => {
+    setupDefaultMock()
+    const user = userEvent.setup()
+
+    render(<TagPanel blockId="BLOCK1" />)
+
+    await screen.findByText('work')
+
+    const addBtn = screen.getByRole('button', { name: /Add tag/i })
+    await user.click(addBtn)
+
+    // Popover should be open
+    expect(screen.getByPlaceholderText('Search tags...')).toBeInTheDocument()
+
+    // Press Escape
+    await user.keyboard('{Escape}')
+
+    // Popover should be closed
+    await waitFor(() => {
+      expect(screen.queryByPlaceholderText('Search tags...')).not.toBeInTheDocument()
+    })
+  })
+
+  it('selecting a tag closes the popover', async () => {
+    setupDefaultMock()
+    const user = userEvent.setup()
+
+    render(<TagPanel blockId="BLOCK1" />)
+
+    await screen.findByText('work')
+
+    await user.click(screen.getByRole('button', { name: /Add tag/i }))
+
+    const personalOption = screen.getByRole('option', { name: 'personal' })
+    await user.click(personalOption)
+
+    await waitFor(() => {
+      expect(screen.queryByPlaceholderText('Search tags...')).not.toBeInTheDocument()
+    })
+
+    expect(screen.getByText('personal')).toBeInTheDocument()
+  })
+
+  it('has no a11y violations with popover open', async () => {
+    setupDefaultMock()
+    const user = userEvent.setup()
+
+    render(<TagPanel blockId="BLOCK1" />)
+
+    await screen.findByText('work')
+
+    await user.click(screen.getByRole('button', { name: /Add tag/i }))
+
+    // Wait for popover content to render
+    await screen.findByPlaceholderText('Search tags...')
+
+    const results = await axe(document.body, {
+      rules: {
+        // Component is not rendered inside a landmark in tests; skip this rule
+        region: { enabled: false },
+      },
+    })
+    expect(results).toHaveNoViolations()
+  })
 })

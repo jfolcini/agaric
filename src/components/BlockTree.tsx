@@ -42,7 +42,7 @@ import { getDragDescendants } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
-import { INDENT_WIDTH, SortableBlock } from './SortableBlock'
+import { SortableBlock } from './SortableBlock'
 import { Calendar } from './ui/calendar'
 import { Skeleton } from './ui/skeleton'
 
@@ -834,7 +834,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           items={dnd.visibleItems.map((b) => b.id)}
           strategy={verticalListSortingStrategy}
         >
-          <div className="block-tree space-y-0.5">
+          <div className="block-tree space-y-0.5 [@media(pointer:coarse)]:space-y-1.5">
             {dnd.visibleItems.map((block) => {
               const isFocused = focusedBlockId === block.id
               // Show projected depth during drag for the active item's over target
@@ -861,7 +861,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                   {dnd.projected && dnd.overId === block.id && dnd.activeId !== block.id && (
                     <div
                       className="drop-indicator h-[3px] bg-primary rounded-full ring-2 ring-primary/20"
-                      style={{ marginLeft: dnd.projected.depth * INDENT_WIDTH }}
+                      style={{ marginLeft: `calc(var(--indent-width) * ${dnd.projected.depth})` }}
                     />
                   )}
                   <SortableBlock

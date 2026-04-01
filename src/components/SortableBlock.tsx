@@ -180,7 +180,7 @@ export function SortableBlock({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.7 : 1,
-    paddingLeft: depth > 0 ? depth * INDENT_WIDTH : undefined,
+    paddingLeft: depth > 0 ? `calc(var(--indent-width) * ${depth})` : undefined,
   }
 
   return (
@@ -206,7 +206,7 @@ export function SortableBlock({
         {depth > 0 && (
           <div
             className="absolute left-0 top-0 bottom-0 border-l border-border/20"
-            style={{ left: (depth - 1) * INDENT_WIDTH + INDENT_WIDTH / 2 }}
+            style={{ left: `calc(var(--indent-width) * ${depth - 1} + var(--indent-width) / 2)` }}
           />
         )}
 

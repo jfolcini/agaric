@@ -14,7 +14,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { useNavigationStore } from '../../stores/navigation'
@@ -674,5 +674,49 @@ describe('TagFilterPanel', () => {
     expect(section).not.toBeNull()
     expect(section?.tagName).toBe('SECTION')
     expect(section).toHaveClass('tag-filter-results', 'space-y-3')
+  })
+
+  // -----------------------------------------------------------------------
+  // Escape key clears search
+  // -----------------------------------------------------------------------
+  it('pressing Escape on search input clears the search and results', async () => {
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    await typeAndWaitForTags(input, 'work')
+
+    // Matching tags should be visible
+    expect(findTagSpan(/work \(5\)/)).toBeInTheDocument()
+
+    // Press Escape
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    // Search input should be cleared
+    expect(input).toHaveValue('')
+    // Matching tags should be gone
+    expect(findTagSpan(/work \(5\)/)).toBeNull()
+  })
+
+  it('has no a11y violations with search results visible', async () => {
+    vi.useRealTimers()
+    mockedInvoke.mockResolvedValueOnce([makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })])
+
+    const { container } = render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    fireEvent.change(input, { target: { value: 'work' } })
+
+    // Wait for debounce without fake timers
+    await new Promise((r) => setTimeout(r, 350))
+
+    // Wait for matching tags to render
+    await waitFor(() => {
+      expect(findTagSpan(/work \(5\)/)).toBeInTheDocument()
+    })
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 })

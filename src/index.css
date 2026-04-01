@@ -120,6 +120,16 @@
   --sidebar-ring: oklch(0.550 0.188 28.710);
 }
 
+/* ── Indent width (responsive) ─────────────────────────────────────── */
+:root {
+  --indent-width: 24px;
+}
+@media (pointer: coarse) {
+  :root {
+    --indent-width: 16px;
+  }
+}
+
 /* ── Base resets ────────────────────────────────────────────────────── */
 @layer base {
   * {
@@ -236,6 +246,13 @@
 .tag-ref-chip:hover,
 .tag-ref-chip:active {
   @apply bg-accent/80;
+}
+
+@media (pointer: coarse) {
+  .block-link-chip,
+  .tag-ref-chip {
+    @apply px-2.5 py-1 text-sm;
+  }
 }
 
 /* External URL links — both in TipTap editor (a.external-link) and StaticBlock */

@@ -40,23 +40,24 @@ function Calendar({
         nav: 'flex items-center gap-1',
         button_previous: cn(
           buttonVariants({ variant: 'outline' }),
-          'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 absolute left-0',
+          'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 absolute left-0 [@media(pointer:coarse)]:size-10',
         ),
         button_next: cn(
           buttonVariants({ variant: 'outline' }),
-          'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 absolute right-0',
+          'size-7 bg-transparent p-0 opacity-50 hover:opacity-100 absolute right-0 [@media(pointer:coarse)]:size-10',
         ),
         month_grid: 'w-full border-collapse space-y-1',
         weekdays: 'flex',
-        weekday: 'text-muted-foreground rounded-md w-8 font-normal text-[0.8rem]',
+        weekday:
+          'text-muted-foreground rounded-md w-8 font-normal text-[0.8rem] [@media(pointer:coarse)]:w-11',
         week: 'flex w-full mt-2',
         day: cn(
           'relative p-0 text-center text-sm focus-within:relative focus-within:z-20 [&:has([aria-selected])]:bg-accent [&:has([aria-selected].outside)]:bg-accent/50 first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md',
-          'h-8 w-8',
+          'h-8 w-8 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11',
         ),
         day_button: cn(
           buttonVariants({ variant: 'ghost' }),
-          'size-8 p-0 font-normal aria-selected:opacity-100',
+          'size-8 p-0 font-normal aria-selected:opacity-100 [@media(pointer:coarse)]:size-11',
         ),
         range_end: 'day-range-end',
         selected:

@@ -13,6 +13,7 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { BlockRow } from '../lib/tauri'
 import { addTag, createBlock, listBlocks, listTagsForBlock, removeTag } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
@@ -103,6 +104,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
         await addTag(blockId, resp.id)
         setAppliedTagIds((prev) => new Set([...prev, resp.id]))
       }
+      setShowPicker(false)
     } catch {
       toast.error('Failed to create tag')
     }
@@ -136,25 +138,25 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
         ))}
       </div>
 
-      <Button
-        variant="outline"
-        size="sm"
-        className="tag-panel-add-btn gap-1"
-        onClick={() => setShowPicker(!showPicker)}
-      >
-        <Plus className="h-3.5 w-3.5" />
-        Add tag
-      </Button>
-
-      {showPicker && (
-        <div className="tag-picker mt-2 space-y-2 rounded-lg border bg-popover p-3 shadow-md">
+      <Popover open={showPicker} onOpenChange={setShowPicker}>
+        <PopoverTrigger asChild>
+          <Button variant="outline" size="sm" className="tag-panel-add-btn gap-1">
+            <Plus className="h-3.5 w-3.5" />
+            Add tag
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="tag-picker w-64 space-y-2 p-3" aria-label="Tag picker">
           <Input
             className="tag-picker-input h-8"
             placeholder="Search tags..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <div className="tag-picker-list max-h-60 space-y-1 overflow-y-auto" role="listbox">
+          <div
+            className="tag-picker-list max-h-60 space-y-1 overflow-y-auto"
+            role="listbox"
+            aria-label="Available tags"
+          >
             {availableTags.map((tag) => (
               <button
                 key={tag.id}
@@ -183,8 +185,8 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
               </div>
             )}
           </div>
-        </div>
-      )}
+        </PopoverContent>
+      </Popover>
 
       {newTagName && (
         <fieldset

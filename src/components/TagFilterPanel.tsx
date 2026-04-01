@@ -183,6 +183,13 @@ export function TagFilterPanel(): React.ReactElement {
         <Input
           value={prefix}
           onChange={handlePrefixChange}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              setPrefix('')
+              setMatchingTags([])
+            }
+          }}
           placeholder="Search tags by prefix..."
           aria-label="Search tags by prefix"
           className="flex-1"

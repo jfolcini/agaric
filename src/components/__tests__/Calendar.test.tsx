@@ -92,6 +92,36 @@ describe('Calendar', () => {
     expect(Array.isArray(onWeekNumberClick.mock.calls[0][1])).toBe(true)
   })
 
+  it('includes coarse pointer overrides for touch-friendly sizing', () => {
+    const { container } = render(<Calendar mode="single" defaultMonth={new Date(2026, 2, 1)} />)
+
+    // Day cells should have coarse pointer height/width overrides
+    const dayCells = container.querySelectorAll('td')
+    expect(dayCells.length).toBeGreaterThan(0)
+    const dayCellClass = dayCells[0].className
+    expect(dayCellClass).toContain('[@media(pointer:coarse)]:h-11')
+    expect(dayCellClass).toContain('[@media(pointer:coarse)]:w-11')
+
+    // Day buttons should have coarse pointer size override
+    const dayButtons = container.querySelectorAll('td button')
+    expect(dayButtons.length).toBeGreaterThan(0)
+    expect(dayButtons[0].className).toContain('[@media(pointer:coarse)]:size-11')
+
+    // Nav buttons should have coarse pointer size override
+    const navButtons = Array.from(container.querySelectorAll('button')).filter((btn) =>
+      btn.className.includes('absolute'),
+    )
+    expect(navButtons.length).toBeGreaterThanOrEqual(2)
+    for (const btn of navButtons) {
+      expect(btn.className).toContain('[@media(pointer:coarse)]:size-10')
+    }
+
+    // Weekday headers should have coarse pointer width override
+    const weekdayHeaders = container.querySelectorAll('th')
+    expect(weekdayHeaders.length).toBeGreaterThan(0)
+    expect(weekdayHeaders[0].className).toContain('[@media(pointer:coarse)]:w-11')
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(
       <Calendar
