@@ -1,5 +1,59 @@
 # Session Log
 
+## Session 21 — 2026-03-31 — Touch targets, responsive indent, mobile flash, focus trap
+
+11 items resolved: #103, #104, #105, #106, #107, #108, #109, #110, #111, #181 (Tier 4 + Tier 5).
+Commit: `30aacf4`
+
+### Build 1: Touch target sizing — buttons, StaticBlock, BlockTree, sidebar (#103, #104, #105, #108)
+- **Agent:** `17ae3280`
+- **Files:** `button.tsx`, `StaticBlock.tsx`, `BlockTree.tsx`, `sidebar.tsx`, new `button.test.tsx`
+- **Changes:**
+  - #103: `@media(pointer:coarse)` overrides on 6 button size variants (48dp+ on touch)
+  - #104: StaticBlock `min-h-[2.75rem]` on coarse pointer
+  - #105: BlockTree `space-y-1.5` on coarse pointer (was 0.5/2px)
+  - #108: SidebarTrigger `size-11` on coarse pointer (was size-7/28px)
+- **Tests:** 19 new tests in `button.test.tsx` (size rendering, coarse pointer classes, axe audits)
+- **Review:** `99c8a90a` — PASS
+
+### Build 2: Touch target sizing — inline chips, calendar, scrollbar (#106, #107, #110)
+- **Agent:** `faeb416a`
+- **Files:** `index.css`, `calendar.tsx`, `scroll-area.tsx`, `Calendar.test.tsx`
+- **Changes:**
+  - #106: `.block-link-chip`, `.tag-ref-chip` get `px-2.5 py-1 text-sm` on coarse pointer
+  - #107: Calendar day cells/buttons `size-11`, nav buttons `size-10`, weekday headers `w-11` on coarse pointer
+  - #110: Scrollbar `w-4`/`h-4` on coarse pointer (was 2.5/10px)
+- **Tests:** 1 new test in `Calendar.test.tsx` verifying coarse pointer classes
+- **Review:** `4f7c178c` — PASS
+
+### Build 3: Responsive indent + mobile layout flash (#109, #111)
+- **Agent:** `e912452f`
+- **Files:** `index.css`, `SortableBlock.tsx`, `BlockTree.tsx`, `use-mobile.ts`, new `use-mobile.test.ts`
+- **Changes:**
+  - #109: CSS variable `--indent-width` (24px desktop, 16px touch). Visual rendering uses `calc()`, DnD math keeps numeric constant.
+  - #111: `useIsMobile` synchronous initializer fixes layout flash on mobile
+- **Tests:** 5 new tests in `use-mobile.test.ts`
+- **Review:** `4ab37e52` — PASS
+
+### Build 4: TagPanel/TagFilterPanel focus trap (#181)
+- **Agent:** `dc8bcbaf`
+- **Files:** `TagPanel.tsx`, `TagFilterPanel.tsx`, `TagPanel.test.tsx`, `TagFilterPanel.test.tsx`
+- **Changes:**
+  - #181: TagPanel picker wrapped in Radix Popover (focus trap + Escape). TagFilterPanel search gets Escape-to-clear.
+- **Tests:** 6 new tests (4 TagPanel popover, 2 TagFilterPanel Escape/axe)
+- **Review:** `7ec0a2af` — CONDITIONAL PASS (missing `setShowPicker(false)` in `handleCreateTag` — fixed manually)
+
+### Post-build fixes
+- `TagPanel.tsx`: Added `setShowPicker(false)` after tag creation (review finding)
+- `Calendar.test.tsx`: Removed unused `prevBtn` variable (biome lint)
+- Biome formatting fixes in `button.tsx`, `calendar.tsx`, `scroll-area.tsx`, `TagPanel.tsx`, `button.test.tsx`, `Calendar.test.tsx`
+
+### Stats
+- **Test count:** 55 files, 1522 tests (was 1491)
+- **Remaining unresolved:** 5 items (#112, #128, #129, #130, #193)
+
+---
+
 ## Session 18 — 2026-03-31 — Tier 5 a11y & UX items #36, #38, #39, #42, #43, #49, #50, #60, #120, #122
 
 ### Build 1: CSS a11y fixes (#43 + #38 + #39)
