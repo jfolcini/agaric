@@ -14,7 +14,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -436,6 +436,89 @@ describe('PropertiesPanel', () => {
   })
 
   // -- a11y -------------------------------------------------------------------
+
+  // -- Keyboard hints & handlers -----------------------------------------------
+
+  it('shows keyboard hint text when add form is visible', async () => {
+    const user = userEvent.setup()
+    mockInvokeWith([])
+
+    const { container } = render(<PropertiesPanel blockId="BLOCK001" />)
+
+    await waitFor(() => {
+      expect(container.querySelector('.properties-panel-loading')).not.toBeInTheDocument()
+    })
+
+    const addPropertyBtn = screen.getByRole('button', { name: /Add property/i })
+    await user.click(addPropertyBtn)
+
+    expect(screen.getByText('Press Enter to add, Escape to cancel')).toBeInTheDocument()
+  })
+
+  it('Enter key in add form submits the form', async () => {
+    const user = userEvent.setup()
+
+    const updatedProperties = [makeProp({ key: 'status', value_text: 'active' })]
+
+    let getPropertiesCallCount = 0
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'get_properties') {
+        getPropertiesCallCount++
+        return getPropertiesCallCount === 1 ? [] : updatedProperties
+      }
+      if (cmd === 'set_property') return null
+      return null
+    })
+
+    const { container } = render(<PropertiesPanel blockId="BLOCK001" />)
+
+    await waitFor(() => {
+      expect(container.querySelector('.properties-panel-loading')).not.toBeInTheDocument()
+    })
+
+    const addPropertyBtn = screen.getByRole('button', { name: /Add property/i })
+    await user.click(addPropertyBtn)
+
+    const keyInput = screen.getByPlaceholderText('Key')
+    const valueInput = screen.getByPlaceholderText('Value')
+    await user.type(keyInput, 'status')
+    await user.type(valueInput, 'active')
+
+    fireEvent.keyDown(keyInput, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'set_property',
+        expect.objectContaining({
+          blockId: 'BLOCK001',
+          key: 'status',
+          valueText: 'active',
+        }),
+      )
+    })
+  })
+
+  it('Escape key in add form cancels the form', async () => {
+    const user = userEvent.setup()
+    mockInvokeWith([])
+
+    const { container } = render(<PropertiesPanel blockId="BLOCK001" />)
+
+    await waitFor(() => {
+      expect(container.querySelector('.properties-panel-loading')).not.toBeInTheDocument()
+    })
+
+    const addPropertyBtn = screen.getByRole('button', { name: /Add property/i })
+    await user.click(addPropertyBtn)
+
+    expect(screen.getByPlaceholderText('Key')).toBeInTheDocument()
+
+    fireEvent.keyDown(screen.getByPlaceholderText('Key'), { key: 'Escape' })
+
+    expect(screen.queryByPlaceholderText('Key')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Add property/i })).toBeInTheDocument()
+  })
 
   it('has no a11y violations with properties', async () => {
     mockInvokeWith(mockProperties)

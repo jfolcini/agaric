@@ -115,7 +115,20 @@ export function PropertiesPanel({ blockId }: PropertiesPanelProps): React.ReactE
           <Plus className="h-3.5 w-3.5" /> Add property
         </Button>
       ) : (
-        <div className="add-property-form flex items-center gap-2">
+        <fieldset
+          aria-label="Add property"
+          className="add-property-form flex items-center gap-2 border-none p-0 m-0"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              handleAdd()
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              setShowAddForm(false)
+            }
+          }}
+        >
           <Input
             className="h-7 flex-1 text-xs"
             placeholder="Key"
@@ -134,7 +147,10 @@ export function PropertiesPanel({ blockId }: PropertiesPanelProps): React.ReactE
           <Button variant="ghost" size="xs" onClick={() => setShowAddForm(false)}>
             Cancel
           </Button>
-        </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            Press Enter to add, Escape to cancel
+          </p>
+        </fieldset>
       )}
     </div>
   )

@@ -187,7 +187,20 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
       )}
 
       {newTagName && (
-        <div className="tag-create-form mt-2 flex items-center gap-2">
+        <fieldset
+          aria-label="Create tag"
+          className="tag-create-form mt-2 flex items-center gap-2 border-none p-0 m-0"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              handleCreateTag()
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              setNewTagName('')
+            }
+          }}
+        >
           <Input
             className="tag-create-input h-8 flex-1"
             value={newTagName}
@@ -205,7 +218,10 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
           >
             Cancel
           </Button>
-        </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            Press Enter to create, Escape to cancel
+          </p>
+        </fieldset>
       )}
     </div>
   )

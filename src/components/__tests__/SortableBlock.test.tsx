@@ -1708,3 +1708,125 @@ describe('SortableBlock long-press and context menu', () => {
     expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
   })
 })
+
+// =========================================================================
+// Drag-cancels-long-press tests (#116)
+// =========================================================================
+
+describe('SortableBlock drag cancels long-press', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('clears long-press timer when isDragging becomes true', () => {
+    // Start with isDragging = false
+    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: false })
+
+    const { container, rerender } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const wrapper = container.querySelector('.sortable-block') as HTMLElement
+
+    // Start a touch (starts the long-press timer)
+    fireEvent.touchStart(wrapper, {
+      touches: [{ clientX: 100, clientY: 200 }],
+    })
+
+    // Simulate drag starting at 250ms (before long-press fires at 400ms)
+    act(() => {
+      vi.advanceTimersByTime(250)
+    })
+
+    // Re-render with isDragging = true (simulates dnd-kit activating drag)
+    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: true })
+    rerender(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    // Advance past the original long-press delay
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+
+    // Context menu should NOT appear because drag cancelled the timer
+    expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
+  })
+
+  it('does not open context menu if drag is active when long-press timeout fires', () => {
+    // Start with isDragging = true from the beginning
+    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: true })
+
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const wrapper = container.querySelector('.sortable-block') as HTMLElement
+
+    // Start touch (even though drag is already active)
+    fireEvent.touchStart(wrapper, {
+      touches: [{ clientX: 100, clientY: 200 }],
+    })
+
+    // Advance past the long-press delay
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    // Context menu should NOT appear because isDraggingRef is true
+    expect(screen.queryByTestId('block-context-menu')).not.toBeInTheDocument()
+  })
+
+  it('allows context menu when drag ends before long-press fires', () => {
+    // Start not dragging
+    mockUseSortable.mockReturnValue({ ...makeSortable(), isDragging: false })
+
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const wrapper = container.querySelector('.sortable-block') as HTMLElement
+
+    // Start touch
+    fireEvent.touchStart(wrapper, {
+      touches: [{ clientX: 100, clientY: 200 }],
+    })
+
+    // Advance past the long-press delay (400ms) — no drag started
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
+
+    // Context menu SHOULD appear because isDragging was never true
+    expect(screen.getByTestId('block-context-menu')).toBeInTheDocument()
+  })
+})

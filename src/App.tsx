@@ -42,6 +42,7 @@ import {
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
+import { announce } from './lib/announcer'
 import { createBlock } from './lib/tauri'
 import { useJournalStore } from './stores/journal'
 import { useNavigationStore, type View } from './stores/navigation'
@@ -125,16 +126,23 @@ function App() {
         if (mode === 'daily') setCurrentDate(subDays(currentDate, 1))
         else if (mode === 'weekly') setCurrentDate(subWeeks(currentDate, 1))
         else setCurrentDate(subMonths(currentDate, 1))
+        announce(
+          `Navigated to previous ${mode === 'daily' ? 'day' : mode === 'weekly' ? 'week' : 'month'}`,
+        )
       }
       if (e.key === 'ArrowRight') {
         e.preventDefault()
         if (mode === 'daily') setCurrentDate(addDays(currentDate, 1))
         else if (mode === 'weekly') setCurrentDate(addWeeks(currentDate, 1))
         else setCurrentDate(addMonths(currentDate, 1))
+        announce(
+          `Navigated to next ${mode === 'daily' ? 'day' : mode === 'weekly' ? 'week' : 'month'}`,
+        )
       }
       if (e.key === 't' || e.key === 'T') {
         e.preventDefault()
         setCurrentDate(new Date())
+        announce('Jumped to today')
       }
     }
     document.addEventListener('keydown', handleJournalNav)
@@ -149,11 +157,13 @@ function App() {
       if (e.key === 'f') {
         e.preventDefault()
         useNavigationStore.getState().setView('search')
+        announce('Search opened')
       }
       if (e.key === 'n') {
         e.preventDefault()
         createBlock({ blockType: 'page', content: 'Untitled' }).then((resp) => {
           useNavigationStore.getState().navigateToPage(resp.id, 'Untitled')
+          announce('New page created')
         })
       }
     }

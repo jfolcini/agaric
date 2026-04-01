@@ -18,7 +18,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { addDays, endOfWeek, format, startOfWeek, subDays } from 'date-fns'
+import { addDays, addMonths, endOfWeek, format, startOfWeek, subDays } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -33,7 +33,7 @@ vi.mock('../BlockTree', () => ({
 
 import { useBlockStore } from '../../stores/blocks'
 import { useJournalStore } from '../../stores/journal'
-import { JournalControls, JournalPage } from '../JournalPage'
+import { JournalControls, JournalPage, MAX_JOURNAL_DATE, MIN_JOURNAL_DATE } from '../JournalPage'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -747,6 +747,211 @@ describe('JournalPage', () => {
       expect(screen.getAllByTestId('block-tree')).toHaveLength(1)
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ── Calendar dropdown positioning (#178) ────────────────────────────
+
+  describe('calendar dropdown positioning', () => {
+    it('flips above when calendar overflows viewport bottom', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Mock getBoundingClientRect to simulate overflow: bottom > viewportHeight - 8
+      const originalGBCR = Element.prototype.getBoundingClientRect
+      Element.prototype.getBoundingClientRect = () => ({
+        top: 500,
+        bottom: 900,
+        left: 100,
+        right: 400,
+        width: 300,
+        height: 400,
+        x: 100,
+        y: 500,
+        toJSON: () => {},
+      })
+
+      // Simulate small viewport
+      Object.defineProperty(window, 'visualViewport', {
+        value: { height: 600, width: 1024 },
+        writable: true,
+        configurable: true,
+      })
+
+      const calButton = screen.getByRole('button', { name: /open calendar picker/i })
+      await user.click(calButton)
+
+      // The calendar dropdown should have 'bottom-full' class (flipped above)
+      await waitFor(() => {
+        const dropdown = document.querySelector('.absolute.z-50.rounded-md')
+        expect(dropdown).not.toBeNull()
+        expect(dropdown?.className).toContain('bottom-full')
+      })
+
+      // Cleanup
+      Element.prototype.getBoundingClientRect = originalGBCR
+    })
+
+    it('shifts right when calendar overflows left edge on narrow viewport', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Mock getBoundingClientRect to simulate left overflow: left < 8
+      const originalGBCR = Element.prototype.getBoundingClientRect
+      Element.prototype.getBoundingClientRect = () => ({
+        top: 50,
+        bottom: 350,
+        left: -20,
+        right: 280,
+        width: 300,
+        height: 300,
+        x: -20,
+        y: 50,
+        toJSON: () => {},
+      })
+
+      Object.defineProperty(window, 'visualViewport', {
+        value: { height: 800, width: 300 },
+        writable: true,
+        configurable: true,
+      })
+
+      const calButton = screen.getByRole('button', { name: /open calendar picker/i })
+      await user.click(calButton)
+
+      // The calendar dropdown should have a translateX transform to shift right
+      await waitFor(() => {
+        const dropdown = document.querySelector('.absolute.z-50.rounded-md') as HTMLElement | null
+        expect(dropdown).not.toBeNull()
+        expect(dropdown?.style.transform).toBe('translateX(28px)')
+      })
+
+      // Cleanup
+      Element.prototype.getBoundingClientRect = originalGBCR
+    })
+  })
+
+  // ── Date navigation boundaries (#196) ───────────────────────────────
+
+  describe('date navigation boundaries', () => {
+    it('prev button is disabled at MIN_JOURNAL_DATE', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      useJournalStore.setState({
+        mode: 'daily',
+        currentDate: MIN_JOURNAL_DATE,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const prevBtn = screen.getByRole('button', { name: /previous day/i })
+      expect(prevBtn).toBeDisabled()
+    })
+
+    it('next button is disabled at MAX_JOURNAL_DATE', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      useJournalStore.setState({
+        mode: 'daily',
+        currentDate: MAX_JOURNAL_DATE,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const nextBtn = screen.getByRole('button', { name: /next day/i })
+      expect(nextBtn).toBeDisabled()
+    })
+
+    it('prev button is enabled when after MIN_JOURNAL_DATE', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      useJournalStore.setState({
+        mode: 'daily',
+        currentDate: addDays(MIN_JOURNAL_DATE, 1),
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const prevBtn = screen.getByRole('button', { name: /previous day/i })
+      expect(prevBtn).toBeEnabled()
+    })
+
+    it('next button is enabled when before MAX_JOURNAL_DATE', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      useJournalStore.setState({
+        mode: 'daily',
+        currentDate: new Date(),
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const nextBtn = screen.getByRole('button', { name: /next day/i })
+      expect(nextBtn).toBeEnabled()
+    })
+
+    it('boundary applies to weekly navigation', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      useJournalStore.setState({
+        mode: 'weekly',
+        currentDate: MIN_JOURNAL_DATE,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const prevBtn = screen.getByRole('button', { name: /previous week/i })
+      expect(prevBtn).toBeDisabled()
+    })
+
+    it('boundary applies to monthly navigation', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      useJournalStore.setState({
+        mode: 'monthly',
+        currentDate: addMonths(new Date(), 12),
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const nextBtn = screen.getByRole('button', { name: /next month/i })
+      expect(nextBtn).toBeDisabled()
     })
   })
 })

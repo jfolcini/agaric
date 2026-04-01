@@ -14,8 +14,13 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import App from '../../App'
+import { announce } from '../../lib/announcer'
 import { useBootStore } from '../../stores/boot'
 import { useNavigationStore } from '../../stores/navigation'
+
+vi.mock('../../lib/announcer', () => ({
+  announce: vi.fn(),
+}))
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -328,6 +333,47 @@ describe('App', () => {
       expect(state.pageStack).toContainEqual(
         expect.objectContaining({ pageId: 'NEW_PAGE_ID_00000000000000', title: 'Untitled' }),
       )
+    })
+  })
+
+  it('Ctrl+F announces "Search opened"', async () => {
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+
+    await waitFor(() => {
+      expect(announce).toHaveBeenCalledWith('Search opened')
+    })
+  })
+
+  it('Ctrl+N announces "New page created"', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_block') {
+        return {
+          id: 'NEW_PAGE_ID_00000000000000',
+          block_type: 'page',
+          content: 'Untitled',
+          parent_id: null,
+          position: 0,
+        }
+      }
+      return emptyPage
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Agaric')).toBeInTheDocument()
+    })
+
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+
+    await waitFor(() => {
+      expect(announce).toHaveBeenCalledWith('New page created')
     })
   })
 })

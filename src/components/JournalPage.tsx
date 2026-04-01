@@ -20,6 +20,8 @@ import {
   endOfMonth,
   endOfWeek,
   format,
+  isAfter,
+  isBefore,
   startOfMonth,
   startOfWeek,
   subDays,
@@ -67,6 +69,12 @@ interface JournalPageProps {
 // ── Helpers ───────────────────────────────────────────────────────────
 
 const WEEK_OPTIONS = { weekStartsOn: 1 as const }
+
+/** Earliest navigable journal date. */
+export const MIN_JOURNAL_DATE = new Date(2020, 0, 1)
+
+/** Latest navigable journal date (1 year from today). */
+export const MAX_JOURNAL_DATE = addMonths(new Date(), 12)
 
 /** Format a Date as YYYY-MM-DD. */
 function formatDate(d: Date): string {
@@ -256,6 +264,7 @@ function JournalCalendarDropdown({
 }: JournalCalendarDropdownProps): React.ReactElement {
   const calRef = useRef<HTMLDivElement>(null)
   const [flipAbove, setFlipAbove] = useState(false)
+  const [shiftLeft, setShiftLeft] = useState(0)
 
   // Escape key closes the calendar
   useEffect(() => {
@@ -269,13 +278,21 @@ function JournalCalendarDropdown({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  // Check if calendar overflows viewport and flip above if needed
+  // Check if calendar overflows viewport and flip above / shift horizontally
   useEffect(() => {
     const el = calRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
-    if (rect.bottom > window.innerHeight - 8) {
+
+    // Use visualViewport for accurate height (handles virtual keyboard)
+    const vh = window.visualViewport?.height ?? window.innerHeight
+
+    if (rect.bottom > vh - 8) {
       setFlipAbove(true)
+    }
+    // Prevent horizontal overflow on narrow viewports
+    if (rect.left < 8) {
+      setShiftLeft(8 - rect.left)
     }
   }, [])
 
@@ -289,6 +306,7 @@ function JournalCalendarDropdown({
         className={`absolute right-0 z-50 rounded-md border bg-popover p-2 shadow-md ${
           flipAbove ? 'bottom-full mb-1' : 'top-full mt-1'
         }`}
+        style={shiftLeft > 0 ? { transform: `translateX(${shiftLeft}px)` } : undefined}
       >
         <Calendar
           mode="single"
@@ -678,6 +696,9 @@ export function JournalControls(): React.ReactElement {
     else setCurrentDate(addMonths(currentDate, 1))
   }
 
+  const canGoPrev = isAfter(currentDate, MIN_JOURNAL_DATE)
+  const canGoNext = isBefore(currentDate, MAX_JOURNAL_DATE)
+
   function getDateDisplay(): string {
     if (mode === 'agenda') return 'Tasks'
     if (mode === 'daily') return formatDateDisplay(currentDate)
@@ -715,7 +736,13 @@ export function JournalControls(): React.ReactElement {
       {/* Date navigation — hidden in agenda mode (no date context) */}
       {mode !== 'agenda' && (
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon-xs" aria-label={navLabels.prev} onClick={goPrev}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={navLabels.prev}
+            onClick={goPrev}
+            disabled={!canGoPrev}
+          >
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span
@@ -724,7 +751,13 @@ export function JournalControls(): React.ReactElement {
           >
             {getDateDisplay()}
           </span>
-          <Button variant="ghost" size="icon-xs" aria-label={navLabels.next} onClick={goNext}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={navLabels.next}
+            onClick={goNext}
+            disabled={!canGoNext}
+          >
             <ChevronRight className="h-4 w-4" />
           </Button>
           <Button

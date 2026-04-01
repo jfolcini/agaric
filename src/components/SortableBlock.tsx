@@ -16,7 +16,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Check, ChevronRight, GripVertical, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { cn } from '../lib/utils'
 import { BlockContextMenu } from './BlockContextMenu'
@@ -117,6 +117,16 @@ export function SortableBlock({
     touchStartPos.current = null
   }, [])
 
+  // Keep a ref in sync with isDragging so the long-press setTimeout closure
+  // can read the current value without capturing a stale boolean.
+  const isDraggingRef = useRef(false)
+  useEffect(() => {
+    isDraggingRef.current = isDragging
+    if (isDragging) {
+      clearLongPress()
+    }
+  }, [isDragging, clearLongPress])
+
   const openContextMenu = useCallback((x: number, y: number) => {
     setContextMenu({ x, y })
   }, [])
@@ -131,7 +141,9 @@ export function SortableBlock({
       const touch = e.touches[0]
       touchStartPos.current = { x: touch.clientX, y: touch.clientY }
       longPressTimer.current = setTimeout(() => {
-        openContextMenu(touch.clientX, touch.clientY)
+        if (!isDraggingRef.current) {
+          openContextMenu(touch.clientX, touch.clientY)
+        }
         longPressTimer.current = null
       }, LONG_PRESS_DELAY)
     },

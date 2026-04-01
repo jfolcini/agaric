@@ -17,7 +17,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -411,6 +411,81 @@ describe('TagPanel', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to create tag')
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Keyboard hints & handlers
+  // -----------------------------------------------------------------------
+  it('shows keyboard hint text when create form is visible', async () => {
+    setupDefaultMock()
+    const user = userEvent.setup()
+
+    render(<TagPanel blockId="BLOCK1" />)
+
+    await screen.findByText('work')
+
+    await user.click(screen.getByRole('button', { name: /Add tag/i }))
+
+    const searchInput = screen.getByPlaceholderText('Search tags...')
+    await user.type(searchInput, 'newstuff')
+
+    await user.click(screen.getByText(/Create "newstuff"/))
+
+    expect(screen.getByText('Press Enter to create, Escape to cancel')).toBeInTheDocument()
+  })
+
+  it('Enter key in create form submits the form', async () => {
+    setupDefaultMock()
+    const user = userEvent.setup()
+
+    render(<TagPanel blockId="BLOCK1" />)
+
+    await screen.findByText('work')
+
+    await user.click(screen.getByRole('button', { name: /Add tag/i }))
+
+    const searchInput = screen.getByPlaceholderText('Search tags...')
+    await user.type(searchInput, 'newstuff')
+
+    await user.click(screen.getByText(/Create "newstuff"/))
+
+    const createInput = screen.getByDisplayValue('newstuff')
+    fireEvent.keyDown(createInput, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'create_block',
+        expect.objectContaining({
+          blockType: 'tag',
+          content: 'newstuff',
+        }),
+      )
+    })
+  })
+
+  it('Escape key in create form cancels the form', async () => {
+    setupDefaultMock()
+    const user = userEvent.setup()
+
+    render(<TagPanel blockId="BLOCK1" />)
+
+    await screen.findByText('work')
+
+    await user.click(screen.getByRole('button', { name: /Add tag/i }))
+
+    const searchInput = screen.getByPlaceholderText('Search tags...')
+    await user.type(searchInput, 'newstuff')
+
+    await user.click(screen.getByText(/Create "newstuff"/))
+
+    const createInput = screen.getByDisplayValue('newstuff')
+    expect(createInput).toBeInTheDocument()
+
+    fireEvent.keyDown(createInput, { key: 'Escape' })
+
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue('newstuff')).not.toBeInTheDocument()
     })
   })
 
