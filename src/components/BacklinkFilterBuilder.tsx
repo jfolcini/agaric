@@ -260,7 +260,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
 
   return (
     <form
-      className="add-filter-row flex flex-wrap items-center gap-1.5 rounded-md border bg-muted/50 p-2"
+      className="add-filter-row flex flex-wrap items-center gap-1.5 rounded-md border bg-muted/50 p-2 [@media(pointer:coarse)]:flex-col [@media(pointer:coarse)]:items-stretch"
       aria-label="Add filter"
       onSubmit={(e) => e.preventDefault()}
       onKeyDown={(e) => {
@@ -327,7 +327,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
 
       {category === 'contains' && (
         <Input
-          className="h-7 w-40 text-xs"
+          className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
           placeholder="Search text..."
           value={containsQuery}
           onChange={(e) => setContainsQuery(e.target.value)}
@@ -352,7 +352,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
             </select>
           ) : (
             <Input
-              className="h-7 w-24 text-xs"
+              className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
               placeholder="key"
               value={propKey}
               onChange={(e) => setPropKey(e.target.value)}
@@ -383,7 +383,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
             <option value="date">Date</option>
           </select>
           <Input
-            className="h-7 w-24 text-xs"
+            className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
             placeholder="value"
             value={propValue}
             onChange={(e) => setPropValue(e.target.value)}
@@ -396,7 +396,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
         <>
           <Input
             type="date"
-            className="h-7 w-36 text-xs"
+            className="h-7 w-36 text-xs [@media(pointer:coarse)]:w-full"
             value={dateAfter}
             onChange={(e) => setDateAfter(e.target.value)}
             aria-label="Date after"
@@ -404,7 +404,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
           <span className="text-xs text-muted-foreground">to</span>
           <Input
             type="date"
-            className="h-7 w-36 text-xs"
+            className="h-7 w-36 text-xs [@media(pointer:coarse)]:w-full"
             value={dateBefore}
             onChange={(e) => setDateBefore(e.target.value)}
             aria-label="Date before"
@@ -428,7 +428,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
           </select>
         ) : (
           <Input
-            className="h-7 w-24 text-xs"
+            className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
             placeholder="key"
             value={propSetKey}
             onChange={(e) => setPropSetKey(e.target.value)}
@@ -452,7 +452,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
           </select>
         ) : (
           <Input
-            className="h-7 w-24 text-xs"
+            className="h-7 w-24 text-xs [@media(pointer:coarse)]:w-full"
             placeholder="key"
             value={propEmptyKey}
             onChange={(e) => setPropEmptyKey(e.target.value)}
@@ -462,7 +462,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
 
       {category === 'has-tag' && (
         <Input
-          className="h-7 w-40 text-xs"
+          className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
           placeholder="Tag ID..."
           value={tagValue}
           onChange={(e) => setTagValue(e.target.value)}
@@ -472,7 +472,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
 
       {category === 'tag-prefix' && (
         <Input
-          className="h-7 w-40 text-xs"
+          className="h-7 w-40 text-xs [@media(pointer:coarse)]:w-full"
           placeholder="Tag prefix..."
           value={prefixValue}
           onChange={(e) => setPrefixValue(e.target.value)}
@@ -485,7 +485,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
         <Button
           variant="default"
           size="xs"
-          className="h-7 text-xs"
+          className="h-7 text-xs [@media(pointer:coarse)]:w-full"
           onClick={handleApply}
           aria-label="Apply filter"
         >
@@ -495,7 +495,7 @@ function AddFilterRow({ propertyKeys, onApply, onCancel }: AddFilterRowProps): R
       <Button
         variant="ghost"
         size="xs"
-        className="h-7 text-xs"
+        className="h-7 text-xs [@media(pointer:coarse)]:w-full"
         onClick={onCancel}
         aria-label="Cancel adding filter"
       >
@@ -595,12 +595,23 @@ export function BacklinkFilterBuilder({
                 key={index}
                 className="contents"
               >
-                <Badge variant="secondary" className="filter-pill shrink-0 gap-1 text-xs">
+                <Badge
+                  variant="secondary"
+                  className="filter-pill shrink-0 gap-1 text-xs"
+                  role="group"
+                  aria-label={`Filter: ${filterSummary(filter)}`}
+                >
                   {filterSummary(filter)}
                   <button
                     type="button"
-                    className="ml-0.5 rounded-full hover:bg-muted"
+                    className="ml-0.5 inline-flex items-center justify-center rounded-full p-1 hover:bg-muted active:bg-muted active:scale-95 focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px]"
                     onClick={() => handleRemoveFilter(index)}
+                    onKeyDown={(e: React.KeyboardEvent) => {
+                      if (e.key === 'Delete' || e.key === 'Backspace') {
+                        e.preventDefault()
+                        handleRemoveFilter(index)
+                      }
+                    }}
                     aria-label={`Remove filter ${filterSummary(filter)}`}
                   >
                     <X className="h-3 w-3" />

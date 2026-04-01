@@ -18,6 +18,7 @@
 
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
@@ -101,6 +102,21 @@ fn crockford_decode_char(c: char) -> Option<u8> {
         'Z' => Some(31),
         _ => None,
     }
+}
+
+/// Crockford base32 alphabet for ULID encoding.
+const CROCKFORD_ENCODE: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/// Encode a Unix millisecond timestamp into the 10-character ULID prefix
+/// (Crockford base32, big-endian).  This is the inverse of `ulid_to_ms`.
+fn ms_to_ulid_prefix(ms: u64) -> String {
+    let mut chars = [b'0'; 10];
+    let mut value = ms;
+    for i in (0..10).rev() {
+        chars[i] = CROCKFORD_ENCODE[(value & 0x1F) as usize];
+        value >>= 5;
+    }
+    String::from_utf8(chars.to_vec()).unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -394,29 +410,39 @@ fn resolve_filter<'a>(
             }
 
             BacklinkFilter::CreatedInRange { after, before } => {
-                // Parse ISO 8601 date strings to Unix milliseconds, then filter
-                // block IDs by their ULID timestamp component.
-                let after_ms = after.as_ref().and_then(|d| parse_iso_to_ms(d));
-                let before_ms = before.as_ref().and_then(|d| parse_iso_to_ms(d));
+                let after_prefix = after
+                    .as_ref()
+                    .and_then(|d| parse_iso_to_ms(d))
+                    .map(ms_to_ulid_prefix);
+                let before_prefix = before
+                    .as_ref()
+                    .and_then(|d| parse_iso_to_ms(d))
+                    .map(ms_to_ulid_prefix);
 
-                let all_ids = sqlx::query_scalar::<_, String>(
+                // Build SQL with optional ULID range bounds.  ULID prefix comparison
+                // works because Crockford base32 preserves sort order and SQLite
+                // string comparison treats shorter strings as less-than.
+                let mut sql = String::from(
                     "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
-                )
-                .fetch_all(pool)
-                .await?;
+                );
+                let mut bind_idx = 1u32;
+                if after_prefix.is_some() {
+                    sql.push_str(&format!(" AND id >= ?{bind_idx}"));
+                    bind_idx += 1;
+                }
+                if before_prefix.is_some() {
+                    sql.push_str(&format!(" AND id < ?{bind_idx}"));
+                }
 
-                Ok(all_ids
-                    .into_iter()
-                    .filter(|id| {
-                        if let Some(ms) = ulid_to_ms(id) {
-                            let after_ok = after_ms.is_none_or(|a| ms >= a);
-                            let before_ok = before_ms.is_none_or(|b| ms < b);
-                            after_ok && before_ok
-                        } else {
-                            false
-                        }
-                    })
-                    .collect())
+                let mut query = sqlx::query_scalar::<_, String>(&sql);
+                if let Some(ref lo) = after_prefix {
+                    query = query.bind(lo.as_str());
+                }
+                if let Some(ref hi) = before_prefix {
+                    query = query.bind(hi.as_str());
+                }
+                let rows = query.fetch_all(pool).await?;
+                Ok(rows.into_iter().collect())
             }
 
             BacklinkFilter::BlockType { block_type } => {
@@ -453,16 +479,48 @@ fn resolve_filter<'a>(
             }
 
             BacklinkFilter::Not { filter } => {
-                let all = sqlx::query_scalar::<_, String>(
-                    "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
+                let inner_set = resolve_filter(pool, filter, depth + 1).await?;
+
+                if inner_set.is_empty() {
+                    // Not of empty set = all non-deleted blocks
+                    let rows = sqlx::query_scalar::<_, String>(
+                        "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
+                    )
+                    .fetch_all(pool)
+                    .await?;
+                    return Ok(rows.into_iter().collect());
+                }
+
+                // For small exclusion sets, push NOT IN into SQL to avoid loading
+                // all block IDs into memory.  SQLite variable limit is 999 in older
+                // builds, so cap at 500 to be safe.
+                if inner_set.len() <= 500 {
+                    let placeholders: String = std::iter::repeat_n("?", inner_set.len())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let sql = format!(
+                        "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
+                         AND id NOT IN ({placeholders})"
+                    );
+                    let mut query = sqlx::query_scalar::<_, String>(&sql);
+                    for id in &inner_set {
+                        query = query.bind(id.as_str());
+                    }
+                    let rows = query.fetch_all(pool).await?;
+                    return Ok(rows.into_iter().collect());
+                }
+
+                // For large exclusion sets, use json_each() to push NOT
+                // into SQL — avoids loading all block IDs into memory.
+                let json_ids = serde_json::to_string(&inner_set.iter().collect::<Vec<_>>())?;
+                let rows = sqlx::query_scalar::<_, String>(
+                    "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
+                     AND id NOT IN (SELECT value FROM json_each(?))",
                 )
+                .bind(&json_ids)
                 .fetch_all(pool)
                 .await?;
-                let inner_set = resolve_filter(pool, filter, depth + 1).await?;
-                Ok(all
-                    .into_iter()
-                    .filter(|id| !inner_set.contains(id))
-                    .collect())
+                Ok(rows.into_iter().collect())
             }
         }
     })
@@ -2565,6 +2623,40 @@ mod tests {
             ".items[].id" => "[ULID]",
             ".next_cursor" => "[CURSOR]",
         });
+    }
+
+    // ======================================================================
+    // ms_to_ulid_prefix round-trip
+    // ======================================================================
+
+    #[test]
+    fn ms_to_ulid_prefix_round_trip() {
+        // Verify encode/decode round-trip for several known timestamps
+        let timestamps: Vec<u64> = vec![0, 1, 1000, 1735689600000, u64::MAX >> 16];
+        for ms in timestamps {
+            let prefix = ms_to_ulid_prefix(ms);
+            assert_eq!(prefix.len(), 10, "prefix should be 10 chars for ms={ms}");
+            let decoded = ulid_to_ms(&prefix).unwrap();
+            assert_eq!(decoded, ms, "round-trip failed for ms={ms}");
+        }
+    }
+
+    #[test]
+    fn ms_to_ulid_prefix_preserves_sort_order() {
+        let t1 = 1000u64;
+        let t2 = 2000u64;
+        let t3 = 1735689600000u64;
+        let p1 = ms_to_ulid_prefix(t1);
+        let p2 = ms_to_ulid_prefix(t2);
+        let p3 = ms_to_ulid_prefix(t3);
+        assert!(p1 < p2, "sort order: {p1} should be < {p2}");
+        assert!(p2 < p3, "sort order: {p2} should be < {p3}");
+    }
+
+    #[test]
+    fn ms_to_ulid_prefix_zero() {
+        let prefix = ms_to_ulid_prefix(0);
+        assert_eq!(prefix, "0000000000");
     }
 
     // ======================================================================
