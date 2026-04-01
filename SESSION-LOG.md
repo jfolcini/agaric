@@ -1232,3 +1232,28 @@ Resolved 6 Tier 4 items across 2 parallel build subagents: capability schema fix
 ### Stats
 - 1 new test, 56 test files, 1533 total tests
 - 2 build subagents + review cycle
+
+---
+
+## Session 25 — Tier 5/7 final items (#44, #51, #193)
+**Date:** 2026-03-31
+**Commit:** ad7198d
+
+### Summary
+Resolved the last 3 unresolved items across Tiers 5, 6, and 7: date picker modal a11y, priority badge colorblind support, and page title undo/redo integration.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `src/components/BlockTree.tsx` | #44: DatePickerOverlay → `role="dialog"`, `aria-modal`, `aria-label`, focus trap (Tab cycling), auto-focus first button |
+| `src/components/SortableBlock.tsx` | #51: Priority A gets `ring-2 ring-red-400`, C gets `border-dashed border-blue-400` |
+| `src/components/PageEditor.tsx` | #193: Import useUndoStore; handleTitleBlur calls `onNewAction` + `replacePage` after save |
+| `src/hooks/useUndoShortcuts.ts` | #193: New `refreshAfterUndoRedo()` reloads block store + page title after undo/redo |
+| `src/components/__tests__/PageEditor.test.tsx` | 3 new tests: undo store onNewAction, nav store replacePage, unchanged title no-op |
+| `src/components/__tests__/SortableBlock.test.tsx` | Updated A/C priority badge tests for ring/dashed border classes |
+| `src/hooks/__tests__/useUndoShortcuts.test.ts` | 5 new tests: block reload after undo/redo, nav title update, null undo skip, getBlock failure |
+
+### Stats
+- 8 new tests, 56 test files, 1541 total tests
+- Tiers 5, 6, 7 now fully resolved (0 remaining)
