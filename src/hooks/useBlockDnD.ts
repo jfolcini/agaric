@@ -28,6 +28,7 @@ import {
   getProjection,
   type Projection,
 } from '../lib/tree-utils'
+import { useIsMobile } from './use-mobile'
 
 interface UseBlockDnDParams {
   blocks: FlatBlock[]
@@ -87,9 +88,10 @@ export function useBlockDnD({
 
   // ── DnD sensors ────────────────────────────────────────────────────
   // PointerSensor with 8px activation distance so clicks still work.
+  const isMobile = useIsMobile()
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: { distance: 8, delay: 250, tolerance: 5 },
+      activationConstraint: isMobile ? { delay: 250, tolerance: 5 } : { distance: 8 },
     }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )

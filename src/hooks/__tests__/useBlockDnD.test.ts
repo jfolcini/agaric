@@ -41,15 +41,21 @@ vi.mock('../../components/SortableBlock', () => ({
   INDENT_WIDTH: 24,
 }))
 
+vi.mock('../use-mobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
 // ── Imports ──────────────────────────────────────────────────────────────
 
 import type { FlatBlock, Projection } from '../../lib/tree-utils'
 import { computePosition, getDragDescendants, getProjection } from '../../lib/tree-utils'
+import { useIsMobile } from '../use-mobile'
 import { useBlockDnD } from '../useBlockDnD'
 
 const mockedGetDragDescendants = vi.mocked(getDragDescendants)
 const mockedGetProjection = vi.mocked(getProjection)
 const mockedComputePosition = vi.mocked(computePosition)
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -677,7 +683,8 @@ describe('useBlockDnD', () => {
   // ── 12. sensors ──────────────────────────────────────────────────────
 
   describe('sensors', () => {
-    it('configures PointerSensor and KeyboardSensor', () => {
+    it('configures PointerSensor with distance constraint on desktop', () => {
+      mockedUseIsMobile.mockReturnValue(false)
       const params = makeDefaultParams()
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -689,10 +696,30 @@ describe('useBlockDnD', () => {
       // First sensor: PointerSensor
       expect(sensors[0].sensor).toBe('PointerSensor')
       expect(sensors[0].opts).toEqual({
-        activationConstraint: { distance: 8, delay: 250, tolerance: 5 },
+        activationConstraint: { distance: 8 },
       })
 
       // Second sensor: KeyboardSensor
+      expect(sensors[1].sensor).toBe('KeyboardSensor')
+      expect(sensors[1].opts).toHaveProperty('coordinateGetter')
+    })
+
+    it('configures PointerSensor with delay constraint on mobile', () => {
+      mockedUseIsMobile.mockReturnValue(true)
+      const params = makeDefaultParams()
+      const { result } = renderHook(() => useBlockDnD(params))
+
+      const sensors = result.current.sensors as unknown as Array<{ sensor: string; opts?: unknown }>
+
+      expect(sensors).toHaveLength(2)
+
+      // First sensor: PointerSensor with delay-only (long press to drag)
+      expect(sensors[0].sensor).toBe('PointerSensor')
+      expect(sensors[0].opts).toEqual({
+        activationConstraint: { delay: 250, tolerance: 5 },
+      })
+
+      // Second sensor: KeyboardSensor (unchanged)
       expect(sensors[1].sensor).toBe('KeyboardSensor')
       expect(sensors[1].opts).toHaveProperty('coordinateGetter')
     })

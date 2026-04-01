@@ -19,8 +19,8 @@ function updatePosition(
   if (!rect) return
 
   const popupHeight = el.offsetHeight || 200
-  const viewportHeight = window.innerHeight
-  const viewportWidth = window.innerWidth
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth
 
   // Place below by default; flip above if near viewport bottom
   let top = rect.bottom + 4
