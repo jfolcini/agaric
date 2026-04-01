@@ -166,7 +166,7 @@ SQLite in WAL mode. Database file at `~/.local/share/com.blocknotes.app/notes.db
 **Migrations:** Auto-run on pool init from `src-tauri/migrations/`. Versioned `.sql` files.
 
 **Compile-time validation:** All static SQL uses `sqlx::query!` / `query_as!` / `query_scalar!`.
-The `.sqlx/` offline cache (80+ query files) is committed; CI fails if stale. Runtime queries are
+The `.sqlx/` offline cache (90 query files) is committed; CI fails if stale. Runtime queries are
 limited to PRAGMAs, FTS5 operations, and dynamic SQL (~11 queries).
 
 ### Schema
@@ -506,14 +506,49 @@ This is the primary "write prose freely, get structure on exit" mechanic.
 
 **Cross-block paste** uses the same `splitOnNewlines` path — one block per line.
 
-### Undo strategy
+### Undo & redo
 
-- TipTap history handles Ctrl+Z within the active editing session.
-- On blur/flush: op written, `clearHistory()` called.
-- **No Ctrl+Z across the flush boundary** — intentional. The previous state is reconstructable
-  from the per-block edit chain in the history panel. Cross-flush undo is a deliberate manual
-  action, not an automatic shortcut.
-- Non-text ops (tag, property, move) do not participate in Ctrl+Z. Revert via history panel.
+Two-tier model: TipTap handles within-session undo, the backend handles cross-flush page-level
+undo/redo via operation reversal.
+
+**Tier 1 — In-session (TipTap history):**
+- Ctrl+Z/Ctrl+Y inside the active editor instance (native ProseMirror history).
+- On blur/flush: op written, `clearHistory()` called. Session undo history is lost.
+
+**Tier 2 — Page-level (op reversal):**
+- Ctrl+Z/Ctrl+Y when focus is outside contentEditable (intercepted by `useUndoShortcuts`).
+- Backend computes the inverse of the Nth most recent op on the page via `reverse.rs`.
+- Reverse op is appended to the op log as a new op (the log remains append-only).
+- Per-page state tracked in `useUndoStore`: `undoDepth` (how many ops undone) and `redoStack`
+  (`OpRef[]` for redo). Cleared on navigation or new user action.
+- Optimistic UI updates with rollback on backend error.
+
+**Operation reversal (`reverse.rs`):**
+
+| Original op | Reverse |
+|-------------|---------|
+| `create_block` | `delete_block` |
+| `edit_block` | `edit_block` with prior text (from op log) |
+| `delete_block` | `restore_block` |
+| `move_block` | `move_block` to prior parent/position (from op log) |
+| `add_tag` | `remove_tag` |
+| `remove_tag` | `add_tag` |
+| `set_property` | `set_property` with prior values, or `delete_property` if first set |
+| `delete_property` | `set_property` with prior values |
+| `add_attachment` | `delete_attachment` |
+| `restore_block` | `delete_block` |
+| `purge_block` | **non-reversible** |
+| `delete_attachment` | **non-reversible** |
+
+Prior-state lookups use the op log exclusively (not the materialised `blocks` table), ensuring
+consistency even if the materializer lags. Helper functions (`find_prior_text`,
+`find_prior_position`, `find_prior_property`) walk the op log by `(created_at DESC, seq DESC)`.
+
+**Batch revert:** `revert_ops` accepts multiple `OpRef`s, validates all are reversible, sorts
+newest-first, and applies all reverses in a single `IMMEDIATE` transaction.
+
+**History views:** `HistoryPanel` shows per-block edit history. `HistoryView` shows the global
+op log with multi-select, op-type filtering, and batch revert.
 
 ### Viewport rendering
 
@@ -534,6 +569,7 @@ the focused block, there is zero per-block overhead for off-screen blocks.
 | `useNavigationStore` | Page routing and view state | currentView, pageStack[], selectedBlockId |
 | `useJournalStore` | Journal mode and date selection | mode (daily/weekly/monthly/agenda), currentDate |
 | `useResolveStore` | Centralized ULID → title cache | cache Map, pagesList[], version counter |
+| `useUndoStore` | Page-level undo/redo state | undoDepth per page, redoStack (OpRef[]) |
 
 `useResolveStore` is preloaded on boot (`preload()` fetches all pages and tags) and updated
 incrementally on create/edit/delete. Both JournalPage and BlockTree consume from the same store —
@@ -544,17 +580,21 @@ no duplicate `listBlocks` calls.
 ```
 App
 ├── BootGate                       — blocks UI during boot/recovery
-├── Sidebar                        — Journal, Pages, Tags, Trash, Status, Conflicts nav
+├── Sidebar                        — Journal, Pages, Tags, Trash, History, Status, Conflicts nav
 ├── JournalPage                    — daily/weekly/monthly/agenda modes
 │   └── BlockTree (per day)        — recursive block renderer
 │       └── SortableBlock          — @dnd-kit wrapper
 │           └── EditableBlock      — static div ↔ TipTap toggle
 │               ├── StaticBlock    — rendered Markdown (links, tags, code blocks)
-│               └── TipTap editor  — mounted on focus only
+│               ├── TipTap editor  — mounted on focus only
+│               └── BlockContextMenu — right-click / long-press actions
+├── PageEditor                     — page title + block tree + detail panels
+│   └── BlockTree                  — same recursive renderer
 ├── PageBrowser                    — all pages list
 ├── TagList                        — all tags list
 ├── TrashView                      — soft-deleted blocks
 ├── SearchPanel                    — FTS5 full-text search
+├── HistoryView                    — global op log with multi-select batch revert
 ├── StatusPanel                    — materializer queue metrics
 ├── ConflictList                   — pending conflict copies
 └── Panels (contextual)
@@ -563,6 +603,7 @@ App
     ├── PropertiesPanel            — typed key-value properties
     ├── TagPanel                   — apply/remove tags
     ├── FormattingToolbar          — bold/italic/code/link/undo/redo
+    ├── LinkEditPopover            — inline link creation/editing
     └── KeyboardShortcuts          — help panel
 ```
 
@@ -590,8 +631,20 @@ prev/next, Alt+T for today), scroll-to-date support.
 
 ### Tauri command wrappers
 
-`src/lib/tauri.ts` provides 25 type-safe wrappers over auto-generated `bindings.ts`. Handles
+`src/lib/tauri.ts` provides 28 type-safe wrappers over auto-generated `bindings.ts`. Handles
 Tauri 2's requirement for explicit `null` (not `undefined`) on `Option<T>` parameters.
+
+### Extracted hooks
+
+BlockTree's concerns are decomposed into focused hooks:
+
+| Hook | Purpose |
+|------|---------|
+| `useBlockDnD` | DnD state, handlers, and tree-aware depth projection |
+| `useBlockResolve` | ULID → title resolution, tag/page search, page creation |
+| `useBlockProperties` | Property state, TODO/priority cycling |
+| `useUndoShortcuts` | Global Ctrl+Z / Ctrl+Y (outside editor contentEditable) |
+| `useViewportObserver` | IntersectionObserver for off-screen block placeholders |
 
 ---
 
@@ -716,7 +769,7 @@ dispatch after boot (stale-while-revalidate handles it).
 
 ### specta + tauri-specta
 
-All 24 Tauri commands are annotated with `#[specta::specta]`. TypeScript bindings are auto-
+All 28 Tauri commands are annotated with `#[specta::specta]`. TypeScript bindings are auto-
 generated to `src/lib/bindings.ts`. A pre-commit test (`ts_bindings_up_to_date`) fails if the
 committed bindings diverge from the Rust types.
 
@@ -744,14 +797,14 @@ CI doesn't need a live database. `cargo sqlx prepare --check` is a CI gate.
 
 | Layer | Tool | Scope |
 |-------|------|-------|
-| Rust unit tests | cargo nextest | Inline `#[cfg(test)] mod tests` in every module (~850+ tests) |
+| Rust unit tests | cargo nextest | Inline `#[cfg(test)] mod tests` in every module (~890 tests) |
 | Rust integration | cargo nextest | Pipeline tests, API contract tests |
 | Rust snapshots | insta (22 YAML snapshots) | Op payload serialization, command responses |
 | Frontend unit | Vitest (jsdom) | Pure functions, store logic, hooks |
 | Frontend component | Vitest + @testing-library/react | Render, interaction, a11y (vitest-axe) |
 | Frontend property | Vitest + fast-check | Markdown serializer fuzzing, round-trip stability |
-| E2E | Playwright (Chromium) | Smoke, editor lifecycle, link handling |
-| Benchmarks | Criterion (8 bench files) | Cache, commands, FTS, hash, op log, pagination, soft delete (manual only) |
+| E2E | Playwright (Chromium, 8 spec files) | Smoke, editor lifecycle, links, keyboard, Markdown syntax, slash commands, toolbar |
+| Benchmarks | Criterion (9 bench files) | Cache, commands, drafts, FTS, hash, op log, pagination, soft delete, undo/redo (manual only) |
 
 ### Pre-commit hooks (prek)
 

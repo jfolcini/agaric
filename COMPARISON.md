@@ -20,10 +20,10 @@
 | Block properties `key:: value` | Inline `key:: value` syntax on lines after block content | `block_properties` table with typed values (text, num, date, ref). PropertiesPanel UI for viewing/editing. Priority property with color-coded badges | Partial -- general property UI done, no inline `key::` syntax |
 | Collapse/expand children | Click arrow or `Ctrl+Up/Down` | Chevron toggle, `Ctrl+.` shortcut, client-side state, focus rescue | Partial -- collapse state lost on page reload (not persisted) |
 | Zoom into block (focus mode) | `Alt+Right` focuses on block + descendants only | Not implemented | **Gap** |
-| Move block up/down | `Alt+Shift+Up/Down` | Drag-and-drop reordering (tree-aware) | Partial -- no keyboard shortcut for move up/down |
+| Move block up/down | `Alt+Shift+Up/Down` | Drag-and-drop reordering (tree-aware) + `Ctrl+Shift+Up/Down` keyboard shortcuts | None |
 | Block-level selection | `Esc` + arrow keys for multi-block selection | Not implemented | **Gap** |
-| Visual hierarchy (bullets / tree lines) | Bullet points + tree lines for nesting | Indentation only — no bullets or tree lines | **UX gap** |
-| Cross-block undo | Ctrl+Z works across blocks within session | Undo scoped per block mount — Ctrl+Z never crosses flush boundary | **UX gap** (intentional ADR-02, but frustrating) |
+| Visual hierarchy (bullets / tree lines) | Bullet points + tree lines for nesting | Indentation + tree indent guide lines (`border-l`) for nesting depth. No bullet points | Partial -- tree lines done, no bullets |
+| Cross-block undo | Ctrl+Z works across blocks within session | Op-level undo/redo system: `Ctrl+Z`/`Ctrl+Y` shortcuts, per-page undo history, HistoryView with multi-select batch revert. Scoped per page per ADR-02 | Partial -- per-page not per-session (intentional ADR-02) |
 
 ### 2. Page Model
 
@@ -48,12 +48,12 @@
 | ~~Strikethrough~~ | `~~text~~` | Not implemented | **Gap** |
 | ==Highlight== | `^^text^^` | Not implemented | **Gap** |
 | `Inline code` | `` `code` `` | `` `code` `` | None |
-| Headings in blocks | `# H1`, `## H2`, etc. inside blocks | Parsed and rendered in static view (styled h1-h6). No syntax highlighting in editor | Partial -- static rendering works, editor support incomplete |
-| Code blocks with syntax highlighting | ````python ... ``` `` | Code blocks parsed + rendered in `<pre><code>` blocks. No syntax highlighting | Partial -- no language-aware highlighting |
+| Headings in blocks | `# H1`, `## H2`, etc. inside blocks | `/h1`–`/h6` slash commands insert heading syntax. TipTap `Heading` extension configured for levels 1-6. Static view renders styled h1-h6 | None |
+| Code blocks with syntax highlighting | ````python ... ``` `` | Code blocks parsed + rendered with `lowlight` syntax highlighting (common language set, auto-detect fallback). `<pre><code>` with `hljs` classes | None |
 | Math/LaTeX | `$$E=mc^2$$` inline and block | Not implemented | **Gap** |
 | Tables | Markdown tables | Not implemented | **Gap** |
 | Blockquotes | `> quote` | Not implemented | **Gap** |
-| Slash commands `/` | 20+ commands (TODO, template, date, embed, etc.) | `/TODO`, `/DOING`, `/DONE`, `/date`, `/PRIORITY HIGH/MED/LOW` — 7 commands via TipTap Suggestion extension | Partial — framework built, 7 commands. Extensible for more |
+| Slash commands `/` | 20+ commands (TODO, template, date, embed, etc.) | `/TODO`, `/DOING`, `/DONE`, `/DATE`, `/PRIORITY 1/2/3`, `/H1`–`/H6` — 13 commands via TipTap Suggestion extension | Partial — 13 commands, no template/embed. Extensible for more |
 | Autocomplete for `[[` | Search all pages | Yes -- `block-link-picker` extension, searches pages, "Create new" option | None |
 | Autocomplete for `@` | Search all tags | Yes -- `at-tag-picker` extension, searches tags | None |
 | Autocomplete for `((` | Search all blocks for reference | Not implemented -- no block reference system | **Gap** (requires block refs first) |
@@ -105,8 +105,8 @@
 | Simple queries | `{{query (and [[page]] (task TODO))}}` -- embedded live results | Not implemented -- no inline query blocks | **Major gap** |
 | Query operators | `and`, `or`, `not` | `TagExpr` supports `And`, `Or`, `Not` for tag queries only | Very limited scope |
 | Date-based queries | `(between -7d today)`, relative dates | `list_blocks` supports `agendaDate` filter (single date, not range) | **Gap** -- no date range queries |
-| Task queries | `(task TODO DOING)`, `(priority A)` | Not implemented -- no task system | **Major gap** |
-| Property queries | `(property type book)`, `(page-property status active)` | Not implemented | **Gap** |
+| Task queries | `(task TODO DOING)`, `(priority A)` | Agenda mode queries tasks by status (TODO/DOING/DONE) via `query_by_property`. No inline query blocks | Partial -- agenda mode only, no embedded queries in pages |
+| Property queries | `(property type book)`, `(page-property status active)` | `query_by_property` command with cursor-based pagination. Used by agenda mode for task queries | Partial -- single key+value filter, no compound property queries |
 | Advanced Datalog queries | Full Datascript query language with custom rules | Not implemented -- backend uses SQL directly | **Gap** (but SQL could serve same purpose) |
 | Query result as table | `query-table:: true` with selectable columns | Not implemented | **Gap** |
 | Live-updating results | Queries re-evaluate on data change | FTS search and tag queries are live. No inline query blocks | Partial |
@@ -117,11 +117,11 @@
 | Capability | Logseq | Block Notes | Gap |
 |---|---|---|---|
 | Task markers | `TODO`, `DOING`, `DONE`, `CANCELLED`, `NOW`, `LATER` | TODO/DOING/DONE via block properties. Click to cycle, `Ctrl+Enter` shortcut. Visual icons (Circle/CircleDot/CheckCircle2) | Partial -- 3 states vs Logseq's 6, no CANCELLED/NOW/LATER |
-| Priority levels | `[#A]`, `[#B]`, `[#C]` | Not implemented | **Gap** |
+| Priority levels | `[#A]`, `[#B]`, `[#C]` | Priority A/B/C via block properties. Slash commands (`/PRIORITY 1/2/3`), keyboard shortcuts (`Ctrl+Shift+1/2/3`), click-to-cycle badge. Color-coded: A=red, B=yellow, C=blue | None |
 | Scheduled dates | `SCHEDULED: <2024-12-27 Fri>` | Org-mode timestamps parsed (`<2024-01-15 Mon>`) but no task scheduling semantics | Partial -- syntax exists, semantics missing |
 | Deadline dates | `DEADLINE: <2024-12-31 Tue>` | Same as above | Partial |
 | Task cycling | `Ctrl+Enter` toggles TODO/DONE | Click marker or `Ctrl+Enter` cycles TODO → DOING → DONE → none | Comparable |
-| Task queries/dashboard | Embedded queries surface tasks across graph | Not implemented | **Gap** |
+| Task queries/dashboard | Embedded queries surface tasks across graph | Agenda mode: dedicated task dashboard with collapsible TODO/DOING/DONE sections, paginated. No embedded inline queries on arbitrary pages | Partial -- dedicated view exists, no inline query blocks |
 | Custom task keywords | Configurable via `config.edn` | Not implemented | **Gap** |
 | Recurring tasks | Via plugins | Not implemented | **Gap** |
 
@@ -131,7 +131,7 @@
 |---|---|---|---|
 | Auto-created daily page | Created at midnight, date as title | `JournalPage` component -- auto-creates page with `YYYY-MM-DD` content on first block | Comparable |
 | Default landing page | Opens to today's journal | App opens to journal view | None |
-| Date navigation | `g n`/`g p` for next/prev day, date picker | Prev/next buttons per mode, calendar date picker, Today button. No keyboard shortcuts (g n/g p) | Partial -- no keyboard shortcuts for journal navigation |
+| Date navigation | `g n`/`g p` for next/prev day, date picker | Prev/next buttons per mode, calendar date picker, Today button. `Alt+Left/Right` for prev/next (mode-aware: day/week/month), `Alt+T` for today | Partial -- different key bindings than Logseq but functional |
 | Scrollable past journals | Past days stacked below today | Daily: single day. Weekly: 7-day sections. Monthly: stacked all-month sections (not a grid). No "Load older days" button or infinite scroll | **Gap** -- monthly renders 28-31 sections with full BlockTrees (performance issue) |
 | Journal templates | Auto-populated via `config.edn` | Not implemented | **Gap** |
 | Configurable date format | `:journal/page-title-format` | Fixed `YYYY-MM-DD` | Minor gap |
@@ -217,13 +217,12 @@
 
 **Gaps to close:**
 1. Journal templates (auto-populate new journal pages)
-2. Task queries to surface TODOs across all journal days
+2. Task queries to surface TODOs across all journal days (agenda mode exists but no inline query blocks)
 3. Auto-create today's journal page on app launch
 4. "Load older days" / infinite scroll for past entries
 5. Monthly view should be calendar grid, not 31 stacked sections
-6. Keyboard shortcuts for date navigation (g n / g p / g t)
 
-**Verdict: Functional but incomplete.** Core daily journal workflow works for a single day, but multi-day views are problematic (monthly is a performance issue), no templates, no task dashboard, and no keyboard navigation shortcuts. Not ready to replace Logseq for serious journalers.
+**Verdict: Functional but incomplete.** Core daily journal workflow works well — 4 view modes, keyboard nav (`Alt+Arrow`, `Alt+T`), calendar picker with content dots, agenda mode with task dashboard. Missing: templates, auto-create today on launch, monthly calendar grid view (current stacked sections have performance issues). Getting close to Logseq parity for daily journaling.
 
 ---
 
@@ -240,16 +239,17 @@
 - Task markers: TODO/DOING/DONE via block properties
 - Click or Ctrl+Enter to cycle task state
 - Visual task icons (Circle/CircleDot/CheckCircle2)
+- Priority A/B/C with color-coded badges, slash commands, keyboard shortcuts (`Ctrl+Shift+1/2/3`)
+- Agenda mode with collapsible sections per status (TODO/DOING/DONE), paginated
 - Timestamps parsed but no scheduling semantics
-- No task queries or dashboard
+- No inline query blocks on arbitrary pages
 
 **Gaps to close:**
-1. Priority system ([#A], [#B], [#C])
-2. Scheduled/deadline date semantics (not just timestamp syntax)
-3. Task query commands (filter by marker, priority, date range)
-4. Dashboard view (or inline query blocks)
+1. Scheduled/deadline date semantics (not just timestamp syntax)
+2. Inline query blocks (embed task lists in project pages)
+3. Date-range queries for "overdue" / "this week" filtering
 
-**Verdict: Started.** Task markers work. Missing priority, scheduling semantics, and task queries.
+**Verdict: Mostly functional.** Task markers, priority, agenda dashboard all work. Missing scheduling semantics and inline queries for project pages.
 
 ---
 
@@ -372,26 +372,24 @@
 |---|---------|-------|
 | 8 | Inline query blocks | Embed live query results in any page (task dashboards, project overviews) |
 | 9 | Unlinked references | FTS5 search for page title as plain text -- serendipity engine |
-| 10 | Move block up/down keyboard shortcut | `Alt+Shift+Up/Down` for fast outliner editing |
-| 11 | Zoom into block (focus mode) | Show only a block + descendants |
-| 12 | Visual tree lines / bullets | Outline readability without squinting at indentation |
-| 13 | Blockquotes (`> quote`) | Common formatting |
-| 14 | Tables | Structured data in blocks |
+| 10 | Zoom into block (focus mode) | Show only a block + descendants |
+| 11 | Blockquotes (`> quote`) | Common formatting |
+| 12 | Tables | Structured data in blocks |
+| 13 | Bullet points in outliner | Tree lines done, but no visible bullet dots at each block |
 
 ### Tier 3 -- Nice to Have (polish and parity)
 
 | # | Feature | Notes |
 |---|---------|-------|
-| 15 | Page aliases | Multiple names for same page |
-| 16 | Namespaced pages | Hierarchical organization |
-| 17 | Import/export | Migration from Logseq, backups |
-| 18 | Math/LaTeX rendering | Academic use |
-| 19 | Block-level selection (multi-select) | Bulk operations |
-| 20 | Custom link labels for internal links | `[display]([[page]])` |
-| 21 | Cross-block undo | Undo across flush boundaries |
-| 22 | CANCELLED/WAITING task states | GTD completeness |
-| 23 | Block references `((id))` | Inline rendering of referenced block content |
-| 24 | Block/page embeds `{{embed}}` | Full subtree rendered inline, editable |
+| 14 | Page aliases | Multiple names for same page |
+| 15 | Namespaced pages | Hierarchical organization |
+| 16 | Import/export | Migration from Logseq, backups |
+| 17 | Math/LaTeX rendering | Academic use |
+| 18 | Block-level selection (multi-select) | Bulk operations |
+| 19 | Custom link labels for internal links | `[display]([[page]])` |
+| 20 | CANCELLED/WAITING task states | GTD completeness |
+| 21 | Block references `((id))` | Inline rendering of referenced block content |
+| 22 | Block/page embeds `{{embed}}` | Full subtree rendered inline, editable |
 
 ### Tier 4 -- Deferred (noted, not priority)
 
@@ -413,7 +411,7 @@
 | **Journal views** | 4 modes (daily/weekly/monthly/agenda) with calendar grid | Single scrollable daily view |
 | **Task dashboard** | Dedicated agenda mode with collapsible sections per state | Requires manually writing Datalog queries |
 | **Backlink filtering** | 4 filter dimensions (type, status, date, priority) | Basic filter bar |
-| **Formatting toolbar** | BubbleMenu with bold/italic/code/link/codeblock/undo/redo | None (keyboard shortcuts only) |
+| **Formatting toolbar** | BubbleMenu with bold/italic/code/link/page-link/tag/codeblock/priority 1-2-3/date/undo/redo + Radix tooltips with shortcut hints | None (keyboard shortcuts only) |
 | **Sync foundation** | Append-only op log, DAG-based merge, three-way conflict resolution, blake3 integrity | File-based sync is fragile, conflicts are file-level |
 | **Data integrity** | Every op is hash-verified, crash recovery at boot | File corruption possible, no checksums |
 | **Performance architecture** | CQRS materializer, cursor-based pagination everywhere, FTS5 with BM25 | Datascript in-memory DB can be slow for large graphs |
@@ -421,6 +419,7 @@
 | **Structured properties** | Typed properties (text, num, date, ref) with validation + PropertiesPanel UI | Properties are untyped strings in file graph |
 | **ID system** | ULIDs are sortable, case-normalized, deterministic ordering | UUID v4 is random, not sortable |
 | **Soft delete** | Cascade soft-delete with restore + purge, timestamp verification | Delete is file deletion or block removal |
+| **Undo/redo history** | Op-level undo/redo + HistoryView with multi-select batch revert, filter by op type, payload preview | No explicit undo history UI |
 | **Test coverage** | 1,777 tests across 3 layers (836 Rust + 903 Vitest + 38 Playwright) | Community-reported quality issues |
 | **Desktop performance** | Tauri 2 (Rust + WebView) -- small binary, low memory | Electron -- large binary, high memory |
 | **Android** | Tauri 2 Android target (spike working, IPC confirmed) | Electron-based, no native mobile |
@@ -431,15 +430,15 @@
 
 | Category | Logseq | Block Notes | Notes |
 |---|:---:|:---:|---|
-| Block CRUD | 10 | 9 | Collapse works (not persisted). No visual bullets/tree lines. No cross-block undo |
+| Block CRUD | 10 | 9 | Collapse works (not persisted). Tree indent lines done, no bullets. Move up/down via keyboard + DnD. Op-level undo per page, HistoryView for batch revert. No multi-block selection, no zoom/focus mode |
 | Page management | 9 | 7 | Missing aliases, namespaces |
-| Editor formatting | 9 | 8 | Bold/italic/code/headings/code blocks with syntax highlighting + formatting toolbar. No tables, highlight, strikethrough |
-| Linking system | 10 | 6 | Page links + backlinks + external links + rich backlink filtering. Missing block refs, embeds, unlinked refs |
+| Editor formatting | 9 | 8 | Bold/italic/code/headings (h1-h6 via slash commands)/code blocks with lowlight syntax highlighting + 11-button formatting toolbar with Radix tooltips. No tables, highlight, strikethrough, blockquotes |
+| Linking system | 10 | 6 | Page links + backlinks + external links + rich backlink filtering (4 dimensions). Missing block refs, embeds, unlinked refs |
 | Properties | 8 | 8 | Full system: backend + PropertiesPanel + priority badges + batch fetch + query_by_property |
 | Tags | 8 | 7 | Boolean AND/OR/NOT filtering. Tags not unified with pages (design choice) |
-| Query system | 9 | 5 | Tag queries + FTS + property queries + agenda mode. No inline query blocks |
-| Task management | 8 | 7 | TODO/DOING/DONE + priority A/B/C + agenda mode + slash commands. No scheduling/deadline semantics |
-| Daily journal | 8 | 8 | 4 modes (daily/weekly/monthly/agenda) + calendar picker. No templates, no auto-create today |
+| Query system | 9 | 5 | Tag queries + FTS + property queries + agenda mode. No inline query blocks, no compound queries |
+| Task management | 8 | 8 | TODO/DOING/DONE + priority A/B/C (slash commands + Ctrl+Shift+1/2/3 + click-to-cycle badges) + agenda dashboard + context menu actions. No scheduling/deadline semantics |
+| Daily journal | 8 | 8 | 4 modes (daily/weekly/monthly/agenda) + calendar picker with content dots + keyboard nav (Alt+Arrow, Alt+T). No templates, no auto-create today, monthly view is stacked sections not grid |
 | Search | 8 | 7 | FTS5 + FTS in pickers + batch resolve. Missing scope filters, unlinked refs |
 | Templates | 7 | 0 | Not started -- **top priority** |
 | Sync/storage | 5 | 8 | Architecture fundamentally better, transport not exposed yet |
@@ -447,7 +446,7 @@
 | Performance arch | 6 | 8 | CQRS + cursor pagination + Tauri 2 |
 | Import/export | 7 | 0 | Not started |
 
-**Overall: Block Notes has closed most original gaps and now has features Logseq lacks (4 journal modes, agenda dashboard, formatting toolbar, rich backlink filtering). The next sprint is templates + UX polish (auto-create today, collapse persistence, strikethrough/highlight) + date-aware task scheduling. Block refs/embeds are deferred -- not needed for the target workflow.**
+**Overall: Block Notes has closed most original gaps and now has features Logseq lacks (4 journal modes, agenda dashboard, 11-button formatting toolbar, rich backlink filtering, op-level undo with HistoryView, syntax highlighting). The next sprint is templates + UX polish (auto-create today, collapse persistence, strikethrough/highlight, monthly calendar grid) + date-aware task scheduling. Block refs/embeds are deferred -- not needed for the target workflow.**
 
 ---
 
