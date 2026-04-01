@@ -251,7 +251,7 @@ describe('StaticBlock', () => {
     expect(tagChip.classList.contains('tag-ref-chip')).toBe(true)
   })
 
-  it('does not call onNavigate when onNavigate is not provided', async () => {
+  it('clicking block_link chip without onNavigate bubbles to parent', async () => {
     const onFocus = vi.fn()
     const user = userEvent.setup()
     const content = `[[${NAV_BLOCK}]]`
@@ -267,9 +267,9 @@ describe('StaticBlock', () => {
 
     const chip = screen.getByText('Some Page')
     await user.click(chip)
-    // onNavigate is undefined — click should not throw and onFocus should NOT
-    // be called because stopPropagation is called regardless
-    expect(onFocus).not.toHaveBeenCalled()
+    // onNavigate is undefined — click should not throw; without stopPropagation
+    // the click bubbles to the parent button, triggering onFocus
+    expect(onFocus).toHaveBeenCalledWith('B1')
   })
 
   // -- a11y -------------------------------------------------------------------

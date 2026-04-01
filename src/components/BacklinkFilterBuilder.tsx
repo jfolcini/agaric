@@ -77,7 +77,7 @@ function getFilterKey(filter: BacklinkFilter): string {
 // Human-readable filter summary
 // ---------------------------------------------------------------------------
 
-function filterSummary(filter: BacklinkFilter): string {
+function filterSummary(filter: BacklinkFilter, tagResolver?: (id: string) => string): string {
   switch (filter.type) {
     case 'BlockType':
       return `type = ${filter.block_type}`
@@ -102,8 +102,9 @@ function filterSummary(filter: BacklinkFilter): string {
       return `created ${parts.join(' ')}`
     }
     case 'HasTag':
-      // TODO: resolve tag name from tag_id via Tauri command
-      return `has tag ${filter.tag_id.slice(0, 8)}...`
+      return tagResolver
+        ? `has tag ${tagResolver(filter.tag_id)}`
+        : `has tag ${filter.tag_id.slice(0, 8)}...`
     case 'HasTagPrefix':
       return `tag prefix "${filter.prefix}"`
     default:
@@ -139,12 +140,7 @@ interface AddFilterRowProps {
   onCancel: () => void
 }
 
-function AddFilterRow({
-  propertyKeys,
-  tags,
-  onApply,
-  onCancel,
-}: AddFilterRowProps): React.ReactElement {
+function AddFilterRow({ propertyKeys, tags, onApply, onCancel }: AddFilterRowProps): React.ReactElement {
   const [category, setCategory] = useState<FilterCategory | ''>('')
   const [blockType, setBlockType] = useState('content')
   const [statusValue, setStatusValue] = useState('TODO')
@@ -631,11 +627,9 @@ export function BacklinkFilterBuilder({
                   variant="secondary"
                   className="filter-pill shrink-0 gap-1 text-xs"
                   role="group"
-                  aria-label={`Filter: ${filterSummary(filter)}`}
+                  aria-label={`Filter: ${filterSummary(filter, tagResolver)}`}
                 >
-                  {filter.type === 'HasTag' && tagResolver
-                    ? `has tag ${tagResolver(filter.tag_id)}`
-                    : filterSummary(filter)}
+                  {filterSummary(filter, tagResolver)}
                   <button
                     type="button"
                     className="ml-0.5 inline-flex items-center justify-center rounded-full p-1 hover:bg-muted active:bg-muted active:scale-95 focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px]"
@@ -646,7 +640,7 @@ export function BacklinkFilterBuilder({
                         handleRemoveFilter(index)
                       }
                     }}
-                    aria-label={`Remove filter ${filterSummary(filter)}`}
+                    aria-label={`Remove filter ${filterSummary(filter, tagResolver)}`}
                   >
                     <X className="h-3 w-3" />
                   </button>

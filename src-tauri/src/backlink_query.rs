@@ -2804,4 +2804,94 @@ mod tests {
             "error should mention depth limit, got: {msg}"
         );
     }
+
+    // ======================================================================
+    // #409 — Not filter json_each path (>500 items)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn not_filter_large_set_uses_json_each() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TARGET", "page", "Target Page").await;
+
+        // Create >500 "page" source blocks that link to TARGET
+        for i in 0..510 {
+            let id = format!("PAGE_{i:04}");
+            insert_block(&pool, &id, "page", &format!("Page {i}")).await;
+            insert_block_link(&pool, &id, "TARGET").await;
+        }
+
+        // Create 5 "content" blocks that link to TARGET
+        for i in 0..5 {
+            let id = format!("CONTENT_{i:04}");
+            insert_block(&pool, &id, "content", &format!("Content {i}")).await;
+            insert_block_link(&pool, &id, "TARGET").await;
+        }
+
+        // Not(BlockType("page")) should return only the content blocks
+        // (plus TARGET itself since it's a block, but it won't be in
+        // the backlink base set for itself).
+        // The inner set has >500 page blocks, triggering the json_each path.
+        let filter = BacklinkFilter::Not {
+            filter: Box::new(BacklinkFilter::BlockType {
+                block_type: "page".into(),
+            }),
+        };
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+
+        // All 5 content blocks should be in the result
+        for i in 0..5 {
+            let id = format!("CONTENT_{i:04}");
+            assert!(set.contains(&id), "expected {id} in Not(page) set");
+        }
+
+        // No page blocks should be in the result
+        for i in 0..510 {
+            let id = format!("PAGE_{i:04}");
+            assert!(!set.contains(&id), "page block {id} should NOT be in Not(page) set");
+        }
+    }
+
+    // ======================================================================
+    // #410 — Not(Not(filter)) double negation is identity
+    // ======================================================================
+
+    #[tokio::test]
+    async fn not_not_is_identity() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TARGET", "page", "Target Page").await;
+
+        // Create mixed block types as backlink sources
+        for i in 0..3 {
+            let id = format!("CONTENT_{i}");
+            insert_block(&pool, &id, "content", &format!("Content {i}")).await;
+            insert_block_link(&pool, &id, "TARGET").await;
+        }
+        for i in 0..2 {
+            let id = format!("PAGE_{i}");
+            insert_block(&pool, &id, "page", &format!("Page {i}")).await;
+            insert_block_link(&pool, &id, "TARGET").await;
+        }
+
+        // Evaluate BlockType("content")
+        let plain_filter = BacklinkFilter::BlockType {
+            block_type: "content".into(),
+        };
+        let plain_set = resolve_filter(&pool, &plain_filter, 0).await.unwrap();
+
+        // Evaluate Not(Not(BlockType("content")))
+        let double_neg_filter = BacklinkFilter::Not {
+            filter: Box::new(BacklinkFilter::Not {
+                filter: Box::new(BacklinkFilter::BlockType {
+                    block_type: "content".into(),
+                }),
+            }),
+        };
+        let double_neg_set = resolve_filter(&pool, &double_neg_filter, 0).await.unwrap();
+
+        assert_eq!(
+            plain_set, double_neg_set,
+            "Not(Not(BlockType(\"content\"))) should equal BlockType(\"content\")"
+        );
+    }
 }

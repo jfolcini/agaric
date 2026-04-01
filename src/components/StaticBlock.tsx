@@ -46,6 +46,7 @@ export function renderRichContent(
     resolveTagName?: (id: string) => string
     resolveBlockStatus?: (id: string) => 'active' | 'deleted'
     resolveTagStatus?: (id: string) => 'active' | 'deleted'
+    interactive?: boolean
   },
 ): React.ReactNode {
   if (!markdown) return null
@@ -77,6 +78,19 @@ export function renderRichContent(
                   e.stopPropagation()
                   openUrl(linkMark.attrs.href)
                 }}
+                {...(options.interactive
+                  ? {
+                      tabIndex: 0,
+                      role: 'link' as const,
+                      onKeyDown: (e: React.KeyboardEvent) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          openUrl(linkMark.attrs.href)
+                        }
+                      },
+                    }
+                  : {})}
               >
                 {node.text}
                 <span className="sr-only"> (opens in new tab)</span>
@@ -110,6 +124,8 @@ export function renderRichContent(
             <span
               key={`tag-${keyIdx++}`}
               className={`tag-ref-chip${status === 'deleted' ? ' tag-ref-deleted' : ''}`}
+              {...(status === 'deleted' ? { 'aria-label': `${name} (deleted)` } : {})}
+              {...(options.interactive ? { tabIndex: 0 } : {})}
             >
               {name}
             </span>,
@@ -127,10 +143,28 @@ export function renderRichContent(
             <span
               key={`link-${keyIdx++}`}
               className={`block-link-chip cursor-pointer${status === 'deleted' ? ' block-link-deleted' : ''}`}
+              {...(status === 'deleted' ? { 'aria-label': `${title} (deleted)` } : {})}
               onClick={(e) => {
-                e.stopPropagation()
-                options.onNavigate?.(linkId)
+                if (options.onNavigate) {
+                  e.stopPropagation()
+                  options.onNavigate(linkId)
+                }
               }}
+              {...(options.interactive
+                ? {
+                    tabIndex: 0,
+                    role: 'link' as const,
+                    onKeyDown: (e: React.KeyboardEvent) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        if (options.onNavigate) {
+                          e.stopPropagation()
+                          options.onNavigate(linkId)
+                        }
+                      }
+                    },
+                  }
+                : {})}
             >
               {title}
             </span>,

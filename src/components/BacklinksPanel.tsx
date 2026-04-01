@@ -16,10 +16,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { BacklinkFilter, BacklinkSort, BlockRow } from '../lib/tauri'
 import {
   batchResolve,
+  getBlock,
   listPropertyKeys,
   listTagsByPrefix,
   queryBacklinksFiltered,
 } from '../lib/tauri'
+import { useNavigationStore } from '../stores/navigation'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { EmptyState } from './EmptyState'
 import { renderRichContent } from './StaticBlock'
@@ -45,6 +47,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
   const [sort, setSort] = useState<BacklinkSort | null>(null)
   const [propertyKeys, setPropertyKeys] = useState<string[]>([])
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
+  const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
   // Load property keys on mount
   useEffect(() => {
@@ -52,15 +55,17 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
       .then(setPropertyKeys)
       .catch((err) => {
         console.error('Failed to load property keys:', err)
+        toast.error('Failed to load property keys')
       })
   }, [])
 
   // Load tags on mount
   useEffect(() => {
     listTagsByPrefix({ prefix: '' })
-      .then((result) => setTags(result.map((t) => ({ id: t.tag_id, name: t.name }))))
+      .then((result) => setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name }))))
       .catch((err) => {
         console.error('Failed to load tags:', err)
+        toast.error('Failed to load tags')
       })
   }, [])
 
@@ -226,6 +231,24 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
     setSort(newSort)
   }, [])
 
+  const handleNavigate = useCallback(
+    async (block: BlockRow) => {
+      if (block.block_type === 'page') {
+        navigateToPage(block.id, block.content ?? 'Untitled')
+        return
+      }
+      if (block.parent_id) {
+        try {
+          const parent = await getBlock(block.parent_id)
+          navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
+        } catch {
+          navigateToPage(block.parent_id, 'Untitled', block.id)
+        }
+      }
+    },
+    [navigateToPage],
+  )
+
   if (!blockId) {
     return <EmptyState icon={Link} message="Select a block to see backlinks" compact />
   }
@@ -245,6 +268,10 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
           tags={tags}
           tagResolver={resolveTagName}
         />
+      </div>
+
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {totalCount > 0 ? `${blocks.length} of ${totalCount} backlinks loaded` : ''}
       </div>
 
       {loading && blocks.length === 0 && (
@@ -280,7 +307,15 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
         {blocks.map((block) => (
           <li
             key={block.id}
-            className="backlink-item flex items-center gap-3 border-b py-2 px-1 last:border-b-0 [@media(pointer:coarse)]:flex-col [@media(pointer:coarse)]:items-start [@media(pointer:coarse)]:gap-1"
+            className="backlink-item flex items-center gap-3 border-b py-2 px-1 last:border-b-0 cursor-pointer hover:bg-muted/50 [@media(pointer:coarse)]:flex-col [@media(pointer:coarse)]:items-start [@media(pointer:coarse)]:gap-1"
+            tabIndex={0}
+            onClick={() => handleNavigate(block)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                handleNavigate(block)
+              }
+            }}
           >
             <Badge variant="secondary" className="backlink-item-type shrink-0">
               {block.block_type}
@@ -309,11 +344,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
           onClick={loadMore}
           disabled={loading}
           aria-busy={loading}
-          aria-label={
-            loading
-              ? 'Loading more backlinks'
-              : `Load more backlinks (${blocks.length} of ${totalCount} loaded)`
-          }
+          aria-label={loading ? 'Loading more backlinks' : `Load more backlinks (${blocks.length} of ${totalCount} loaded)`}
         >
           {loading ? 'Loading...' : 'Load more'}
         </Button>

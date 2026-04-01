@@ -611,4 +611,184 @@ describe('BacklinkFilterBuilder', () => {
       expect(input).toHaveAttribute('maxLength', '100')
     })
   })
+
+  // ====================================================================
+  // #400 — Tag select dropdown rendering with actual tags
+  // ====================================================================
+
+  describe('tag select dropdown with actual tags (#400)', () => {
+    const tagsData = [
+      { id: '01ARZTAGAAAAAAAAAAAAAAAAAA', name: 'Project' },
+      { id: '01ARZTAGBBBBBBBBBBBBBBBBBB', name: 'Review' },
+    ]
+
+    it('renders a <select> with tag options when has-tag category is selected', async () => {
+      const user = userEvent.setup()
+      renderBuilder({ tags: tagsData })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
+
+      const tagSelect = screen.getByLabelText('Tag')
+      expect(tagSelect).toBeInTheDocument()
+      expect(tagSelect.tagName).toBe('SELECT')
+
+      const options = tagSelect.querySelectorAll('option')
+      expect(options).toHaveLength(2)
+      expect(options[0]).toHaveTextContent('Project')
+      expect(options[1]).toHaveTextContent('Review')
+    })
+
+    it('calls onFiltersChange with selected tag_id when Apply is clicked', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ tags: tagsData, onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
+      await user.selectOptions(screen.getByLabelText('Tag'), '01ARZTAGAAAAAAAAAAAAAAAAAA')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        { type: 'HasTag', tag_id: '01ARZTAGAAAAAAAAAAAAAAAAAA' },
+      ])
+    })
+
+    it('uses tagResolver in pill aria-label (#388)', () => {
+      const tagResolver = (id: string) => {
+        const tag = tagsData.find((t) => t.id === id)
+        return tag ? tag.name : id
+      }
+      renderBuilder({
+        tags: tagsData,
+        tagResolver,
+        filters: [{ type: 'HasTag', tag_id: '01ARZTAGAAAAAAAAAAAAAAAAAA' }],
+      })
+
+      expect(
+        screen.getByRole('group', { name: 'Filter: has tag Project' }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByLabelText('Remove filter has tag Project'),
+      ).toBeInTheDocument()
+    })
+  })
+
+  // ====================================================================
+  // #401 — Enter-to-submit in AddFilterRow
+  // ====================================================================
+
+  describe('Enter-to-submit (#401)', () => {
+    it('submits filter on Enter key press', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
+      const input = screen.getByLabelText('Contains text')
+      await user.type(input, 'hello{Enter}')
+
+      expect(onFiltersChange).toHaveBeenCalledWith([{ type: 'Contains', query: 'hello' }])
+    })
+  })
+
+  // ====================================================================
+  // #402 — Escape returning focus to Add filter button
+  // ====================================================================
+
+  describe('Escape returns focus to Add filter button (#402)', () => {
+    it('closes form and focuses Add filter button on Escape', async () => {
+      const user = userEvent.setup()
+      renderBuilder()
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      const categorySelect = screen.getByLabelText('Filter category')
+      expect(categorySelect).toBeInTheDocument()
+
+      // Focus an element inside the form so Escape bubbles through the form
+      categorySelect.focus()
+      await user.keyboard('{Escape}')
+
+      expect(screen.queryByLabelText('Filter category')).not.toBeInTheDocument()
+      // Wait for requestAnimationFrame focus
+      await new Promise((r) => requestAnimationFrame(r))
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: /Add filter/i }),
+      )
+    })
+  })
+
+  // ====================================================================
+  // #403 — aria-live SR announcement content
+  // ====================================================================
+
+  describe('aria-live announcement (#403)', () => {
+    it('announces "2 filters applied" when 2 filters are active', () => {
+      renderBuilder({
+        filters: [
+          { type: 'BlockType', block_type: 'content' },
+          { type: 'Contains', query: 'test' },
+        ],
+      })
+
+      const liveRegion = document.querySelector('[aria-live="polite"][aria-atomic="true"].sr-only')
+      expect(liveRegion).toBeInTheDocument()
+      expect(liveRegion).toHaveTextContent('2 filters applied')
+    })
+
+    it('announces "1 filter applied" for a single filter', () => {
+      renderBuilder({
+        filters: [{ type: 'BlockType', block_type: 'page' }],
+      })
+
+      const liveRegion = document.querySelector('[aria-live="polite"][aria-atomic="true"].sr-only')
+      expect(liveRegion).toBeInTheDocument()
+      expect(liveRegion).toHaveTextContent('1 filter applied')
+    })
+
+    it('announces "0 filters applied" when no filters active', () => {
+      renderBuilder()
+
+      const liveRegion = document.querySelector('[aria-live="polite"][aria-atomic="true"].sr-only')
+      expect(liveRegion).toBeInTheDocument()
+      expect(liveRegion).toHaveTextContent('0 filters applied')
+    })
+  })
+
+  // ====================================================================
+  // #404 — Infinity/NaN rejection in PropertyNum
+  // ====================================================================
+
+  describe('Infinity/NaN rejection in PropertyNum (#404)', () => {
+    it('rejects Infinity as property num value', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
+      await user.selectOptions(screen.getByLabelText('Property type'), 'num')
+      await user.type(screen.getByLabelText('Property value'), 'Infinity')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(toast.error).toHaveBeenCalledWith('Invalid number')
+      expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+
+    it('rejects NaN as property num value', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ onFiltersChange })
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
+      await user.selectOptions(screen.getByLabelText('Property type'), 'num')
+      await user.type(screen.getByLabelText('Property value'), 'NaN')
+      await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+
+      expect(toast.error).toHaveBeenCalledWith('Invalid number')
+      expect(onFiltersChange).not.toHaveBeenCalled()
+    })
+  })
 })

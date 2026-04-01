@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { useNavigationStore } from '../../stores/navigation'
 import { BacklinksPanel } from '../BacklinksPanel'
 
 vi.mock('sonner', () => ({
@@ -53,6 +54,7 @@ function mockInvokeWith(backlinksResponse: unknown, extras?: Record<string, unkn
   mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
     if (cmd === 'query_backlinks_filtered') return backlinksResponse
     if (cmd === 'list_property_keys') return ['todo', 'priority']
+    if (cmd === 'list_tags_by_prefix') return []
     if (cmd === 'batch_resolve') return []
     if (extras?.[cmd] !== undefined) return extras[cmd]
     return emptyResponse
@@ -61,6 +63,11 @@ function mockInvokeWith(backlinksResponse: unknown, extras?: Record<string, unkn
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useNavigationStore.setState({
+    currentView: 'journal',
+    pageStack: [],
+    selectedBlockId: null,
+  })
 })
 
 describe('BacklinksPanel', () => {
@@ -167,6 +174,7 @@ describe('BacklinksPanel', () => {
         return callCount === 1 ? page1 : page2
       }
       if (cmd === 'list_property_keys') return ['todo', 'priority']
+      if (cmd === 'list_tags_by_prefix') return []
       return emptyResponse
     })
 
@@ -247,6 +255,7 @@ describe('BacklinksPanel', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'query_backlinks_filtered') throw new Error('network failure')
       if (cmd === 'list_property_keys') return ['todo', 'priority']
+      if (cmd === 'list_tags_by_prefix') return []
       return emptyResponse
     })
 
@@ -347,6 +356,7 @@ describe('BacklinksPanel', () => {
           }
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         return emptyResponse
       })
 
@@ -437,6 +447,7 @@ describe('BacklinksPanel', () => {
             }))
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         return emptyResponse
       })
 
@@ -464,6 +475,7 @@ describe('BacklinksPanel', () => {
           }
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         return emptyResponse
       })
 
@@ -494,6 +506,7 @@ describe('BacklinksPanel', () => {
             .map((id: string) => ({ id, title: 'Important', block_type: 'tag', deleted: false }))
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         return emptyResponse
       })
 
@@ -520,6 +533,7 @@ describe('BacklinksPanel', () => {
           return [{ id: PAGE_ULID, title: 'Resolved Title', block_type: 'page', deleted: false }]
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         return emptyResponse
       })
 
@@ -544,6 +558,7 @@ describe('BacklinksPanel', () => {
           throw new Error('not found')
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         return emptyResponse
       })
 
@@ -579,6 +594,7 @@ describe('BacklinksPanel', () => {
           }
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         return emptyResponse
       })
 
@@ -628,6 +644,7 @@ describe('BacklinksPanel', () => {
           return results
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         return emptyResponse
       })
 
@@ -665,6 +682,7 @@ describe('BacklinksPanel', () => {
           throw new Error('Network error')
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         return emptyResponse
       })
 
@@ -692,6 +710,7 @@ describe('BacklinksPanel', () => {
           throw new Error('Should not be called')
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         return emptyResponse
       })
 
@@ -720,6 +739,7 @@ describe('BacklinksPanel', () => {
           return [{ id: PAGE_ULID, title: 'Accessible Page', block_type: 'page', deleted: false }]
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         return emptyResponse
       })
 
@@ -774,6 +794,7 @@ describe('BacklinksPanel', () => {
           return emptyResponse
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         if (cmd === 'batch_resolve') return []
         return emptyResponse
       })
@@ -875,6 +896,7 @@ describe('BacklinksPanel', () => {
           return new Promise(() => {}) // never resolves — keeps loading
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         return emptyResponse
       })
 
@@ -947,6 +969,7 @@ describe('BacklinksPanel', () => {
           }
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         if (cmd === 'batch_resolve') return []
         return emptyResponse
       })
@@ -990,6 +1013,7 @@ describe('BacklinksPanel', () => {
           return emptyResponse
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         if (cmd === 'batch_resolve') return []
         return emptyResponse
       })
@@ -1030,6 +1054,7 @@ describe('BacklinksPanel', () => {
       // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
       mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
         if (cmd === 'list_property_keys') throw testError
+        if (cmd === 'list_tags_by_prefix') return []
         if (cmd === 'query_backlinks_filtered') return emptyResponse
         if (cmd === 'batch_resolve') return []
         return emptyResponse
@@ -1088,6 +1113,7 @@ describe('BacklinksPanel', () => {
           })
         }
         if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
         if (cmd === 'batch_resolve') return []
         return emptyResponse
       })
@@ -1140,6 +1166,196 @@ describe('BacklinksPanel', () => {
       expect(item?.className).not.toContain('bg-card')
       expect(item?.className).not.toContain('rounded-lg')
       expect(item?.className).not.toContain('cursor-default')
+    })
+  })
+
+  describe('listTagsByPrefix called on mount (#407)', () => {
+    it('calls list_tags_by_prefix on mount', async () => {
+      mockInvokeWith(emptyResponse)
+
+      render(<BacklinksPanel blockId="BLOCK001" />)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('list_tags_by_prefix', {
+          prefix: '',
+        })
+      })
+    })
+  })
+
+  describe('backlink item navigation (#389)', () => {
+    it('clicking a page-type backlink navigates to that page', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          {
+            ...makeBlock('01HPAGEAA00000000000001', 'My Page Title', 'page'),
+            parent_id: null,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: 1,
+      }
+      mockInvokeWith(page)
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('My Page Title')
+      const item = screen.getByText('My Page Title').closest('li')!
+      await user.click(item)
+
+      const state = useNavigationStore.getState()
+      expect(state.currentView).toBe('page-editor')
+      expect(state.pageStack).toEqual([
+        { pageId: '01HPAGEAA00000000000001', title: 'My Page Title' },
+      ])
+      expect(state.selectedBlockId).toBeNull()
+    })
+
+    it('clicking a content-type backlink navigates to parent page with block selected', async () => {
+      const user = userEvent.setup()
+      const PARENT_ID = '01HPARENT0000000000000001'
+      const BLOCK_ID = '01HCHILD000000000000000001'
+      const page = {
+        items: [
+          {
+            ...makeBlock(BLOCK_ID, 'Child block content', 'content'),
+            parent_id: PARENT_ID,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: 1,
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+        if (cmd === 'query_backlinks_filtered') return page
+        if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
+        if (cmd === 'batch_resolve') return []
+        if (cmd === 'get_block') {
+          return {
+            ...makeBlock(PARENT_ID, 'Parent Page Title', 'page'),
+            parent_id: null,
+          }
+        }
+        return emptyResponse
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('Child block content')
+      const item = screen.getByText('Child block content').closest('li')!
+      await user.click(item)
+
+      await waitFor(() => {
+        const state = useNavigationStore.getState()
+        expect(state.currentView).toBe('page-editor')
+        expect(state.pageStack).toEqual([
+          { pageId: PARENT_ID, title: 'Parent Page Title' },
+        ])
+        expect(state.selectedBlockId).toBe(BLOCK_ID)
+      })
+    })
+
+    it('navigates with fallback title when getBlock fails', async () => {
+      const user = userEvent.setup()
+      const PARENT_ID = '01HPARENT0000000000000002'
+      const BLOCK_ID = '01HCHILD000000000000000002'
+      const page = {
+        items: [
+          {
+            ...makeBlock(BLOCK_ID, 'Orphan content', 'content'),
+            parent_id: PARENT_ID,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: 1,
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
+        if (cmd === 'query_backlinks_filtered') return page
+        if (cmd === 'list_property_keys') return ['todo', 'priority']
+        if (cmd === 'list_tags_by_prefix') return []
+        if (cmd === 'batch_resolve') return []
+        if (cmd === 'get_block') throw new Error('not found')
+        return emptyResponse
+      })
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('Orphan content')
+      const item = screen.getByText('Orphan content').closest('li')!
+      await user.click(item)
+
+      await waitFor(() => {
+        const state = useNavigationStore.getState()
+        expect(state.currentView).toBe('page-editor')
+        expect(state.pageStack).toEqual([
+          { pageId: PARENT_ID, title: 'Untitled' },
+        ])
+        expect(state.selectedBlockId).toBe(BLOCK_ID)
+      })
+    })
+
+    it('pressing Enter on a backlink item triggers navigation', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          {
+            ...makeBlock('01HPAGEBB00000000000001', 'Keyboard Nav Page', 'page'),
+            parent_id: null,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: 1,
+      }
+      mockInvokeWith(page)
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('Keyboard Nav Page')
+      const item = screen.getByText('Keyboard Nav Page').closest('li')!
+      item.focus()
+      await user.keyboard('{Enter}')
+
+      const state = useNavigationStore.getState()
+      expect(state.currentView).toBe('page-editor')
+      expect(state.pageStack).toEqual([
+        { pageId: '01HPAGEBB00000000000001', title: 'Keyboard Nav Page' },
+      ])
+    })
+
+    it('pressing Space on a backlink item triggers navigation', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          {
+            ...makeBlock('01HPAGECC00000000000001', 'Space Nav Page', 'page'),
+            parent_id: null,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: 1,
+      }
+      mockInvokeWith(page)
+
+      render(<BacklinksPanel blockId="TARGET01" />)
+
+      await screen.findByText('Space Nav Page')
+      const item = screen.getByText('Space Nav Page').closest('li')!
+      item.focus()
+      await user.keyboard(' ')
+
+      const state = useNavigationStore.getState()
+      expect(state.currentView).toBe('page-editor')
+      expect(state.pageStack).toEqual([
+        { pageId: '01HPAGECC00000000000001', title: 'Space Nav Page' },
+      ])
     })
   })
 })
