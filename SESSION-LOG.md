@@ -1,5 +1,37 @@
 # Session Log
 
+## Session 17 — 2026-03-31 — Items #127, #131, #132, #133, #149, #184
+
+### Build 1: Frontend undo fixes (#127 + #132 + #133)
+- #127: Aligned `UndoResult` in tauri.ts with bindings.ts (new_op → new_op_ref + new_op_type), updated mock + tests
+- #132: Added `MAX_REDO_STACK = 100` constant and `.slice()` cap in undo.ts, with test
+- #133: Replaced empty `.catch(() => {})` with `toast.error('Undo/Redo failed')` in useUndoShortcuts.ts, tests verify
+
+### Build 2: Rust undo_depth validation (#131)
+- Added `if undo_depth < 0` validation guard in `undo_page_op_inner` returning `AppError::Validation`
+- Test verifies negative depth (-1) returns correct error variant and message
+- `redo_page_op_inner` confirmed not affected (uses sequence number, not depth)
+
+### Build 3: AlertDialog for TrashView + ConflictList (#149)
+- Replaced inline confirmation `<div>` with Radix `<AlertDialog>` in both components
+- Removed manual Escape key listeners (AlertDialog handles natively)
+- Preserved CSS class names for E2E test compatibility
+- Updated component tests: text assertions + `axe(document.body)` for portal content
+
+### #184: Already resolved
+- BlockContextMenu.test.tsx has comprehensive keyboard navigation tests (ArrowUp/Down/Home/End/Enter)
+- Marked as resolved in REVIEW-LATER.md
+
+### Reviews: 3 subagents
+- Frontend undo (#127+#132+#133): APPROVE — type alignment verified, no old field refs, cap + toast correct
+- Rust validation (#131): APPROVE — guard at function entry, correct error variant, happy path unaffected
+- AlertDialog (#149): APPROVE — CSS classes preserved, portal rendering handled, E2E compat verified
+
+### Commit: 9e25d31
+- All prek hooks pass (biome, typescript, vitest, cargo fmt, clippy, nextest)
+- 1427 vitest tests, 24/25 E2E pass (1 pre-existing failure in context menu Delete)
+- 904 Rust tests pass
+
 ## Session 16 — 2026-03-31 — Tier 6 Items #84, #89, #100, #101
 
 ### Build 1: DnD E2E test + computePosition fix (#84)
