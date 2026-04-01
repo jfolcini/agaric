@@ -5,7 +5,7 @@
  * Supports restoring a block to a previous state via the op log payload.
  */
 
-import { Clock, Loader2, RotateCcw } from 'lucide-react'
+import { ChevronDown, ChevronRight, Clock, Loader2, RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
@@ -23,8 +23,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatTimestamp } from '../lib/format'
-import type { HistoryEntry } from '../lib/tauri'
-import { editBlock, getBlockHistory } from '../lib/tauri'
+import type { DiffSpan, HistoryEntry } from '../lib/tauri'
+import { computeEditDiff, editBlock, getBlockHistory } from '../lib/tauri'
+import { DiffDisplay } from './DiffDisplay'
 import { EmptyState } from './EmptyState'
 
 interface HistoryPanelProps {
@@ -39,6 +40,9 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const [hasMore, setHasMore] = useState(false)
   const [restoringSeq, setRestoringSeq] = useState<number | null>(null)
   const [confirmEntry, setConfirmEntry] = useState<HistoryEntry | null>(null)
+  const [expandedSeqs, setExpandedSeqs] = useState<Set<number>>(new Set())
+  const [diffCache, setDiffCache] = useState<Map<number, DiffSpan[]>>(new Map())
+  const [loadingDiffs, setLoadingDiffs] = useState<Set<number>>(new Set())
 
   const loadHistory = useCallback(
     async (cursor?: string) => {
@@ -91,6 +95,37 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     [blockId],
   )
 
+  const handleToggleDiff = useCallback(
+    async (entry: HistoryEntry) => {
+      const seq = entry.seq
+      if (expandedSeqs.has(seq)) {
+        setExpandedSeqs((prev) => {
+          const next = new Set(prev)
+          next.delete(seq)
+          return next
+        })
+        return
+      }
+      setExpandedSeqs((prev) => new Set(prev).add(seq))
+      if (diffCache.has(seq)) return
+      setLoadingDiffs((prev) => new Set(prev).add(seq))
+      try {
+        const diff = await computeEditDiff({ deviceId: entry.device_id, seq })
+        if (diff) {
+          setDiffCache((prev) => new Map(prev).set(seq, diff))
+        }
+      } catch {
+        toast.error('Failed to load diff')
+      }
+      setLoadingDiffs((prev) => {
+        const next = new Set(prev)
+        next.delete(seq)
+        return next
+      })
+    },
+    [expandedSeqs, diffCache],
+  )
+
   /** Extract a preview from the payload for edit_block ops. */
   function getPayloadPreview(entry: HistoryEntry): string | null {
     try {
@@ -129,42 +164,66 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
           return (
             <li
               key={entry.seq}
-              className="history-item flex items-start justify-between gap-3 rounded-lg border bg-card p-4"
+              className="history-item flex flex-col rounded-lg border bg-card p-4"
             >
-              <div className="history-item-content flex flex-col gap-1 min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary" className="history-item-type shrink-0">
-                    {entry.op_type}
-                  </Badge>
-                  <span className="history-item-time text-xs text-muted-foreground">
-                    {formatTimestamp(entry.created_at)}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground/60">&middot;</span>
-                  <span className="text-[10px] text-muted-foreground/60">
-                    dev:{entry.device_id.slice(0, 8)}
-                  </span>
+              <div className="history-item-row flex items-start justify-between gap-3 w-full">
+                <div className="history-item-content flex flex-col gap-1 min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="history-item-type shrink-0">
+                      {entry.op_type}
+                    </Badge>
+                    <span className="history-item-time text-xs text-muted-foreground">
+                      {formatTimestamp(entry.created_at)}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground/60">&middot;</span>
+                    <span className="text-[10px] text-muted-foreground/60">
+                      dev:{entry.device_id.slice(0, 8)}
+                    </span>
+                  </div>
+                  {preview && (
+                    <span className="history-item-preview text-sm text-muted-foreground truncate">
+                      {preview}
+                    </span>
+                  )}
                 </div>
-                {preview && (
-                  <span className="history-item-preview text-sm text-muted-foreground truncate">
-                    {preview}
-                  </span>
+                {entry.op_type === 'edit_block' && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="diff-toggle-btn shrink-0 h-7 px-2"
+                    onClick={() => handleToggleDiff(entry)}
+                  >
+                    {loadingDiffs.has(entry.seq) ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : expandedSeqs.has(entry.seq) ? (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    )}
+                    Diff
+                  </Button>
+                )}
+                {isEditBlock && preview && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="history-restore-btn shrink-0"
+                    onClick={() => setConfirmEntry(entry)}
+                    disabled={restoringSeq === entry.seq}
+                  >
+                    {restoringSeq === entry.seq ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    )}
+                    Restore
+                  </Button>
                 )}
               </div>
-              {isEditBlock && preview && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="history-restore-btn shrink-0"
-                  onClick={() => setConfirmEntry(entry)}
-                  disabled={restoringSeq === entry.seq}
-                >
-                  {restoringSeq === entry.seq ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RotateCcw className="h-3.5 w-3.5" />
-                  )}
-                  Restore
-                </Button>
+              {expandedSeqs.has(entry.seq) && diffCache.has(entry.seq) && (
+                <div className="diff-container mt-2 w-full">
+                  <DiffDisplay spans={diffCache.get(entry.seq) ?? []} />
+                </div>
               )}
             </li>
           )

@@ -300,7 +300,7 @@ fn reverse_restore_block(record: &OpRecord) -> Result<OpPayload, AppError> {
 ///
 /// - For `edit_block` ops, returns `to_text`.
 /// - For `create_block` ops, returns `content`.
-async fn find_prior_text(
+pub(crate) async fn find_prior_text(
     pool: &SqlitePool,
     block_id: &str,
     created_at: &str,

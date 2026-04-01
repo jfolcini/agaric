@@ -7,6 +7,8 @@ export type {
   BlockRow,
   CompareOp,
   DeleteResponse,
+  DiffSpan,
+  DiffTag,
   HistoryEntry,
   MoveResponse,
   PageResponse,
@@ -24,6 +26,7 @@ import type {
   BacklinkSort,
   BlockRow,
   DeleteResponse,
+  DiffSpan,
   HistoryEntry,
   MoveResponse,
   PageResponse,
@@ -207,9 +210,13 @@ export async function queryByTags(params: {
 }
 
 /** List tags whose name starts with the given prefix (autocomplete). */
-export async function listTagsByPrefix(params: { prefix: string }): Promise<TagCacheRow[]> {
+export async function listTagsByPrefix(params: {
+  prefix: string
+  limit?: number
+}): Promise<TagCacheRow[]> {
   return invoke('list_tags_by_prefix', {
     prefix: params.prefix,
+    ...(params.limit != null && { limit: params.limit }),
   })
 }
 
@@ -337,6 +344,21 @@ export async function redoPageOp(params: {
   return invoke('redo_page_op', {
     undoDeviceId: params.undoDeviceId,
     undoSeq: params.undoSeq,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Word-level diff for history display
+// ---------------------------------------------------------------------------
+
+/** Compute a word-level diff for an edit_block history entry. Returns null for non-edit ops. */
+export async function computeEditDiff(params: {
+  deviceId: string
+  seq: number
+}): Promise<DiffSpan[] | null> {
+  return invoke('compute_edit_diff', {
+    deviceId: params.deviceId,
+    seq: params.seq,
   })
 }
 

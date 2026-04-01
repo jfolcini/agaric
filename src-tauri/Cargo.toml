@@ -44,6 +44,7 @@ specta-typescript = "0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 rustc-hash = "2.1.2"
 diffy = "0.4.2"
+similar = "2"
 zstd = "0.13"
 ciborium = "0.2"
 tracing = "0.1.44"
@@ -110,4 +111,12 @@ harness = false
 
 [[bench]]
 name = "backlink_query_bench"
+harness = false
+
+[[bench]]
+name = "move_reorder_bench"
+harness = false
+
+[[bench]]
+name = "sync_bench"
 harness = false

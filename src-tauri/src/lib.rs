@@ -24,6 +24,7 @@ pub mod sync_net;
 pub mod sync_protocol;
 pub mod tag_query;
 pub mod ulid;
+pub mod word_diff;
 
 /// Return the current UTC time as an RFC 3339 string with millisecond
 /// precision and a `Z` suffix (e.g. `2025-01-15T12:34:56.789Z`).
@@ -80,6 +81,7 @@ mod specta_tests {
             crate::commands::revert_ops,
             crate::commands::undo_page_op,
             crate::commands::redo_page_op,
+            crate::commands::compute_edit_diff,
             crate::commands::query_backlinks_filtered,
             crate::commands::list_property_keys,
             // Sync
@@ -206,6 +208,7 @@ pub fn run() {
         commands::revert_ops,
         commands::undo_page_op,
         commands::redo_page_op,
+        commands::compute_edit_diff,
         commands::query_backlinks_filtered,
         commands::list_property_keys,
         // Sync

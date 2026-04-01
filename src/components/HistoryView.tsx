@@ -6,7 +6,7 @@
  * and batch revert with confirmation dialog.
  */
 
-import { Clock, Lock, RotateCcw } from 'lucide-react'
+import { ChevronDown, ChevronRight, Clock, Loader2, Lock, RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -25,8 +25,9 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTimestamp } from '../lib/format'
-import type { HistoryEntry } from '../lib/tauri'
-import { listPageHistory, revertOps } from '../lib/tauri'
+import type { DiffSpan, HistoryEntry } from '../lib/tauri'
+import { computeEditDiff, listPageHistory, revertOps } from '../lib/tauri'
+import { DiffDisplay } from './DiffDisplay'
 import { EmptyState } from './EmptyState'
 
 // ---------------------------------------------------------------------------
@@ -126,6 +127,9 @@ export function HistoryView(): React.ReactElement {
   const [confirmRevert, setConfirmRevert] = useState(false)
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
+  const [diffCache, setDiffCache] = useState<Map<string, DiffSpan[]>>(new Map())
+  const [loadingDiffs, setLoadingDiffs] = useState<Set<string>>(new Set())
 
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -264,6 +268,37 @@ export function HistoryView(): React.ReactElement {
     setReverting(false)
     setConfirmRevert(false)
   }, [selected, entries, loadHistory])
+
+  const handleToggleDiff = useCallback(
+    async (entry: HistoryEntry) => {
+      const key = entryKey(entry)
+      if (expandedKeys.has(key)) {
+        setExpandedKeys((prev) => {
+          const next = new Set(prev)
+          next.delete(key)
+          return next
+        })
+        return
+      }
+      setExpandedKeys((prev) => new Set(prev).add(key))
+      if (diffCache.has(key)) return
+      setLoadingDiffs((prev) => new Set(prev).add(key))
+      try {
+        const diff = await computeEditDiff({ deviceId: entry.device_id, seq: entry.seq })
+        if (diff) {
+          setDiffCache((prev) => new Map(prev).set(key, diff))
+        }
+      } catch {
+        toast.error('Failed to load diff')
+      }
+      setLoadingDiffs((prev) => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    },
+    [expandedKeys, diffCache],
+  )
 
   // ── Keyboard navigation ──────────────────────────────────────────
 
@@ -458,7 +493,7 @@ export function HistoryView(): React.ReactElement {
                 data-testid={`history-item-${index}`}
                 role="option"
                 aria-selected={isSelected}
-                className={`history-item flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors ${
+                className={`history-item flex flex-col gap-2 rounded-lg border p-4 cursor-pointer transition-colors ${
                   isSelected ? 'bg-accent/50 border-accent' : 'bg-card hover:bg-accent/30'
                 } ${isFocused ? 'ring-2 ring-ring' : ''} ${isNonReversible ? 'opacity-50' : ''}`}
                 onClick={(e) => handleRowClick(index, e)}
@@ -471,63 +506,97 @@ export function HistoryView(): React.ReactElement {
                 tabIndex={isFocused ? 0 : -1}
                 aria-disabled={isNonReversible || undefined}
               >
-                {/* Checkbox */}
-                <input
-                  type="checkbox"
-                  checked={isSelected}
-                  disabled={isNonReversible}
-                  onChange={() => toggleSelection(index)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="h-4 w-4 shrink-0 rounded border-border"
-                  aria-label={`Select operation ${entry.op_type} #${entry.seq}`}
-                />
+                <div className="flex items-center gap-3 w-full">
+                  {/* Checkbox */}
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    disabled={isNonReversible}
+                    onChange={() => toggleSelection(index)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="h-4 w-4 shrink-0 rounded border-border"
+                    aria-label={`Select operation ${entry.op_type} #${entry.seq}`}
+                  />
 
-                {/* Op type badge */}
-                <Badge
-                  variant="outline"
-                  className={`history-item-type shrink-0 border-transparent ${opBadgeClasses(entry.op_type)}`}
-                >
-                  {entry.op_type}
-                </Badge>
+                  {/* Op type badge */}
+                  <Badge
+                    variant="outline"
+                    className={`history-item-type shrink-0 border-transparent ${opBadgeClasses(entry.op_type)}`}
+                  >
+                    {entry.op_type}
+                  </Badge>
 
-                {/* Content preview + timestamp */}
-                <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                  {preview && (
-                    <span className="history-item-preview text-sm truncate">{preview}</span>
+                  {/* Content preview + timestamp */}
+                  <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                    {preview && (
+                      <span className="history-item-preview text-sm truncate">{preview}</span>
+                    )}
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="history-item-time text-xs text-muted-foreground w-fit">
+                            {formatTimestamp(entry.created_at, 'relative')}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{formatTimestamp(entry.created_at, 'full')}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <span className="text-[10px] text-muted-foreground/60"> · </span>
+                    <span className="history-item-device text-[10px] text-muted-foreground/60">
+                      dev:{entry.device_id.slice(0, 8)}
+                    </span>
+                  </div>
+
+                  {/* Diff toggle for edit_block entries */}
+                  {entry.op_type === 'edit_block' && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="diff-toggle-btn shrink-0 h-7 px-2"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleToggleDiff(entry)
+                      }}
+                    >
+                      {loadingDiffs.has(key) ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : expandedKeys.has(key) ? (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      )}
+                      Diff
+                    </Button>
                   )}
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="history-item-time text-xs text-muted-foreground w-fit">
-                          {formatTimestamp(entry.created_at, 'relative')}
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>{formatTimestamp(entry.created_at, 'full')}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  <span className="text-[10px] text-muted-foreground/60"> · </span>
-                  <span className="history-item-device text-[10px] text-muted-foreground/60">
-                    dev:{entry.device_id.slice(0, 8)}
-                  </span>
-                </div>
 
-                {/* Lock icon for non-reversible ops */}
-                {isNonReversible && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Lock
-                          className="h-4 w-4 shrink-0 text-muted-foreground"
-                          aria-label="Non-reversible"
-                        />
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>This operation cannot be reversed</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  {/* Lock icon for non-reversible ops */}
+                  {isNonReversible && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Lock
+                            className="h-4 w-4 shrink-0 text-muted-foreground"
+                            aria-label="Non-reversible"
+                          />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>This operation cannot be reversed</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+                </div>
+                {expandedKeys.has(key) && diffCache.has(key) && (
+                  // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation prevents parent row selection when clicking diff
+                  <div
+                    className="diff-container mt-2 w-full"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <DiffDisplay spans={diffCache.get(key) ?? []} />
+                  </div>
                 )}
               </div>
             )
