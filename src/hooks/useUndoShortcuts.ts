@@ -12,6 +12,7 @@ import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { useUndoStore } from '@/stores/undo'
 import { getBlock } from '../lib/tauri'
+import { useResolveStore } from '../stores/resolve'
 
 /** Reload block store and refresh page title in nav store after undo/redo. */
 async function refreshAfterUndoRedo(pageId: string): Promise<void> {
@@ -20,6 +21,7 @@ async function refreshAfterUndoRedo(pageId: string): Promise<void> {
     const pageBlock = await getBlock(pageId)
     if (pageBlock?.content) {
       useNavigationStore.getState().replacePage(pageId, pageBlock.content)
+      useResolveStore.getState().set(pageId, pageBlock.content, false)
     }
   } catch {
     // Page title refresh is best-effort

@@ -44,29 +44,34 @@ export const useResolveStore = create<ResolveStore>((set, get) => ({
 
   preload: async () => {
     try {
-      const cache = new Map(get().cache)
-
       // Fetch all pages
       const pagesResp = await listBlocks({ blockType: 'page', limit: 1000 })
       const pagesList: Array<{ id: string; title: string }> = []
+      const fetchedPages = new Map<string, ResolveEntry>()
       for (const p of pagesResp.items) {
         const title = p.content ?? 'Untitled'
-        cache.set(p.id, { title, deleted: p.deleted_at !== null })
+        fetchedPages.set(p.id, { title, deleted: p.deleted_at !== null })
         pagesList.push({ id: p.id, title })
       }
 
       // Fetch all tags
       const tags = await listTagsByPrefix({ prefix: '' })
+      const fetchedTags = new Map<string, ResolveEntry>()
       for (const t of tags) {
-        cache.set(t.tag_id, { title: t.name, deleted: false })
+        fetchedTags.set(t.tag_id, { title: t.name, deleted: false })
       }
 
-      set((state) => ({
-        cache,
-        pagesList,
-        version: state.version + 1,
-        _preloaded: true,
-      }))
+      // Merge: fetched data fills gaps, but concurrent set() calls win
+      // (state.cache is current at commit time thanks to the updater pattern)
+      set((state) => {
+        const cache = new Map([...fetchedPages, ...fetchedTags, ...state.cache])
+        return {
+          cache,
+          pagesList,
+          version: state.version + 1,
+          _preloaded: true,
+        }
+      })
     } catch {
       // Preload failed — resolve callbacks will use fallbacks
       set({ _preloaded: true })

@@ -26,6 +26,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { formatTimestamp } from '../lib/format'
 import type { BlockRow } from '../lib/tauri'
 import { listBlocks, purgeBlock, restoreBlock } from '../lib/tauri'
+import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 
 export function TrashView(): React.ReactElement {
@@ -61,6 +62,9 @@ export function TrashView(): React.ReactElement {
     try {
       await restoreBlock(block.id, block.deleted_at)
       setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+      if (block.block_type === 'page' || block.block_type === 'tag') {
+        useResolveStore.getState().set(block.id, block.content ?? 'Untitled', false)
+      }
       toast.success('Block restored')
     } catch {
       toast.error('Failed to restore block')

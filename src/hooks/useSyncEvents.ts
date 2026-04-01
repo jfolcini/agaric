@@ -16,6 +16,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useEffect } from 'react'
 import { toast } from 'sonner'
 import { useBlockStore } from '@/stores/blocks'
+import { useResolveStore } from '@/stores/resolve'
 import { useSyncStore } from '@/stores/sync'
 
 /** Payload shapes from the Rust backend sync_events.rs */
@@ -105,6 +106,7 @@ export function useSyncEvents(): void {
       if (ops_received > 0) {
         const { rootParentId } = useBlockStore.getState()
         useBlockStore.getState().load(rootParentId ?? undefined)
+        useResolveStore.getState().preload()
       }
     }).then((unlisten) => {
       if (cancelled) unlisten()
