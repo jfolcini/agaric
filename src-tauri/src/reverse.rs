@@ -23,6 +23,7 @@ use crate::op::{
     MoveBlockPayload, OpPayload, OpType, RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload,
 };
 use crate::op_log::OpRecord;
+use crate::ulid::BlockId;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -96,26 +97,31 @@ fn reverse_delete_block(_pool: &SqlitePool, record: &OpRecord) -> Result<OpPaylo
     }))
 }
 
-/// `edit_block` -> `EditBlock { block_id, to_text: prior_text, prev_edit: None }`
+/// `edit_block` -> `EditBlock { block_id, to_text: prior_text, prev_edit: Some((device_id, seq)) }`
 ///
 /// Finds the prior text by looking for the most recent `edit_block` or
 /// `create_block` for this `block_id` in the op log *before* the target op.
 async fn reverse_edit_block(pool: &SqlitePool, record: &OpRecord) -> Result<OpPayload, AppError> {
     let payload: EditBlockPayload = serde_json::from_str(&record.payload)?;
 
-    let prior_text = find_prior_text(pool, &payload.block_id, &record.created_at, record.seq)
-        .await?
-        .ok_or_else(|| {
-            AppError::NotFound(format!(
-                "no prior text found for block '{}' before ({}, {})",
-                payload.block_id, record.device_id, record.seq
-            ))
-        })?;
+    let prior_text = find_prior_text(
+        pool,
+        payload.block_id.as_str(),
+        &record.created_at,
+        record.seq,
+    )
+    .await?
+    .ok_or_else(|| {
+        AppError::NotFound(format!(
+            "no prior text found for block '{}' before ({}, {})",
+            payload.block_id, record.device_id, record.seq
+        ))
+    })?;
 
     Ok(OpPayload::EditBlock(EditBlockPayload {
         block_id: payload.block_id,
         to_text: prior_text,
-        prev_edit: None,
+        prev_edit: Some((record.device_id.clone(), record.seq)),
     }))
 }
 
@@ -126,15 +132,19 @@ async fn reverse_edit_block(pool: &SqlitePool, record: &OpRecord) -> Result<OpPa
 async fn reverse_move_block(pool: &SqlitePool, record: &OpRecord) -> Result<OpPayload, AppError> {
     let payload: MoveBlockPayload = serde_json::from_str(&record.payload)?;
 
-    let (old_parent, old_pos) =
-        find_prior_position(pool, &payload.block_id, &record.created_at, record.seq)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!(
-                    "no prior position found for block '{}' before ({}, {})",
-                    payload.block_id, record.device_id, record.seq
-                ))
-            })?;
+    let (old_parent, old_pos) = find_prior_position(
+        pool,
+        payload.block_id.as_str(),
+        &record.created_at,
+        record.seq,
+    )
+    .await?
+    .ok_or_else(|| {
+        AppError::NotFound(format!(
+            "no prior position found for block '{}' before ({}, {})",
+            payload.block_id, record.device_id, record.seq
+        ))
+    })?;
 
     Ok(OpPayload::MoveBlock(MoveBlockPayload {
         block_id: payload.block_id,
@@ -168,7 +178,7 @@ async fn reverse_set_property(pool: &SqlitePool, record: &OpRecord) -> Result<Op
 
     let prior = find_prior_property(
         pool,
-        &payload.block_id,
+        payload.block_id.as_str(),
         &payload.key,
         &record.created_at,
         record.seq,
@@ -202,7 +212,7 @@ async fn reverse_delete_property(
 
     let prior = find_prior_property(
         pool,
-        &payload.block_id,
+        payload.block_id.as_str(),
         &payload.key,
         &record.created_at,
         record.seq,
@@ -304,7 +314,7 @@ async fn find_prior_position(
     block_id: &str,
     created_at: &str,
     seq: i64,
-) -> Result<Option<(Option<String>, i64)>, AppError> {
+) -> Result<Option<(Option<BlockId>, i64)>, AppError> {
     let row = sqlx::query!(
         "SELECT op_type, payload FROM op_log \
          WHERE json_extract(payload, '$.block_id') = ?1 \
@@ -395,6 +405,7 @@ mod tests {
     use crate::db::init_pool;
     use crate::op::*;
     use crate::op_log::append_local_op_at;
+    use crate::ulid::BlockId;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -428,7 +439,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let create = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "BLK1".into(),
+            block_id: BlockId::test_id("BLK1"),
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
@@ -454,7 +465,7 @@ mod tests {
         // no blocks table row needed.
         let delete_ts = "2025-01-15T13:00:00+00:00";
         let delete = OpPayload::DeleteBlock(DeleteBlockPayload {
-            block_id: "BLK2".into(),
+            block_id: BlockId::test_id("BLK2"),
         });
         let rec = append_op(&pool, delete, delete_ts).await;
 
@@ -480,7 +491,7 @@ mod tests {
 
         // First: create_block (content = "original")
         let create = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "BLK3".into(),
+            block_id: BlockId::test_id("BLK3"),
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
@@ -490,7 +501,7 @@ mod tests {
 
         // Second: edit_block #1 (to_text = "first edit")
         let edit1 = OpPayload::EditBlock(EditBlockPayload {
-            block_id: "BLK3".into(),
+            block_id: BlockId::test_id("BLK3"),
             to_text: "first edit".into(),
             prev_edit: None,
         });
@@ -498,7 +509,7 @@ mod tests {
 
         // Third: edit_block #2 (to_text = "second edit")
         let edit2 = OpPayload::EditBlock(EditBlockPayload {
-            block_id: "BLK3".into(),
+            block_id: BlockId::test_id("BLK3"),
             to_text: "second edit".into(),
             prev_edit: None,
         });
@@ -513,9 +524,15 @@ mod tests {
                     p.to_text, "first edit",
                     "reverse should use prior edit's to_text"
                 );
+                assert!(
+                    p.prev_edit.is_some(),
+                    "reverse edit should have prev_edit = Some((device_id, seq))"
+                );
+                let (ref dev, seq) = p.prev_edit.as_ref().unwrap();
+                assert_eq!(dev, TEST_DEVICE, "prev_edit device_id should match");
                 assert_eq!(
-                    p.prev_edit, None,
-                    "reverse edit should have prev_edit = None"
+                    *seq, rec.seq,
+                    "prev_edit seq should match the reversed op's seq"
                 );
             }
             _ => panic!("expected EditBlock, got: {reverse:?}"),
@@ -530,7 +547,7 @@ mod tests {
 
         // create_block with content = "from create"
         let create = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "BLK4".into(),
+            block_id: BlockId::test_id("BLK4"),
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
@@ -540,7 +557,7 @@ mod tests {
 
         // edit_block (to_text = "edited")
         let edit = OpPayload::EditBlock(EditBlockPayload {
-            block_id: "BLK4".into(),
+            block_id: BlockId::test_id("BLK4"),
             to_text: "edited".into(),
             prev_edit: None,
         });
@@ -567,9 +584,9 @@ mod tests {
 
         // First: create_block with parent_id = "P1", position = 1
         let create = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "BLK5".into(),
+            block_id: BlockId::test_id("BLK5"),
             block_type: "content".into(),
-            parent_id: Some("P1".into()),
+            parent_id: Some(BlockId::test_id("P1")),
             position: Some(1),
             content: "test".into(),
         });
@@ -577,16 +594,16 @@ mod tests {
 
         // Second: move_block #1 (new_parent_id = "P2", new_position = 3)
         let move1 = OpPayload::MoveBlock(MoveBlockPayload {
-            block_id: "BLK5".into(),
-            new_parent_id: Some("P2".into()),
+            block_id: BlockId::test_id("BLK5"),
+            new_parent_id: Some(BlockId::test_id("P2")),
             new_position: 3,
         });
         append_op(&pool, move1, "2025-01-15T12:01:00+00:00").await;
 
         // Third: move_block #2 (new_parent_id = "P3", new_position = 5)
         let move2 = OpPayload::MoveBlock(MoveBlockPayload {
-            block_id: "BLK5".into(),
-            new_parent_id: Some("P3".into()),
+            block_id: BlockId::test_id("BLK5"),
+            new_parent_id: Some(BlockId::test_id("P3")),
             new_position: 5,
         });
         let rec = append_op(&pool, move2, "2025-01-15T12:02:00+00:00").await;
@@ -598,7 +615,7 @@ mod tests {
                 assert_eq!(p.block_id, "BLK5", "block_id mismatch");
                 assert_eq!(
                     p.new_parent_id,
-                    Some("P2".into()),
+                    Some(BlockId::test_id("P2")),
                     "reverse should use prior move's parent_id"
                 );
                 assert_eq!(
@@ -618,9 +635,9 @@ mod tests {
 
         // create_block with parent_id = "ROOT", position = 2
         let create = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "BLK6".into(),
+            block_id: BlockId::test_id("BLK6"),
             block_type: "content".into(),
-            parent_id: Some("ROOT".into()),
+            parent_id: Some(BlockId::test_id("ROOT")),
             position: Some(2),
             content: "test".into(),
         });
@@ -628,8 +645,8 @@ mod tests {
 
         // move_block (new_parent_id = "OTHER", new_position = 7)
         let mv = OpPayload::MoveBlock(MoveBlockPayload {
-            block_id: "BLK6".into(),
-            new_parent_id: Some("OTHER".into()),
+            block_id: BlockId::test_id("BLK6"),
+            new_parent_id: Some(BlockId::test_id("OTHER")),
             new_position: 7,
         });
         let rec = append_op(&pool, mv, "2025-01-15T12:01:00+00:00").await;
@@ -640,7 +657,7 @@ mod tests {
             OpPayload::MoveBlock(ref p) => {
                 assert_eq!(
                     p.new_parent_id,
-                    Some("ROOT".into()),
+                    Some(BlockId::test_id("ROOT")),
                     "reverse should use create_block's parent_id"
                 );
                 assert_eq!(
@@ -659,8 +676,8 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let add = OpPayload::AddTag(AddTagPayload {
-            block_id: "BLK7".into(),
-            tag_id: "TAG1".into(),
+            block_id: BlockId::test_id("BLK7"),
+            tag_id: BlockId::test_id("TAG1"),
         });
         let rec = append_op(&pool, add, FIXED_TS).await;
 
@@ -682,8 +699,8 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let remove = OpPayload::RemoveTag(RemoveTagPayload {
-            block_id: "BLK8".into(),
-            tag_id: "TAG2".into(),
+            block_id: BlockId::test_id("BLK8"),
+            tag_id: BlockId::test_id("TAG2"),
         });
         let rec = append_op(&pool, remove, FIXED_TS).await;
 
@@ -706,7 +723,7 @@ mod tests {
 
         // First set_property: key = "priority", value_text = "low"
         let set1 = OpPayload::SetProperty(SetPropertyPayload {
-            block_id: "BLK9".into(),
+            block_id: BlockId::test_id("BLK9"),
             key: "priority".into(),
             value_text: Some("low".into()),
             value_num: None,
@@ -717,7 +734,7 @@ mod tests {
 
         // Second set_property: key = "priority", value_text = "high"
         let set2 = OpPayload::SetProperty(SetPropertyPayload {
-            block_id: "BLK9".into(),
+            block_id: BlockId::test_id("BLK9"),
             key: "priority".into(),
             value_text: Some("high".into()),
             value_num: None,
@@ -748,7 +765,7 @@ mod tests {
 
         // Only one set_property — no prior exists
         let set1 = OpPayload::SetProperty(SetPropertyPayload {
-            block_id: "BLK9B".into(),
+            block_id: BlockId::test_id("BLK9B"),
             key: "status".into(),
             value_text: Some("active".into()),
             value_num: None,
@@ -776,7 +793,7 @@ mod tests {
 
         // set_property: key = "color", value_text = "blue"
         let set = OpPayload::SetProperty(SetPropertyPayload {
-            block_id: "BLK10".into(),
+            block_id: BlockId::test_id("BLK10"),
             key: "color".into(),
             value_text: Some("blue".into()),
             value_num: None,
@@ -787,7 +804,7 @@ mod tests {
 
         // delete_property: key = "color"
         let del = OpPayload::DeleteProperty(DeletePropertyPayload {
-            block_id: "BLK10".into(),
+            block_id: BlockId::test_id("BLK10"),
             key: "color".into(),
         });
         let rec = append_op(&pool, del, "2025-01-15T12:01:00+00:00").await;
@@ -816,7 +833,7 @@ mod tests {
 
         let add = OpPayload::AddAttachment(AddAttachmentPayload {
             attachment_id: "ATT1".into(),
-            block_id: "BLK11".into(),
+            block_id: BlockId::test_id("BLK11"),
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
             size_bytes: 1024,
@@ -841,7 +858,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let purge = OpPayload::PurgeBlock(PurgeBlockPayload {
-            block_id: "BLK12".into(),
+            block_id: BlockId::test_id("BLK12"),
         });
         let rec = append_op(&pool, purge, FIXED_TS).await;
 
@@ -886,7 +903,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let restore = OpPayload::RestoreBlock(RestoreBlockPayload {
-            block_id: "BLK14".into(),
+            block_id: BlockId::test_id("BLK14"),
             deleted_at_ref: "2025-01-15T10:00:00+00:00".into(),
         });
         let rec = append_op(&pool, restore, FIXED_TS).await;
@@ -907,7 +924,7 @@ mod tests {
 
         // edit_block for a block that has no prior create_block or edit_block
         let edit = OpPayload::EditBlock(EditBlockPayload {
-            block_id: "ORPHAN_EDIT".into(),
+            block_id: BlockId::test_id("ORPHAN_EDIT"),
             to_text: "new text".into(),
             prev_edit: None,
         });
@@ -931,8 +948,8 @@ mod tests {
 
         // move_block for a block that has no prior create_block or move_block
         let mv = OpPayload::MoveBlock(MoveBlockPayload {
-            block_id: "ORPHAN_MOVE".into(),
-            new_parent_id: Some("P1".into()),
+            block_id: BlockId::test_id("ORPHAN_MOVE"),
+            new_parent_id: Some(BlockId::test_id("P1")),
             new_position: 5,
         });
         let rec = append_op(&pool, mv, FIXED_TS).await;
@@ -955,7 +972,7 @@ mod tests {
 
         // delete_property for a (block_id, key) that has no prior set_property
         let del = OpPayload::DeleteProperty(DeletePropertyPayload {
-            block_id: "ORPHAN_PROP".into(),
+            block_id: BlockId::test_id("ORPHAN_PROP"),
             key: "color".into(),
         });
         let rec = append_op(&pool, del, FIXED_TS).await;
@@ -1000,9 +1017,9 @@ mod tests {
         let _create = append_op(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "BLK_UC1".into(),
+                block_id: BlockId::test_id("BLK_UC1"),
                 block_type: "content".into(),
-                parent_id: Some("PAGE1".into()),
+                parent_id: Some(BlockId::test_id("PAGE1")),
                 position: Some(0),
                 content: "original".into(),
             }),
@@ -1014,7 +1031,7 @@ mod tests {
         let edit = append_op(
             &pool,
             OpPayload::EditBlock(EditBlockPayload {
-                block_id: "BLK_UC1".into(),
+                block_id: BlockId::test_id("BLK_UC1"),
                 to_text: "modified".into(),
                 prev_edit: None,
             }),
@@ -1056,9 +1073,9 @@ mod tests {
         let _create = append_op(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "BLK_UC2".into(),
+                block_id: BlockId::test_id("BLK_UC2"),
                 block_type: "content".into(),
-                parent_id: Some("PAGE1".into()),
+                parent_id: Some(BlockId::test_id("PAGE1")),
                 position: Some(0),
                 content: "moveable".into(),
             }),
@@ -1070,8 +1087,8 @@ mod tests {
         let move_op = append_op(
             &pool,
             OpPayload::MoveBlock(MoveBlockPayload {
-                block_id: "BLK_UC2".into(),
-                new_parent_id: Some("PAGE2".into()),
+                block_id: BlockId::test_id("BLK_UC2"),
+                new_parent_id: Some(BlockId::test_id("PAGE2")),
                 new_position: 5,
             }),
             "2025-01-15T12:01:00+00:00",
@@ -1084,7 +1101,7 @@ mod tests {
             .unwrap();
         match &rev1 {
             OpPayload::MoveBlock(p) => {
-                assert_eq!(p.new_parent_id, Some("PAGE1".into()));
+                assert_eq!(p.new_parent_id, Some(BlockId::test_id("PAGE1")));
                 assert_eq!(p.new_position, 0);
             }
             other => panic!("Expected MoveBlock, got {:?}", other),
@@ -1099,7 +1116,7 @@ mod tests {
             .unwrap();
         match &rev2 {
             OpPayload::MoveBlock(p) => {
-                assert_eq!(p.new_parent_id, Some("PAGE2".into()));
+                assert_eq!(p.new_parent_id, Some(BlockId::test_id("PAGE2")));
                 assert_eq!(p.new_position, 5);
             }
             other => panic!("Expected MoveBlock, got {:?}", other),
@@ -1116,7 +1133,7 @@ mod tests {
         let create = append_op(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "BLK_UC3".into(),
+                block_id: BlockId::test_id("BLK_UC3"),
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(0),
@@ -1180,7 +1197,7 @@ mod tests {
         let set1 = append_op(
             &pool,
             OpPayload::SetProperty(SetPropertyPayload {
-                block_id: "BLK_PN".into(),
+                block_id: BlockId::test_id("BLK_PN"),
                 key: "score".into(),
                 value_text: None,
                 value_num: Some(42.0),
@@ -1205,7 +1222,7 @@ mod tests {
         let set2 = append_op(
             &pool,
             OpPayload::SetProperty(SetPropertyPayload {
-                block_id: "BLK_PN".into(),
+                block_id: BlockId::test_id("BLK_PN"),
                 key: "score".into(),
                 value_text: None,
                 value_num: Some(99.0),
@@ -1241,7 +1258,7 @@ mod tests {
         let set1 = append_op(
             &pool,
             OpPayload::SetProperty(SetPropertyPayload {
-                block_id: "BLK_PD".into(),
+                block_id: BlockId::test_id("BLK_PD"),
                 key: "due-date".into(),
                 value_text: None,
                 value_num: None,
@@ -1266,7 +1283,7 @@ mod tests {
         let set2 = append_op(
             &pool,
             OpPayload::SetProperty(SetPropertyPayload {
-                block_id: "BLK_PD".into(),
+                block_id: BlockId::test_id("BLK_PD"),
                 key: "due-date".into(),
                 value_text: None,
                 value_num: None,
@@ -1306,7 +1323,7 @@ mod tests {
         let _create = append_op(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "BLK_SEQ".into(),
+                block_id: BlockId::test_id("BLK_SEQ"),
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(0),
@@ -1321,7 +1338,7 @@ mod tests {
         let _edit1 = append_op(
             &pool,
             OpPayload::EditBlock(EditBlockPayload {
-                block_id: "BLK_SEQ".into(),
+                block_id: BlockId::test_id("BLK_SEQ"),
                 to_text: "v1".into(),
                 prev_edit: None,
             }),
@@ -1333,7 +1350,7 @@ mod tests {
         let edit2 = append_op(
             &pool,
             OpPayload::EditBlock(EditBlockPayload {
-                block_id: "BLK_SEQ".into(),
+                block_id: BlockId::test_id("BLK_SEQ"),
                 to_text: "v2".into(),
                 prev_edit: None,
             }),

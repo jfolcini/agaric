@@ -18,6 +18,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ulid::BlockId;
+
 // ---------------------------------------------------------------------------
 // OpType — the string tag stored in op_log.op_type
 // ---------------------------------------------------------------------------
@@ -109,9 +111,9 @@ impl FromStr for OpType {
 /// Payload for the `create_block` op — creates a new block with the given type, content, and optional parent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateBlockPayload {
-    pub block_id: String,
+    pub block_id: BlockId,
     pub block_type: String,
-    pub parent_id: Option<String>,
+    pub parent_id: Option<BlockId>,
     pub position: Option<i64>,
     pub content: String,
 }
@@ -119,7 +121,7 @@ pub struct CreateBlockPayload {
 /// Payload for the `edit_block` op — replaces a block's content with `to_text`, tracking the previous edit for conflict detection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditBlockPayload {
-    pub block_id: String,
+    pub block_id: BlockId,
     pub to_text: String,
     /// Previous edit reference as `(device_id, seq)`. Serialized as a JSON
     /// two-element array `[device_id, seq]` or `null`.
@@ -130,48 +132,48 @@ pub struct EditBlockPayload {
 /// was removed — it was always `true` and never read by any code path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteBlockPayload {
-    pub block_id: String,
+    pub block_id: BlockId,
 }
 
 /// Payload for the `restore_block` op — un-deletes a block and its descendants using the `deleted_at` timestamp as a guard.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestoreBlockPayload {
-    pub block_id: String,
+    pub block_id: BlockId,
     pub deleted_at_ref: String,
 }
 
 /// Payload for the `purge_block` op — physically deletes a soft-deleted block and all its descendants.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PurgeBlockPayload {
-    pub block_id: String,
+    pub block_id: BlockId,
 }
 
 /// Payload for the `move_block` op — reparents a block under a new parent at the given position.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveBlockPayload {
-    pub block_id: String,
-    pub new_parent_id: Option<String>,
+    pub block_id: BlockId,
+    pub new_parent_id: Option<BlockId>,
     pub new_position: i64,
 }
 
 /// Payload for the `add_tag` op — associates a tag block with a content/page block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddTagPayload {
-    pub block_id: String,
-    pub tag_id: String,
+    pub block_id: BlockId,
+    pub tag_id: BlockId,
 }
 
 /// Payload for the `remove_tag` op — dissociates a tag block from a content/page block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoveTagPayload {
-    pub block_id: String,
-    pub tag_id: String,
+    pub block_id: BlockId,
+    pub tag_id: BlockId,
 }
 
 /// Payload for the `set_property` op — upserts a typed key-value property on a block (exactly one value field must be set).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetPropertyPayload {
-    pub block_id: String,
+    pub block_id: BlockId,
     pub key: String,
     pub value_text: Option<String>,
     pub value_num: Option<f64>,
@@ -182,7 +184,7 @@ pub struct SetPropertyPayload {
 /// Payload for the `delete_property` op — removes a property by key from a block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeletePropertyPayload {
-    pub block_id: String,
+    pub block_id: BlockId,
     pub key: String,
 }
 
@@ -190,7 +192,7 @@ pub struct DeletePropertyPayload {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddAttachmentPayload {
     pub attachment_id: String,
-    pub block_id: String,
+    pub block_id: BlockId,
     pub mime_type: String,
     pub filename: String,
     pub size_bytes: i64,
@@ -285,79 +287,30 @@ impl OpPayload {
     /// `attachment_id` only, so this method returns `None` for that variant.
     pub fn block_id(&self) -> Option<&str> {
         match self {
-            OpPayload::CreateBlock(p) => Some(&p.block_id),
-            OpPayload::EditBlock(p) => Some(&p.block_id),
-            OpPayload::DeleteBlock(p) => Some(&p.block_id),
-            OpPayload::RestoreBlock(p) => Some(&p.block_id),
-            OpPayload::PurgeBlock(p) => Some(&p.block_id),
-            OpPayload::MoveBlock(p) => Some(&p.block_id),
-            OpPayload::AddTag(p) => Some(&p.block_id),
-            OpPayload::RemoveTag(p) => Some(&p.block_id),
-            OpPayload::SetProperty(p) => Some(&p.block_id),
-            OpPayload::DeleteProperty(p) => Some(&p.block_id),
-            OpPayload::AddAttachment(p) => Some(&p.block_id),
+            OpPayload::CreateBlock(p) => Some(p.block_id.as_str()),
+            OpPayload::EditBlock(p) => Some(p.block_id.as_str()),
+            OpPayload::DeleteBlock(p) => Some(p.block_id.as_str()),
+            OpPayload::RestoreBlock(p) => Some(p.block_id.as_str()),
+            OpPayload::PurgeBlock(p) => Some(p.block_id.as_str()),
+            OpPayload::MoveBlock(p) => Some(p.block_id.as_str()),
+            OpPayload::AddTag(p) => Some(p.block_id.as_str()),
+            OpPayload::RemoveTag(p) => Some(p.block_id.as_str()),
+            OpPayload::SetProperty(p) => Some(p.block_id.as_str()),
+            OpPayload::DeleteProperty(p) => Some(p.block_id.as_str()),
+            OpPayload::AddAttachment(p) => Some(p.block_id.as_str()),
             OpPayload::DeleteAttachment(_) => None,
         }
     }
 
-    /// Normalize all ULID-typed String fields to uppercase Crockford base32.
+    /// Normalize all ULID-typed fields to uppercase Crockford base32.
     ///
-    /// This ensures that payloads received from external sources (sync, import)
-    /// have canonical IDs before being hashed or stored. Affects:
-    /// - `block_id` (all variants except DeleteAttachment)
-    /// - `parent_id` (CreateBlock, MoveBlock)
-    /// - `tag_id` (AddTag, RemoveTag)
-    /// - `attachment_id` (AddAttachment, DeleteAttachment)
-    /// - `value_ref` (SetProperty)
-    ///
-    /// Non-ULID fields (content, key, etc.) are left untouched.
+    /// BlockId fields auto-normalize to uppercase Crockford base32 on
+    /// construction and deserialization. This function is retained as a
+    /// call-site marker for the normalization contract.
     pub fn normalize_block_ids(&mut self) {
-        fn norm(s: &mut String) {
-            if let Ok(parsed) = ulid::Ulid::from_str(s) {
-                let upper = parsed.to_string();
-                if *s != upper {
-                    *s = upper;
-                }
-            }
-        }
-        fn norm_opt(s: &mut Option<String>) {
-            if let Some(inner) = s.as_mut() {
-                norm(inner);
-            }
-        }
-
-        match self {
-            OpPayload::CreateBlock(p) => {
-                norm(&mut p.block_id);
-                norm_opt(&mut p.parent_id);
-            }
-            OpPayload::EditBlock(p) => norm(&mut p.block_id),
-            OpPayload::DeleteBlock(p) => norm(&mut p.block_id),
-            OpPayload::RestoreBlock(p) => norm(&mut p.block_id),
-            OpPayload::PurgeBlock(p) => norm(&mut p.block_id),
-            OpPayload::MoveBlock(p) => {
-                norm(&mut p.block_id);
-                norm_opt(&mut p.new_parent_id);
-            }
-            OpPayload::AddTag(p) => {
-                norm(&mut p.block_id);
-                norm(&mut p.tag_id);
-            }
-            OpPayload::RemoveTag(p) => {
-                norm(&mut p.block_id);
-                norm(&mut p.tag_id);
-            }
-            OpPayload::SetProperty(p) => {
-                norm(&mut p.block_id);
-                norm_opt(&mut p.value_ref);
-            }
-            OpPayload::DeleteProperty(p) => norm(&mut p.block_id),
-            OpPayload::AddAttachment(p) => {
-                norm(&mut p.attachment_id);
-                norm(&mut p.block_id);
-            }
-            OpPayload::DeleteAttachment(p) => norm(&mut p.attachment_id),
-        }
+        // BlockId fields auto-normalize to uppercase Crockford base32 on
+        // construction and deserialization. This function is retained as a
+        // call-site marker for the normalization contract.
     }
 }
 
@@ -441,6 +394,11 @@ mod tests {
     // Helpers
     // -----------------------------------------------------------------------
 
+    /// Valid ULID fixture constants for tests that go through serde round-trips.
+    const TEST_BID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const TEST_PID: &str = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
+    const TEST_TID: &str = "01BX5ZZKBKACTAV9WEVGEMMVS0";
+
     /// All OpType variants, for exhaustive iteration in tests.
     fn all_op_types() -> Vec<OpType> {
         vec![
@@ -459,46 +417,47 @@ mod tests {
         ]
     }
 
-    /// Builds one test instance of each OpPayload variant with block_id "B1".
+    /// Builds one test instance of each OpPayload variant with valid ULID block_ids
+    /// so serde round-trips work.
     fn all_test_payloads() -> Vec<OpPayload> {
         vec![
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "B1".into(),
+                block_id: BlockId::from_string(TEST_BID).unwrap(),
                 block_type: "content".into(),
-                parent_id: Some("P1".into()),
+                parent_id: Some(BlockId::from_string(TEST_PID).unwrap()),
                 position: Some(1),
                 content: "hello".into(),
             }),
             OpPayload::EditBlock(EditBlockPayload {
-                block_id: "B1".into(),
+                block_id: BlockId::from_string(TEST_BID).unwrap(),
                 to_text: "updated".into(),
                 prev_edit: Some(("dev-1".into(), 1)),
             }),
             OpPayload::DeleteBlock(DeleteBlockPayload {
-                block_id: "B1".into(),
+                block_id: BlockId::from_string(TEST_BID).unwrap(),
             }),
             OpPayload::RestoreBlock(RestoreBlockPayload {
-                block_id: "B1".into(),
+                block_id: BlockId::from_string(TEST_BID).unwrap(),
                 deleted_at_ref: "ref-1".into(),
             }),
             OpPayload::PurgeBlock(PurgeBlockPayload {
-                block_id: "B1".into(),
+                block_id: BlockId::from_string(TEST_BID).unwrap(),
             }),
             OpPayload::MoveBlock(MoveBlockPayload {
-                block_id: "B1".into(),
-                new_parent_id: Some("P2".into()),
+                block_id: BlockId::from_string(TEST_BID).unwrap(),
+                new_parent_id: Some(BlockId::from_string(TEST_PID).unwrap()),
                 new_position: 3,
             }),
             OpPayload::AddTag(AddTagPayload {
-                block_id: "B1".into(),
-                tag_id: "T1".into(),
+                block_id: BlockId::from_string(TEST_BID).unwrap(),
+                tag_id: BlockId::from_string(TEST_TID).unwrap(),
             }),
             OpPayload::RemoveTag(RemoveTagPayload {
-                block_id: "B1".into(),
-                tag_id: "T1".into(),
+                block_id: BlockId::from_string(TEST_BID).unwrap(),
+                tag_id: BlockId::from_string(TEST_TID).unwrap(),
             }),
             OpPayload::SetProperty(SetPropertyPayload {
-                block_id: "B1".into(),
+                block_id: BlockId::from_string(TEST_BID).unwrap(),
                 key: "priority".into(),
                 value_text: Some("high".into()),
                 value_num: None,
@@ -506,12 +465,12 @@ mod tests {
                 value_ref: None,
             }),
             OpPayload::DeleteProperty(DeletePropertyPayload {
-                block_id: "B1".into(),
+                block_id: BlockId::from_string(TEST_BID).unwrap(),
                 key: "priority".into(),
             }),
             OpPayload::AddAttachment(AddAttachmentPayload {
                 attachment_id: "A1".into(),
-                block_id: "B1".into(),
+                block_id: BlockId::from_string(TEST_BID).unwrap(),
                 mime_type: "image/png".into(),
                 filename: "photo.png".into(),
                 size_bytes: 1024,
@@ -562,7 +521,7 @@ mod tests {
     #[test]
     fn edit_block_prev_edit_serializes_as_array_or_null() {
         let with = EditBlockPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::test_id("B1"),
             to_text: "new text".into(),
             prev_edit: Some(("device-1".into(), 5)),
         };
@@ -570,7 +529,7 @@ mod tests {
         assert!(json.contains("[\"device-1\",5]"));
 
         let without = EditBlockPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::test_id("B1"),
             to_text: "new text".into(),
             prev_edit: None,
         };
@@ -581,7 +540,7 @@ mod tests {
     #[test]
     fn create_block_with_null_optional_fields_roundtrips() {
         let p = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::from_string(TEST_BID).unwrap(),
             block_type: "content".into(),
             parent_id: None,
             position: None,
@@ -699,9 +658,10 @@ mod tests {
                 _ => {
                     assert_eq!(
                         payload.block_id(),
-                        Some("B1"),
-                        "{:?} should have block_id B1",
-                        payload.op_type()
+                        Some(TEST_BID),
+                        "{:?} should have block_id {}",
+                        payload.op_type(),
+                        TEST_BID
                     );
                 }
             }
@@ -809,7 +769,7 @@ mod tests {
     fn unicode_content_roundtrips_through_serde() {
         let text = "日本語テスト 🚀 spëcial — «guillemets» \u{200B}";
         let payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::from_string(TEST_BID).unwrap(),
             block_type: "content".into(),
             parent_id: None,
             position: None,
@@ -829,7 +789,7 @@ mod tests {
     #[test]
     fn empty_content_roundtrips_through_serde() {
         let payload = OpPayload::EditBlock(EditBlockPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::from_string(TEST_BID).unwrap(),
             to_text: "".into(),
             prev_edit: None,
         });
@@ -845,7 +805,7 @@ mod tests {
     fn large_content_100kb_roundtrips_through_serde() {
         let long_text = "x".repeat(100_000);
         let payload = OpPayload::EditBlock(EditBlockPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::from_string(TEST_BID).unwrap(),
             to_text: long_text.clone(),
             prev_edit: None,
         });
@@ -868,7 +828,7 @@ mod tests {
     #[test]
     fn all_optional_set_property_fields_serialize_as_null() {
         let payload = SetPropertyPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::from_string(TEST_BID).unwrap(),
             key: "k".into(),
             value_text: None,
             value_num: None,
@@ -892,7 +852,7 @@ mod tests {
     #[test]
     fn set_property_with_numeric_value_roundtrips() {
         let payload = OpPayload::SetProperty(SetPropertyPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::from_string(TEST_BID).unwrap(),
             key: "score".into(),
             value_text: None,
             value_num: Some(42.5),
@@ -932,7 +892,7 @@ mod tests {
     #[test]
     fn move_block_to_root_serializes_null_parent() {
         let payload = OpPayload::MoveBlock(MoveBlockPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::from_string(TEST_BID).unwrap(),
             new_parent_id: None,
             new_position: 0,
         });
@@ -952,75 +912,47 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // 12. F02: normalize_block_ids
+    // 12. F02: normalize_block_ids — now a no-op since BlockId auto-normalizes
     // -----------------------------------------------------------------------
 
     #[test]
-    fn normalize_block_ids_uppercases_lowercase_block_id() {
+    fn normalize_block_ids_is_no_op_since_block_id_auto_normalizes() {
         let lower = "01arz3ndektsv4rrffq69g5fav";
         let upper = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        // BlockId::from_string auto-normalizes to uppercase
         let mut payload = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: lower.into(),
+            block_id: BlockId::from_string(lower).unwrap(),
             block_type: "content".into(),
-            parent_id: Some(lower.into()),
+            parent_id: Some(BlockId::from_string(lower).unwrap()),
             position: Some(1),
             content: "test".into(),
         });
+        // Already uppercase from construction
+        assert_eq!(payload.block_id(), Some(upper));
+        // normalize_block_ids is a no-op but should not panic
         payload.normalize_block_ids();
         assert_eq!(payload.block_id(), Some(upper));
         let OpPayload::CreateBlock(inner) = &payload else {
             panic!("expected CreateBlock");
         };
-        assert_eq!(inner.parent_id.as_deref(), Some(upper));
+        assert_eq!(inner.parent_id.as_ref().unwrap().as_str(), upper);
     }
 
     #[test]
-    fn normalize_block_ids_handles_all_variant_fields() {
+    fn block_id_auto_normalizes_on_construction() {
         let lower = "01arz3ndektsv4rrffq69g5fav";
         let upper = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 
-        // AddTag — normalizes both block_id and tag_id
-        let mut tag_payload = OpPayload::AddTag(AddTagPayload {
-            block_id: lower.into(),
-            tag_id: lower.into(),
+        // AddTag — both block_id and tag_id normalize on construction
+        let tag_payload = OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::from_string(lower).unwrap(),
+            tag_id: BlockId::from_string(lower).unwrap(),
         });
-        tag_payload.normalize_block_ids();
         let OpPayload::AddTag(inner) = &tag_payload else {
             panic!("expected AddTag");
         };
-        assert_eq!(inner.block_id, upper);
-        assert_eq!(inner.tag_id, upper);
-
-        // SetProperty — normalizes block_id and value_ref
-        let mut prop_payload = OpPayload::SetProperty(SetPropertyPayload {
-            block_id: lower.into(),
-            key: "ref".into(),
-            value_text: None,
-            value_num: None,
-            value_date: None,
-            value_ref: Some(lower.into()),
-        });
-        prop_payload.normalize_block_ids();
-        let OpPayload::SetProperty(inner) = &prop_payload else {
-            panic!("expected SetProperty");
-        };
-        assert_eq!(inner.block_id, upper);
-        assert_eq!(inner.value_ref.as_deref(), Some(upper));
-    }
-
-    #[test]
-    fn normalize_block_ids_leaves_non_ulid_strings_unchanged() {
-        let mut payload = OpPayload::EditBlock(EditBlockPayload {
-            block_id: "not-a-ulid".into(),
-            to_text: "content not touched".into(),
-            prev_edit: None,
-        });
-        payload.normalize_block_ids();
-        let OpPayload::EditBlock(inner) = &payload else {
-            panic!("expected EditBlock");
-        };
-        assert_eq!(inner.block_id, "not-a-ulid");
-        assert_eq!(inner.to_text, "content not touched");
+        assert_eq!(inner.block_id.as_str(), upper);
+        assert_eq!(inner.tag_id.as_str(), upper);
     }
 
     // -----------------------------------------------------------------------
@@ -1030,7 +962,7 @@ mod tests {
     #[test]
     fn validate_set_property_accepts_exactly_one_value() {
         let p = SetPropertyPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::test_id("B1"),
             key: "k".into(),
             value_text: Some("v".into()),
             value_num: None,
@@ -1043,7 +975,7 @@ mod tests {
     #[test]
     fn validate_set_property_rejects_zero_values() {
         let p = SetPropertyPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::test_id("B1"),
             key: "k".into(),
             value_text: None,
             value_num: None,
@@ -1061,7 +993,7 @@ mod tests {
     #[test]
     fn validate_set_property_rejects_multiple_values() {
         let p = SetPropertyPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::test_id("B1"),
             key: "k".into(),
             value_text: Some("v".into()),
             value_num: Some(1.0),
@@ -1092,7 +1024,7 @@ mod tests {
             &"k".repeat(64),
         ] {
             let p = SetPropertyPayload {
-                block_id: "B1".into(),
+                block_id: BlockId::test_id("B1"),
                 key: key.into(),
                 value_text: Some("v".into()),
                 value_num: None,
@@ -1109,7 +1041,7 @@ mod tests {
     #[test]
     fn validate_set_property_rejects_empty_key() {
         let p = SetPropertyPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::test_id("B1"),
             key: "".into(),
             value_text: Some("v".into()),
             value_num: None,
@@ -1127,7 +1059,7 @@ mod tests {
     #[test]
     fn validate_set_property_rejects_too_long_key() {
         let p = SetPropertyPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::test_id("B1"),
             key: "k".repeat(65),
             value_text: Some("v".into()),
             value_num: None,
@@ -1146,7 +1078,7 @@ mod tests {
     fn validate_set_property_rejects_special_char_keys() {
         for key in ["bad key", "key.name", "key/name", "key@here", "k!ey", "a b"] {
             let p = SetPropertyPayload {
-                block_id: "B1".into(),
+                block_id: BlockId::test_id("B1"),
                 key: key.into(),
                 value_text: Some("v".into()),
                 value_num: None,
@@ -1207,7 +1139,7 @@ mod tests {
     #[test]
     fn test_validate_set_property_nan() {
         let p = SetPropertyPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::test_id("B1"),
             key: "k".into(),
             value_text: None,
             value_num: Some(f64::NAN),
@@ -1228,7 +1160,7 @@ mod tests {
     #[test]
     fn test_validate_set_property_infinity() {
         let p = SetPropertyPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::test_id("B1"),
             key: "k".into(),
             value_text: None,
             value_num: Some(f64::INFINITY),
@@ -1247,7 +1179,7 @@ mod tests {
 
         // Also test negative infinity
         let p_neg = SetPropertyPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::test_id("B1"),
             key: "k".into(),
             value_text: None,
             value_num: Some(f64::NEG_INFINITY),

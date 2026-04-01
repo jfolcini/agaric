@@ -5,7 +5,26 @@ use uuid::Uuid;
 
 /// Wrapper for device UUID in Tauri managed state.
 #[derive(Clone, Debug)]
-pub struct DeviceId(pub String);
+pub struct DeviceId(String);
+
+impl DeviceId {
+    /// Create a DeviceId from a UUID string. No validation — called once
+    /// at startup from a trusted file.
+    pub fn new(id: String) -> Self {
+        Self(id)
+    }
+
+    /// Returns the inner UUID string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for DeviceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// Build the error for a corrupt device-id file.
 ///
@@ -279,27 +298,52 @@ mod tests {
 
     #[test]
     fn device_id_stores_and_exposes_inner_string() {
-        let device = DeviceId(FIXTURE_UUID.to_string());
+        let device = DeviceId::new(FIXTURE_UUID.to_string());
         assert_eq!(
-            device.0, FIXTURE_UUID,
+            device.as_str(),
+            FIXTURE_UUID,
             "DeviceId inner field should hold the UUID string"
         );
     }
 
     #[test]
     fn device_id_clone_produces_equal_value() {
-        let device = DeviceId(FIXTURE_UUID.to_string());
+        let device = DeviceId::new(FIXTURE_UUID.to_string());
         let cloned = device.clone();
-        assert_eq!(device.0, cloned.0, "cloned DeviceId should be equal");
+        assert_eq!(
+            device.as_str(),
+            cloned.as_str(),
+            "cloned DeviceId should be equal"
+        );
     }
 
     #[test]
     fn device_id_debug_includes_uuid() {
-        let device = DeviceId(FIXTURE_UUID.to_string());
+        let device = DeviceId::new(FIXTURE_UUID.to_string());
         let debug = format!("{device:?}");
         assert!(
             debug.contains(FIXTURE_UUID),
             "Debug output should include the UUID, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn device_id_as_str_returns_inner() {
+        let device = DeviceId::new(FIXTURE_UUID.to_string());
+        assert_eq!(
+            device.as_str(),
+            FIXTURE_UUID,
+            "as_str should return the inner UUID string"
+        );
+    }
+
+    #[test]
+    fn device_id_display_returns_uuid() {
+        let device = DeviceId::new(FIXTURE_UUID.to_string());
+        assert_eq!(
+            format!("{device}"),
+            FIXTURE_UUID,
+            "Display should return the UUID string"
         );
     }
 }

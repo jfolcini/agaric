@@ -830,8 +830,19 @@ async fn handle_foreground_task(
 ) -> Result<(), AppError> {
     match task {
         MaterializeTask::ApplyOp(record) => {
-            // Stub: will implement actual op application in next batch
-            tracing::debug!(op_type = %record.op_type, seq = record.seq, "processing foreground op");
+            // Phase 1: local ops are applied directly by command handlers
+            // (create_block_inner, edit_block_inner, etc.) within the same
+            // transaction that appends the op to the log.  This handler is
+            // therefore a no-op for local operations.
+            //
+            // Phase 4 TODO: when sync delivers remote ops, this handler must
+            // apply them to the blocks table — remote ops arrive as raw op_log
+            // entries without going through the command layer.
+            tracing::debug!(
+                op_type = %record.op_type,
+                seq = record.seq,
+                "foreground ApplyOp no-op (Phase 1: command handler already applied)"
+            );
             Ok(())
         }
         MaterializeTask::Barrier(ref notify) => {
@@ -892,6 +903,7 @@ mod tests {
         PurgeBlockPayload, RestoreBlockPayload, SetPropertyPayload,
     };
     use crate::op_log::append_local_op;
+    use crate::ulid::BlockId;
     use std::path::PathBuf;
     use std::sync::atomic::Ordering as AtomicOrdering;
     use std::time::Duration;
@@ -980,7 +992,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "blk-1".into(),
+                block_id: BlockId::test_id("blk-1"),
                 block_type: "page".into(),
                 parent_id: None,
                 position: Some(0),
@@ -1004,7 +1016,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "blk-tag".into(),
+                block_id: BlockId::test_id("blk-tag"),
                 block_type: "tag".into(),
                 parent_id: None,
                 position: None,
@@ -1028,7 +1040,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "blk-c".into(),
+                block_id: BlockId::test_id("blk-c"),
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(0),
@@ -1053,7 +1065,7 @@ mod tests {
         make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "blk-2".into(),
+                block_id: BlockId::test_id("blk-2"),
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(0),
@@ -1065,7 +1077,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::EditBlock(EditBlockPayload {
-                block_id: "blk-2".into(),
+                block_id: BlockId::test_id("blk-2"),
                 to_text: "edited".into(),
                 prev_edit: None,
             }),
@@ -1086,7 +1098,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::DeleteBlock(DeleteBlockPayload {
-                block_id: "blk-3".into(),
+                block_id: BlockId::test_id("blk-3"),
             }),
         )
         .await;
@@ -1105,7 +1117,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::RestoreBlock(RestoreBlockPayload {
-                block_id: "blk-r".into(),
+                block_id: BlockId::test_id("blk-r"),
                 deleted_at_ref: FIXED_TS.into(),
             }),
         )
@@ -1125,7 +1137,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::PurgeBlock(PurgeBlockPayload {
-                block_id: "blk-p".into(),
+                block_id: BlockId::test_id("blk-p"),
             }),
         )
         .await;
@@ -1144,8 +1156,8 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::AddTag(AddTagPayload {
-                block_id: "blk-4".into(),
-                tag_id: "tag-1".into(),
+                block_id: BlockId::test_id("blk-4"),
+                tag_id: BlockId::test_id("tag-1"),
             }),
         )
         .await;
@@ -1165,8 +1177,8 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::RemoveTag(RemoveTagPayload {
-                block_id: "blk-rt".into(),
-                tag_id: "tag-99".into(),
+                block_id: BlockId::test_id("blk-rt"),
+                tag_id: BlockId::test_id("tag-99"),
             }),
         )
         .await;
@@ -1185,7 +1197,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::SetProperty(SetPropertyPayload {
-                block_id: "blk-5".into(),
+                block_id: BlockId::test_id("blk-5"),
                 key: "due".into(),
                 value_text: None,
                 value_num: None,
@@ -1209,7 +1221,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::DeleteProperty(DeletePropertyPayload {
-                block_id: "blk-dp".into(),
+                block_id: BlockId::test_id("blk-dp"),
                 key: "due".into(),
             }),
         )
@@ -1229,8 +1241,8 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::MoveBlock(MoveBlockPayload {
-                block_id: "blk-6".into(),
-                new_parent_id: Some("blk-parent".into()),
+                block_id: BlockId::test_id("blk-6"),
+                new_parent_id: Some(BlockId::test_id("blk-parent")),
                 new_position: 2,
             }),
         )
@@ -1251,7 +1263,7 @@ mod tests {
             &pool,
             OpPayload::AddAttachment(AddAttachmentPayload {
                 attachment_id: "att-1".into(),
-                block_id: "blk-a".into(),
+                block_id: BlockId::test_id("blk-a"),
                 mime_type: "image/png".into(),
                 filename: "photo.png".into(),
                 size_bytes: 1024,
@@ -1310,7 +1322,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::EditBlock(EditBlockPayload {
-                block_id: "blk-bg".into(),
+                block_id: BlockId::test_id("blk-bg"),
                 to_text: "edited bg".into(),
                 prev_edit: None,
             }),
@@ -1332,7 +1344,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::DeleteBlock(DeleteBlockPayload {
-                block_id: "blk-db".into(),
+                block_id: BlockId::test_id("blk-db"),
             }),
         )
         .await;
@@ -1530,7 +1542,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "blk-fg".into(),
+                block_id: BlockId::test_id("blk-fg"),
                 block_type: "content".into(),
                 parent_id: None,
                 position: None,
@@ -1596,7 +1608,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "blk-flush-fg".into(),
+                block_id: BlockId::test_id("blk-flush-fg"),
                 block_type: "content".into(),
                 parent_id: None,
                 position: None,
@@ -1640,7 +1652,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "blk-flush-both".into(),
+                block_id: BlockId::test_id("blk-flush-both"),
                 block_type: "content".into(),
                 parent_id: None,
                 position: None,
@@ -1978,7 +1990,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "blk-hw-fg".into(),
+                block_id: BlockId::test_id("blk-hw-fg"),
                 block_type: "content".into(),
                 parent_id: None,
                 position: None,
@@ -2038,7 +2050,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "blk-si".into(),
+                block_id: BlockId::test_id("blk-si"),
                 block_type: "page".into(),
                 parent_id: None,
                 position: None,
@@ -2201,7 +2213,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "TAG_FLUSH_1".into(),
+                block_id: BlockId::test_id("TAG_FLUSH_1"),
                 block_type: "tag".into(),
                 parent_id: None,
                 position: None,
@@ -2247,7 +2259,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "PAGE_FLUSH_1".into(),
+                block_id: BlockId::test_id("PAGE_FLUSH_1"),
                 block_type: "page".into(),
                 parent_id: None,
                 position: Some(0),
@@ -2284,7 +2296,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "TAG_DEL_1".into(),
+                block_id: BlockId::test_id("TAG_DEL_1"),
                 block_type: "tag".into(),
                 parent_id: None,
                 position: None,
@@ -2311,7 +2323,7 @@ mod tests {
         let del_record = make_op_record(
             &pool,
             OpPayload::DeleteBlock(DeleteBlockPayload {
-                block_id: "TAG_DEL_1".into(),
+                block_id: BlockId::test_id("TAG_DEL_1"),
             }),
         )
         .await;
@@ -2347,7 +2359,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "TAG_USE_1".into(),
+                block_id: BlockId::test_id("TAG_USE_1"),
                 block_type: "tag".into(),
                 parent_id: None,
                 position: None,
@@ -2376,8 +2388,8 @@ mod tests {
         let add_record = make_op_record(
             &pool,
             OpPayload::AddTag(AddTagPayload {
-                block_id: "BLK_USE_1".into(),
-                tag_id: "TAG_USE_1".into(),
+                block_id: BlockId::test_id("BLK_USE_1"),
+                tag_id: BlockId::test_id("TAG_USE_1"),
             }),
         )
         .await;
@@ -2414,7 +2426,7 @@ mod tests {
         let record = make_op_record(
             &pool,
             OpPayload::SetProperty(SetPropertyPayload {
-                block_id: "BLK_AGD_1".into(),
+                block_id: BlockId::test_id("BLK_AGD_1"),
                 key: "due".into(),
                 value_text: None,
                 value_num: None,

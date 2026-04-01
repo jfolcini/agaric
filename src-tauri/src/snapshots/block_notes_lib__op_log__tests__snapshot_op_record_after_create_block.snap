@@ -8,5 +8,5 @@ seq: 1
 parent_seqs: ~
 hash: "[HASH]"
 op_type: create_block
-payload: "{\"block_id\":\"BLK-SNAP\",\"block_type\":\"content\",\"parent_id\":null,\"position\":1,\"content\":\"test\"}"
+payload: "{\"block_id\":\"BLK-SNAP\",\"block_type\":\"content\",\"content\":\"test\",\"parent_id\":null,\"position\":1}"
 created_at: "2025-01-15T12:00:00+00:00"

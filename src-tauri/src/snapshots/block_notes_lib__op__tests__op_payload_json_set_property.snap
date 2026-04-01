@@ -1,9 +1,8 @@
 ---
 source: src/op.rs
-assertion_line: 845
 expression: json
 ---
-block_id: B1
+block_id: 01ARZ3NDEKTSV4RRFFQ69G5FAV
 key: priority
 op_type: set_property
 value_date: ~

@@ -49,7 +49,14 @@ impl OpRecord {
 macro_rules! serialize_variant {
     ($op:expr; $($variant:ident),+ $(,)?) => {
         match $op {
-            $(OpPayload::$variant(p) => Ok(serde_json::to_string(p)?),)+
+            $(OpPayload::$variant(p) => {
+                // Serialize to Value first for canonical key ordering (BTreeMap).
+                // serde_json::to_string on derive(Serialize) uses declaration
+                // order — deterministic within a serde version but not across
+                // versions.  Going through Value ensures alphabetical key order.
+                let value = serde_json::to_value(p)?;
+                Ok(serde_json::to_string(&value)?)
+            },)+
         }
     };
 }
@@ -268,6 +275,7 @@ mod tests {
     use super::*;
     use crate::db::init_pool;
     use crate::op::*;
+    use crate::ulid::BlockId;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -289,7 +297,7 @@ mod tests {
     /// Build a minimal `CreateBlock` payload with the given block ID.
     fn make_create_payload(block_id: &str) -> OpPayload {
         OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: block_id.into(),
+            block_id: BlockId::test_id(block_id),
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
@@ -303,7 +311,7 @@ mod tests {
             (
                 "create_block",
                 OpPayload::CreateBlock(CreateBlockPayload {
-                    block_id: "BLK001".into(),
+                    block_id: BlockId::test_id("BLK001"),
                     block_type: "content".into(),
                     parent_id: None,
                     position: Some(1),
@@ -313,7 +321,7 @@ mod tests {
             (
                 "edit_block",
                 OpPayload::EditBlock(EditBlockPayload {
-                    block_id: "BLK001".into(),
+                    block_id: BlockId::test_id("BLK001"),
                     to_text: "updated".into(),
                     prev_edit: None,
                 }),
@@ -321,48 +329,48 @@ mod tests {
             (
                 "delete_block",
                 OpPayload::DeleteBlock(DeleteBlockPayload {
-                    block_id: "BLK001".into(),
+                    block_id: BlockId::test_id("BLK001"),
                 }),
             ),
             (
                 "restore_block",
                 OpPayload::RestoreBlock(RestoreBlockPayload {
-                    block_id: "BLK001".into(),
+                    block_id: BlockId::test_id("BLK001"),
                     deleted_at_ref: "2025-01-01T00:00:00Z".into(),
                 }),
             ),
             (
                 "purge_block",
                 OpPayload::PurgeBlock(PurgeBlockPayload {
-                    block_id: "BLK001".into(),
+                    block_id: BlockId::test_id("BLK001"),
                 }),
             ),
             (
                 "move_block",
                 OpPayload::MoveBlock(MoveBlockPayload {
-                    block_id: "BLK001".into(),
-                    new_parent_id: Some("BLK000".into()),
+                    block_id: BlockId::test_id("BLK001"),
+                    new_parent_id: Some(BlockId::test_id("BLK000")),
                     new_position: 3,
                 }),
             ),
             (
                 "add_tag",
                 OpPayload::AddTag(AddTagPayload {
-                    block_id: "BLK001".into(),
-                    tag_id: "TAG01".into(),
+                    block_id: BlockId::test_id("BLK001"),
+                    tag_id: BlockId::test_id("TAG01"),
                 }),
             ),
             (
                 "remove_tag",
                 OpPayload::RemoveTag(RemoveTagPayload {
-                    block_id: "BLK001".into(),
-                    tag_id: "TAG01".into(),
+                    block_id: BlockId::test_id("BLK001"),
+                    tag_id: BlockId::test_id("TAG01"),
                 }),
             ),
             (
                 "set_property",
                 OpPayload::SetProperty(SetPropertyPayload {
-                    block_id: "BLK001".into(),
+                    block_id: BlockId::test_id("BLK001"),
                     key: "priority".into(),
                     value_text: Some("high".into()),
                     value_num: None,
@@ -373,7 +381,7 @@ mod tests {
             (
                 "delete_property",
                 OpPayload::DeleteProperty(DeletePropertyPayload {
-                    block_id: "BLK001".into(),
+                    block_id: BlockId::test_id("BLK001"),
                     key: "priority".into(),
                 }),
             ),
@@ -381,7 +389,7 @@ mod tests {
                 "add_attachment",
                 OpPayload::AddAttachment(AddAttachmentPayload {
                     attachment_id: "ATT01".into(),
-                    block_id: "BLK001".into(),
+                    block_id: BlockId::test_id("BLK001"),
                     mime_type: "text/plain".into(),
                     filename: "readme.txt".into(),
                     size_bytes: 256,
@@ -437,7 +445,7 @@ mod tests {
         assert_eq!(r1.seq, 1);
 
         let p2 = OpPayload::EditBlock(EditBlockPayload {
-            block_id: "BLK-PARENT".into(),
+            block_id: BlockId::test_id("BLK-PARENT"),
             to_text: "world".into(),
             prev_edit: None,
         });
@@ -531,9 +539,9 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let original = CreateBlockPayload {
-            block_id: "BLK-RT".into(),
+            block_id: BlockId::test_id("BLK-RT"),
             block_type: "heading".into(),
-            parent_id: Some("ROOT".into()),
+            parent_id: Some(BlockId::test_id("ROOT")),
             position: Some(42),
             content: "round-trip test".into(),
         };
@@ -549,7 +557,7 @@ mod tests {
         let deserialized: CreateBlockPayload = serde_json::from_str(&fetched.payload).unwrap();
         assert_eq!(deserialized.block_id, "BLK-RT");
         assert_eq!(deserialized.block_type, "heading");
-        assert_eq!(deserialized.parent_id, Some("ROOT".into()));
+        assert_eq!(deserialized.parent_id, Some(BlockId::test_id("ROOT")));
         assert_eq!(deserialized.position, Some(42));
         assert_eq!(deserialized.content, "round-trip test");
     }
@@ -605,14 +613,14 @@ mod tests {
         // Insert two ops to exercise both null and non-null parent_seqs
         for payload in [
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "BLK-H1".into(),
+                block_id: BlockId::test_id("BLK-H1"),
                 block_type: "content".into(),
                 parent_id: None,
                 position: None,
                 content: "first".into(),
             }),
             OpPayload::EditBlock(EditBlockPayload {
-                block_id: "BLK-H1".into(),
+                block_id: BlockId::test_id("BLK-H1"),
                 to_text: "second".into(),
                 prev_edit: None,
             }),
@@ -812,7 +820,7 @@ mod tests {
             &pool,
             TEST_DEVICE,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: lower_id.into(),
+                block_id: BlockId::from_string(lower_id).unwrap(),
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(1),
@@ -841,7 +849,7 @@ mod tests {
             &pool,
             "dev-a",
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: lower_id.into(),
+                block_id: BlockId::from_string(lower_id).unwrap(),
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(1),
@@ -856,7 +864,7 @@ mod tests {
             &pool,
             "dev-a",
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: upper_id.into(),
+                block_id: BlockId::from_string(upper_id).unwrap(),
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(1),
@@ -892,7 +900,7 @@ mod tests {
             &pool,
             TEST_DEVICE,
             OpPayload::SetProperty(SetPropertyPayload {
-                block_id: "BLK001".into(),
+                block_id: BlockId::test_id("BLK001"),
                 key: "status".into(),
                 value_text: None,
                 value_num: None,
@@ -921,7 +929,7 @@ mod tests {
             &pool,
             TEST_DEVICE,
             OpPayload::SetProperty(SetPropertyPayload {
-                block_id: "BLK001".into(),
+                block_id: BlockId::test_id("BLK001"),
                 key: "status".into(),
                 value_text: Some("active".into()),
                 value_num: Some(42.0),
@@ -944,7 +952,7 @@ mod tests {
             &pool,
             TEST_DEVICE,
             OpPayload::SetProperty(SetPropertyPayload {
-                block_id: "BLK001".into(),
+                block_id: BlockId::test_id("BLK001"),
                 key: "status".into(),
                 value_text: Some("active".into()),
                 value_num: None,
@@ -1055,5 +1063,63 @@ mod tests {
             ..make_test_op()
         };
         assert!(op.parsed_parent_seqs().is_err());
+    }
+
+    // ── Canonical JSON ordering ─────────────────────────────────────────
+
+    /// Verify that `serialize_inner_payload` produces keys in alphabetical
+    /// order for a `CreateBlockPayload` (whose declaration order differs from
+    /// alphabetical).
+    #[test]
+    fn canonical_json_keys_are_sorted() {
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("BLK001"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "hello".into(),
+        });
+        let json = serialize_inner_payload(&payload).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let obj = value.as_object().unwrap();
+        let keys: Vec<&String> = obj.keys().collect();
+        let mut sorted_keys = keys.clone();
+        sorted_keys.sort();
+        assert_eq!(keys, sorted_keys, "JSON keys must be in alphabetical order");
+    }
+
+    /// Verify that all 12 payload types produce JSON with alphabetically
+    /// sorted keys when serialized through `serialize_inner_payload`.
+    #[test]
+    fn canonical_json_deterministic_across_all_payload_types() {
+        for (op_type_name, payload) in all_op_payloads() {
+            let json = serialize_inner_payload(&payload).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            let obj = value
+                .as_object()
+                .unwrap_or_else(|| panic!("{op_type_name}: expected JSON object"));
+            let keys: Vec<&String> = obj.keys().collect();
+            let mut sorted_keys = keys.clone();
+            sorted_keys.sort();
+            assert_eq!(
+                keys, sorted_keys,
+                "{op_type_name}: JSON keys must be in alphabetical order, got: {keys:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn expression_index_on_block_id_exists() {
+        let (pool, _dir) = test_pool().await;
+        let row = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_op_log_payload_block_id'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row, 1,
+            "expression index on json_extract block_id should exist"
+        );
     }
 }

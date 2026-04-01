@@ -8,6 +8,8 @@
 
 #![allow(dead_code)]
 
+use std::collections::HashSet;
+
 use sqlx::SqlitePool;
 
 use crate::dag;
@@ -18,7 +20,7 @@ use crate::ulid::BlockId;
 
 /// Maximum number of iterations when walking prev_edit chains.
 /// Prevents infinite loops on corrupted cyclic data.           (F07)
-const MAX_CHAIN_WALK_ITERATIONS: usize = 10_000;
+const MAX_CHAIN_WALK_ITERATIONS: usize = 1_000;
 
 // ---------------------------------------------------------------------------
 // Result types
@@ -52,7 +54,7 @@ pub enum MergeOutcome {
     Merged(OpRecord),
     /// Conflict -- original block keeps our text, conflict copy created.
     ConflictCopy {
-        original_kept_ancestor: bool,
+        original_kept_ours: bool,
         conflict_block_op: OpRecord,
     },
     /// No merge needed -- heads are the same.
@@ -97,6 +99,7 @@ pub async fn merge_text(
             let mut current: Option<(String, i64)> = Some(op_ours.clone());
             let mut root_text = String::new();
             let mut iterations = 0usize;
+            let mut visited_walk: HashSet<(String, i64)> = HashSet::new();
             while let Some(key) = current.take() {
                 iterations += 1;
                 if iterations > MAX_CHAIN_WALK_ITERATIONS {
@@ -104,6 +107,12 @@ pub async fn merge_text(
                         "prev_edit chain for block '{}' exceeded {} iterations \
                          — possible cycle in corrupted data",
                         block_id, MAX_CHAIN_WALK_ITERATIONS,
+                    )));
+                }
+                if !visited_walk.insert(key.clone()) {
+                    return Err(AppError::InvalidOperation(format!(
+                        "cycle detected in prev_edit chain for block '{}' at ({}, {})",
+                        block_id, key.0, key.1,
                     )));
                 }
                 let record = op_log::get_op_by_seq(pool, &key.0, key.1).await?;
@@ -184,9 +193,9 @@ pub async fn create_conflict_copy(
 
     // 3. Build the CreateBlock payload
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
-        block_id: new_block_id.as_str().to_owned(),
+        block_id: new_block_id.clone(),
         block_type: block_type.clone(),
-        parent_id: parent_id.clone(),
+        parent_id: parent_id.as_deref().map(BlockId::from_trusted),
         position: new_position,
         content: conflict_content.to_owned(),
     });
@@ -316,7 +325,7 @@ pub async fn merge_block(
         MergeResult::Clean(merged) => {
             // 3. Create edit_block op with merged text
             let merge_payload = OpPayload::EditBlock(EditBlockPayload {
-                block_id: block_id.to_owned(),
+                block_id: BlockId::from_trusted(block_id),
                 to_text: merged,
                 prev_edit: Some(our_head.clone()),
             });
@@ -327,23 +336,23 @@ pub async fn merge_block(
             Ok(MergeOutcome::Merged(record))
         }
         MergeResult::Conflict {
-            ours: _,
+            ours,
             theirs,
-            ancestor,
+            ancestor: _,
         } => {
             // 4. Create conflict copy with "theirs" content
             let conflict_op = create_conflict_copy(pool, device_id, block_id, &theirs).await?;
 
             // 5. Create a merge op on the ORIGINAL block to unify the two
             //    divergent heads in the DAG.  The original block retains the
-            //    common-ancestor content per ADR-06 ("Original block retains
-            //    the common ancestor content").  Without this merge op the two
-            //    heads would remain unresolved and `get_block_edit_heads`
-            //    would re-detect divergence on the next sync, potentially
-            //    creating duplicate conflict copies.          (fixes F01+F02)
+            //    local ("ours") content so the user's own edits are preserved
+            //    in-place.  Without this merge op the two heads would remain
+            //    unresolved and `get_block_edit_heads` would re-detect
+            //    divergence on the next sync, potentially creating duplicate
+            //    conflict copies.                             (fixes F01+F02)
             let merge_payload = OpPayload::EditBlock(EditBlockPayload {
-                block_id: block_id.to_owned(),
-                to_text: ancestor,
+                block_id: BlockId::from_trusted(block_id),
+                to_text: ours,
                 prev_edit: Some(our_head.clone()),
             });
             let parent_entries = vec![our_head.clone(), their_head.clone()];
@@ -351,7 +360,7 @@ pub async fn merge_block(
                 dag::append_merge_op(pool, device_id, merge_payload, parent_entries).await?;
 
             Ok(MergeOutcome::ConflictCopy {
-                original_kept_ancestor: true,
+                original_kept_ours: true,
                 conflict_block_op: conflict_op,
             })
         }
@@ -390,7 +399,7 @@ mod tests {
     /// Build a `CreateBlock` payload.
     fn make_create(block_id: &str, content: &str) -> OpPayload {
         OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: block_id.into(),
+            block_id: BlockId::test_id(block_id),
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
@@ -401,7 +410,7 @@ mod tests {
     /// Build an `EditBlock` payload with a `prev_edit` pointer.
     fn make_edit(block_id: &str, to_text: &str, prev_edit: Option<(String, i64)>) -> OpPayload {
         OpPayload::EditBlock(EditBlockPayload {
-            block_id: block_id.into(),
+            block_id: BlockId::test_id(block_id),
             to_text: to_text.into(),
             prev_edit,
         })
@@ -688,9 +697,10 @@ mod tests {
         assert!(payload.parent_id.is_none()); // matches original
 
         // Verify the block in the blocks table
+        let block_id_str = payload.block_id.as_str();
         let row = sqlx::query!(
             r#"SELECT is_conflict as "is_conflict: bool", conflict_source FROM blocks WHERE id = ?"#,
-            payload.block_id
+            block_id_str
         )
         .fetch_one(&pool)
         .await
@@ -726,7 +736,7 @@ mod tests {
             .unwrap();
 
         let payload: CreateBlockPayload = serde_json::from_str(&record.payload).unwrap();
-        assert_eq!(payload.parent_id, Some("PARENT".to_owned()));
+        assert_eq!(payload.parent_id, Some(BlockId::test_id("PARENT")));
         assert_eq!(payload.position, Some(4)); // 3 + 1
     }
 
@@ -757,7 +767,7 @@ mod tests {
         value_text: &str,
     ) -> OpRecord {
         let payload = serde_json::to_string(&SetPropertyPayload {
-            block_id: block_id.into(),
+            block_id: BlockId::test_id(block_id),
             key: key.into(),
             value_text: Some(value_text.into()),
             value_num: None,
@@ -1019,12 +1029,12 @@ mod tests {
 
         match result {
             MergeOutcome::ConflictCopy {
-                original_kept_ancestor,
+                original_kept_ours,
                 conflict_block_op,
             } => {
                 assert!(
-                    original_kept_ancestor,
-                    "original should now retain ancestor content (F01+F02)"
+                    original_kept_ours,
+                    "original should now retain ours content (F01+F02)"
                 );
                 assert_eq!(conflict_block_op.op_type, "create_block");
 
@@ -1034,10 +1044,25 @@ mod tests {
                 assert_eq!(payload.content, "hello universe");
                 assert_eq!(payload.block_type, "content");
 
+                // Verify the merge op on the original block kept "ours" content
+                // The merge op is the latest op for DEV_A — it was appended after
+                // the conflict copy.  Its `to_text` must be our local content.
+                let heads = crate::dag::get_block_edit_heads(&pool, "B1").await.unwrap();
+                // DEV_A should have a head — the merge op
+                let a_head = heads.iter().find(|(d, _)| d == DEV_A).unwrap();
+                let merge_text_val = crate::dag::text_at(&pool, &a_head.0, a_head.1)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    merge_text_val, "goodbye world",
+                    "original block's merge op should keep ours (local) content, not ancestor"
+                );
+
                 // Verify is_conflict=1 in DB
+                let block_id_str = payload.block_id.as_str();
                 let row = sqlx::query!(
                     r#"SELECT is_conflict as "is_conflict: bool", conflict_source FROM blocks WHERE id = ?"#,
-                    payload.block_id
+                    block_id_str
                 )
                 .fetch_one(&pool)
                 .await
@@ -1097,7 +1122,7 @@ mod tests {
     #[test]
     fn resolve_property_conflict_with_numeric_values() {
         let payload_a = serde_json::to_string(&SetPropertyPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::test_id("B1"),
             key: "score".into(),
             value_text: None,
             value_num: Some(42.0),
@@ -1107,7 +1132,7 @@ mod tests {
         .unwrap();
 
         let payload_b = serde_json::to_string(&SetPropertyPayload {
-            block_id: "B1".into(),
+            block_id: BlockId::test_id("B1"),
             key: "score".into(),
             value_text: None,
             value_num: Some(99.0),
@@ -1341,7 +1366,7 @@ mod tests {
         // Build payloads where every value field is None
         let null_payload = |block_id: &str, key: &str| -> String {
             serde_json::to_string(&SetPropertyPayload {
-                block_id: block_id.into(),
+                block_id: BlockId::test_id(block_id),
                 key: key.into(),
                 value_text: None,
                 value_num: None,
@@ -1819,6 +1844,143 @@ mod tests {
                     "ancestor must come from create_block found by fallback walk"
                 );
             }
+        }
+    }
+
+    // =====================================================================
+    // 11. Cycle detection in chain walk (#11)
+    // =====================================================================
+
+    /// Insert ops with a cyclic prev_edit chain via direct DB inserts, call
+    /// merge_text, verify `InvalidOperation` error containing "cycle".
+    ///
+    /// The cycle is triggered through the no-LCA fallback path:
+    ///   - Device A has edit_block ops forming a cycle: (A,1)→(A,2)→(A,1)
+    ///   - Device B has a disjoint edit (prev_edit=null) so find_lca returns None
+    ///   - merge_text then walks from op_ours through the cycle → cycle detected
+    #[tokio::test]
+    async fn chain_walk_detects_cycle() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert two edit_block ops that form a cycle:
+        //   (A,1) edit_block prev_edit=(A,2)
+        //   (A,2) edit_block prev_edit=(A,1)
+        let payload1 = r#"{"block_id":"B1","to_text":"v1","prev_edit":["device-A",2]}"#;
+        let hash1 = compute_op_hash(DEV_A, 1, None, "edit_block", payload1);
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES (?, ?, NULL, ?, 'edit_block', ?, ?)",
+        )
+        .bind(DEV_A)
+        .bind(1_i64)
+        .bind(&hash1)
+        .bind(payload1)
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let payload2 = r#"{"block_id":"B1","to_text":"v2","prev_edit":["device-A",1]}"#;
+        let hash2 = compute_op_hash(DEV_A, 2, None, "edit_block", payload2);
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES (?, ?, NULL, ?, 'edit_block', ?, ?)",
+        )
+        .bind(DEV_A)
+        .bind(2_i64)
+        .bind(&hash2)
+        .bind(payload2)
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Device B: disjoint edit with prev_edit=null so find_lca returns None
+        let b_payload = r#"{"block_id":"B1","to_text":"v-B","prev_edit":null}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        crate::dag::insert_remote_op(&pool, &b_record)
+            .await
+            .unwrap();
+
+        // merge_text: find_lca returns None → fallback walk from (A,2) → cycle!
+        let result = merge_text(&pool, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 1)).await;
+
+        assert!(result.is_err(), "merge_text should fail on cyclic chain");
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.to_lowercase().contains("cycle"),
+            "error should mention cycle, got: {msg}"
+        );
+    }
+
+    // =====================================================================
+    // 12. Conflict merge keeps ours, conflict copy has theirs (#67)
+    // =====================================================================
+
+    /// Verify the complete conflict resolution behavior:
+    /// - The original block's merge op has `to_text` == ours (local content)
+    /// - The conflict copy block has theirs (remote content)
+    /// - `original_kept_ours` is `true`
+    #[tokio::test]
+    async fn conflict_merge_keeps_ours_not_ancestor() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create → A edits to "local edit", B edits to "remote edit"
+        append_local_op_at(&pool, DEV_A, make_create("B1", "base"), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "local edit", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        let b_payload = r#"{"block_id":"B1","to_text":"remote edit","prev_edit":["device-A",1]}"#;
+        let b_record = make_remote_record(DEV_B, 1, None, "edit_block", b_payload);
+        crate::dag::insert_remote_op(&pool, &b_record)
+            .await
+            .unwrap();
+
+        insert_block(&pool, "B1", "content", "base", None, Some(0)).await;
+
+        let result = merge_block(&pool, DEV_A, "B1", &(DEV_A.into(), 2), &(DEV_B.into(), 1))
+            .await
+            .unwrap();
+
+        match result {
+            MergeOutcome::ConflictCopy {
+                original_kept_ours,
+                conflict_block_op,
+            } => {
+                // (a) original_kept_ours must be true
+                assert!(original_kept_ours, "original_kept_ours must be true");
+
+                // (b) conflict copy has theirs (remote) content
+                let copy_payload: CreateBlockPayload =
+                    serde_json::from_str(&conflict_block_op.payload).unwrap();
+                assert_eq!(
+                    copy_payload.content, "remote edit",
+                    "conflict copy should contain theirs (remote) content"
+                );
+
+                // (c) the merge op on the original block has ours (local) content
+                // Walk the latest edit head for DEV_A on block B1
+                let heads = crate::dag::get_block_edit_heads(&pool, "B1").await.unwrap();
+                let a_head = heads.iter().find(|(d, _)| d == DEV_A).unwrap();
+                let original_text = crate::dag::text_at(&pool, &a_head.0, a_head.1)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    original_text, "local edit",
+                    "original block's to_text should be ours, not ancestor ('base')"
+                );
+            }
+            other => panic!("expected ConflictCopy, got: {:?}", other),
         }
     }
 }

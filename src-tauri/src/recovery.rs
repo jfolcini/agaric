@@ -34,6 +34,7 @@ use crate::draft::{delete_draft, get_all_drafts};
 use crate::error::AppError;
 use crate::op::{EditBlockPayload, OpPayload};
 use crate::op_log::append_local_op_in_tx;
+use crate::ulid::BlockId;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -226,14 +227,17 @@ async fn recover_single_draft(
         "block_id must be alphanumeric (ULID format), got: '{}'",
         draft.block_id,
     );
+    // Normalize to uppercase — BlockId serializes uppercase, but the draft
+    // table stores the raw string that may differ in case.
+    let bid_upper = draft.block_id.to_ascii_uppercase();
     let row: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log \
          WHERE payload LIKE '%\"block_id\":\"' || ? || '\"%' \
          AND json_extract(payload, '$.block_id') = ? \
          AND op_type IN ('edit_block', 'create_block') \
          AND created_at >= ?",
-        draft.block_id,
-        draft.block_id,
+        bid_upper,
+        bid_upper,
         draft.updated_at
     )
     .fetch_one(pool)
@@ -245,7 +249,7 @@ async fn recover_single_draft(
         let prev_edit = find_prev_edit(pool, &draft.block_id).await?;
 
         let op = OpPayload::EditBlock(EditBlockPayload {
-            block_id: draft.block_id.clone(),
+            block_id: BlockId::from_trusted(&draft.block_id),
             to_text: draft.content.clone(),
             prev_edit,
         });
@@ -269,11 +273,7 @@ async fn recover_single_draft(
     }
 }
 
-/// Find the most recent `edit_block` or `create_block` op for a given
-/// `block_id`, returning `Some((device_id, seq))` or `None`.
-///
-/// Useful outside recovery — e.g. when constructing `prev_edit` references
-/// for new edits.
+/// Find the most recent `edit_block` or `create_block` op for a given block.
 ///
 /// ## Ordering limitation (F03 — Phase 1 only)
 ///
@@ -284,11 +284,22 @@ async fn recover_single_draft(
 /// limited to NTP clock jumps (where `created_at` ordering could disagree
 /// with `seq` ordering).
 ///
-/// **Phase 4 rework required:** For multi-device sync, `created_at` ordering
-/// is definitively incorrect — the ADR states "`created_at` is a display
-/// hint, not a merge ordering key." The query should be redesigned to use
-/// causal ordering (e.g., walk the `prev_edit` chain or use device-aware
-/// `seq` ordering).
+/// ## Phase 4 rework required
+///
+/// For multi-device sync, `created_at` ordering is definitively incorrect —
+/// the ADR states "`created_at` is a display hint, not a merge ordering key."
+/// The rework must:
+///
+/// 1. Use `get_block_edit_heads()` from `dag.rs` to find all edit heads
+///    across devices.
+/// 2. If exactly one head exists, use it as prev_edit.
+/// 3. If multiple heads exist (concurrent edits), the caller must first
+///    merge them via `merge_block()` before proceeding.
+///
+/// The `ORDER BY created_at DESC` approach will produce incorrect results
+/// when device clocks are skewed — it may select a causally-earlier op
+/// from a device with a faster clock over a causally-later op from a
+/// device with a slower clock.
 // TODO: add index or extracted column for production scale — json_extract()
 // forces a full table scan with JSON parsing per row. A LIKE pre-filter
 // narrows candidates before the expensive json_extract.
@@ -306,6 +317,8 @@ pub async fn find_prev_edit(
                 .all(|c| c.is_ascii_alphanumeric() || c == '-'),
         "block_id must be alphanumeric (ULID format), got: '{block_id}'",
     );
+    // Normalize to uppercase — BlockId serializes uppercase in JSON payloads.
+    let bid_upper = block_id.to_ascii_uppercase();
     let maybe_row = sqlx::query!(
         "SELECT device_id, seq FROM op_log \
          WHERE payload LIKE '%\"block_id\":\"' || ? || '\"%' \
@@ -313,8 +326,8 @@ pub async fn find_prev_edit(
          AND op_type IN ('edit_block', 'create_block') \
          ORDER BY created_at DESC \
          LIMIT 1",
-        block_id,
-        block_id
+        bid_upper,
+        bid_upper
     )
     .fetch_optional(pool)
     .await?;
@@ -479,11 +492,12 @@ mod tests {
         assert_eq!(report.drafts_already_flushed, 0);
 
         // A synthetic edit_block op should exist in op_log
+        let bid_upper = block_id.to_ascii_uppercase();
         let row: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM op_log \
              WHERE json_extract(payload, '$.block_id') = ? \
              AND op_type = 'edit_block'",
-            block_id
+            bid_upper
         )
         .fetch_one(&pool)
         .await
@@ -518,7 +532,7 @@ mod tests {
         // Simulate that the flush already happened: write an edit_block op
         // whose created_at (Utc::now()) is well after the draft's updated_at.
         let op = OpPayload::EditBlock(EditBlockPayload {
-            block_id: block_id.to_owned(),
+            block_id: BlockId::test_id(block_id),
             to_text: "some content".to_owned(),
             prev_edit: None,
         });
@@ -607,7 +621,7 @@ mod tests {
 
         // Create a block first (this will be the prev_edit reference)
         let create_op = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: block_id.to_owned(),
+            block_id: BlockId::test_id(block_id),
             block_type: "content".to_owned(),
             parent_id: None,
             position: Some(0),
@@ -635,11 +649,12 @@ mod tests {
         assert_eq!(report.drafts_recovered, vec![block_id]);
 
         // The synthetic edit_block should reference the create op as prev_edit
+        let bid_upper = block_id.to_ascii_uppercase();
         let row: String = sqlx::query_scalar!(
             "SELECT payload FROM op_log \
              WHERE op_type = 'edit_block' \
              AND json_extract(payload, '$.block_id') = ?",
-            block_id
+            bid_upper
         )
         .fetch_one(&pool)
         .await
@@ -662,7 +677,7 @@ mod tests {
 
         // 1. create_block (seq 1)
         let create_op = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: block_id.to_owned(),
+            block_id: BlockId::test_id(block_id),
             block_type: "content".to_owned(),
             parent_id: None,
             position: Some(0),
@@ -670,9 +685,12 @@ mod tests {
         });
         append_local_op(&pool, device_id, create_op).await.unwrap();
 
+        // Sleep guard: ensure distinct created_at timestamps (ms precision)
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
         // 2. edit_block (seq 2) — this should be the prev_edit
         let edit_op = OpPayload::EditBlock(EditBlockPayload {
-            block_id: block_id.to_owned(),
+            block_id: BlockId::test_id(block_id),
             to_text: "v2".to_owned(),
             prev_edit: Some((device_id.to_owned(), 1)),
         });
@@ -692,12 +710,13 @@ mod tests {
         assert_eq!(report.drafts_recovered, vec![block_id]);
 
         // The synthetic op should reference the edit_block (seq 2), not create_block (seq 1)
+        let bid_upper = block_id.to_ascii_uppercase();
         let row: String = sqlx::query_scalar!(
             "SELECT payload FROM op_log \
              WHERE op_type = 'edit_block' \
              AND json_extract(payload, '$.block_id') = ? \
              ORDER BY created_at DESC LIMIT 1",
-            block_id
+            bid_upper
         )
         .fetch_one(&pool)
         .await
@@ -767,7 +786,7 @@ mod tests {
             .await
             .unwrap();
         let op = OpPayload::EditBlock(EditBlockPayload {
-            block_id: "block-flushed".to_owned(),
+            block_id: BlockId::test_id("block-flushed"),
             to_text: "flushed content".to_owned(),
             prev_edit: None,
         });
@@ -859,7 +878,7 @@ mod tests {
             .await
             .unwrap();
             let op = OpPayload::EditBlock(EditBlockPayload {
-                block_id: bid,
+                block_id: BlockId::test_id(&bid),
                 to_text: "x".to_owned(),
                 prev_edit: None,
             });
@@ -896,7 +915,7 @@ mod tests {
             &pool,
             device_id,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: block_id.to_owned(),
+                block_id: BlockId::test_id(block_id),
                 block_type: "content".to_owned(),
                 parent_id: None,
                 position: Some(0),
@@ -911,7 +930,7 @@ mod tests {
             &pool,
             device_id,
             OpPayload::EditBlock(EditBlockPayload {
-                block_id: block_id.to_owned(),
+                block_id: BlockId::test_id(block_id),
                 to_text: "v2".to_owned(),
                 prev_edit: Some((device_id.to_owned(), 1)),
             }),
@@ -1065,7 +1084,7 @@ mod tests {
             .unwrap();
 
         let op = OpPayload::EditBlock(EditBlockPayload {
-            block_id: block_id.to_owned(),
+            block_id: BlockId::test_id(block_id),
             to_text: "current content".to_owned(),
             prev_edit: None,
         });

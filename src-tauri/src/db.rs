@@ -44,6 +44,7 @@ fn base_connect_options(db_path: &Path) -> SqliteConnectOptions {
         .synchronous(SqliteSynchronous::Normal)
         .create_if_missing(true)
         .pragma("foreign_keys", "ON")
+        .pragma("wal_autocheckpoint", "1000") // checkpoint every 1000 pages (~4MB)
         .busy_timeout(std::time::Duration::from_secs(5))
 }
 
@@ -407,5 +408,15 @@ mod tests {
             result.is_err(),
             "init_pools with invalid path should return an error"
         );
+    }
+
+    #[tokio::test]
+    async fn wal_autocheckpoint_is_configured() {
+        let (pool, _dir) = test_pool().await;
+        let row = sqlx::query_scalar!("PRAGMA wal_autocheckpoint")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row, Some(1000), "wal_autocheckpoint should be 1000 pages");
     }
 }

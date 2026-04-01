@@ -450,6 +450,8 @@ pub async fn compact_op_log(
         .execute(pool)
         .await?;
 
+    cleanup_old_snapshots(pool, 3).await?;
+
     Ok(Some(snapshot_id))
 }
 
@@ -463,6 +465,23 @@ pub async fn get_latest_snapshot(pool: &SqlitePool) -> Result<Option<(String, Ve
     Ok(row.map(|r| (r.id, r.data)))
 }
 
+/// Delete old complete snapshots, keeping only the `keep` most recent.
+/// Also deletes any lingering 'pending' snapshots (crash leftovers).
+/// Returns the number of deleted rows.
+pub async fn cleanup_old_snapshots(pool: &SqlitePool, keep: usize) -> Result<u64, AppError> {
+    let keep_i64 = keep as i64;
+    let result = sqlx::query(
+        "DELETE FROM log_snapshots WHERE status = 'pending' \
+         OR id NOT IN \
+         (SELECT id FROM log_snapshots WHERE status = 'complete' \
+          ORDER BY id DESC LIMIT ?1)",
+    )
+    .bind(keep_i64)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -473,6 +492,7 @@ mod tests {
     use crate::db::init_pool;
     use crate::op::{CreateBlockPayload, OpPayload};
     use crate::op_log::append_local_op_at;
+    use crate::ulid::BlockId;
     use sqlx::SqlitePool;
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -553,7 +573,7 @@ mod tests {
     /// Helper: insert an op via append_local_op_at with an explicit timestamp.
     async fn insert_op_at(pool: &SqlitePool, device_id: &str, block_id: &str, ts: &str) {
         let op = OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: block_id.to_owned(),
+            block_id: BlockId::test_id(block_id),
             block_type: "content".to_owned(),
             parent_id: None,
             position: Some(0),
@@ -1853,5 +1873,65 @@ mod tests {
         );
         assert_eq!(decoded.tables.attachments[0].filename, "photo.png");
         assert_eq!(decoded.tables.attachments[0].block_id, "blk-1");
+    }
+
+    // =======================================================================
+    // cleanup_old_snapshots
+    // =======================================================================
+
+    #[tokio::test]
+    async fn cleanup_old_snapshots_keeps_n_most_recent() {
+        let (pool, _dir) = test_pool().await;
+        let dev = "test-device";
+
+        // Insert a block so the snapshot has content
+        insert_block(&pool, "blk-cleanup", "cleanup test").await;
+
+        // Create 5 snapshots by inserting a new op before each (frontier needs at least one op)
+        for i in 0..5 {
+            insert_op_at(
+                &pool,
+                dev,
+                &format!("blk-c{i}"),
+                &format!("2025-01-0{}T00:00:00Z", i + 1),
+            )
+            .await;
+            create_snapshot(&pool, dev).await.unwrap();
+        }
+
+        // Verify we have 5 complete snapshots
+        let before: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(before, 5, "should have 5 complete snapshots before cleanup");
+
+        let deleted = cleanup_old_snapshots(&pool, 2).await.unwrap();
+        assert_eq!(deleted, 3, "should delete 3 of 5 snapshots, keeping 2");
+
+        let remaining: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            remaining, 2,
+            "should have exactly 2 remaining complete snapshots"
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_old_snapshots_noop_when_fewer_than_keep() {
+        let (pool, _dir) = test_pool().await;
+        let dev = "test-device";
+
+        // Insert a block and one op so we can create a snapshot
+        insert_block(&pool, "blk-noop", "noop test").await;
+        insert_op_at(&pool, dev, "blk-noop1", "2025-01-01T00:00:00Z").await;
+        create_snapshot(&pool, dev).await.unwrap();
+
+        let deleted = cleanup_old_snapshots(&pool, 5).await.unwrap();
+        assert_eq!(deleted, 0, "should not delete when fewer than keep");
     }
 }

@@ -149,6 +149,42 @@ LWW on `created_at` with `device_id` tiebreaker. Logged in Status View.
 **Attachment binary transfer:** Separate file-sync step after op streaming. Op log carries
 reference only.
 
+### Concurrent delete + edit resolution (#68)
+
+A remote `edit_block` targeting a locally-deleted block means the remote user intended the block
+to exist. **Resolution: resurrect.** Apply the edit AND clear `deleted_at`. Emit a synthetic
+`restore_block` op before applying the `edit_block`. Log the auto-resurrection in Status View.
+
+Rationale: Discarding silently loses data. Conflict copy is overcomplicated — the remote user's
+intent is unambiguous (they edited a block they believed existed). Git's merge model also
+resurrects: a merge commit that includes both a delete and an edit in different branches keeps
+the file if the edit is more recent.
+
+### `move_block` sync conflicts (#69)
+
+Three scenarios, each with its own resolution:
+
+1. **Same block moved to different parents:** LWW on `created_at` with `device_id` tiebreaker
+   (same as property conflicts). Winner's parent is used. Logged in Status View.
+2. **Block moved into a concurrently deleted subtree:** Reparent to document root
+   (`parent_id = NULL`). Emit a synthetic `move_block` op to root. Log in Status View as
+   *"Block [id] reparented to root — original parent was deleted."*
+3. **Interleaved batch move ops:** Resolve position conflicts per-parent using the existing
+   position compaction (insert at position, shift siblings). Process in `created_at` order
+   within each parent.
+
+### Duplicate tag blocks after sync (#70)
+
+**Resolution: materializer background dedup.** On cache rebuild, detect tag blocks with duplicate
+content (case-insensitive). Keep the lexicographically smallest ULID as canonical. Emit
+`edit_block` ops to rewrite `#[loser-ULID]` tokens to `#[winner-ULID]` in all blocks that
+reference the loser. Update `block_tags` rows. Background reconciliation — no user action needed.
+Log dedup events in Status View.
+
+Rationale: Option (a) merge-on-sync is correct but invasive and generates ops during sync
+streaming. Option (c) expose-to-user adds UI complexity for a machine-fixable problem. Background
+dedup runs after sync completes and is idempotent.
+
 ---
 
 ## ADR-10 — CRDT / Conflict Strategy (Remaining)
@@ -158,6 +194,10 @@ merge_block orchestrator, LCA algorithm). See ARCHITECTURE.md §10.
 
 **Pending:**
 
+- **Conflict copy semantics updated (#67):** The original block now retains local ("ours")
+  content on conflict, not the common ancestor. Conflict copy contains remote ("theirs") content.
+  This matches the Git model: your working copy keeps your changes; the conflict marker shows
+  what the other side did.
 - **Sync-triggered merge execution (Phase 4 Wave 5):** The merge infrastructure is built and
   tested, but it is not yet wired into the sync protocol. When ADR-09's sync streaming delivers
   concurrent ops, the materializer must invoke `merge_block()` to produce merge results. This is

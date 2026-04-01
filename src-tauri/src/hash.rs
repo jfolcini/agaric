@@ -25,8 +25,8 @@
 ///   for the genesis op (seq 1). When `None`, the empty string is used in the
 ///   hash input. When `Some`, the JSON array should already have entries sorted
 ///   lexicographically by `[device_id, seq]`.
-/// - `payload`: The canonical JSON string of the op payload (keys ordered by
-///   serde's derive order). **All ULID fields in the payload MUST be
+/// - `payload`: The canonical JSON string of the op payload (keys ordered
+///   alphabetically via `serde_json::to_value` → BTreeMap). **All ULID fields in the payload MUST be
 ///   uppercase Crockford base32 before hashing** — call
 ///   `OpPayload::normalize_block_ids()` before serialization.
 ///   `append_local_op_in_tx` enforces this automatically.
@@ -43,6 +43,24 @@ pub fn compute_op_hash(
     payload: &str,
 ) -> String {
     let parent_seqs_canonical = parent_seqs.unwrap_or("");
+
+    debug_assert!(
+        !device_id.contains('\0'),
+        "device_id must not contain null bytes"
+    );
+    debug_assert!(
+        !parent_seqs_canonical.contains('\0'),
+        "parent_seqs must not contain null bytes"
+    );
+    debug_assert!(
+        !op_type.contains('\0'),
+        "op_type must not contain null bytes"
+    );
+    // payload: serde_json serializes \0 as \\u0000, so raw \0 indicates corruption
+    debug_assert!(
+        !payload.contains('\0'),
+        "serialized payload must not contain raw null bytes"
+    );
 
     // Format seq into a stack buffer to avoid the heap allocation that
     // `i64::to_string()` would incur on every call.
@@ -89,6 +107,11 @@ pub fn verify_op_hash(
 }
 
 /// Constant-time byte-slice comparison (avoids early-exit on first diff).
+///
+/// **Note:** The `a.len() != b.len()` early return means this is only truly
+/// constant-time for equal-length inputs.  This is safe for our use case
+/// (blake3 hex hashes are always exactly 64 bytes) but callers should not
+/// assume constant-time behavior for variable-length inputs.
 #[inline]
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -264,7 +287,19 @@ mod tests {
         );
     }
 
+    /// In debug builds the null-byte debug_assert fires before hashing,
+    /// so we expect a panic.
     #[test]
+    #[should_panic(expected = "serialized payload must not contain raw null bytes")]
+    #[cfg(debug_assertions)]
+    fn payload_with_embedded_null_bytes_is_distinct() {
+        let _ = compute_op_hash(DEV_1, 1, None, OP_CREATE, "abc\0def");
+    }
+
+    /// In release builds (no debug_assertions) the null byte is hashed
+    /// normally and must produce a distinct hash from the non-null version.
+    #[test]
+    #[cfg(not(debug_assertions))]
     fn payload_with_embedded_null_bytes_is_distinct() {
         let h1 = compute_op_hash(DEV_1, 1, None, OP_CREATE, "abc\0def");
         let h2 = compute_op_hash(DEV_1, 1, None, OP_CREATE, "abcdef");
@@ -355,5 +390,14 @@ mod tests {
     #[test]
     fn constant_time_eq_empty_slices_returns_true() {
         assert!(constant_time_eq(b"", b""));
+    }
+
+    // ── debug_assert: null-byte separator ──────────────────────────────
+
+    #[test]
+    #[should_panic(expected = "device_id must not contain null bytes")]
+    #[cfg(debug_assertions)]
+    fn null_byte_debug_assert_fires_for_device_id() {
+        let _ = compute_op_hash("dev\0ice", 1, None, "create_block", "{}");
     }
 }

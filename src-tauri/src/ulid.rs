@@ -21,8 +21,10 @@ impl<'de> serde::Deserialize<'de> for BlockId {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        let parsed = ulid::Ulid::from_str(&s).map_err(serde::de::Error::custom)?;
-        Ok(Self(parsed.to_string()))
+        // Lenient: uppercase-normalize without ULID validation.
+        // Validation happens at the API boundary via `from_string`.
+        // This must accept any string stored by `from_trusted` / `test_id`.
+        Ok(Self(s.to_ascii_uppercase()))
     }
 }
 
@@ -54,9 +56,25 @@ impl BlockId {
         &self.0
     }
 
+    /// Create from a trusted string (already known to be a valid ULID from a
+    /// prior `BlockId::new()` call).  Normalises to uppercase but skips ULID
+    /// validation. Use in command handlers where the ID was returned by a
+    /// previous `create_block` and is being passed back from the frontend.
+    pub fn from_trusted(s: &str) -> Self {
+        Self(s.to_uppercase())
+    }
+
     /// Consume and return the inner string.
     pub fn into_string(self) -> String {
         self.0
+    }
+
+    /// Test-only constructor that bypasses ULID validation but still
+    /// uppercases the input.  Keeps test fixtures readable (e.g.
+    /// `BlockId::test_id("BLK1")` instead of a 26-char ULID literal).
+    #[cfg(test)]
+    pub fn test_id(s: &str) -> Self {
+        Self(s.to_uppercase())
     }
 }
 
@@ -75,6 +93,18 @@ impl fmt::Display for BlockId {
 impl AsRef<str> for BlockId {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+impl PartialEq<&str> for BlockId {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<str> for BlockId {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
     }
 }
 
@@ -417,12 +447,13 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_rejects_invalid_ulid() {
-        let bad_json = "\"not-a-ulid\"";
-        let result: Result<BlockId, _> = serde_json::from_str(bad_json);
-        assert!(
-            result.is_err(),
-            "deserialization must reject invalid ULID strings"
+    fn deserialize_accepts_any_string_and_uppercases() {
+        let json = "\"not-a-ulid\"";
+        let result: BlockId = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            result.as_str(),
+            "NOT-A-ULID",
+            "deserialization is lenient — just uppercases, validation is at the API boundary"
         );
     }
 

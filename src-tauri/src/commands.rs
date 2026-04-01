@@ -34,6 +34,9 @@ use crate::soft_delete;
 use crate::tag_query::{self, TagCacheRow, TagExpr};
 use crate::ulid::BlockId;
 
+/// Maximum allowed content length for a single block (256 KB).
+const MAX_CONTENT_LENGTH: usize = 256 * 1024;
+
 // ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------
@@ -192,6 +195,14 @@ pub async fn create_block_inner(
         }
     }
 
+    // 1c. Validate content length
+    if content.len() > MAX_CONTENT_LENGTH {
+        return Err(AppError::Validation(format!(
+            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
+            content.len()
+        )));
+    }
+
     // 2. Generate new BlockId
     let block_id = BlockId::new();
 
@@ -232,10 +243,11 @@ pub async fn create_block_inner(
     };
 
     // 3b. Build OpPayload with the resolved position
+    let parent_block_id = parent_id.as_ref().map(|s| BlockId::from_trusted(s));
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
-        block_id: block_id.as_str().to_owned(),
+        block_id: block_id.clone(),
         block_type: block_type.clone(),
-        parent_id: parent_id.clone(),
+        parent_id: parent_block_id,
         position: Some(effective_position),
         content: content.clone(),
     });
@@ -312,6 +324,14 @@ pub async fn edit_block_inner(
     let parent_id = existing.parent_id;
     let position = existing.position;
 
+    // 1b. Validate content length
+    if to_text.len() > MAX_CONTENT_LENGTH {
+        return Err(AppError::Validation(format!(
+            "content length {} exceeds maximum {MAX_CONTENT_LENGTH}",
+            to_text.len()
+        )));
+    }
+
     // 2. Find prev_edit inside transaction (inlined from recovery::find_prev_edit)
     let prev_edit_row = sqlx::query!(
         "SELECT device_id, seq FROM op_log \
@@ -326,8 +346,9 @@ pub async fn edit_block_inner(
     let prev_edit = prev_edit_row.map(|r| (r.device_id, r.seq));
 
     // 3. Build OpPayload
+    let block_id_ulid = BlockId::from_trusted(&block_id);
     let payload = OpPayload::EditBlock(EditBlockPayload {
-        block_id: block_id.clone(),
+        block_id: block_id_ulid,
         to_text: to_text.clone(),
         prev_edit,
     });
@@ -381,7 +402,7 @@ pub async fn delete_block_inner(
     block_id: String,
 ) -> Result<DeleteResponse, AppError> {
     let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
-        block_id: block_id.clone(),
+        block_id: BlockId::from_trusted(&block_id),
     });
 
     // Single IMMEDIATE transaction: validation + op_log + cascade soft-delete.
@@ -485,7 +506,7 @@ pub async fn restore_block_inner(
     }
 
     let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
-        block_id: block_id.clone(),
+        block_id: BlockId::from_trusted(&block_id),
         deleted_at_ref: deleted_at_ref.clone(),
     });
 
@@ -561,7 +582,7 @@ pub async fn purge_block_inner(
     }
 
     let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
-        block_id: block_id.clone(),
+        block_id: BlockId::from_trusted(&block_id),
     });
 
     // Append to op_log within transaction
@@ -742,9 +763,10 @@ pub async fn move_block_inner(
     }
 
     // 2. Build OpPayload
+    let new_parent_block_id = new_parent_id.as_ref().map(|s| BlockId::from_trusted(s));
     let payload = OpPayload::MoveBlock(MoveBlockPayload {
-        block_id: block_id.clone(),
-        new_parent_id: new_parent_id.clone(),
+        block_id: BlockId::from_trusted(&block_id),
+        new_parent_id: new_parent_block_id.clone(),
         new_position,
     });
 
@@ -1001,9 +1023,10 @@ pub async fn reorder_block_inner(
     };
 
     // 6. Build OpPayload (reuses MoveBlock — same logical operation)
+    let new_parent_block_id = parent_id.as_ref().map(|s| BlockId::from_trusted(s));
     let payload = OpPayload::MoveBlock(MoveBlockPayload {
-        block_id: block_id.clone(),
-        new_parent_id: parent_id.clone(),
+        block_id: BlockId::from_trusted(&block_id),
+        new_parent_id: new_parent_block_id,
         new_position,
     });
 
@@ -1198,8 +1221,8 @@ pub async fn add_tag_inner(
 ) -> Result<TagResponse, AppError> {
     // 1. Build OpPayload
     let payload = OpPayload::AddTag(AddTagPayload {
-        block_id: block_id.clone(),
-        tag_id: tag_id.clone(),
+        block_id: BlockId::from_trusted(&block_id),
+        tag_id: BlockId::from_trusted(&tag_id),
     });
 
     // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
@@ -1293,8 +1316,8 @@ pub async fn remove_tag_inner(
 ) -> Result<TagResponse, AppError> {
     // 1. Build OpPayload
     let payload = OpPayload::RemoveTag(RemoveTagPayload {
-        block_id: block_id.clone(),
-        tag_id: tag_id.clone(),
+        block_id: BlockId::from_trusted(&block_id),
+        tag_id: BlockId::from_trusted(&tag_id),
     });
 
     // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
@@ -1508,7 +1531,7 @@ pub async fn set_property_inner(
 ) -> Result<BlockRow, AppError> {
     // 1. Build and validate the payload before touching the DB
     let prop_payload = SetPropertyPayload {
-        block_id: block_id.clone(),
+        block_id: BlockId::from_trusted(&block_id),
         key: key.clone(),
         value_text: value_text.clone(),
         value_num,
@@ -1601,7 +1624,7 @@ pub async fn delete_property_inner(
 
     // 3. Append DeleteProperty op
     let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
-        block_id: block_id.clone(),
+        block_id: BlockId::from_trusted(&block_id),
         key: key.clone(),
     });
     let op_record =
@@ -1729,7 +1752,7 @@ pub async fn apply_reverse_in_tx(
                  UPDATE blocks SET deleted_at = ? \
                  WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
             )
-            .bind(&p.block_id)
+            .bind(p.block_id.as_str())
             .bind(&now)
             .execute(&mut **tx)
             .await?;
@@ -1746,7 +1769,7 @@ pub async fn apply_reverse_in_tx(
                  UPDATE blocks SET deleted_at = NULL \
                  WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
             )
-            .bind(&p.block_id)
+            .bind(p.block_id.as_str())
             .bind(&p.deleted_at_ref)
             .execute(&mut **tx)
             .await?;
@@ -1754,29 +1777,29 @@ pub async fn apply_reverse_in_tx(
         OpPayload::EditBlock(p) => {
             sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
                 .bind(&p.to_text)
-                .bind(&p.block_id)
+                .bind(p.block_id.as_str())
                 .execute(&mut **tx)
                 .await?;
         }
         OpPayload::MoveBlock(p) => {
             sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
-                .bind(&p.new_parent_id)
+                .bind(p.new_parent_id.as_ref().map(BlockId::as_str))
                 .bind(p.new_position)
-                .bind(&p.block_id)
+                .bind(p.block_id.as_str())
                 .execute(&mut **tx)
                 .await?;
         }
         OpPayload::AddTag(p) => {
             sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-                .bind(&p.block_id)
-                .bind(&p.tag_id)
+                .bind(p.block_id.as_str())
+                .bind(p.tag_id.as_str())
                 .execute(&mut **tx)
                 .await?;
         }
         OpPayload::RemoveTag(p) => {
             sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
-                .bind(&p.block_id)
-                .bind(&p.tag_id)
+                .bind(p.block_id.as_str())
+                .bind(p.tag_id.as_str())
                 .execute(&mut **tx)
                 .await?;
         }
@@ -1785,7 +1808,7 @@ pub async fn apply_reverse_in_tx(
                 "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
                  VALUES (?, ?, ?, ?, ?, ?)",
             )
-            .bind(&p.block_id)
+            .bind(p.block_id.as_str())
             .bind(&p.key)
             .bind(&p.value_text)
             .bind(p.value_num)
@@ -1796,7 +1819,7 @@ pub async fn apply_reverse_in_tx(
         }
         OpPayload::DeleteProperty(p) => {
             sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-                .bind(&p.block_id)
+                .bind(p.block_id.as_str())
                 .bind(&p.key)
                 .execute(&mut **tx)
                 .await?;
@@ -2070,7 +2093,7 @@ pub async fn create_block(
 ) -> Result<BlockRow, AppError> {
     create_block_inner(
         &pool.0,
-        &device_id.0,
+        device_id.as_str(),
         &materializer,
         block_type,
         content,
@@ -2092,9 +2115,15 @@ pub async fn edit_block(
     block_id: String,
     to_text: String,
 ) -> Result<BlockRow, AppError> {
-    edit_block_inner(&pool.0, &device_id.0, &materializer, block_id, to_text)
-        .await
-        .map_err(sanitize_internal_error)
+    edit_block_inner(
+        &pool.0,
+        device_id.as_str(),
+        &materializer,
+        block_id,
+        to_text,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
@@ -2107,7 +2136,7 @@ pub async fn delete_block(
     materializer: State<'_, Materializer>,
     block_id: String,
 ) -> Result<DeleteResponse, AppError> {
-    delete_block_inner(&pool.0, &device_id.0, &materializer, block_id)
+    delete_block_inner(&pool.0, device_id.as_str(), &materializer, block_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2125,7 +2154,7 @@ pub async fn restore_block(
 ) -> Result<RestoreResponse, AppError> {
     restore_block_inner(
         &pool.0,
-        &device_id.0,
+        device_id.as_str(),
         &materializer,
         block_id,
         deleted_at_ref,
@@ -2144,7 +2173,7 @@ pub async fn purge_block(
     materializer: State<'_, Materializer>,
     block_id: String,
 ) -> Result<PurgeResponse, AppError> {
-    purge_block_inner(&pool.0, &device_id.0, &materializer, block_id)
+    purge_block_inner(&pool.0, device_id.as_str(), &materializer, block_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2163,7 +2192,7 @@ pub async fn move_block(
 ) -> Result<MoveResponse, AppError> {
     move_block_inner(
         &pool.0,
-        &device_id.0,
+        device_id.as_str(),
         &materializer,
         block_id,
         new_parent_id,
@@ -2236,7 +2265,7 @@ pub async fn add_tag(
     block_id: String,
     tag_id: String,
 ) -> Result<TagResponse, AppError> {
-    add_tag_inner(&pool.0, &device_id.0, &materializer, block_id, tag_id)
+    add_tag_inner(&pool.0, device_id.as_str(), &materializer, block_id, tag_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2252,7 +2281,7 @@ pub async fn remove_tag(
     block_id: String,
     tag_id: String,
 ) -> Result<TagResponse, AppError> {
-    remove_tag_inner(&pool.0, &device_id.0, &materializer, block_id, tag_id)
+    remove_tag_inner(&pool.0, device_id.as_str(), &materializer, block_id, tag_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2401,7 +2430,7 @@ pub async fn set_property(
 ) -> Result<BlockRow, AppError> {
     set_property_inner(
         &pool.0,
-        &device_id.0,
+        device_id.as_str(),
         &materializer,
         block_id,
         key,
@@ -2425,7 +2454,7 @@ pub async fn delete_property(
     block_id: String,
     key: String,
 ) -> Result<(), AppError> {
-    delete_property_inner(&pool.0, &device_id.0, &materializer, block_id, key)
+    delete_property_inner(&pool.0, device_id.as_str(), &materializer, block_id, key)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2482,7 +2511,7 @@ pub async fn revert_ops(
     materializer: State<'_, Materializer>,
     ops: Vec<OpRef>,
 ) -> Result<Vec<UndoResult>, AppError> {
-    revert_ops_inner(&pool.0, &device_id.0, &materializer, ops)
+    revert_ops_inner(&pool.0, device_id.as_str(), &materializer, ops)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -2498,9 +2527,15 @@ pub async fn undo_page_op(
     page_id: String,
     undo_depth: i64,
 ) -> Result<UndoResult, AppError> {
-    undo_page_op_inner(&pool.0, &device_id.0, &materializer, page_id, undo_depth)
-        .await
-        .map_err(sanitize_internal_error)
+    undo_page_op_inner(
+        &pool.0,
+        device_id.as_str(),
+        &materializer,
+        page_id,
+        undo_depth,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: redo page op. Delegates to [`redo_page_op_inner`].
@@ -2516,7 +2551,7 @@ pub async fn redo_page_op(
 ) -> Result<UndoResult, AppError> {
     redo_page_op_inner(
         &pool.0,
-        &device_id.0,
+        device_id.as_str(),
         &materializer,
         undo_device_id,
         undo_seq,
@@ -2873,6 +2908,26 @@ mod tests {
         assert_eq!(row.content, Some(unicode_content.into()));
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_block_rejects_oversized_content() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let oversized = "x".repeat(MAX_CONTENT_LENGTH + 1);
+        let result =
+            create_block_inner(&pool, DEV, &mat, "content".into(), oversized, None, None).await;
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "should return Validation error for oversized content, got: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("exceeds maximum"),
+            "error message should mention exceeds maximum"
+        );
+    }
+
     // ======================================================================
     // edit_block
     // ======================================================================
@@ -3125,6 +3180,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(row.content, Some("same text".into()));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn edit_block_rejects_oversized_content() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block to edit
+        let created = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "original".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let oversized = "x".repeat(MAX_CONTENT_LENGTH + 1);
+        let result = edit_block_inner(&pool, DEV, &mat, created.id, oversized).await;
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "should return Validation error for oversized content, got: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("exceeds maximum"),
+            "error message should mention exceeds maximum"
+        );
     }
 
     // ======================================================================
@@ -6510,7 +6597,7 @@ mod tests {
             &pool,
             DEV,
             OpPayload::DeleteBlock(DeleteBlockPayload {
-                block_id: parent.id.clone(),
+                block_id: BlockId::from_trusted(&parent.id),
             }),
             delete_ts.to_string(),
         )
@@ -7055,7 +7142,7 @@ mod tests {
             DEV,
             OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
                 attachment_id: att_id.into(),
-                block_id: block.id.clone(),
+                block_id: BlockId::from_trusted(&block.id),
                 mime_type: "image/png".into(),
                 filename: "photo.png".into(),
                 size_bytes: 1024,
@@ -7592,7 +7679,7 @@ mod tests {
         // from DEV (whose created_at is now_rfc3339()). The reverse lookup
         // needs to find the create op *before* this edit in temporal order.
         let edit_payload = OpPayload::EditBlock(EditBlockPayload {
-            block_id: block.id.clone(),
+            block_id: BlockId::from_trusted(&block.id),
             to_text: "from-device-B".into(),
             prev_edit: None,
         });

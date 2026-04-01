@@ -16,6 +16,7 @@ use sqlx::SqlitePool;
 use crate::error::AppError;
 use crate::op::{EditBlockPayload, OpPayload};
 use crate::op_log::{append_local_op_in_tx, OpRecord};
+use crate::ulid::BlockId;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -138,7 +139,7 @@ pub async fn flush_draft(
     prev_edit: Option<(String, i64)>,
 ) -> Result<OpRecord, AppError> {
     let op = OpPayload::EditBlock(EditBlockPayload {
-        block_id: block_id.to_owned(),
+        block_id: BlockId::from_trusted(block_id),
         to_text: content.to_owned(),
         prev_edit,
     });
@@ -574,7 +575,7 @@ mod tests {
         // of committing, to prove rollback semantics.
         {
             let op = OpPayload::EditBlock(EditBlockPayload {
-                block_id: BLOCK_A.to_owned(),
+                block_id: BlockId::test_id(BLOCK_A),
                 to_text: "rollback test".to_owned(),
                 prev_edit: None,
             });

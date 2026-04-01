@@ -3,7 +3,7 @@ source: src/op.rs
 expression: json
 ---
 attachment_id: A1
-block_id: B1
+block_id: 01ARZ3NDEKTSV4RRFFQ69G5FAV
 filename: photo.png
 fs_path: /tmp/photo.png
 mime_type: image/png

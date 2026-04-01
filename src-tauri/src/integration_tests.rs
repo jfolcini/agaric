@@ -37,6 +37,7 @@ use crate::op_log;
 use crate::pagination::BlockRow;
 use crate::recovery;
 use crate::snapshot;
+use crate::ulid::BlockId;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -406,7 +407,7 @@ async fn recovery_skips_already_flushed_draft_without_duplicate() {
 
     // Insert a matching edit op with a timestamp after the draft's updated_at
     let payload = OpPayload::EditBlock(EditBlockPayload {
-        block_id: "FLUSHED-BLOCK".into(),
+        block_id: BlockId::test_id("FLUSHED-BLOCK"),
         to_text: "flushed content".into(),
         prev_edit: None,
     });

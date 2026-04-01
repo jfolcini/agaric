@@ -227,7 +227,7 @@ pub fn run() {
             // Store all in Tauri managed state
             app.manage(WritePool(pools.write));
             app.manage(ReadPool(pools.read));
-            app.manage(DeviceId(device_id));
+            app.manage(DeviceId::new(device_id));
             app.manage(materializer);
 
             Ok(())

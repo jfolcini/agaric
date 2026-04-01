@@ -176,23 +176,53 @@ pub async fn find_lca(
     op_a: &(String, i64),
     op_b: &(String, i64),
 ) -> Result<Option<(String, i64)>, AppError> {
+    // Check if compaction has occurred (snapshots exist)
+    let has_snapshots: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+            .fetch_one(pool)
+            .await?;
+
     // Build visited set from chain A (including op_a itself)
     let mut visited: HashSet<(String, i64)> = HashSet::new();
     let mut current: Option<(String, i64)> = Some(op_a.clone());
     while let Some(key) = current.take() {
-        visited.insert(key.clone());
-        let record = get_op_by_seq(pool, &key.0, key.1).await?;
-        current = extract_prev_edit(&record)?;
+        if !visited.insert(key.clone()) {
+            break; // cycle detected — stop walking
+        }
+        match get_op_by_seq(pool, &key.0, key.1).await {
+            Ok(record) => current = extract_prev_edit(&record)?,
+            Err(AppError::NotFound(_)) if has_snapshots > 0 => {
+                return Err(AppError::InvalidOperation(format!(
+                    "edit chain broken at ({}, {}) — likely due to op log compaction; \
+                     LCA requires intact chains",
+                    key.0, key.1
+                )));
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     // Walk chain B, checking each step against the visited set
+    let mut visited_b: HashSet<(String, i64)> = HashSet::new();
     let mut current: Option<(String, i64)> = Some(op_b.clone());
     while let Some(key) = current.take() {
         if visited.contains(&key) {
             return Ok(Some(key));
         }
-        let record = get_op_by_seq(pool, &key.0, key.1).await?;
-        current = extract_prev_edit(&record)?;
+        if !visited_b.insert(key.clone()) {
+            break; // cycle detected — stop walking
+        }
+        match get_op_by_seq(pool, &key.0, key.1).await {
+            Ok(record) => current = extract_prev_edit(&record)?,
+            Err(AppError::NotFound(_)) if has_snapshots > 0 => {
+                return Err(AppError::InvalidOperation(format!(
+                    "edit chain broken at ({}, {}) — likely due to op log compaction; \
+                     LCA requires intact chains",
+                    key.0, key.1
+                )));
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     Ok(None)
@@ -255,6 +285,7 @@ mod tests {
     use crate::db::init_pool;
     use crate::hash::compute_op_hash;
     use crate::op_log::append_local_op_at;
+    use crate::ulid::BlockId;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -277,7 +308,7 @@ mod tests {
     /// Build a `CreateBlock` payload.
     fn make_create(block_id: &str, content: &str) -> OpPayload {
         OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: block_id.into(),
+            block_id: BlockId::test_id(block_id),
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
@@ -288,7 +319,7 @@ mod tests {
     /// Build an `EditBlock` payload with a `prev_edit` pointer.
     fn make_edit(block_id: &str, to_text: &str, prev_edit: Option<(String, i64)>) -> OpPayload {
         OpPayload::EditBlock(EditBlockPayload {
-            block_id: block_id.into(),
+            block_id: BlockId::test_id(block_id),
             to_text: to_text.into(),
             prev_edit,
         })
@@ -297,7 +328,7 @@ mod tests {
     /// Build a `DeleteBlock` payload.
     fn make_delete(block_id: &str) -> OpPayload {
         OpPayload::DeleteBlock(DeleteBlockPayload {
-            block_id: block_id.into(),
+            block_id: BlockId::test_id(block_id),
         })
     }
 
@@ -952,8 +983,8 @@ mod tests {
     // ── F15: find_lca after compaction (ops purged from chain) ──────────
 
     /// When historical ops have been purged by compaction, `find_lca` should
-    /// propagate `AppError::NotFound` for the missing op. This test documents
-    /// the current behavior.
+    /// return `AppError::InvalidOperation` with a clear message mentioning
+    /// compaction (snapshots exist, so the guard detects the broken chain).
     #[tokio::test]
     async fn find_lca_after_compaction_produces_not_found() {
         use crate::snapshot::compact_op_log;
@@ -974,7 +1005,7 @@ mod tests {
             &pool,
             DEV_A,
             OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: "B1".to_owned(),
+                block_id: BlockId::test_id("B1"),
                 block_type: "content".to_owned(),
                 parent_id: None,
                 position: Some(0),
@@ -990,7 +1021,7 @@ mod tests {
             &pool,
             DEV_A,
             OpPayload::EditBlock(EditBlockPayload {
-                block_id: "B1".to_owned(),
+                block_id: BlockId::test_id("B1"),
                 prev_edit: Some((DEV_A.to_owned(), 1)),
                 to_text: "v2".to_owned(),
             }),
@@ -1005,7 +1036,7 @@ mod tests {
             &pool,
             DEV_A,
             OpPayload::EditBlock(EditBlockPayload {
-                block_id: "B1".to_owned(),
+                block_id: BlockId::test_id("B1"),
                 prev_edit: Some((DEV_A.to_owned(), 2)),
                 to_text: "v3".to_owned(),
             }),
@@ -1036,8 +1067,62 @@ mod tests {
         let err = result.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.to_lowercase().contains("not found"),
-            "expected NotFound error, got: {msg}"
+            msg.to_lowercase().contains("compaction"),
+            "expected InvalidOperation mentioning compaction, got: {msg}"
+        );
+    }
+
+    /// Dedicated test: set up two ops, create a snapshot, delete the
+    /// intermediate op from op_log, call find_lca, verify it returns
+    /// `AppError::InvalidOperation` containing "compaction".
+    #[tokio::test]
+    async fn find_lca_after_compaction_returns_clear_error() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create block
+        append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+            .await
+            .unwrap();
+
+        // Edit pointing back to create
+        append_local_op_at(
+            &pool,
+            DEV_A,
+            make_edit("B1", "v1", Some((DEV_A.into(), 1))),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Simulate compaction: insert a snapshot row then delete seq 1
+        sqlx::query(
+            "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
+             VALUES ('SNAP01', 'complete', 'fakehash', '{\"device-A\":1}', X'00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query("DELETE FROM op_log WHERE device_id = ? AND seq = 1")
+            .bind(DEV_A)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // find_lca walks from (A,2), follows prev_edit to (A,1) which is
+        // missing → should return InvalidOperation mentioning compaction
+        let result = find_lca(&pool, &(DEV_A.into(), 2), &(DEV_A.into(), 2)).await;
+        assert!(result.is_err(), "find_lca should fail on broken chain");
+
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.to_lowercase().contains("compaction"),
+            "error should mention compaction, got: {msg}"
+        );
+        assert!(
+            msg.contains("edit chain broken"),
+            "error should mention broken chain, got: {msg}"
         );
     }
 
