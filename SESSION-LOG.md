@@ -186,6 +186,25 @@ Review: Reviewer flagged duplication with unit tests and missing edge cases. Fix
 - Backend: 139 command integration tests pass (130 existing + 9 new)
 - REVIEW-LATER.md: 5 → 4 open items (resolved #492)
 
+### Phase 11: Error Handling + Sync Protocol Reviews
+
+2 parallel review subagents covering error handling/resilience and sync protocol/merge.
+Cross-validated P1 claims with a separate subagent.
+
+**Reviews:**
+- Error handling + resilience: 14 findings (5 P1, 4 P2, 4 P3, 1 P4)
+- Sync protocol + merge: 3 findings (1 P2, 1 P3, 1 P4) — code is solid
+
+**Cross-validation of 5 P1 claims (error handling):**
+All 5 downgraded to P2. React 18 doesn't crash on unhandled promise rejections. No data loss in any scenario. Undo state corruption claim was false (undo update is after the await, not before).
+
+**5 confirmed findings added to REVIEW-LATER.md (#508-#512):**
+- #508-#511: Missing try/catch + toast in 4 async handlers (PageEditor, BlockTree)
+- #512: merge.rs doc says "ancestor" but code uses "ours" (doc mismatch)
+
+### Phase 11 Stats
+- REVIEW-LATER.md: 4 → 9 open items (+5 from reviews)
+
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 
 Resolved all 18 Tier 7.5 items. 7 BacklinkFilterBuilder UX/a11y fixes, 6 BacklinksPanel fixes, 1 button.tsx touch target, 3 backend perf optimizations, 2 already resolved by Tier 7.
