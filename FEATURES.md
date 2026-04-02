@@ -63,7 +63,6 @@
 | 21. Android | 0 | 0 | 2 | 3 | 0 | 5 |
 | 22. i18n & Localization | 0 | 0 | 1 | 2 | 0 | 3 |
 | 23. CJK Support | 1 | 0 | 0 | 4 | 0 | 5 |
-| 24. Graph View | 0 | 0 | 0 | 2 | 0 | 2 |
 | 25. UI Shell & Components | 9 | 0 | 0 | 0 | 0 | 9 |
 | 26. State Management | 4 | 0 | 0 | 2 | 0 | 6 |
 | 27. Database Architecture | 8 | 0 | 0 | 0 | 0 | 8 |
@@ -430,15 +429,6 @@
 
 ---
 
-## 24. Graph View
-
-| # | Feature | Status | Phase | Tests | Notes |
-|---|---------|--------|-------|-------|-------|
-| 191 | Graph data query (`block_links` + `block_tags`) | Planned | 5 | — | |
-| 192 | react-force-graph visualization (WebGL canvas) | Planned | 5 | — | |
-
----
-
 ## 25. UI Shell & Components
 
 | # | Feature | Status | Phase | Tests | Notes |
@@ -588,4 +578,4 @@ before the noted phase.
 | **4W1 — DAG + Merge** | **Complete** | Multi-parent ops, LCA, diffy merge, conflict copies, property LWW |
 | **4W2 — Snapshots** | **Complete** | zstd+CBOR encoding, crash-safe write, RESET apply, 90-day compaction |
 | **4 — Sync + Android** | **Complete** | mDNS, pairing, op streaming, RESET protocol, full Android |
-| **5 — Polish** | **Planned** | i18n, CJK search, export, auto-updates, graph view |
+| **5 — Polish** | **Planned** | i18n, export, auto-updates |

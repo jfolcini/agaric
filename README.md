@@ -330,7 +330,6 @@ The hooks cover: trailing whitespace, EOF fixer, YAML/TOML/JSON validation, Biom
 │   └── tauri.conf.json     # Tauri configuration
 ├── public/                 # Static assets (agaric.svg icon)
 ├── AGENTS.md               # Developer conventions (for AI agents)
-├── ADR.md                  # Architecture Decision Records
 └── COMPARISON.md           # Feature comparison with Logseq
 ```
 

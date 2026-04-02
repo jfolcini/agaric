@@ -349,9 +349,8 @@ These tasks block everything downstream. Ship them before moving on.
 ## Phase 5 — Polish
 
 **Estimate:** 6–8 weeks
-**ADRs:** ADR-12, ADR-17, ADR-19, ADR-20
 
-> i18n, CJK search, export, auto-updates, graph view. The difference between a great tool and a shipped product.
+> i18n, export, auto-updates. The difference between a great tool and a shipped product.
 
 ### i18n
 
@@ -373,13 +372,6 @@ These tasks block everything downstream. Ship them before moving on.
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
 | p5-t10 | Tauri updater setup | infra | | GitHub Releases as update server. Sign binaries. Linux: AppImage or .deb. Android: sideload or F-Droid track. |
-
-### Graph View
-
-| ID | Task | Tags | Critical | Notes |
-|----|------|------|----------|-------|
-| p5-t11 | Graph data query | backend | | [ADR-17] block_links JOIN blocks. Tag relationships via block_tags. Data already in schema — this is visualisation only. |
-| p5-t12 | react-force-graph on WebGL canvas | frontend | | [ADR-17] ADR-17: D3 and Cytoscape rejected. react-force-graph chosen if graph view is built. Deferred to Phase 5. |
 
 ---
 
@@ -425,8 +417,3 @@ These tasks block everything downstream. Ship them before moving on.
 | zstd | backend | Snapshot compression. |
 | ciborium | backend | CBOR for snapshot encoding. |
 | tokio-tungstenite + rustls | backend | Sync transport. |
-
-### Phase 5
-| Dep | Side | Notes |
-|-----|------|-------|
-| react-force-graph | frontend | Graph view. WebGL canvas. |
