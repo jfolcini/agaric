@@ -149,7 +149,7 @@ describe('LinkedReferences', () => {
 
     render(<LinkedReferences pageId="PAGE1" />)
 
-    expect(await screen.findByText('5 Linked References')).toBeInTheDocument()
+    expect(await screen.findByText('5 References')).toBeInTheDocument()
   })
 
   // 3. renders singular for 1 backlink
@@ -165,7 +165,7 @@ describe('LinkedReferences', () => {
 
     render(<LinkedReferences pageId="PAGE1" />)
 
-    expect(await screen.findByText('1 Linked Reference')).toBeInTheDocument()
+    expect(await screen.findByText('1 Reference')).toBeInTheDocument()
   })
 
   // 4. header toggle collapses/expands content
@@ -187,16 +187,16 @@ describe('LinkedReferences', () => {
 
     // Content should be visible (expanded by default)
     expect(
-      screen.getByLabelText('Linked references').querySelector('.linked-references-content'),
+      screen.getByLabelText('References').querySelector('.linked-references-content'),
     ).toBeInTheDocument()
 
     // Click header to collapse
-    const header = screen.getByText('1 Linked Reference')
+    const header = screen.getByText('1 Reference')
     await user.click(header)
 
     // Content should be hidden
     expect(
-      screen.getByLabelText('Linked references').querySelector('.linked-references-content'),
+      screen.getByLabelText('References').querySelector('.linked-references-content'),
     ).not.toBeInTheDocument()
 
     // Click header to expand again
@@ -204,7 +204,7 @@ describe('LinkedReferences', () => {
 
     // Content should be visible again
     expect(
-      screen.getByLabelText('Linked references').querySelector('.linked-references-content'),
+      screen.getByLabelText('References').querySelector('.linked-references-content'),
     ).toBeInTheDocument()
   })
 
@@ -441,7 +441,7 @@ describe('LinkedReferences', () => {
     render(<LinkedReferences pageId="PAGE1" />)
 
     const loadMoreBtn = await screen.findByRole('button', {
-      name: /load more linked references/i,
+      name: /load more references/i,
     })
     expect(loadMoreBtn).toBeInTheDocument()
   })
@@ -479,7 +479,7 @@ describe('LinkedReferences', () => {
     render(<LinkedReferences pageId="PAGE1" />)
 
     const loadMoreBtn = await screen.findByRole('button', {
-      name: /load more linked references/i,
+      name: /load more references/i,
     })
     await user.click(loadMoreBtn)
 
@@ -547,7 +547,7 @@ describe('LinkedReferences', () => {
     render(<LinkedReferences pageId="PAGE1" />)
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load linked references')
+      expect(toast.error).toHaveBeenCalledWith('Failed to load references')
     })
   })
 
@@ -632,7 +632,7 @@ describe('LinkedReferences', () => {
 
     await screen.findByText('block')
 
-    const section = screen.getByLabelText('Linked references')
+    const section = screen.getByLabelText('References')
     expect(section).toBeInTheDocument()
     expect(section.tagName).toBe('SECTION')
   })
@@ -711,7 +711,7 @@ describe('LinkedReferences', () => {
 
     render(<LinkedReferences pageId="PAGE1" />)
 
-    const header = await screen.findByText('1 Linked Reference')
+    const header = await screen.findByText('1 Reference')
     const headerBtn = header.closest('button') as HTMLElement
 
     // Initially expanded

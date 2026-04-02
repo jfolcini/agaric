@@ -113,7 +113,7 @@ export function LinkedReferences({
         setHasMore(resp.has_more)
         setTotalCount(resp.total_count)
       } catch {
-        toast.error('Failed to load linked references')
+        toast.error('Failed to load references')
       } finally {
         setLoading(false)
       }
@@ -309,10 +309,10 @@ export function LinkedReferences({
     blockCount: g.blocks.length,
   }))
 
-  const headerLabel = totalCount === 1 ? '1 Linked Reference' : `${totalCount} Linked References`
+  const headerLabel = totalCount === 1 ? '1 Reference' : `${totalCount} References`
 
   return (
-    <section className="linked-references" aria-label="Linked references">
+    <section className="linked-references" aria-label="References">
       {/* Main header -- collapsible */}
       <button
         type="button"
@@ -440,9 +440,7 @@ export function LinkedReferences({
               onClick={loadMore}
               disabled={loading}
               aria-busy={loading}
-              aria-label={
-                loading ? 'Loading more linked references' : 'Load more linked references'
-              }
+              aria-label={loading ? 'Loading more references' : 'Load more references'}
             >
               {loading ? (
                 <>

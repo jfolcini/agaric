@@ -31,6 +31,24 @@ vi.mock('../BlockTree', () => ({
   },
 }))
 
+// ── Mock DuePanel ───────────────────────────────────────────────────
+vi.mock('../DuePanel', () => ({
+  DuePanel: (props: { date: string; onNavigateToPage?: unknown }) => (
+    <div data-testid="due-panel" data-date={props.date}>
+      DuePanel
+    </div>
+  ),
+}))
+
+// ── Mock LinkedReferences ───────────────────────────────────────────
+vi.mock('../LinkedReferences', () => ({
+  LinkedReferences: (props: { pageId: string; onNavigateToPage?: unknown }) => (
+    <div data-testid="linked-references" data-page-id={props.pageId}>
+      LinkedReferences
+    </div>
+  ),
+}))
+
 import { useBlockStore } from '../../stores/blocks'
 import { useJournalStore } from '../../stores/journal'
 import { JournalControls, JournalPage, MAX_JOURNAL_DATE, MIN_JOURNAL_DATE } from '../JournalPage'
@@ -1559,6 +1577,137 @@ describe('JournalPage', () => {
       await waitFor(() => {
         expect(onNavigateToPage).toHaveBeenCalledWith('PAGE-1', 'Untitled')
       })
+    })
+  })
+
+  // ── DuePanel & LinkedReferences in daily mode ─────────────────────
+  describe('DuePanel and LinkedReferences', () => {
+    it('daily mode renders DuePanel with correct date', async () => {
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockResolvedValue({
+        items: [makeDailyPage('DP-TODAY', todayStr)],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByTestId('due-panel')).toBeInTheDocument()
+      })
+
+      expect(screen.getByTestId('due-panel')).toHaveAttribute('data-date', todayStr)
+    })
+
+    it('daily mode renders LinkedReferences with correct pageId', async () => {
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockResolvedValue({
+        items: [makeDailyPage('DP-TODAY', todayStr)],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByTestId('linked-references')).toBeInTheDocument()
+      })
+
+      expect(screen.getByTestId('linked-references')).toHaveAttribute('data-page-id', 'DP-TODAY')
+    })
+
+    it('weekly mode does NOT render DuePanel or LinkedReferences', async () => {
+      const user = userEvent.setup()
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockResolvedValue({
+        items: [makeDailyPage('DP-TODAY', todayStr)],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const weekTab = screen.getByRole('tab', { name: /weekly view/i })
+      await user.click(weekTab)
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('region').length).toBe(7)
+      })
+
+      expect(screen.queryByTestId('due-panel')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('linked-references')).not.toBeInTheDocument()
+    })
+
+    it('monthly mode does NOT render DuePanel or LinkedReferences', async () => {
+      const user = userEvent.setup()
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockResolvedValue({
+        items: [makeDailyPage('DP-TODAY', todayStr)],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const monthTab = screen.getByRole('tab', { name: /monthly view/i })
+      await user.click(monthTab)
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('region').length).toBeGreaterThanOrEqual(28)
+      })
+
+      expect(screen.queryByTestId('due-panel')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('linked-references')).not.toBeInTheDocument()
+    })
+
+    it('panels not rendered when pageId is null', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      expect(screen.queryByTestId('due-panel')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('linked-references')).not.toBeInTheDocument()
+    })
+
+    it('DuePanel renders before LinkedReferences in DOM order', async () => {
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockResolvedValue({
+        items: [makeDailyPage('DP-TODAY', todayStr)],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByTestId('due-panel')).toBeInTheDocument()
+      })
+
+      const duePanel = screen.getByTestId('due-panel')
+      const linkedRefs = screen.getByTestId('linked-references')
+
+      // DuePanel should come before LinkedReferences in DOM order
+      // Node.DOCUMENT_POSITION_FOLLOWING = 4
+      expect(
+        duePanel.compareDocumentPosition(linkedRefs) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
     })
   })
 })

@@ -52,7 +52,9 @@ import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
 import { useResolveStore } from '../stores/resolve'
 import { BlockTree } from './BlockTree'
+import { DuePanel } from './DuePanel'
 import { EmptyState } from './EmptyState'
+import { LinkedReferences } from './LinkedReferences'
 
 interface DayEntry {
   date: Date
@@ -511,6 +513,14 @@ export function JournalPage({
         )}
 
         {entry.pageId && <BlockTree parentId={entry.pageId} onNavigateToPage={onNavigateToPage} />}
+
+        {/* DuePanel + LinkedReferences — only in daily mode */}
+        {mode === 'daily' && entry.pageId && (
+          <>
+            <DuePanel date={entry.dateStr} onNavigateToPage={onNavigateToPage} />
+            <LinkedReferences pageId={entry.pageId} onNavigateToPage={onNavigateToPage} />
+          </>
+        )}
 
         {/* Empty state: compact for multi-day views, full for daily */}
         {!entry.pageId &&

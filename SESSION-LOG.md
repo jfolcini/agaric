@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 61 — 2026-04-03 — Phase 6 Wave 1+2: DuePanel + Journal Panels + References Rename (#600-#603)
+
+### DuePanel component + journal daily view panels + label rename
+4 items resolved: DuePanel for due-date blocks, JournalPage wiring (DuePanel + LinkedReferences in daily mode), "Linked References" → "References" rename.
+
+Built by 2 parallel subagents (A: DuePanel component + 16 tests; B: JournalPage wiring + 6 tests) + orchestrator (#602 label rename + review fix for remaining "linked references" in Load more aria-label and toast). Reviewed by 1 subagent (CONDITIONAL PASS — found stale "linked references" in Load more button, fixed).
+
+| File | Change |
+|------|--------|
+| `DuePanel.tsx` (new) | #600: Blocks due on a date, grouped by todo_state (DOING>TODO>DONE>Other), priority-sorted, batchResolve breadcrumbs, auto-hides when empty. |
+| `DuePanel.test.tsx` (new) | #600: 16 tests (render, grouping, sorting, pagination, navigation, priority badges, collapse, date change, a11y). |
+| `JournalPage.tsx` | #601+#603: Render DuePanel + LinkedReferences in renderDaySection(), daily mode only, when pageId exists. |
+| `JournalPage.test.tsx` | #601+#603: 6 new tests (daily renders both, weekly/monthly don't, null pageId, DOM order). |
+| `LinkedReferences.tsx` | #602: Header "N Linked References"→"N References", aria-label, Load more label, error toast. |
+| `LinkedReferences.test.tsx` | #602: Updated 5 assertions for renamed labels. |
+
+### Stats
+- Frontend: 78/78 test files, 2186 tests pass (2164 + 22 new)
+- Commit: `187de28`
+
 ## Session 60 — 2026-04-03 — Phase 5 Wave 5: Unlinked References (#576-#579)
 
 ### Full-stack unlinked references feature
