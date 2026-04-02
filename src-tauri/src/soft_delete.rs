@@ -604,7 +604,7 @@ mod tests {
         // Ensure the next wall-clock timestamp is strictly after t1.
         // now_rfc3339() has millisecond precision — without this sleep,
         // both calls can land in the same millisecond, making t1 == t2.
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
 
         // Cascade-delete parent: CTE does NOT traverse through the
         // already-deleted child, so grandchild is NOT reached.

@@ -1,9 +1,9 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use block_notes_lib::db::init_pool;
-use block_notes_lib::op::*;
-use block_notes_lib::op_log::append_local_op;
-use block_notes_lib::ulid::BlockId;
+use agaric_lib::db::init_pool;
+use agaric_lib::op::*;
+use agaric_lib::op_log::append_local_op;
+use agaric_lib::ulid::BlockId;
 
 use tempfile::TempDir;
 use tokio::runtime::Runtime;

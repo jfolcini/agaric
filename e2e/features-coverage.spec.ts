@@ -9,7 +9,7 @@ import { expect, test } from '@playwright/test'
  *
  * Seed data (tauri-mock.ts):
  *   PAGE_GETTING_STARTED ("Getting Started") — 5 child blocks:
- *     GS_1: "Welcome to Block Notes! This is your personal knowledge base."
+ *     GS_1: "Welcome to Agaric! This is your personal knowledge base."
  *     GS_2: contains [[PAGE_QUICK_NOTES]] link
  *     GS_3: "Create new blocks by pressing Enter at the end of any block."
  *     GS_4: contains #[TAG_WORK] and #[TAG_PERSONAL] tag refs

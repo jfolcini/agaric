@@ -29,6 +29,11 @@ vi.mock('../DeviceManagement', () => ({
   DeviceManagement: () => <div data-testid="device-management">Device ID: mock-device</div>,
 }))
 
+// Mock useSyncTrigger to prevent automatic sync in tests
+vi.mock('../../hooks/useSyncTrigger', () => ({
+  useSyncTrigger: () => ({ syncing: false, syncAll: vi.fn() }),
+}))
+
 const mockedInvoke = vi.mocked(invoke)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false }

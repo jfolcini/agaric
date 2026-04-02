@@ -1,6 +1,6 @@
 # Features Map
 
-> Exhaustive feature inventory for Block Notes. Every entry maps to an ADR, a
+> Exhaustive feature inventory for Agaric. Every entry maps to an ADR, a
 > Logseq comparison gap, or both. Use this as the canonical development guide.
 >
 > **Last updated:** 2026-03-31

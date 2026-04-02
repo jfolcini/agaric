@@ -157,7 +157,7 @@ common ancestor content. User sees both and chooses. On resolution: chosen conte
 
 ### Engine and access pattern
 
-SQLite in WAL mode. Database file at `~/.local/share/com.blocknotes.app/notes.db`.
+SQLite in WAL mode. Database file at `~/.local/share/com.agaric.app/notes.db`.
 
 **Pool architecture:**
 - **Write pool:** Single connection (`max_connections(1)`) — serialises all writes including
@@ -970,7 +970,7 @@ identical UI.
 - `x86_64` — emulator (AVD `spike_test`, API 34)
 - `aarch64` — physical ARM64 devices
 
-**DB path:** `/data/data/com.blocknotes.app/notes.db` (via `app.path().app_data_dir()`). Same
+**DB path:** `/data/data/com.agaric.app/notes.db` (via `app.path().app_data_dir()`). Same
 SQLite WAL mode, same pool configuration, same migrations.
 
 **SDK requirements:** Min SDK 24, Target SDK 36, NDK 27.
@@ -1002,7 +1002,7 @@ transport via TLS WebSocket, protocol via op streaming with three-way merge.
 
 | Crate | Purpose |
 |-------|---------|
-| mdns-sd | mDNS service announcement and browsing (`_blocknotes._tcp.local.`) |
+| mdns-sd | mDNS service announcement and browsing (`_agaric._tcp.local.`) |
 | tokio-tungstenite | Async WebSocket (server + client) |
 | rustls + rcgen | TLS with self-signed ECDSA P-256 certificates |
 | hkdf + sha2 | HKDF-SHA256 session key derivation from passphrase |
@@ -1011,7 +1011,7 @@ transport via TLS WebSocket, protocol via op streaming with three-way merge.
 
 ### Discovery
 
-mDNS service type `_blocknotes._tcp.local.`. On announce: register service with TXT record
+mDNS service type `_agaric._tcp.local.`. On announce: register service with TXT record
 `device_id=<UUID>`. On browse: receive `ServiceResolved` events, extract peer addresses and port.
 
 ### Pairing
@@ -1022,7 +1022,7 @@ Per-session passphrase + QR code. Ephemeral — discarded after pairing or 5-min
 2. Host displays QR code (JSON: `{"passphrase":"...","host":"...","port":12345}`) and 4-word text.
 3. Both sides derive a 32-byte session key via HKDF-SHA256:
    - Salt: sorted concatenation of local + remote device IDs (order-independent).
-   - Info: `b"block-notes-sync-v1"`.
+   - Info: `b"agaric-sync-v1"`.
 4. Messages encrypted with ChaCha20-Poly1305: `[12-byte nonce][ciphertext + 16-byte tag]`.
 
 **`PairingSession`** struct holds passphrase, derived key, and creation instant. `is_expired()`
@@ -1033,7 +1033,7 @@ dependency for marginal gain at this threat model).
 
 ### Transport
 
-Self-signed ECDSA P-256 certificates generated per device (`CN=block-notes-{device_id}`,
+Self-signed ECDSA P-256 certificates generated per device (`CN=agaric-{device_id}`,
 SAN: localhost/127.0.0.1). `SyncServer` binds to a random port, accepts TLS+WebSocket connections.
 `connect_to_peer()` establishes client connection with optional certificate pinning via a custom
 `ServerCertVerifier` that computes SHA-256 of the peer's certificate.

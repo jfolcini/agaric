@@ -1,4 +1,4 @@
--- Block Notes: Initial Schema
+-- Agaric: Initial Schema
 -- See ADR-05 for design rationale
 
 -- Core block table: everything is a block

@@ -3,5 +3,5 @@
 
 #[cfg(not(tarpaulin_include))]
 fn main() {
-    block_notes_lib::run()
+    agaric_lib::run()
 }

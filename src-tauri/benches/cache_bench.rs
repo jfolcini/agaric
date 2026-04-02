@@ -1,9 +1,9 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use block_notes_lib::cache::{
+use agaric_lib::cache::{
     rebuild_agenda_cache, rebuild_pages_cache, rebuild_tags_cache, reindex_block_links,
 };
-use block_notes_lib::db::init_pool;
+use agaric_lib::db::init_pool;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;

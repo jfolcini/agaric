@@ -5,9 +5,9 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use block_notes_lib::commands::{move_block_inner, reorder_block_inner};
-use block_notes_lib::db::init_pool;
-use block_notes_lib::materializer::Materializer;
+use agaric_lib::commands::{move_block_inner, reorder_block_inner};
+use agaric_lib::db::init_pool;
+use agaric_lib::materializer::Materializer;
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;

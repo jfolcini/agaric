@@ -25,6 +25,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "agaric"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "blake3",
+ "chacha20poly1305",
+ "chrono",
+ "ciborium",
+ "criterion",
+ "diffy",
+ "futures-util",
+ "hkdf",
+ "insta",
+ "mdns-sd",
+ "qrcode",
+ "rand 0.8.5",
+ "rcgen",
+ "regex",
+ "rustc-hash",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "specta",
+ "specta-typescript",
+ "sqlx",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-shell",
+ "tauri-specta",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
+ "uuid",
+ "zstd",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -276,50 +320,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
-]
-
-[[package]]
-name = "block-notes"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "blake3",
- "chacha20poly1305",
- "chrono",
- "ciborium",
- "criterion",
- "diffy",
- "futures-util",
- "hkdf",
- "insta",
- "mdns-sd",
- "qrcode",
- "rand 0.8.5",
- "rcgen",
- "regex",
- "rustc-hash",
- "rustls",
- "serde",
- "serde_json",
- "sha2",
- "similar",
- "specta",
- "specta-typescript",
- "sqlx",
- "tauri",
- "tauri-build",
- "tauri-plugin-shell",
- "tauri-specta",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-rustls",
- "tokio-tungstenite",
- "tracing",
- "tracing-subscriber",
- "ulid",
- "uuid",
- "zstd",
 ]
 
 [[package]]

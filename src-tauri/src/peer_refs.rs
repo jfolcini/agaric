@@ -20,6 +20,11 @@ pub struct PeerRef {
     pub synced_at: Option<String>,
     pub reset_count: i64,
     pub last_reset_at: Option<String>,
+    /// SHA-256 hex of the peer's TLS certificate, observed during pairing.
+    /// Used for certificate pinning on reconnection.
+    pub cert_hash: Option<String>,
+    /// Human-readable name/label for this peer (e.g. "Javier's Phone").
+    pub device_name: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -33,7 +38,8 @@ pub async fn get_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<Option<Pee
     let row = sqlx::query_as!(
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
-                  reset_count as "reset_count!: i64", last_reset_at
+                  reset_count as "reset_count!: i64", last_reset_at, cert_hash,
+                  device_name
            FROM peer_refs WHERE peer_id = ?"#,
         peer_id,
     )
@@ -49,7 +55,8 @@ pub async fn list_peer_refs(pool: &SqlitePool) -> Result<Vec<PeerRef>, AppError>
     let rows = sqlx::query_as!(
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
-                  reset_count as "reset_count!: i64", last_reset_at
+                  reset_count as "reset_count!: i64", last_reset_at, cert_hash,
+                  device_name
            FROM peer_refs
            ORDER BY synced_at DESC"#,
     )
@@ -70,6 +77,26 @@ pub async fn upsert_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<(), App
     sqlx::query!(
         "INSERT OR IGNORE INTO peer_refs (peer_id) VALUES (?)",
         peer_id,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Insert a new peer ref with a certificate hash (used during pairing).
+///
+/// Uses `INSERT OR REPLACE` so an existing peer's cert_hash is updated.
+pub async fn upsert_peer_ref_with_cert(
+    pool: &SqlitePool,
+    peer_id: &str,
+    cert_hash: &str,
+) -> Result<(), AppError> {
+    sqlx::query!(
+        "INSERT INTO peer_refs (peer_id, cert_hash)
+         VALUES (?, ?)
+         ON CONFLICT(peer_id) DO UPDATE SET cert_hash = excluded.cert_hash",
+        peer_id,
+        cert_hash,
     )
     .execute(pool)
     .await?;
@@ -137,6 +164,27 @@ pub async fn delete_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<(), App
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("peer_refs ({peer_id})")));
+    }
+    Ok(())
+}
+
+/// Update the human-readable name for a peer.
+pub async fn update_device_name(
+    pool: &SqlitePool,
+    peer_id: &str,
+    device_name: Option<&str>,
+) -> Result<(), AppError> {
+    let rows = sqlx::query!(
+        "UPDATE peer_refs SET device_name = ? WHERE peer_id = ?",
+        device_name,
+        peer_id,
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    if rows == 0 {
+        return Err(AppError::NotFound(format!("peer_ref {peer_id}")));
     }
     Ok(())
 }
@@ -329,7 +377,7 @@ mod tests {
         // Sync two of them so they have synced_at timestamps
         update_on_sync(&pool, "peer-X", "hx", "sx").await.unwrap();
         // Small sleep to ensure distinct timestamps for ordering
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         update_on_sync(&pool, "peer-Z", "hz", "sz").await.unwrap();
 
         let peers = list_peer_refs(&pool).await.unwrap();
@@ -388,5 +436,170 @@ mod tests {
             matches!(result, Err(AppError::NotFound(_))),
             "delete_peer_ref on nonexistent peer must return AppError::NotFound"
         );
+    }
+
+    // ── cert_hash ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn upsert_without_cert_has_null_cert_hash() {
+        let (pool, _dir) = test_pool().await;
+
+        upsert_peer_ref(&pool, "peer-no-cert").await.unwrap();
+        let peer = get_peer_ref(&pool, "peer-no-cert")
+            .await
+            .unwrap()
+            .expect("peer must exist");
+        assert!(
+            peer.cert_hash.is_none(),
+            "cert_hash must be NULL when upserted without cert"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_with_cert_stores_cert_hash() {
+        let (pool, _dir) = test_pool().await;
+        let hash = "a".repeat(64);
+
+        upsert_peer_ref_with_cert(&pool, "peer-cert", &hash)
+            .await
+            .unwrap();
+
+        let peer = get_peer_ref(&pool, "peer-cert")
+            .await
+            .unwrap()
+            .expect("peer must exist after upsert_with_cert");
+        assert_eq!(
+            peer.cert_hash.as_deref(),
+            Some(hash.as_str()),
+            "cert_hash must match the provided hash"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_with_cert_updates_existing_peer_cert_hash() {
+        let (pool, _dir) = test_pool().await;
+        let hash1 = "a".repeat(64);
+        let hash2 = "b".repeat(64);
+
+        // Create peer with first cert hash.
+        upsert_peer_ref_with_cert(&pool, "peer-update", &hash1)
+            .await
+            .unwrap();
+
+        // Update with second cert hash.
+        upsert_peer_ref_with_cert(&pool, "peer-update", &hash2)
+            .await
+            .unwrap();
+
+        let peer = get_peer_ref(&pool, "peer-update")
+            .await
+            .unwrap()
+            .expect("peer must exist");
+        assert_eq!(
+            peer.cert_hash.as_deref(),
+            Some(hash2.as_str()),
+            "cert_hash must be updated to second hash"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_with_cert_preserves_existing_sync_state() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create peer and sync it.
+        upsert_peer_ref(&pool, "peer-preserve").await.unwrap();
+        update_on_sync(&pool, "peer-preserve", "h1", "s1")
+            .await
+            .unwrap();
+
+        // Now set cert hash — should not overwrite sync state.
+        let hash = "c".repeat(64);
+        upsert_peer_ref_with_cert(&pool, "peer-preserve", &hash)
+            .await
+            .unwrap();
+
+        let peer = get_peer_ref(&pool, "peer-preserve")
+            .await
+            .unwrap()
+            .expect("peer must exist");
+        assert_eq!(
+            peer.cert_hash.as_deref(),
+            Some(hash.as_str()),
+            "cert_hash must be set"
+        );
+        assert_eq!(
+            peer.last_hash.as_deref(),
+            Some("h1"),
+            "last_hash must be preserved after cert update"
+        );
+        assert_eq!(
+            peer.last_sent_hash.as_deref(),
+            Some("s1"),
+            "last_sent_hash must be preserved after cert update"
+        );
+        assert!(
+            peer.synced_at.is_some(),
+            "synced_at must be preserved after cert update"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_peer_refs_includes_cert_hash() {
+        let (pool, _dir) = test_pool().await;
+        let hash = "d".repeat(64);
+
+        upsert_peer_ref_with_cert(&pool, "peer-list-cert", &hash)
+            .await
+            .unwrap();
+
+        let peers = list_peer_refs(&pool).await.unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(
+            peers[0].cert_hash.as_deref(),
+            Some(hash.as_str()),
+            "list_peer_refs must include cert_hash"
+        );
+    }
+
+    // ── device_name ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_device_name_default_null() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "PEERDN01").await.unwrap();
+        let peer = get_peer_ref(&pool, "PEERDN01").await.unwrap().unwrap();
+        assert!(peer.device_name.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_device_name() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "PEERDN02").await.unwrap();
+        update_device_name(&pool, "PEERDN02", Some("Javier's Phone"))
+            .await
+            .unwrap();
+        let peer = get_peer_ref(&pool, "PEERDN02").await.unwrap().unwrap();
+        assert_eq!(peer.device_name.as_deref(), Some("Javier's Phone"));
+    }
+
+    #[tokio::test]
+    async fn test_update_device_name_clear() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "PEERDN03").await.unwrap();
+        update_device_name(&pool, "PEERDN03", Some("Old Name"))
+            .await
+            .unwrap();
+        update_device_name(&pool, "PEERDN03", None).await.unwrap();
+        let peer = get_peer_ref(&pool, "PEERDN03").await.unwrap().unwrap();
+        assert!(peer.device_name.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_device_name_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let err = update_device_name(&pool, "NONEXISTENT", Some("name"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound(_)));
     }
 }

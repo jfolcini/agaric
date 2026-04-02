@@ -105,11 +105,11 @@ mod specta_tests {
     /// Verify the generated TypeScript bindings match the committed file.
     ///
     /// Writes to a temp file and compares against `src/lib/bindings.ts`.
-    /// To regenerate: `cargo test -p block-notes-lib -- specta_tests --ignored`
+    /// To regenerate: `cargo test -p agaric-lib -- specta_tests --ignored`
     #[test]
     fn ts_bindings_up_to_date() {
         let builder = specta_builder();
-        let tmp = std::env::temp_dir().join("blocknotes_bindings_check.ts");
+        let tmp = std::env::temp_dir().join("agaric_bindings_check.ts");
         builder
             .export(
                 specta_typescript::Typescript::default()
@@ -146,13 +146,13 @@ mod specta_tests {
             norm(&generated),
             norm(&committed),
             "TypeScript bindings are stale — regenerate with: \
-             cd src-tauri && cargo test -p block-notes-lib -- specta_tests --ignored"
+             cd src-tauri && cargo test -p agaric-lib -- specta_tests --ignored"
         );
     }
 
     /// Regenerate `src/lib/bindings.ts` from the current Rust types.
     ///
-    /// Run manually: `cd src-tauri && cargo test -p block-notes-lib -- specta_tests --ignored`
+    /// Run manually: `cd src-tauri && cargo test -p agaric-lib -- specta_tests --ignored`
     #[test]
     #[ignore]
     fn regenerate_ts_bindings() {
@@ -186,7 +186,7 @@ pub fn run() {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::from_default_env().add_directive("blocknotes=info".parse().unwrap()),
+            EnvFilter::from_default_env().add_directive("agaric=info".parse().unwrap()),
         )
         .init();
 

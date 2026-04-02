@@ -22,7 +22,7 @@
 
 # ── Tauri / WebView keep rules ──────────────────────────────────────
 # Keep native methods called via JNI from Rust
--keep class com.blocknotes.app.** { *; }
+-keep class com.agaric.app.** { *; }
 
 # Keep JavaScript interface classes used by WebView
 -keepclassmembers class * {

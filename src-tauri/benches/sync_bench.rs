@@ -4,8 +4,8 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use block_notes_lib::db::init_pool;
-use block_notes_lib::sync_protocol::{compute_ops_to_send, get_local_heads, DeviceHead};
+use agaric_lib::db::init_pool;
+use agaric_lib::sync_protocol::{compute_ops_to_send, get_local_heads, DeviceHead};
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;

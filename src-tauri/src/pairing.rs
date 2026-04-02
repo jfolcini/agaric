@@ -61,13 +61,13 @@ pub fn generate_passphrase() -> String {
 ///
 /// - `passphrase`: the 4-word passphrase
 /// - `salt`: remote device ID bytes
-/// - Info context: `b"block-notes-sync-v1"`
+/// - Info context: `b"agaric-sync-v1"`
 ///
 /// Output is suitable for ChaCha20-Poly1305.
 pub fn derive_session_key(passphrase: &str, salt: &[u8]) -> [u8; 32] {
     let hk = Hkdf::<Sha256>::new(Some(salt), passphrase.as_bytes());
     let mut okm = [0u8; 32];
-    hk.expand(b"block-notes-sync-v1", &mut okm)
+    hk.expand(b"agaric-sync-v1", &mut okm)
         .expect("32 bytes is a valid HKDF-SHA256 output length");
     okm
 }

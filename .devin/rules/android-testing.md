@@ -11,7 +11,7 @@ adb shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
 # Build + install + launch
 cargo tauri android build --target x86_64 --debug
 adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
-adb shell am start -n com.blocknotes.app/.MainActivity
+adb shell am start -n com.agaric.app/.MainActivity
 sleep 3  # wait for WebView + Rust init
 
 # Observe
@@ -27,15 +27,15 @@ adb shell input keyevent KEYCODE_BACK               # back button
 adb shell input keyevent KEYCODE_ENTER              # enter key
 
 # Inspect app data (debug builds only)
-adb shell run-as com.blocknotes.app ls files/
-adb shell run-as com.blocknotes.app cat files/device-id
+adb shell run-as com.agaric.app ls files/
+adb shell run-as com.agaric.app cat files/device-id
 
 # WebView JS execution via Chrome DevTools Protocol
-adb forward tcp:9222 localabstract:webview_devtools_remote_$(adb shell pidof com.blocknotes.app)
+adb forward tcp:9222 localabstract:webview_devtools_remote_$(adb shell pidof com.agaric.app)
 curl -s http://localhost:9222/json                   # list pages
 
 # Cleanup
-adb shell am force-stop com.blocknotes.app
+adb shell am force-stop com.agaric.app
 adb emu kill
 ```
 

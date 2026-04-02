@@ -1,5 +1,5 @@
 /**
- * Standalone ProseMirror JSON types for the block-notes content format.
+ * Standalone ProseMirror JSON types for the agaric content format.
  *
  * These are structurally compatible with TipTap's JSONContent but defined
  * locally so the serializer has zero runtime dependencies. TipTap extensions

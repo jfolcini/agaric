@@ -11,12 +11,12 @@
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use block_notes_lib::commands::{revert_ops_inner, undo_page_op_inner};
-use block_notes_lib::db::init_pool;
-use block_notes_lib::materializer::Materializer;
-use block_notes_lib::op::OpRef;
-use block_notes_lib::pagination::{self, PageRequest};
-use block_notes_lib::reverse;
+use agaric_lib::commands::{revert_ops_inner, undo_page_op_inner};
+use agaric_lib::db::init_pool;
+use agaric_lib::materializer::Materializer;
+use agaric_lib::op::OpRef;
+use agaric_lib::pagination::{self, PageRequest};
+use agaric_lib::reverse;
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;

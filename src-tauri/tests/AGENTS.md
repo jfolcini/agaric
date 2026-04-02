@@ -25,23 +25,23 @@ cd src-tauri && cargo nextest run
 cd src-tauri && cargo test
 
 # Specific test by name substring
-cargo nextest run -p block-notes-lib create_block_returns
-cargo test -p block-notes-lib -- create_block_returns
+cargo nextest run -p agaric-lib create_block_returns
+cargo test -p agaric-lib -- create_block_returns
 
 # All tests in one module
-cargo nextest run -p block-notes-lib -E 'test(::op_log::)'
-cargo test -p block-notes-lib -- op_log::tests
+cargo nextest run -p agaric-lib -E 'test(::op_log::)'
+cargo test -p agaric-lib -- op_log::tests
 
 # Only integration tests
-cargo test -p block-notes-lib -- integration_tests
-cargo test -p block-notes-lib -- command_integration_tests
+cargo test -p agaric-lib -- integration_tests
+cargo test -p agaric-lib -- command_integration_tests
 
 # Snapshot review after changes
 cargo insta test          # run tests, save pending snapshots
 cargo insta review        # interactive accept/reject
 
 # Regenerate TypeScript bindings (ignored by default)
-cargo test -p block-notes-lib -- specta_tests --ignored
+cargo test -p agaric-lib -- specta_tests --ignored
 
 # Benchmarks (local only, never CI)
 cargo bench --bench hash_bench
@@ -210,7 +210,7 @@ Tests every `*_inner` function's contract: inputs, outputs, error variants. Orga
 
 ### Where snapshots live
 
-`src/snapshots/` — 22 `.snap` files. Naming: `block_notes_lib__<module>__tests__<test_name>.snap`.
+`src/snapshots/` — 22 `.snap` files. Naming: `agaric_lib__<module>__tests__<test_name>.snap`.
 
 ### Modules using snapshots
 
@@ -350,7 +350,7 @@ criterion_main!(benches);
 
 5. **`cargo sqlx prepare` after SQL changes** — The project uses compile-time checked SQL queries (`query!` macros). Changing SQL in source requires regenerating the offline cache: `cargo sqlx prepare -- --lib`. Tests will fail to compile otherwise.
 
-6. **Specta bindings drift** — If you change Rust types used in Tauri commands, the `ts_bindings_up_to_date` test will fail. Regenerate: `cargo test -p block-notes-lib -- specta_tests --ignored`.
+6. **Specta bindings drift** — If you change Rust types used in Tauri commands, the `ts_bindings_up_to_date` test will fail. Regenerate: `cargo test -p agaric-lib -- specta_tests --ignored`.
 
 7. **Integration test files are `mod` includes, not separate binaries** — `integration_tests.rs` and `command_integration_tests.rs` are `#[cfg(test)] mod` in `lib.rs`. They share the same test binary as unit tests.
 

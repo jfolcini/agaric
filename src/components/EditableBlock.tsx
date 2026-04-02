@@ -54,6 +54,15 @@ function EditableBlockInner({
     }
   }, [isFocused])
 
+  // Auto-mount the roving editor when focus is set externally (e.g. via
+  // PageEditor's "Add block" button) without going through handleFocus.
+  // Without this, activeBlockId remains null and blur/Enter cannot save.
+  useEffect(() => {
+    if (isFocused && rovingEditor.activeBlockId !== blockId) {
+      rovingEditor.mount(blockId, content)
+    }
+  }, [isFocused, blockId, content, rovingEditor])
+
   const handleFocus = useCallback(
     (id: string) => {
       // Unmount from previous block if any

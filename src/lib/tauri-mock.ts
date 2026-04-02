@@ -136,7 +136,7 @@ function seedBlocks(): void {
     makeBlock(
       SEED_IDS.BLOCK_GS_1,
       'content',
-      'Welcome to Block Notes! This is your personal knowledge base.',
+      'Welcome to Agaric! This is your personal knowledge base.',
       SEED_IDS.PAGE_GETTING_STARTED,
       0,
     ),

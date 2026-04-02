@@ -1,8 +1,8 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use block_notes_lib::db::init_pool;
-use block_notes_lib::fts::{fts_optimize, rebuild_fts_index, search_fts, update_fts_for_block};
-use block_notes_lib::pagination::PageRequest;
+use agaric_lib::db::init_pool;
+use agaric_lib::fts::{fts_optimize, rebuild_fts_index, search_fts, update_fts_for_block};
+use agaric_lib::pagination::PageRequest;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;

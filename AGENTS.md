@@ -1,4 +1,4 @@
-# Developer Documentation — Block Notes App
+# Developer Documentation — Agaric
 
 Local-first block-based note-taking app inspired by Org-mode and Logseq. React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log with CQRS materializer for offline-first sync.
 
@@ -58,7 +58,7 @@ prek run                 # Staged files only
 
 ## Database
 
-- **File:** `notes.db` in `~/.local/share/com.blocknotes.app/` (Linux) or app data dir (Android)
+- **File:** `notes.db` in `~/.local/share/com.agaric.app/` (Linux) or app data dir (Android)
 - **WAL mode**, foreign keys ON on every connection
 - **Pool:** 1 writer + 4 readers (5 total)
 - **Migrations:** `src-tauri/migrations/` (10 files) — auto-run on pool init
@@ -114,12 +114,13 @@ During development, run only the relevant check:
 
 ## Android
 
-- **Status:** APK builds and launches. All IPC confirmed working (2026-03-31).
+- **Status:** Both debug and release APKs build, install, and launch successfully (2026-04-02).
+- **Release APK:** 24 MB (vs 402 MB debug). ProGuard/R8 minification works — keep rules verified.
 - **Generated project:** `src-tauri/gen/android/`
 - **Min SDK:** 24, **Target SDK:** 36, **NDK:** 27
 - **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`
-- **DB path:** `/data/data/com.blocknotes.app/notes.db` (via `app.path().app_data_dir()`)
-- **Known issues:** 12 open items in REVIEW-LATER.md. ProGuard keep rules empty — release APK crashes (#63).
+- **DB path:** `/data/data/com.agaric.app/notes.db` (via `app.path().app_data_dir()`)
+- **Known issues:** 4 open items in REVIEW-LATER.md (all deferred by design).
 - **Headless testing:** See `.devin/rules/android-testing.md` for ADB recipes and debugging workflow.
 
 ## Subagent Workflow

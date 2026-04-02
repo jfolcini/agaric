@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use block_notes_lib::{db::init_pool, pagination::*};
+use agaric_lib::{db::init_pool, pagination::*};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 

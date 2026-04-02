@@ -1,4 +1,4 @@
-# cargo-deny configuration for Block Notes
+# cargo-deny configuration for Agaric
 # Docs: https://embarkstudios.github.io/cargo-deny/
 
 [graph]

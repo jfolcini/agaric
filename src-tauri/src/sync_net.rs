@@ -60,7 +60,7 @@ pub struct SyncCert {
 
 /// Generate a self-signed ECDSA P-256 certificate for the given device.
 ///
-/// * Subject: `CN=block-notes-{device_id}`
+/// * Subject: `CN=agaric-{device_id}`
 /// * SAN: `localhost`, `127.0.0.1`
 /// * Validity: rcgen defaults (long-lived); override to 365 days when
 ///   `time` is added as a direct dependency.
@@ -78,7 +78,7 @@ pub fn generate_self_signed_cert(device_id: &str) -> Result<SyncCert, AppError> 
     // Override the default CN.
     params
         .distinguished_name
-        .push(DnType::CommonName, format!("block-notes-{device_id}"));
+        .push(DnType::CommonName, format!("agaric-{device_id}"));
 
     // Self-sign.
     let cert = params
@@ -105,7 +105,7 @@ pub fn generate_self_signed_cert(device_id: &str) -> Result<SyncCert, AppError> 
 // =========================================================================
 
 /// mDNS service type for BlockNotes sync discovery.
-pub const MDNS_SERVICE_TYPE: &str = "_blocknotes._tcp.local.";
+pub const MDNS_SERVICE_TYPE: &str = "_agaric._tcp.local.";
 
 /// mDNS service name prefix.
 pub const MDNS_SERVICE_NAME: &str = "BlockNotes";
@@ -125,7 +125,7 @@ impl MdnsService {
 
     /// Announce this device on the local network.
     ///
-    /// Registers a `_blocknotes._tcp.local.` service with a TXT record
+    /// Registers a `_agaric._tcp.local.` service with a TXT record
     /// containing `device_id=<id>`.  Returns the registered `ServiceInfo`.
     pub fn announce(&self, device_id: &str, port: u16) -> Result<mdns_sd::ServiceInfo, AppError> {
         let host_name = format!("{device_id}.local.");
@@ -757,8 +757,8 @@ mod tests {
     fn parse_service_event_returns_none_for_non_resolved() {
         // ServiceFound carries (service_type, fullname) – not enough info.
         let event = mdns_sd::ServiceEvent::ServiceFound(
-            "_blocknotes._tcp.local.".into(),
-            "test._blocknotes._tcp.local.".into(),
+            "_agaric._tcp.local.".into(),
+            "test._agaric._tcp.local.".into(),
         );
         assert!(
             parse_service_event(event).is_none(),

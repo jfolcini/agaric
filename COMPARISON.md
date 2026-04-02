@@ -1,6 +1,6 @@
-# Block Notes vs Logseq: Comprehensive Feature Comparison
+# Agaric vs Logseq: Comprehensive Feature Comparison
 
-> Goal: Block Notes is meant to fully replace Logseq.
+> Goal: Agaric is meant to fully replace Logseq.
 > This document maps every Logseq capability to what we have, what's missing,
 > and what needs to be built.
 
@@ -10,7 +10,7 @@
 
 ### 1. Block Model
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Everything is a block (outliner) | Yes -- every piece of content is a bullet | Yes -- `blocks` table, tree via `parent_id` + `position` | None |
 | Block nesting / indentation | Unlimited depth, visual indentation | Unlimited depth, visual indentation via `depth` in flat tree | None |
@@ -27,7 +27,7 @@
 
 ### 2. Page Model
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Pages as named containers | One .md/.org file per page | `blocks` with `block_type = 'page'`, content = page title | None |
 | Page properties (frontmatter) | First block holds `key:: value` page properties | `block_properties` on page blocks (backend only) | **UI gap** |
@@ -39,7 +39,7 @@
 
 ### 3. Editor & Formatting
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Markdown support | Full Markdown (headings, lists, tables, code blocks, etc.) | Markdown-based. Frontend uses TipTap with custom serializer (`**bold**`, `*italic*`, `` `code` ``, `[text](url)`) | Subset -- no tables, blockquotes, or lists yet |
 | Org-mode support | Full .org format alternative | Not implemented. Org-mode is an inspiration for features (tags, properties, agenda), not a supported format | **Design choice** -- Markdown only |
@@ -62,7 +62,7 @@
 
 ### 4. Linking System
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Page links `[[page]]` | `[[page name]]` -- creates page if needed, case-insensitive match | `[[ULID]]` links rendered as clickable chips with title resolution | Functional but different -- links by ID not name. More robust but less human-readable in raw text |
 | Block references `((uuid))` | Inline content preview, live-updating | Not implemented | **Critical gap** |
@@ -76,7 +76,7 @@
 
 ### 5. Properties System
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Block properties | `key:: value` inline syntax | `block_properties` table with `set_property` / `delete_property` / `get_properties` commands. Backend + frontend wrappers complete | Backend + API complete, **no general UI** (task marker is the first property-based UI) |
 | Typed values | DB version: Text, Number, Date, DateTime, Checkbox, URL, Node | 4 types: text, num, date, ref (block reference) | Close -- missing DateTime, Checkbox, URL |
@@ -88,7 +88,7 @@
 
 ### 6. Tags
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Inline tag syntax | `#tag` or `#[[multi word]]` | `#[ULID]` rendered as styled chip with name | Functional but different -- ULID-based, not name-based |
 | Tags as pages | Every tag IS a page (same backlink system) | Tags and pages are separate `block_type` values | **Design difference** -- Logseq unifies, we separate |
@@ -100,7 +100,7 @@
 
 ### 7. Query System
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Simple queries | `{{query (and [[page]] (task TODO))}}` -- embedded live results | Not implemented -- no inline query blocks | **Major gap** |
 | Query operators | `and`, `or`, `not` | `TagExpr` supports `And`, `Or`, `Not` for tag queries only | Very limited scope |
@@ -114,7 +114,7 @@
 
 ### 8. Task Management
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Task markers | `TODO`, `DOING`, `DONE`, `CANCELLED`, `NOW`, `LATER` | TODO/DOING/DONE via block properties. Click to cycle, `Ctrl+Enter` shortcut. Visual icons (Circle/CircleDot/CheckCircle2) | Partial -- 3 states vs Logseq's 6, no CANCELLED/NOW/LATER |
 | Priority levels | `[#A]`, `[#B]`, `[#C]` | Priority A/B/C via block properties. Slash commands (`/PRIORITY 1/2/3`), keyboard shortcuts (`Ctrl+Shift+1/2/3`), click-to-cycle badge. Color-coded: A=red, B=yellow, C=blue | None |
@@ -127,7 +127,7 @@
 
 ### 9. Daily Journal
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Auto-created daily page | Created at midnight, date as title | `JournalPage` component -- auto-creates page with `YYYY-MM-DD` content on first block | Comparable |
 | Default landing page | Opens to today's journal | App opens to journal view | None |
@@ -141,7 +141,7 @@
 
 ### 10. Search
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Full-text search | `Ctrl+K` / `Cmd+K` global search | `SearchPanel` with FTS5 backend, debounced, paginated | Comparable |
 | Search scope | Pages + blocks, filterable | All blocks, no scope filtering | Minor gap |
@@ -152,7 +152,7 @@
 
 ### 11. Sync & Storage
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Local-first | Flat files on disk (.md/.org per page) | SQLite database in app data dir | Both local-first, different storage model |
 | File format | Human-readable Markdown or Org-mode files | Binary SQLite database | **Trade-off** -- our format is not human-readable but more robust |
@@ -165,7 +165,7 @@
 
 ### 12. Templates
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Template creation | Block/page with `template:: name` property | Not implemented | **Gap** |
 | Template insertion | `/Template` slash command | Not implemented | **Gap** |
@@ -175,7 +175,7 @@
 
 ### 13. Import / Export
 
-| Capability | Logseq | Block Notes | Gap |
+| Capability | Logseq | Agaric | Gap |
 |---|---|---|---|
 | Markdown export | Full graph export to .md files | Not implemented | **Gap** |
 | JSON/EDN export | Data export | Not implemented | **Gap** |
@@ -186,7 +186,7 @@
 
 ### 14. Out of Scope (Noted, Not Priority)
 
-| Feature | Logseq | Block Notes | Notes |
+| Feature | Logseq | Agaric | Notes |
 |---|---|---|---|
 | Graph view | Global + local graph visualization | Not implemented | Not priority per user |
 | Plugin/extension system | Marketplace with 100+ plugins | Not implemented | Not priority per user |
@@ -207,7 +207,7 @@
 - Templates auto-populate structure (gratitude, tasks, notes, review)
 - Backlinks on topic pages create timeline of thoughts
 
-**Block Notes current state:**
+**Agaric current state:**
 - Scrollable multi-day journal view (daily/weekly/monthly modes)
 - Each day section with its own BlockTree, date header, "Add block"
 - Task markers (TODO/DOING/DONE) with click-to-cycle and Ctrl+Enter
@@ -235,7 +235,7 @@
 - Review: Query pages surface all open/overdue tasks
 - Engage: Dashboard with `DOING`/`NOW` queries
 
-**Block Notes current state:**
+**Agaric current state:**
 - Task markers: TODO/DOING/DONE via block properties
 - Click or Ctrl+Enter to cycle task state
 - Visual task icons (Circle/CircleDot/CheckCircle2)
@@ -263,7 +263,7 @@
 - Unlinked references discover implicit connections
 - Graph view for exploration
 
-**Block Notes current state:**
+**Agaric current state:**
 - Blocks with `[[ULID]]` page links (rendered as chips)
 - Backlinks panel shows blocks linking to a given block
 - Tags for categorization
@@ -289,7 +289,7 @@
 - Action items as `TODO [[Person]] description` -- tracked in task queries
 - Follow-up via queries on person pages
 
-**Block Notes current state:**
+**Agaric current state:**
 - Can create page for meeting, add blocks underneath
 - Can link to other pages via `[[ULID]]`
 - Task markers (TODO/DOING/DONE) for action items
@@ -312,7 +312,7 @@
 - PARA method via namespaces or properties
 - Kanban view via plugin
 
-**Block Notes current state:**
+**Agaric current state:**
 - Project pages with PropertiesPanel (add/edit/delete properties)
 - Property-based queries (`query_by_property` command, paginated)
 - Tags for categorization with boolean AND/OR queries
@@ -338,7 +338,7 @@
 - Progressive summarization with highlight syntax
 - Literature note templates
 
-**Block Notes current state:**
+**Agaric current state:**
 - Pages and blocks for notes with external URL links
 - Properties for metadata (PropertiesPanel)
 - Attachments tracked in backend (not rendered in UI)
@@ -406,7 +406,7 @@
 
 ## Part 4: What We Do Better Than Logseq
 
-| Area | Block Notes Advantage | Logseq Limitation |
+| Area | Agaric Advantage | Logseq Limitation |
 |---|---|---|
 | **Journal views** | 4 modes (daily/weekly/monthly/agenda) with calendar picker + keyboard nav | Single scrollable daily view |
 | **Task dashboard** | Dedicated agenda mode with collapsible sections per state | Requires manually writing Datalog queries |
@@ -430,7 +430,7 @@
 
 ## Part 5: Summary Scorecard
 
-| Category | Logseq | Block Notes | Notes |
+| Category | Logseq | Agaric | Notes |
 |---|:---:|:---:|---|
 | Block CRUD | 10 | 9 | Collapse works (not persisted). Tree indent lines done, no bullets. Move up/down via keyboard + DnD. Op-level undo per page, HistoryView for batch revert. Depth limit (20). No multi-block selection, no zoom/focus mode |
 | Page management | 9 | 7 | Missing aliases, namespaces |
@@ -448,9 +448,9 @@
 | Performance arch | 6 | 8 | CQRS + cursor pagination + depth limits + Tauri 2 |
 | Import/export | 7 | 0 | Not started |
 
-**Totals: Logseq 116 / Block Notes 102** (88%)
+**Totals: Logseq 116 / Agaric 102** (88%)
 
-**Overall: Block Notes has closed most original gaps and now exceeds Logseq in sync architecture (fully automated LAN sync with SyncDaemon), data integrity, search (CJK trigram), backlink filtering (server-side expression tree), undo/redo history, formatting toolbar, and journal views. Sync is now fully wired end-to-end. The next sprint is templates + UX polish (auto-create today, collapse persistence, strikethrough/highlight, monthly calendar grid) + date-aware task scheduling. Block refs/embeds are deferred -- not needed for the target workflow.**
+**Overall: Agaric has closed most original gaps and now exceeds Logseq in sync architecture (fully automated LAN sync with SyncDaemon), data integrity, search (CJK trigram), backlink filtering (server-side expression tree), undo/redo history, formatting toolbar, and journal views. Sync is now fully wired end-to-end. The next sprint is templates + UX polish (auto-create today, collapse persistence, strikethrough/highlight, monthly calendar grid) + date-aware task scheduling. Block refs/embeds are deferred -- not needed for the target workflow.**
 
 ---
 

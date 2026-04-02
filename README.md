@@ -1,10 +1,10 @@
-# Block Notes (Agaric)
+# Agaric (Agaric)
 
 A local-first, block-based note-taking app for **Linux**, **Windows**, **macOS**, and **Android**. Inspired by Org-mode and Logseq — journal-first, with powerful tagging and emergent structure. No cloud, no accounts. Your data lives on your machine.
 
 ## What is it?
 
-Block Notes treats everything as a **block** — paragraphs, headings, code snippets, tasks. Blocks live in a tree: pages contain blocks, blocks can nest infinitely. Tags and links are first-class citizens that connect your knowledge graph.
+Agaric treats everything as a **block** — paragraphs, headings, code snippets, tasks. Blocks live in a tree: pages contain blocks, blocks can nest infinitely. Tags and links are first-class citizens that connect your knowledge graph.
 
 Think Logseq or Notion, but:
 - **Local-first** — SQLite database on your filesystem, no server required
@@ -235,7 +235,7 @@ cargo tauri android build --target x86_64 --debug
 adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
 
 # Launch the app
-adb shell am start -n com.blocknotes.app/.MainActivity
+adb shell am start -n com.agaric.app/.MainActivity
 
 # Take a screenshot and pull it to your machine
 adb exec-out screencap -p > screenshot.png
@@ -256,11 +256,11 @@ adb logcat -s RustStdoutStderr:V -d
 adb shell dumpsys activity top | head -100
 
 # Access the app's private data directory (requires debug build)
-adb shell run-as com.blocknotes.app ls files/
-adb shell run-as com.blocknotes.app cat files/device-id
+adb shell run-as com.agaric.app ls files/
+adb shell run-as com.agaric.app cat files/device-id
 
 # Kill the app
-adb shell am force-stop com.blocknotes.app
+adb shell am force-stop com.agaric.app
 
 # Shut down the emulator
 adb emu kill
@@ -270,7 +270,7 @@ You can also script the WebView via Chrome DevTools Protocol. Forward the debug 
 
 ```bash
 # Find the WebView debug socket
-adb forward tcp:9222 localabstract:webview_devtools_remote_$(adb shell pidof com.blocknotes.app)
+adb forward tcp:9222 localabstract:webview_devtools_remote_$(adb shell pidof com.agaric.app)
 
 # List inspectable pages
 curl -s http://localhost:9222/json
@@ -286,7 +286,7 @@ The Android build is functional with all core IPC commands working (block creati
 - `window.prompt()` and `window.open()` don't work in Android WebView
 - Touch targets and hover-dependent UI need mobile adaptation
 - ProGuard keep rules are missing for release builds
-- Stale databases from earlier builds will crash on launch — fix with `adb shell pm clear com.blocknotes.app`
+- Stale databases from earlier builds will crash on launch — fix with `adb shell pm clear com.agaric.app`
 
 ### Linting and Formatting
 
@@ -347,10 +347,10 @@ SQLite database stored at the platform's app data directory. WAL mode with forei
 
 | Platform | Path |
 |----------|------|
-| Linux | `~/.local/share/com.blocknotes.app/notes.db` |
-| Windows | `C:\Users\<User>\AppData\Local\com.blocknotes.app\notes.db` |
-| macOS | `~/Library/Application Support/com.blocknotes.app/notes.db` |
-| Android | `/data/data/com.blocknotes.app/notes.db` |
+| Linux | `~/.local/share/com.agaric.app/notes.db` |
+| Windows | `C:\Users\<User>\AppData\Local\com.agaric.app\notes.db` |
+| macOS | `~/Library/Application Support/com.agaric.app/notes.db` |
+| Android | `/data/data/com.agaric.app/notes.db` |
 
 ## License
 

@@ -1,4 +1,4 @@
-# UX Baseline — Block Notes App
+# UX Baseline — Agaric App
 
 Consolidated best practices implemented across the app. New components, features, and visual changes should follow these patterns. This document is the UX equivalent of the test `AGENTS.md` files — a reference for anyone building UI in this project.
 

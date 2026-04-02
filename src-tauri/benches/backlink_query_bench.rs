@@ -5,11 +5,11 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use block_notes_lib::backlink_query::{
+use agaric_lib::backlink_query::{
     eval_backlink_query, list_property_keys, BacklinkFilter, BacklinkSort, CompareOp, SortDir,
 };
-use block_notes_lib::db::init_pool;
-use block_notes_lib::pagination::PageRequest;
+use agaric_lib::db::init_pool;
+use agaric_lib::pagination::PageRequest;
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;

@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use block_notes_lib::db::init_pool;
-use block_notes_lib::soft_delete::{cascade_soft_delete, purge_block, restore_block};
+use agaric_lib::db::init_pool;
+use agaric_lib::soft_delete::{cascade_soft_delete, purge_block, restore_block};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 

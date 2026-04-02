@@ -9,11 +9,11 @@
 
 #![allow(dead_code)]
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
+use crate::now_rfc3339;
 use crate::op::{EditBlockPayload, OpPayload};
 use crate::op_log::{append_local_op_in_tx, OpRecord};
 use crate::ulid::BlockId;
@@ -145,7 +145,7 @@ pub async fn flush_draft(
     });
 
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let record = append_local_op_in_tx(&mut tx, device_id, op, Utc::now().to_rfc3339()).await?;
+    let record = append_local_op_in_tx(&mut tx, device_id, op, now_rfc3339()).await?;
     delete_draft_in_tx(&mut tx, block_id).await?;
     tx.commit().await?;
 
@@ -581,7 +581,7 @@ mod tests {
             });
 
             let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-            append_local_op_in_tx(&mut tx, DEVICE, op, chrono::Utc::now().to_rfc3339())
+            append_local_op_in_tx(&mut tx, DEVICE, op, crate::now_rfc3339())
                 .await
                 .unwrap();
             delete_draft_in_tx(&mut tx, BLOCK_A).await.unwrap();

@@ -1,5 +1,5 @@
 [package]
-name = "block-notes"
+name = "agaric"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -70,7 +70,7 @@ tempfile = "3.27.0"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
 [lib]
-name = "block_notes_lib"
+name = "agaric_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [[bench]]

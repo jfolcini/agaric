@@ -1,6 +1,6 @@
 # Sync Platform Notes
 
-Platform-specific considerations for the Block Notes sync protocol.
+Platform-specific considerations for the Agaric sync protocol.
 
 ## mDNS on Android (#233)
 
@@ -21,7 +21,7 @@ and should work on Android if the multicast lock is acquired.
 ### Testing plan
 1. Build debug APK: `cargo tauri android build --target x86_64 --debug`
 2. Start emulator: `emulator -avd spike_test -gpu swiftshader_indirect -no-window -no-audio &`
-3. Install + launch: `adb install -r <apk> && adb shell am start -n com.blocknotes.app/.MainActivity`
+3. Install + launch: `adb install -r <apk> && adb shell am start -n com.agaric.app/.MainActivity`
 4. Check logcat for mDNS output: `adb logcat -s RustStdoutStderr:V`
 5. If multicast fails, implement WiFi multicast lock via Tauri plugin
 
@@ -88,9 +88,9 @@ connections on the sync port.
 Add to README or Help:
 
 ```
-# Allow Block Notes sync (replace PORT with actual port shown in app)
+# Allow Agaric sync (replace PORT with actual port shown in app)
 # Ubuntu/Debian (UFW):
-sudo ufw allow PORT/tcp comment "Block Notes sync"
+sudo ufw allow PORT/tcp comment "Agaric sync"
 
 # Fedora (firewalld):
 sudo firewall-cmd --add-port=PORT/tcp --permanent
@@ -120,13 +120,13 @@ However, the *other* device may need Avahi to resolve `.local` hostnames.
 
 ### Clarification
 - `mdns-sd` handles multicast announcement and browsing independently
-- Avahi is NOT required for Block Notes sync to work
+- Avahi is NOT required for Agaric sync to work
 - Avahi IS recommended if users want `.local` hostname resolution from other apps
 - Fallback to manual IP entry works without any mDNS daemon
 
 ### Documentation for users
 ```
-Block Notes sync uses mDNS for automatic peer discovery on your local network.
+Agaric sync uses mDNS for automatic peer discovery on your local network.
 If automatic discovery doesn't work:
 1. Install Avahi (optional): sudo apt install avahi-daemon
 2. Or use manual IP entry: enter the other device's IP address and port

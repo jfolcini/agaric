@@ -1,4 +1,4 @@
-//! Tauri command handlers for the block-notes app.
+//! Tauri command handlers for the Agaric app.
 //!
 //! Each command writes to both the op_log AND the blocks table directly.
 //! The materializer is used only for background cache work (tags, pages,
