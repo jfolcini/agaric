@@ -1,5 +1,34 @@
 # Session Log
 
+## Session 49 — 2026-04-02 — Performance Fixes (#524, #533)
+
+2 performance items resolved: FTS N+1 query pattern (backend) and entire-store Zustand subscriptions (frontend). Built by 2 parallel subagents, reviewed by 2 separate subagents (reviewer fixed `serde_json` error handling in #524 to use `?` instead of `unwrap_or_default()`).
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `fts.rs` | #524: Replaced N+1 `query_scalar!` calls in `strip_for_fts()` with 2 batch queries using `json_each()` + HashMap lookup. Reduces from N DB queries to 2 per block regardless of reference count. |
+| `fts.rs` (tests) | #524: Added `strip_multiple_refs_batched` test — verifies 2 tag refs + 2 page links in one block are all resolved correctly via batch path. |
+| `BlockTree.tsx` | #533: Replaced 15-item destructuring `useBlockStore()` with 15 individual selectors `useBlockStore((s) => s.field)`. |
+| `PageEditor.tsx` | #533: Replaced 3-item destructuring `useBlockStore()` with 3 individual selectors. Existing selector on line 91 left as-is. |
+| `EditableBlock.tsx` | #533: Replaced 3-action destructuring `useBlockStore()` with 3 individual selectors. |
+| `JournalPage.tsx` | #533: Replaced 1-action destructuring `useBlockStore()` with 1 individual selector. |
+| `EditableBlock.test.tsx` | #533: Updated mock to support selector pattern: `useBlockStore(selector?) => selector ? selector(store) : store`. |
+
+### Reviews
+- #533: PASS — all 23 selectors correct, no missed components, no behavioral changes.
+- #524: CONDITIONAL PASS — reviewer fixed `unwrap_or_default()` → `?` on `serde_json::to_string` for consistency with `commands.rs`.
+
+### Stats
+- Frontend: 74/74 test files, 2106 tests pass
+- Rust: 76/76 FTS-related tests pass (75 existing + 1 new), 1314 total pass
+- 6 files changed, 91 insertions, 52 deletions
+- Commit: `9af4681`
+- REVIEW-LATER.md: 54 → 52 open items (resolved #524, #533)
+
+---
+
 ## Session 48 — 2026-04-02 — Frontend Fixes (#531, #532, #535, #536)
 
 4 S-cost frontend items resolved: undo state leak, resolve callback instability, brittle blur guard, date format inconsistency. Built by 1 subagent, reviewed by 1 separate subagent (reviewer fixed biome lint + TS unused var in #532).
