@@ -47,6 +47,8 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
           if (item.isCreate && extensionOptions.onCreate) {
             extensionOptions.onCreate(item.label).then((newId) => {
               editor.chain().focus().deleteRange(range).insertBlockLink(newId).run()
+            }).catch((err) => {
+              console.error('Failed to create page for block link:', err)
             })
           } else {
             editor.chain().focus().deleteRange(range).insertBlockLink(item.id).run()
