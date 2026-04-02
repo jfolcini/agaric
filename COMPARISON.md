@@ -156,9 +156,9 @@
 |---|---|---|---|
 | Local-first | Flat files on disk (.md/.org per page) | SQLite database in app data dir | Both local-first, different storage model |
 | File format | Human-readable Markdown or Org-mode files | Binary SQLite database | **Trade-off** -- our format is not human-readable but more robust |
-| Cloud sync | Logseq Sync (paid), or DIY via git/iCloud/Dropbox | Full sync protocol (tested), TLS WebSocket transport, mDNS discovery, device pairing with ChaCha20-Poly1305. Transport not wired to Tauri commands yet | **Gap** -- protocol + transport + UI ready, 5 Tauri commands missing to connect them |
+| Cloud sync | Logseq Sync (paid), or DIY via git/iCloud/Dropbox | Full sync pipeline: SyncDaemon background service with mDNS discovery + TLS WebSocket + cert pinning. 5 Tauri commands wired. Exponential backoff. Frontend: periodic sync, offline detection, toast notifications | **Gap** -- protocol + transport + UI ready, 5 Tauri commands missing to connect them |
 | Conflict resolution | File-level, can cause issues with git | Three-way merge with diffy, conflict copies, LWW for properties. 4 conflict types handled (edit, property, move, delete-vs-edit) | **We're better** architecturally |
-| Multi-device | Via sync solution | Not yet -- single device (sync protocol exists but not exposed) | **Gap** |
+| Multi-device | Via sync solution | LAN sync via SyncDaemon: mDNS discovery of paired peers, immediate sync on appearance, periodic resync every 60s, change-triggered debounced sync (3s window) | None -- fully functional for LAN devices |
 | Op log / history | No explicit op log (git history if using git) | Full append-only op log with blake3 hashes, per-device sequence | **We're better** |
 | Snapshots / compaction | N/A (file-based) | zstd-compressed CBOR snapshots, 90-day compaction | **We're better** |
 | Crash recovery | File system journaling | Explicit recovery at boot (pending snapshots, draft errors) | **We're better** |
@@ -412,7 +412,7 @@
 | **Task dashboard** | Dedicated agenda mode with collapsible sections per state | Requires manually writing Datalog queries |
 | **Backlink filtering** | Server-side expression tree: 10 filter types (property text/num/date, tag, FTS, date range, block type) + And/Or/Not composition, keyset pagination | Basic filter bar with simple matching |
 | **Formatting toolbar** | BubbleMenu with bold/italic/code/link/page-link/tag/codeblock/priority 1-2-3/date/undo/redo + Radix tooltips with shortcut hints (11 buttons) | None (keyboard shortcuts only) |
-| **Sync architecture** | Full sync protocol (1,841 LOC) + three-way merge (2,157 LOC) + TLS WebSocket transport + mDNS discovery + ChaCha20-Poly1305 pairing + UI scaffolding. Protocol tested, transport not wired to app yet | File-based sync is fragile, conflicts are file-level |
+| **Sync architecture** | Full sync pipeline: SyncDaemon auto-sync orchestrator + three-way merge + TLS WebSocket + mDNS continuous discovery + cert pinning + ChaCha20-Poly1305 pairing. 5 Tauri commands, exponential backoff, offline detection. Fully wired end-to-end | File-based sync is fragile, conflicts are file-level |
 | **Data integrity** | Every op is hash-verified (blake3), crash recovery at boot, op-level undo/redo | File corruption possible, no checksums |
 | **Search** | FTS5 with trigram tokenizer (CJK substring search), BM25 ranking, cursor pagination | Standard unicode61 tokenizer, no CJK substring support |
 | **Performance architecture** | CQRS materializer, cursor-based pagination everywhere, depth limits (max 20), Tauri 2 | Datascript in-memory DB can be slow for large graphs |
@@ -443,14 +443,14 @@
 | Daily journal | 8 | 8 | 4 modes (daily/weekly/monthly/agenda) + calendar picker with content dots + keyboard nav (Alt+Arrow, Alt+T). No templates, no auto-create today, monthly view is stacked sections not grid |
 | Search | 8 | 8 | FTS5 with trigram tokenizer (CJK substring search) + BM25 ranking + FTS in pickers + batch resolve. Missing scope filters, unlinked refs |
 | Templates | 7 | 0 | Not started -- **top priority** |
-| Sync/storage | 5 | 9 | Full sync protocol + three-way merge + TLS WebSocket + mDNS + pairing crypto + UI scaffolding. All tested. Transport not wired to Tauri commands yet (~1-2 days to complete) |
+| Sync/storage | 5 | 10 | Full sync pipeline: SyncDaemon orchestrator + three-way merge + TLS WebSocket + mDNS discovery + cert pinning + pairing crypto + 5 Tauri commands + exponential backoff + offline detection. Fully wired end-to-end |
 | Data integrity | 4 | 9 | Op log + blake3 hashing + recovery + undo hardening + error injection testing |
 | Performance arch | 6 | 8 | CQRS + cursor pagination + depth limits + Tauri 2 |
 | Import/export | 7 | 0 | Not started |
 
-**Totals: Logseq 116 / Block Notes 101** (87%)
+**Totals: Logseq 116 / Block Notes 102** (88%)
 
-**Overall: Block Notes has closed most original gaps and now exceeds Logseq in sync architecture, data integrity, search (CJK trigram), backlink filtering (server-side expression tree), undo/redo history, formatting toolbar, and journal views. The next sprint is templates + UX polish (auto-create today, collapse persistence, strikethrough/highlight, monthly calendar grid) + wiring the sync transport + date-aware task scheduling. Block refs/embeds are deferred -- not needed for the target workflow.**
+**Overall: Block Notes has closed most original gaps and now exceeds Logseq in sync architecture (fully automated LAN sync with SyncDaemon), data integrity, search (CJK trigram), backlink filtering (server-side expression tree), undo/redo history, formatting toolbar, and journal views. Sync is now fully wired end-to-end. The next sprint is templates + UX polish (auto-create today, collapse persistence, strikethrough/highlight, monthly calendar grid) + date-aware task scheduling. Block refs/embeds are deferred -- not needed for the target workflow.**
 
 ---
 
