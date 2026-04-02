@@ -1,28 +1,38 @@
 # Session Log
 
-## Session 54 — 2026-04-02 — Phase 5 Wave 2: Property Definitions Backend (#548, #549, #550, #557)
+## Session 54 — 2026-04-02 — Phase 5 Wave 2: Property Definitions + PageHeader (#548-#552, #555-#557)
 
-4 Phase 5 Wave 2 items resolved: property definitions migration, CRUD commands, seed defaults, and integration tests. Also cleaned up 4 stale Wave 1 items (#541, #542, #546, #547) that were already implemented. Built by 1 subagent (backend), reviewed by 1 review subagent (PASS, no blockers).
+8 Phase 5 Wave 2 items resolved in two batches. Also cleaned up 4 stale Wave 1 items (#541, #542, #546, #547).
 
-### Changes
+### Batch 1 — Backend: Property Definitions (#548, #549, #550, #557)
+Built by 1 subagent, reviewed by 1 subagent (PASS, no blockers).
 
 | File | Change |
 |------|--------|
-| `0011_property_definitions.sql` (new) | #548+#550: CREATE TABLE with CHECK on value_type (text/number/date/select). Seeds 3 defaults: status (select), due (date), url (text). |
-| `commands.rs` | #549: `PropertyDefinition` struct + 4 inner functions (create, list, update_options, delete) + 4 Tauri command wrappers. Full input validation: key format (1-64 chars, alphanumeric/underscore/hyphen), value_type enum, options JSON for select-type. |
+| `0011_property_definitions.sql` (new) | #548+#550: CREATE TABLE with CHECK on value_type. Seeds 3 defaults: status (select), due (date), url (text). |
+| `commands.rs` | #549: `PropertyDefinition` struct + 4 inner functions + 4 Tauri command wrappers. |
 | `lib.rs` | Registered 4 new commands in both `collect_commands!` lists. |
-| `command_integration_tests.rs` | #557: 18 tests — 7 happy-path, 9 error-path, 2 edge-case. Covers CRUD, validation, idempotent create, seeded defaults. |
-| `bindings.ts` | Regenerated specta bindings with `PropertyDefinition` type and 4 command signatures. |
-| `.sqlx/` | 2 new prepared statement caches, 2 removed stale ones. |
+| `command_integration_tests.rs` | #557: 18 tests — 7 happy-path, 9 error-path, 2 edge-case. |
+| `bindings.ts` | Regenerated specta bindings with `PropertyDefinition` type. |
+| `.sqlx/` | 2 new prepared statements, 2 removed stale. |
 
-### Reviews
-- Backend: PASS — migration correct, all validation sound, SQL parameterized, conventions followed, 18 tests comprehensive. 3 minor missing tests flagged (not blockers).
+### Batch 2 — Frontend: PageHeader + Tag Badges (#551, #552, #555, #556)
+Built by 1 subagent, reviewed by 1 subagent (PASS WITH FIXES — line width + aria-label fixes applied).
+
+| File | Change |
+|------|--------|
+| `PageHeader.tsx` (new) | #551: Editable title (extracted from PageEditor) + tag badge row. |
+| `useBlockTags.ts` (new) | #552: Reusable hook for tag CRUD (extracted from TagPanel). |
+| `PageEditor.tsx` | #555: Title area → PageHeader component. Tags tab removed. DetailTab = history \| properties. |
+| `TagPanel.tsx` | Refactored to use useBlockTags hook. |
+| `PageHeader.test.tsx` (new) | #556: 18 tests — render, title edit, tag CRUD, search, create, a11y. |
+| `PageEditor.test.tsx` | Updated: PageHeader mock, removed Tags tab tests, 26 tests. |
 
 ### Stats
 - Rust: 1363 tests pass (1345 existing + 18 new)
-- 9 files changed, 615 insertions
-- Commit: `b077f00`
-- REVIEW-LATER.md: 41 → 33 open items (resolved #541, #542, #546, #547, #548, #549, #550, #557)
+- Frontend: 77/77 test files, 2163 tests pass
+- Commits: `b077f00` (backend), `840b356` (frontend)
+- REVIEW-LATER.md: 41 → 25 open items (resolved #541, #542, #546-#552, #555-#557)
 
 ## Session 53 — 2026-04-02 — Phase 5 Wave 1: SourcePageFilter + Advanced Filters + Remove Backlinks Tab (#543, #544, #545)
 
