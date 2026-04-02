@@ -7,15 +7,10 @@
  *  - Add block button creates a new block
  *  - a11y compliance
  *  - Reloads blocks when pageId prop changes
- *  - Detail panel: hidden when no block focused
- *  - Detail panel: renders when a block is focused
- *  - Detail panel: history tab
- *  - Detail panel: persists when focusedBlockId becomes null
- *  - Detail panel: collapsible
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -43,10 +38,6 @@ vi.mock('../PageHeader', () => ({
 }))
 
 // ── Mock panel components ───────────────────────────────────────────
-// Panels are tested independently; here we just verify they receive
-// the correct blockId prop.
-let capturedHistoryBlockId: string | null = null
-
 let capturedLinkedRefsPageId: string | undefined
 vi.mock('../LinkedReferences', () => ({
   LinkedReferences: (props: { pageId: string; onNavigateToPage?: unknown }) => {
@@ -55,19 +46,9 @@ vi.mock('../LinkedReferences', () => ({
   },
 }))
 
-vi.mock('../HistoryPanel', () => ({
-  HistoryPanel: (props: { blockId: string | null }) => {
-    capturedHistoryBlockId = props.blockId
-    return <div data-testid="history-panel" data-block-id={props.blockId ?? ''} />
-  },
-}))
-
 // ── Mock lucide-react ───────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
-  ChevronDown: () => <svg data-testid="chevron-down-icon" />,
-  ChevronUp: () => <svg data-testid="chevron-up-icon" />,
-  History: () => <svg data-testid="history-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
 }))
 
@@ -105,7 +86,6 @@ function makeBlock(id: string, content: string, parentId: string | null = null, 
 beforeEach(() => {
   vi.clearAllMocks()
   capturedParentId = undefined
-  capturedHistoryBlockId = null
   capturedLinkedRefsPageId = undefined
   capturedPageHeaderProps = null
   // Reset the Zustand stores to a clean state before each test
@@ -348,197 +328,6 @@ describe('PageEditor', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
-  })
-})
-
-describe('PageEditor detail panel', () => {
-  it('does not show detail panel when no block has been focused', () => {
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    expect(screen.queryByTestId('detail-panel')).not.toBeInTheDocument()
-  })
-
-  it('shows tab bar but NOT panel content when a block is focused (collapsed by default)', () => {
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
-
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    // Tab bar should be visible
-    const panel = screen.getByTestId('detail-panel')
-    expect(panel).toBeInTheDocument()
-
-    // History tab button should be visible
-    expect(screen.getByRole('tab', { name: /history/i })).toBeInTheDocument()
-
-    // Panel content should NOT be auto-opened
-    expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
-  })
-
-  it('passes correct blockId to panel components after tab click', async () => {
-    const user = userEvent.setup()
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_42' })
-
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    // Click a tab to open panel
-    await user.click(screen.getByRole('tab', { name: /history/i }))
-
-    expect(capturedHistoryBlockId).toBe('BLOCK_42')
-  })
-
-  it('opens history panel when history tab is clicked', async () => {
-    const user = userEvent.setup()
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
-
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    // Open History tab
-    await user.click(screen.getByRole('tab', { name: /history/i }))
-    expect(screen.getByTestId('history-panel')).toBeInTheDocument()
-    expect(capturedHistoryBlockId).toBe('BLOCK_1')
-  })
-
-  it('persists panel when focusedBlockId becomes null', async () => {
-    const user = userEvent.setup()
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
-
-    const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    // Open tab explicitly
-    await user.click(screen.getByRole('tab', { name: /history/i }))
-
-    // Panel visible with BLOCK_1
-    expect(screen.getByTestId('detail-panel')).toBeInTheDocument()
-    expect(capturedHistoryBlockId).toBe('BLOCK_1')
-
-    // Clear focus — panel should persist with last block
-    act(() => {
-      useBlockStore.setState({ focusedBlockId: null })
-    })
-    rerender(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    expect(screen.getByTestId('detail-panel')).toBeInTheDocument()
-    expect(capturedHistoryBlockId).toBe('BLOCK_1')
-  })
-
-  it('updates panel when focusedBlockId changes to a different block', async () => {
-    const user = userEvent.setup()
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
-
-    const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    // Open tab explicitly
-    await user.click(screen.getByRole('tab', { name: /history/i }))
-    expect(capturedHistoryBlockId).toBe('BLOCK_1')
-
-    act(() => {
-      useBlockStore.setState({ focusedBlockId: 'BLOCK_2' })
-    })
-    rerender(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    expect(capturedHistoryBlockId).toBe('BLOCK_2')
-  })
-
-  it('collapses and expands the detail panel', async () => {
-    const user = userEvent.setup()
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
-
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    // Open tab explicitly
-    await user.click(screen.getByRole('tab', { name: /history/i }))
-
-    // Panel content is visible
-    expect(screen.getByTestId('history-panel')).toBeInTheDocument()
-
-    // Collapse the panel
-    const collapseBtn = screen.getByRole('button', { name: /collapse detail panel/i })
-    await user.click(collapseBtn)
-
-    // Panel header still visible but content hidden
-    expect(screen.getByTestId('detail-panel')).toBeInTheDocument()
-    expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
-
-    // Expand the panel
-    const expandBtn = screen.getByRole('button', { name: /expand detail panel/i })
-    await user.click(expandBtn)
-
-    expect(screen.getByTestId('history-panel')).toBeInTheDocument()
-  })
-
-  it('detail panel content has bounded height to prevent layout push', async () => {
-    const user = userEvent.setup()
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
-
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    // Open tab to reveal content area
-    await user.click(screen.getByRole('tab', { name: /history/i }))
-
-    // The content container should have max-height + overflow classes
-    const contentEl = screen.getByTestId('history-panel').parentElement
-    expect(contentEl).toHaveClass('max-h-96')
-    expect(contentEl).toHaveClass('overflow-y-auto')
-  })
-
-  it('clicking history tab while collapsed re-expands the panel', async () => {
-    const user = userEvent.setup()
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
-
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    // Open and then collapse
-    await user.click(screen.getByRole('tab', { name: /history/i }))
-    await user.click(screen.getByRole('button', { name: /collapse detail panel/i }))
-    expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
-
-    // Click History tab again — should expand
-    await user.click(screen.getByRole('tab', { name: /history/i }))
-    expect(screen.getByTestId('history-panel')).toBeInTheDocument()
-  })
-
-  it('has no a11y violations when detail panel is visible', async () => {
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
-
-    // biome-ignore format: render call is cleaner on one line
-    const { container } = render(<PageEditor pageId="PAGE_1" title="A11y Page" onBack={() => {}} />)
-
-    await waitFor(async () => {
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
-  })
-
-  it('tab bar has tablist role and history tab has tab role with aria-selected', () => {
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
-
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    // tablist wrapper
-    const tablist = screen.getByRole('tablist', { name: /block details/i })
-    expect(tablist).toBeInTheDocument()
-
-    // History tab button
-    const historyTab = screen.getByRole('tab', { name: /history/i })
-    expect(historyTab).toHaveAttribute('aria-selected', 'false')
-  })
-
-  it('clicking history tab sets aria-selected and renders tabpanel with aria-labelledby', async () => {
-    const user = userEvent.setup()
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
-
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    // Click History tab
-    await user.click(screen.getByRole('tab', { name: /history/i }))
-
-    // aria-selected should be true for the clicked tab
-    expect(screen.getByRole('tab', { name: /history/i })).toHaveAttribute('aria-selected', 'true')
-
-    // tabpanel should appear with correct aria-labelledby
-    const tabpanel = screen.getByRole('tabpanel')
-    expect(tabpanel).toHaveAttribute('id', 'detail-tabpanel')
-    expect(tabpanel).toHaveAttribute('aria-labelledby', 'detail-tab-history')
   })
 })
 

@@ -402,4 +402,36 @@ describe('BlockContextMenu', () => {
       expect(item.className).toContain('focus-visible:outline-none')
     }
   })
+
+  // ── History menu item ─────────────────────────────────────────────
+
+  it('does not render History item when onShowHistory is not provided', () => {
+    renderMenu({ onShowHistory: undefined })
+
+    expect(screen.queryByText('History')).not.toBeInTheDocument()
+  })
+
+  it('renders History item when onShowHistory is provided', () => {
+    renderMenu({ onShowHistory: vi.fn() })
+
+    expect(screen.getByText('History')).toBeInTheDocument()
+  })
+
+  it('clicking History calls onShowHistory with blockId and closes menu', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu({ onShowHistory: vi.fn() })
+
+    await user.click(screen.getByText('History'))
+
+    expect(props.onShowHistory).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('renders 4 separators when History group is present', () => {
+    renderMenu({ onShowHistory: vi.fn() })
+
+    const separators = screen.getAllByRole('separator')
+    // With all callbacks wired, hasChildren=true, and onShowHistory: 5 groups → 4 separators
+    expect(separators.length).toBe(4)
+  })
 })

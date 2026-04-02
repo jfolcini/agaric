@@ -14,7 +14,7 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { CalendarDays, Check, ChevronRight, GripVertical, Trash2 } from 'lucide-react'
+import { CalendarDays, Check, ChevronRight, Clock, GripVertical, Trash2 } from 'lucide-react'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { cn } from '../lib/utils'
@@ -113,6 +113,8 @@ interface SortableBlockProps {
   onMoveUp?: (blockId: string) => void
   /** Move block down among siblings. */
   onMoveDown?: (blockId: string) => void
+  /** Show block history sheet */
+  onShowHistory?: (blockId: string) => void
 }
 
 function SortableBlockInner({
@@ -139,6 +141,7 @@ function SortableBlockInner({
   dueDate,
   onMoveUp,
   onMoveDown,
+  onShowHistory,
 }: SortableBlockProps): React.ReactElement {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: blockId,
@@ -270,6 +273,18 @@ function SortableBlockInner({
               Reorder (drag or keyboard)
             </TooltipContent>
           </Tooltip>
+
+          {/* History — between grip and delete */}
+          {onShowHistory && (
+            <button
+              type="button"
+              aria-label="Block history"
+              className="flex-shrink-0 p-0.5 mt-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+              onClick={() => onShowHistory(blockId)}
+            >
+              <Clock size={14} />
+            </button>
+          )}
 
           {/* Delete — next to grip */}
           {onDelete && (
@@ -431,6 +446,7 @@ function SortableBlockInner({
             onToggleCollapse={onToggleCollapse}
             onMoveUp={onMoveUp}
             onMoveDown={onMoveDown}
+            onShowHistory={onShowHistory}
             hasChildren={hasChildren}
             isCollapsed={isCollapsed}
             todoState={todoState}

@@ -42,6 +42,7 @@ import { getDragDescendants } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
+import { HistorySheet } from './HistorySheet'
 import { SortableBlock } from './SortableBlock'
 import { Calendar } from './ui/calendar'
 import { Skeleton } from './ui/skeleton'
@@ -162,6 +163,13 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const [datePickerOpen, setDatePickerOpen] = useState(false)
   const [datePickerMode, setDatePickerMode] = useState<'date' | 'due'>('date')
   const datePickerCursorPos = useRef<number | undefined>(undefined)
+
+  // ── History sheet state ────────────────────────────────────────────
+  const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
+
+  const handleShowHistory = useCallback((blockId: string) => {
+    setHistoryBlockId(blockId)
+  }, [])
 
   // ── Extracted hooks ────────────────────────────────────────────────
   const resolve = useBlockResolve()
@@ -900,6 +908,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                       handleFlush()
                       moveDown(id)
                     }}
+                    onShowHistory={handleShowHistory}
                   />
                 </div>
               )
@@ -935,6 +944,15 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           onClose={() => setDatePickerOpen(false)}
         />
       )}
+
+      {/* History side-sheet for per-block history */}
+      <HistorySheet
+        blockId={historyBlockId}
+        open={!!historyBlockId}
+        onOpenChange={(open) => {
+          if (!open) setHistoryBlockId(null)
+        }}
+      />
     </>
   )
 }

@@ -54,6 +54,14 @@ vi.mock('lucide-react', () => ({
       className={props.className}
     />
   ),
+  Clock: (props: { size: number; className?: string }) => (
+    <svg
+      data-testid="clock-icon"
+      width={props.size}
+      height={props.size}
+      className={props.className}
+    />
+  ),
   GripVertical: (props: { size: number }) => (
     <svg data-testid="grip-vertical-icon" width={props.size} height={props.size} />
   ),
@@ -353,6 +361,86 @@ describe('SortableBlock', () => {
     )
 
     expect(screen.queryByRole('button', { name: /delete block/i })).not.toBeInTheDocument()
+  })
+})
+
+describe('SortableBlock history button', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue({
+      attributes: {},
+      listeners: {},
+      setNodeRef: vi.fn(),
+      transform: null,
+      transition: undefined,
+      isDragging: false,
+    })
+  })
+
+  it('does not render history button when onShowHistory is not provided', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: /block history/i })).not.toBeInTheDocument()
+  })
+
+  it('renders history button when onShowHistory is provided', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onShowHistory={vi.fn()}
+      />,
+    )
+
+    const historyBtn = screen.getByRole('button', { name: /block history/i })
+    expect(historyBtn).toBeInTheDocument()
+    expect(screen.getByTestId('clock-icon')).toBeInTheDocument()
+  })
+
+  it('calls onShowHistory with blockId when history button is clicked', async () => {
+    const user = userEvent.setup()
+    const onShowHistory = vi.fn()
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_42"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onShowHistory={onShowHistory}
+      />,
+    )
+
+    const historyBtn = screen.getByRole('button', { name: /block history/i })
+    await user.click(historyBtn)
+
+    expect(onShowHistory).toHaveBeenCalledOnce()
+    expect(onShowHistory).toHaveBeenCalledWith('BLOCK_42')
+  })
+
+  it('history button has correct hover opacity classes', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onShowHistory={vi.fn()}
+      />,
+    )
+
+    const historyBtn = screen.getByRole('button', { name: /block history/i })
+    expect(historyBtn.className).toContain('opacity-0')
+    expect(historyBtn.className).toContain('group-hover:opacity-100')
   })
 })
 

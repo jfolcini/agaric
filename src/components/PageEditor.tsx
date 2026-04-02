@@ -5,16 +5,15 @@
  * Loads children of the given pageId via BlockTree's parentId prop.
  */
 
-import { ChevronDown, ChevronUp, History, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useBlockStore } from '../stores/blocks'
 import { useNavigationStore } from '../stores/navigation'
 import { useUndoStore } from '../stores/undo'
 import { BlockTree } from './BlockTree'
-import { HistoryPanel } from './HistoryPanel'
 import { LinkedReferences } from './LinkedReferences'
 import { PageHeader } from './PageHeader'
 
@@ -54,21 +53,6 @@ export function PageEditor({
       clearSelection()
     }
   }, [selectedBlockId, blocks, setFocused, clearSelection])
-
-  // Detail panel state
-  const focusedBlockId = useBlockStore((s) => s.focusedBlockId)
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const [panelCollapsed, setPanelCollapsed] = useState(false)
-  const lastBlockIdRef = useRef<string | null>(null)
-
-  // Track the last non-null focusedBlockId so the panel persists when focus clears
-  useEffect(() => {
-    if (focusedBlockId != null) {
-      lastBlockIdRef.current = focusedBlockId
-    }
-  }, [focusedBlockId])
-
-  const effectiveBlockId = focusedBlockId ?? lastBlockIdRef.current
 
   // Clear undo state for the previous page when navigating away or unmounting
   useEffect(() => {
@@ -134,62 +118,6 @@ export function PageEditor({
           Add block
         </Button>
       </div>
-
-      {/* Detail panel — History tab shown when a block has been focused */}
-      {effectiveBlockId != null && (
-        <div className="detail-panel rounded-lg border" data-testid="detail-panel">
-          {/* Tab bar + collapse toggle */}
-          <div className="detail-panel-header flex items-center gap-1 border-b px-3 py-1.5">
-            <div role="tablist" aria-label="Block details" className="flex items-center gap-1">
-              <Button
-                role="tab"
-                id="detail-tab-history"
-                aria-selected={historyOpen}
-                aria-controls="detail-tabpanel"
-                variant={historyOpen ? 'default' : 'ghost'}
-                size="sm"
-                className="detail-tab-history gap-1"
-                onClick={() => {
-                  setHistoryOpen(true)
-                  setPanelCollapsed(false)
-                }}
-              >
-                <History className="h-3.5 w-3.5" />
-                History
-              </Button>
-            </div>
-
-            <div className="flex-1" />
-
-            {historyOpen && (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={panelCollapsed ? 'Expand detail panel' : 'Collapse detail panel'}
-                onClick={() => setPanelCollapsed((c) => !c)}
-              >
-                {panelCollapsed ? (
-                  <ChevronUp className="h-4 w-4" />
-                ) : (
-                  <ChevronDown className="h-4 w-4" />
-                )}
-              </Button>
-            )}
-          </div>
-
-          {/* Panel content */}
-          {historyOpen && !panelCollapsed && (
-            <div
-              role="tabpanel"
-              id="detail-tabpanel"
-              aria-labelledby="detail-tab-history"
-              className="detail-panel-content max-h-96 overflow-y-auto p-3"
-            >
-              <HistoryPanel blockId={effectiveBlockId} />
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }

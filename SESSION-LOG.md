@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 59 — 2026-04-03 — Phase 5 Wave 4: History Sheet + dead code cleanup (#570-#575)
+
+### History UI rearchitecture + orphaned panel deletion
+6 items resolved: block history moved from inline detail panel to Sheet drawer, gutter clock button, context menu History item, PageEditor detail panel removed, orphaned panel components deleted.
+
+Built by 2 parallel subagents (A: HistorySheet + PageEditor + BlockTree wiring; B: gutter button + context menu), reviewed by 2 parallel subagents (A: CONDITIONAL PASS — import path fix; B: PASS — false positive on stopPropagation dismissed). Orchestrator applied #574 dead code cleanup directly.
+
+| File | Change |
+|------|--------|
+| `HistorySheet.tsx` (new) | #570: Sheet wrapper around HistoryPanel. Right-side drawer, renders HistoryPanel when blockId truthy. |
+| `BlockTree.tsx` | #570: Added `historyBlockId` state + `handleShowHistory` callback + `<HistorySheet>` rendering + `onShowHistory` prop to SortableBlock. |
+| `SortableBlock.tsx` | #571: Clock icon button in gutter (between drag handle + delete), visible on hover. `onShowHistory` prop passed through to BlockContextMenu. |
+| `BlockContextMenu.tsx` | #572: Group 5 "History" menu item with Clock icon, follows existing MenuItem pattern. |
+| `PageEditor.tsx` | #573: Removed entire detail panel (tab bar, collapse toggle, panel container, state). 195→123 lines. |
+| `BacklinksPanel.tsx` | #574: Deleted (orphaned — no production imports). |
+| `PropertiesPanel.tsx` | #574: Deleted (orphaned). |
+| `TagPanel.tsx` | #574: Deleted (orphaned). |
+| `HistorySheet.test.tsx` (new) | #575: 7 tests (render, open/close, blockId, a11y). |
+| `SortableBlock.test.tsx` | #575: 4 new gutter history button tests. |
+| `BlockContextMenu.test.tsx` | #575: 4 new History menu item tests. |
+| `PageEditor.test.tsx` | #573: Removed 11 detail panel tests. 582→371 lines. |
+| 3 test files deleted | #574: BacklinksPanel.test.tsx, PropertiesPanel.test.tsx, TagPanel.test.tsx. |
+
+### Stats
+- Frontend: 76/76 test files, 2146 tests pass (net −89 tests from deleted panels, +15 new)
+- 15 files changed, 286 insertions, 3611 deletions
+- Commit: `3c016d1`
+
 ## Session 58 — 2026-04-02 — Picker/linking UX batch (#586, #587, #588)
 
 ### Bug fix + new feature for picker/linking workflows

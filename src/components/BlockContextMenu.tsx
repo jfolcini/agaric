@@ -15,6 +15,7 @@ import {
   CheckSquare,
   ChevronDown,
   ChevronRight,
+  Clock,
   MoveDown,
   MoveUp,
   Signal,
@@ -44,6 +45,8 @@ export interface BlockContextMenuProps {
   priority?: string | null
   /** Due date in YYYY-MM-DD format (for future use). */
   dueDate?: string | null
+  /** Show block history */
+  onShowHistory?: (blockId: string) => void
 }
 
 interface MenuItem {
@@ -100,6 +103,7 @@ export function BlockContextMenu({
   todoState,
   priority,
   dueDate: _dueDate,
+  onShowHistory,
 }: BlockContextMenuProps): React.ReactElement {
   const menuRef = useRef<HTMLDivElement>(null)
   const [focusedIndex, setFocusedIndex] = useState(0)
@@ -223,8 +227,19 @@ export function BlockContextMenu({
     },
   ]
 
+  // Group 5: History
+  const group5: MenuItem[] = onShowHistory
+    ? [
+        {
+          label: 'History',
+          icon: <Clock size={14} />,
+          action: () => handleAction(onShowHistory),
+        },
+      ]
+    : []
+
   // Filter out items without actions and empty groups
-  const groups = [group1, group2, group3, group4]
+  const groups = [group1, group2, group3, group4, group5]
     .map((group) => group.filter((item) => item.action !== undefined))
     .filter((group) => group.length > 0)
 
