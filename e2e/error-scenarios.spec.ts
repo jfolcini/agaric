@@ -11,12 +11,31 @@ interface MockErrorWindow extends Window {
  * These tests inject errors via the mock layer's __injectMockError window
  * global and verify the app handles failures gracefully (e.g. error toasts,
  * no crashes). The mock layer (tauri-mock.ts) auto-activates in the browser.
+ *
+ * Block operations use the "Getting Started" seed page (TipTap roving editor).
  */
+
+async function openGettingStarted(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: 'Pages' }).click()
+  await page.getByText('Getting Started').click()
+  await expect(page.locator('[aria-label="Page title"]')).toBeVisible({ timeout: 5000 })
+}
+
+/** Click "Add block", wait for editor, type text, press Enter to save. */
+async function addBlock(page: import('@playwright/test').Page, text: string) {
+  await page.getByRole('button', { name: /add block/i }).click()
+  const editor = page.getByRole('textbox', { name: 'Block editor' })
+  await expect(editor).toBeVisible({ timeout: 5000 })
+  await editor.pressSequentially(text, { delay: 30 })
+  await editor.press('Enter')
+  await expect(page.getByText(text)).toBeVisible({ timeout: 3000 })
+}
+
 test.describe('Error scenarios', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     // Wait for BootGate to resolve and Journal view to load
-    await expect(page.locator('header').getByText('Journal')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
   })
 
   test.afterEach(async ({ page }) => {
@@ -27,6 +46,8 @@ test.describe('Error scenarios', () => {
   })
 
   test('shows error toast when block creation fails', async ({ page }) => {
+    await openGettingStarted(page)
+
     // Inject an error for the create_block command
     await page.evaluate(() => {
       ;(window as unknown as MockErrorWindow).__injectMockError?.(
@@ -35,46 +56,42 @@ test.describe('Error scenarios', () => {
       )
     })
 
-    // Try to create a block via the input form
-    const input = page.getByPlaceholder('Write something...')
-    await input.fill('This should fail')
-    await input.press('Enter')
+    // Try to create a block via the Add block button
+    await page.getByRole('button', { name: /add block/i }).click()
 
     // Verify error feedback appears (toast or error message)
     await expect(page.getByText(/failed|error/i)).toBeVisible({ timeout: 3000 })
   })
 
   test('shows error toast when edit fails', async ({ page }) => {
-    // First, create a block successfully
-    const input = page.getByPlaceholder('Write something...')
-    await input.fill('Editable block')
-    await input.press('Enter')
-    await expect(page.getByText('Editable block')).toBeVisible()
+    await openGettingStarted(page)
+
+    // Click the first seed block to open the editor
+    const firstBlock = page.getByRole('button', { name: 'Edit block' }).first()
+    await firstBlock.click()
 
     // Now inject an error for future edit_block calls
     await page.evaluate(() => {
       ;(window as unknown as MockErrorWindow).__injectMockError?.('edit_block', 'Content too large')
     })
 
-    // Click the block to focus/edit it, type something, then blur to trigger edit
-    const blockText = page.getByText('Editable block')
-    await blockText.click()
-
     // Type additional content to trigger an edit on blur
-    await page.keyboard.type(' modified')
-    // Click elsewhere to blur and trigger the save
-    await page.locator('header').click()
+    const editor = page.getByRole('textbox', { name: 'Block editor' })
+    await expect(editor).toBeVisible({ timeout: 3000 })
+    await editor.pressSequentially(' modified', { delay: 30 })
+
+    // Press Enter to save (triggers edit_block which will fail)
+    await editor.press('Enter')
 
     // Verify error feedback appears
     await expect(page.getByText(/failed|error/i)).toBeVisible({ timeout: 3000 })
   })
 
   test('app does not crash when delete fails', async ({ page }) => {
+    await openGettingStarted(page)
+
     // Create a block first
-    const input = page.getByPlaceholder('Write something...')
-    await input.fill('Block to fail-delete')
-    await input.press('Enter')
-    await expect(page.getByText('Block to fail-delete')).toBeVisible()
+    await addBlock(page, 'Block to fail-delete')
 
     // Inject an error for delete_block
     await page.evaluate(() => {
@@ -85,17 +102,19 @@ test.describe('Error scenarios', () => {
     })
 
     // Try to delete the block
-    const blockText = page.getByText('Block to fail-delete')
-    await blockText.hover()
-    const deleteBtn = blockText.locator('..').getByRole('button', { name: 'Delete block' })
+    const block = page.locator('.sortable-block').filter({ hasText: 'Block to fail-delete' })
+    await block.hover()
+    const deleteBtn = block.getByRole('button', { name: /delete block/i })
     await deleteBtn.click()
 
     // The block should still be visible (delete failed) and the app should not crash
     // Check app is still functional by verifying header is still visible
-    await expect(page.locator('header').getByText('Journal')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
   })
 
   test('recovers after clearing injected errors', async ({ page }) => {
+    await openGettingStarted(page)
+
     // Inject an error
     await page.evaluate(() => {
       ;(window as unknown as MockErrorWindow).__injectMockError?.(
@@ -105,9 +124,7 @@ test.describe('Error scenarios', () => {
     })
 
     // Try to create a block — should fail
-    const input = page.getByPlaceholder('Write something...')
-    await input.fill('Should fail')
-    await input.press('Enter')
+    await page.getByRole('button', { name: /add block/i }).click()
 
     // Clear the errors
     await page.evaluate(() => {
@@ -115,8 +132,7 @@ test.describe('Error scenarios', () => {
     })
 
     // Now creation should succeed
-    await input.fill('Should succeed')
-    await input.press('Enter')
+    await addBlock(page, 'Should succeed')
     await expect(page.getByText('Should succeed')).toBeVisible()
   })
 })

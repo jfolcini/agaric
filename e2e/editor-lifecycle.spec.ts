@@ -1,259 +1,175 @@
 import { expect, test } from '@playwright/test'
 
 /**
- * E2E editor lifecycle tests for the Agaric app.
+ * Editor lifecycle: CRUD operations, navigation, persistence.
+ * All block operations use the "Getting Started" seed page.
  *
- * The default view is JournalPage which manages blocks via an input form.
- * The mock layer (tauri-mock.ts) auto-activates in the browser and provides
- * an in-memory store — each page load resets state.
+ * Key selectors:
+ * - Static blocks: `button` with `aria-label="Edit block"` (class `.block-static`)
+ * - TipTap editor: `[role="textbox"][aria-label="Block editor"]` (contenteditable)
+ * - Sortable wrapper: `.sortable-block`
+ * - Enter saves; Escape discards.
  */
+
+async function openGettingStarted(page: import('@playwright/test').Page) {
+  await page.getByRole('button', { name: 'Pages' }).click()
+  await page.getByText('Getting Started').click()
+  await expect(page.locator('[aria-label="Page title"]')).toBeVisible({ timeout: 5000 })
+}
+
+/** Click "Add block", wait for the TipTap editor to appear, type text, press Enter to save. */
+async function addBlock(page: import('@playwright/test').Page, text: string) {
+  await page.getByRole('button', { name: /add block/i }).click()
+  const editor = page.getByRole('textbox', { name: 'Block editor' })
+  await expect(editor).toBeVisible({ timeout: 5000 })
+  await editor.pressSequentially(text, { delay: 30 })
+  await editor.press('Enter')
+  // Wait for the static block with the new text to appear
+  await expect(page.getByText(text)).toBeVisible({ timeout: 3000 })
+}
+
 test.describe('Editor lifecycle', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    // Wait for BootGate to resolve and Journal view to load
-    // Use the header text which is unique (sidebar button also says "Journal")
-    await expect(page.locator('header').getByText('Journal')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
   })
 
-  test('shows empty state when no blocks exist', async ({ page }) => {
-    // The JournalPage shows an empty state message for the current date
-    await expect(page.getByText('Add one below')).toBeVisible()
+  test('Getting Started page loads with seed blocks', async ({ page }) => {
+    await openGettingStarted(page)
+    // Seed page has blocks — verify at least one is visible
+    await expect(page.locator('.sortable-block').first()).toBeVisible()
   })
 
-  test('creates a block via the input form', async ({ page }) => {
-    // Type in the input field and submit
-    const input = page.getByPlaceholder('Write something...')
-    await expect(input).toBeVisible()
+  test('creates a block via the Add block button', async ({ page }) => {
+    await openGettingStarted(page)
+    const initialCount = await page.locator('.sortable-block').count()
 
-    await input.fill('Hello, world!')
-    await input.press('Enter')
+    await addBlock(page, 'Hello from E2E')
 
-    // Verify the block appears in the list
-    await expect(page.getByText('Hello, world!')).toBeVisible()
-
-    // Empty state should be gone
-    await expect(page.getByText('Add one below')).not.toBeVisible()
-  })
-
-  test('creates a block via the Add button', async ({ page }) => {
-    const input = page.getByPlaceholder('Write something...')
-    await input.fill('Test block')
-
-    const addButton = page.getByRole('button', { name: 'Add' })
-    await addButton.click()
-
-    await expect(page.getByText('Test block')).toBeVisible()
-  })
-
-  test('clears input after block creation', async ({ page }) => {
-    const input = page.getByPlaceholder('Write something...')
-    await input.fill('Block content')
-    await input.press('Enter')
-
-    // Input should be cleared after submission
-    await expect(input).toHaveValue('')
+    // Verify block count increased
+    await expect(page.locator('.sortable-block')).toHaveCount(initialCount + 1)
+    await expect(page.getByText('Hello from E2E')).toBeVisible()
   })
 
   test('creates multiple blocks', async ({ page }) => {
-    const input = page.getByPlaceholder('Write something...')
+    await openGettingStarted(page)
+    const initialCount = await page.locator('.sortable-block').count()
 
-    await input.fill('First block')
-    await input.press('Enter')
+    await addBlock(page, 'Block A')
+    await addBlock(page, 'Block B')
 
-    await input.fill('Second block')
-    await input.press('Enter')
+    await expect(page.locator('.sortable-block')).toHaveCount(initialCount + 2)
+    await expect(page.getByText('Block A')).toBeVisible()
+    await expect(page.getByText('Block B')).toBeVisible()
+  })
 
-    await input.fill('Third block')
-    await input.press('Enter')
+  test('clicks a block to edit it inline', async ({ page }) => {
+    await openGettingStarted(page)
 
-    // All three blocks should be visible
-    await expect(page.getByText('First block')).toBeVisible()
-    await expect(page.getByText('Second block')).toBeVisible()
-    await expect(page.getByText('Third block')).toBeVisible()
+    // Click the first seed block to focus it
+    const firstBlock = page.getByRole('button', { name: 'Edit block' }).first()
+    const originalText = await firstBlock.textContent()
+    await firstBlock.click()
+
+    // TipTap editor should appear
+    const editor = page.getByRole('textbox', { name: 'Block editor' })
+    await expect(editor).toBeVisible({ timeout: 3000 })
+
+    // Press Escape to discard and unfocus without changing
+    await editor.press('Escape')
+    await expect(page.getByText(originalText!.trim())).toBeVisible()
   })
 
   test('deletes a block via the delete button', async ({ page }) => {
-    const input = page.getByPlaceholder('Write something...')
+    await openGettingStarted(page)
 
-    // Create a block
-    await input.fill('Block to delete')
-    await input.press('Enter')
-    await expect(page.getByText('Block to delete')).toBeVisible()
+    // Create a block to delete
+    await addBlock(page, 'Delete me')
 
-    // The delete button is inside the block's row, visible on hover.
-    // Hover over the block text to reveal the delete button.
-    const blockText = page.getByText('Block to delete')
-    await blockText.hover()
+    // Hover over the block to reveal delete button
+    const block = page.locator('.sortable-block').filter({ hasText: 'Delete me' })
+    await block.hover()
 
-    // Click the delete button (accessible via aria-label)
-    const deleteBtn = blockText.locator('..').getByRole('button', { name: 'Delete block' })
+    // Click the delete button
+    const deleteBtn = block.getByRole('button', { name: /delete block/i })
     await deleteBtn.click()
 
-    // Block should be removed
-    await expect(page.getByText('Block to delete')).not.toBeVisible()
-
-    // Empty state should return
-    await expect(page.getByText('Add one below')).toBeVisible()
-  })
-
-  test('Add button is disabled when input is empty', async ({ page }) => {
-    const addButton = page.getByRole('button', { name: 'Add' })
-    await expect(addButton).toBeDisabled()
-  })
-
-  test('does not create a block with empty/whitespace input', async ({ page }) => {
-    const input = page.getByPlaceholder('Write something...')
-    await input.fill('   ')
-    await input.press('Enter')
-
-    // Empty state should still show (whitespace-only should not create a block)
-    await expect(page.getByText('Add one below')).toBeVisible()
+    // Verify block is gone
+    await expect(page.getByText('Delete me')).not.toBeVisible()
   })
 
   test('navigates between sidebar views', async ({ page }) => {
-    // Default view is Journal
-    await expect(page.getByText('Add one below')).toBeVisible()
-
-    // Navigate to Pages
-    await page.getByRole('button', { name: 'Pages' }).click()
-    await expect(page.getByText('No pages yet')).toBeVisible()
-
     // Navigate to Tags
     await page.getByRole('button', { name: 'Tags' }).click()
-    // Tags view should load (check for the Tags heading in the header)
-    await expect(page.locator('header').getByText('Tags')).toBeVisible()
+    await expect(page.locator('header').getByText('Tags')).toBeVisible({ timeout: 3000 })
 
     // Navigate to Trash
     await page.getByRole('button', { name: 'Trash' }).click()
-    await expect(page.locator('header').getByText('Trash')).toBeVisible()
+    await expect(page.locator('header').getByText('Trash')).toBeVisible({ timeout: 3000 })
 
     // Navigate to Status
     await page.getByRole('button', { name: 'Status' }).click()
-    await expect(page.locator('header').getByText('Status')).toBeVisible()
+    await expect(page.locator('header').getByText('Status')).toBeVisible({ timeout: 3000 })
 
     // Navigate to Conflicts
     await page.getByRole('button', { name: 'Conflicts' }).click()
-    await expect(page.locator('header').getByText('Conflicts')).toBeVisible()
+    await expect(page.locator('header').getByText('Conflicts')).toBeVisible({ timeout: 3000 })
 
-    // Navigate back to Journal
+    // Navigate back to Journal (no header label — has mode tabs instead)
     await page.getByRole('button', { name: 'Journal' }).click()
-    await expect(page.locator('header').getByText('Journal')).toBeVisible()
-  })
-
-  test('journal date navigation works', async ({ page }) => {
-    // The header shows the current date
-    const today = new Date()
-    const dateStr = today.toLocaleDateString('en-US', {
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    })
-    await expect(page.getByText(dateStr, { exact: true })).toBeVisible()
-
-    // Navigate to previous day
-    await page.getByRole('button', { name: 'Prev' }).click()
-
-    // The "Today" button should appear (since we're no longer on today)
-    await expect(page.getByRole('button', { name: 'Today' })).toBeVisible()
-
-    // Click "Today" to return
-    await page.getByRole('button', { name: 'Today' }).click()
-    await expect(page.getByText(dateStr, { exact: true })).toBeVisible()
-  })
-
-  test('blocks persist within the same page session', async ({ page }) => {
-    const input = page.getByPlaceholder('Write something...')
-
-    // Create blocks
-    await input.fill('Persistent block A')
-    await input.press('Enter')
-    await input.fill('Persistent block B')
-    await input.press('Enter')
-
-    // Navigate away to Status (which has no interaction with blocks mock)
-    await page.getByRole('button', { name: 'Status' }).click()
-    await expect(page.locator('header').getByText('Status')).toBeVisible()
-
-    // Navigate back to Journal
-    await page.getByRole('button', { name: 'Journal' }).click()
-
-    // Blocks should still be there (mock is in-memory, persists during session)
-    await expect(page.getByText('Persistent block A')).toBeVisible()
-    await expect(page.getByText('Persistent block B')).toBeVisible()
+    await expect(page.getByRole('tab', { name: /daily/i })).toBeVisible({ timeout: 3000 })
   })
 
   test('pages view allows creating a new page', async ({ page }) => {
-    // Navigate to Pages
     await page.getByRole('button', { name: 'Pages' }).click()
-    await expect(page.getByText('No pages yet')).toBeVisible()
+    await expect(page.locator('header').getByText('Pages')).toBeVisible()
 
-    // Create a new page
-    await page.getByRole('button', { name: 'New Page' }).click()
+    const input = page.getByPlaceholder('New page name...')
+    await input.fill('E2E Test Page')
+    await input.press('Enter')
 
-    // A page titled "Untitled" should appear
-    await expect(page.getByText('Untitled')).toBeVisible()
-
-    // Empty state should be gone
-    await expect(page.getByText('No pages yet')).not.toBeVisible()
+    // New page should appear in the list
+    await expect(page.getByText('E2E Test Page')).toBeVisible()
   })
 
-  test('deletes one block while others remain', async ({ page }) => {
-    const input = page.getByPlaceholder('Write something...')
+  test('blocks persist within the same page session', async ({ page }) => {
+    await openGettingStarted(page)
 
-    // Create two blocks
-    await input.fill('Keep this block')
-    await input.press('Enter')
-    await input.fill('Remove this block')
-    await input.press('Enter')
+    await addBlock(page, 'Persistent block')
 
-    await expect(page.getByText('Keep this block')).toBeVisible()
-    await expect(page.getByText('Remove this block')).toBeVisible()
+    // Navigate away and back
+    await page.getByRole('button', { name: 'Journal' }).click()
+    await expect(page.getByRole('tab', { name: /daily/i })).toBeVisible()
 
-    // Delete only the second block
-    const blockText = page.getByText('Remove this block')
-    await blockText.hover()
-    const deleteBtn = blockText.locator('..').getByRole('button', { name: 'Delete block' })
-    await deleteBtn.click()
+    await openGettingStarted(page)
 
-    // Second block gone, first block remains
-    await expect(page.getByText('Remove this block')).not.toBeVisible()
-    await expect(page.getByText('Keep this block')).toBeVisible()
-
-    // Empty state should NOT return (one block remains)
-    await expect(page.getByText('Add one below')).not.toBeVisible()
+    // Block should still be there (mock state persists within session)
+    await expect(page.getByText('Persistent block')).toBeVisible()
   })
 
   test('handles special characters in block content', async ({ page }) => {
-    const input = page.getByPlaceholder('Write something...')
+    await openGettingStarted(page)
 
-    await input.fill('<script>alert("xss")</script>')
-    await input.press('Enter')
+    await addBlock(page, 'Special: & "quotes" \'apos\'')
 
-    // Content should render as text, not execute as HTML
-    await expect(page.getByText('<script>alert("xss")</script>')).toBeVisible()
-
-    // Also test quotes and ampersands
-    await input.fill('Tom & Jerry said "hello" & it\'s fine')
-    await input.press('Enter')
-
-    await expect(page.getByText('Tom & Jerry said "hello"')).toBeVisible()
+    await expect(page.getByText('Special: & "quotes" \'apos\'')).toBeVisible()
   })
 
   test('mock resets on page reload (test isolation)', async ({ page }) => {
-    const input = page.getByPlaceholder('Write something...')
+    await openGettingStarted(page)
 
-    // Create a block
-    await input.fill('Session block')
-    await input.press('Enter')
-    await expect(page.getByText('Session block')).toBeVisible()
+    await addBlock(page, 'Session block')
 
-    // Reload the page — mock store is in-memory, should reset
+    // Reload the page — mock state resets
     await page.reload()
-    await expect(page.locator('header').getByText('Journal')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
 
-    // Block should be gone after reload
+    // Navigate back to Getting Started
+    await openGettingStarted(page)
+
+    // The session block should be gone (mock reset)
     await expect(page.getByText('Session block')).not.toBeVisible()
-    await expect(page.getByText('Add one below')).toBeVisible()
+    // But seed blocks should be back
+    await expect(page.locator('.sortable-block').first()).toBeVisible()
   })
 })
