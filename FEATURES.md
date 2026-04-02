@@ -427,10 +427,6 @@
 | # | Feature | Status | Phase | Tests | Notes |
 |---|---------|--------|-------|-------|-------|
 | 186 | CJK text rendering (Noto Sans) | Done | 1 | none | UTF-8 storage — implicitly tested via unicode content tests |
-| 187 | Tantivy full-text index (disk, alongside SQLite) | Planned | 5 | — | |
-| 188 | lindera morphological analysis (ja/zh/ko) | Planned | 5 | — | |
-| 189 | Optional dictionary download flow | Planned | 5 | — | |
-| 190 | FTS5 + Tantivy parallel index window | Planned | 5 | — | |
 
 ---
 

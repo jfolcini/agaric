@@ -360,15 +360,6 @@ These tasks block everything downstream. Ship them before moving on.
 | p5-t1 | i18n framework selection + string extraction | frontend, dx | | [ADR-03] Extract all UI strings. RTL layout: Tailwind rtl: variants already prepared. |
 | p5-t2 | RTL layout validation | frontend, testing | | [ADR-03] Block tree, pickers, journal, history panel. rtl: Tailwind variants. |
 
-### CJK Search — Tantivy + lindera
-
-| ID | Task | Tags | Critical | Notes |
-|----|------|------|----------|-------|
-| p5-t3 | Tantivy index — disk, alongside SQLite | backend | | [ADR-12, ADR-19] Background materializer queue maintains Tantivy. Source of truth = op log + blocks. Tantivy is derived. |
-| p5-t4 | lindera integration (Japanese, Chinese, Korean) | backend | | [ADR-12, ADR-19] Tokenization example: 会議室 → ['会議', '室']. IPAdic + CC-CEDICT as priority. IPADIC-NEologd optional/off by default. |
-| p5-t5 | Optional dictionary download flow | frontend | | [ADR-19] First CJK search → 'Better search available. Download ~18MB?' Stored in app-private storage. Non-blocking. |
-| p5-t6 | FTS5 + Tantivy parallel index window | backend | | [ADR-12, ADR-19] Both maintained during transition. FTS5 for non-CJK. Tantivy for CJK queries once dictionary available. |
-
 ### Export
 
 | ID | Task | Tags | Critical | Notes |
@@ -438,6 +429,4 @@ These tasks block everything downstream. Ship them before moving on.
 ### Phase 5
 | Dep | Side | Notes |
 |-----|------|-------|
-| Tantivy | backend | CJK full-text search. FTS5 retained in parallel. |
-| lindera | backend | Morphological analyser. Dictionaries are optional downloads. |
 | react-force-graph | frontend | Graph view. WebGL canvas. |

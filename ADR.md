@@ -9,14 +9,12 @@
 |-----|-------|--------|----------------|
 | 01 | Shell & Frontend | **Partial** | Export (P5). |
 | 06 | Data Model | **Partial** | Export (P5) pending. |
-| 12 | Search | **Partial** | Tantivy + lindera CJK search (P5). |
 | 16 | Build Order | **Reference** | Phase 5 remaining. Phase 4 complete. |
 | 17 | Graph View | **Deferred** | Phase 5+. Schema supports it. |
-| 19 | CJK Support | **Partial** | Tantivy + lindera (P5). |
 | 20 | Content Storage | **Partial** | Export (P5) pending. |
 
 **Legend:** P1=Phase 1, P2=Phase 2, etc. See ARCHITECTURE.md for all implemented decisions
-(former ADR-02, 03, 04, 05, 07, 08, 09, 10, 11, 13, 14, 15, 18).
+(former ADR-02, 03, 04, 05, 07, 08, 09, 10, 11, 12, 13, 14, 15, 18, 19).
 
 ---
 
@@ -51,33 +49,12 @@ Round-trip import (Markdown → blocks with ULID tokens) is deferred to Phase 5.
 
 ---
 
-## ADR-12 — Search (Remaining)
-
-**Implemented:** FTS5 virtual table, strip pass, scheduled optimize, search command, SearchPanel
-UI. See ARCHITECTURE.md §9.
-
-**Pending — Phase 5: Tantivy + lindera**
-
-**Tantivy:** Rust full-text search library with pluggable tokenizers.
-
-**lindera:** Rust morphological analyser — Japanese (IPAdic), Chinese (CC-CEDICT), Korean
-(KoDic). Linguistically-aware tokenisation: `会議室` → `["会議", "室"]`.
-
-**Implementation plan:**
-- Tantivy index lives on disk alongside SQLite. Source of truth remains op log + materialised
-  blocks.
-- Background materializer queue maintains the Tantivy index with stale-while-revalidate.
-- lindera dictionaries are optional downloads, not bundled.
-- FTS5 retained for non-CJK text during transition window. Both indexes maintained in parallel.
-
----
-
 ## ADR-16 — Build Order (Remaining Phases)
 
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 4 — Sync + Android | mDNS, pairing, op streaming, merge, Android spike. | **Complete.** |
-| 5 — Polish | i18n, CJK search (Tantivy + lindera), export (ULID → name substitution, Markdown output), auto-updates, graph view. | Pending. |
+| 5 — Polish | i18n, export (ULID → name substitution, Markdown output), auto-updates, graph view. | Pending. |
 
 **Total at ~10 h/week:** 12–18 months. Daily driver by month 3–4.
 
@@ -94,38 +71,6 @@ Block and tag relationships are already in the schema; the graph view is a visua
 only. If built: react-force-graph on WebGL canvas.
 
 **Rejected for v1:** D3, Cytoscape.
-
----
-
-## ADR-19 — CJK Support (Remaining)
-
-**Implemented:** CJK text renders, stores, and types correctly. FTS5 `unicode61` limitation
-documented and accepted. See ARCHITECTURE.md §9.
-
-**Pending — Phase 5: Tantivy + lindera**
-
-(Merged with ADR-12 above for implementation details.)
-
-**Dictionary sizes and Android strategy:**
-
-| Language | Dictionary | Size |
-|----------|------------|------|
-| Japanese | IPAdic | ~18 MB |
-| Japanese | IPADIC-NEologd | ~130 MB |
-| Chinese | CC-CEDICT | ~8 MB |
-| Korean | KoDic | ~8 MB |
-
-Base APK ships with no dictionaries. First CJK search triggers: *"Better search for
-Japanese / Chinese / Korean is available. Download language data? (~18 MB)"* Stored in
-app-private storage. IPAdic and CC-CEDICT are priority targets. IPADIC-NEologd is optional, off
-by default.
-
-On Linux: dictionaries bundled in package or downloaded on first use, depending on distribution
-packaging constraints.
-
-**Interim option (noted, not planned):** FTS5 `trigram` tokenizer (SQLite 3.34+) enables CJK
-substring search with no additional dependencies. Index size ~3x larger. Viable if CJK demand
-arises before Phase 5 — recreate the FTS5 virtual table only, no schema migration.
 
 ---
 
