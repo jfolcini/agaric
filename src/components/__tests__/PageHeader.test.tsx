@@ -29,6 +29,8 @@ const emptyPage = { items: [], next_cursor: null, has_more: false }
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
+  ChevronDown: () => <svg data-testid="chevron-down" />,
+  ChevronRight: () => <svg data-testid="chevron-right" />,
   Plus: () => <svg data-testid="plus-icon" />,
   X: () => <svg data-testid="x-icon" />,
 }))
@@ -53,6 +55,8 @@ beforeEach(() => {
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'list_blocks') return emptyPage
     if (cmd === 'list_tags_for_block') return []
+    if (cmd === 'get_properties') return []
+    if (cmd === 'list_property_defs') return []
     return null
   })
 })
@@ -113,6 +117,8 @@ function setupTagMock(appliedIds: string[] = ['TAG_1']) {
         parent_id: null,
         position: null,
       }
+    if (cmd === 'get_properties') return []
+    if (cmd === 'list_property_defs') return []
     return null
   })
 }

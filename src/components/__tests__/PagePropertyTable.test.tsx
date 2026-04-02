@@ -1,0 +1,526 @@
+/**
+ * Tests for PagePropertyTable component.
+ *
+ * Validates:
+ *  - Rendering: collapsed default, expand toggle, loading skeletons, property count
+ *  - Property display: text, number, date, select inputs
+ *  - Property editing: blur save, select change, delete
+ *  - Add property flow: popover, search, add from def, create def
+ *  - Error handling: load error, save error
+ *  - Accessibility compliance
+ */
+
+import { invoke } from '@tauri-apps/api/core'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
+import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
+
+const mockedInvoke = vi.mocked(invoke)
+
+vi.mock('lucide-react', () => ({
+  ChevronDown: () => <svg data-testid="chevron-down" />,
+  ChevronRight: () => <svg data-testid="chevron-right" />,
+  Plus: () => <svg data-testid="plus-icon" />,
+  X: () => <svg data-testid="x-icon" />,
+}))
+
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
+
+import { toast } from 'sonner'
+import { PagePropertyTable } from '../PagePropertyTable'
+
+const mockedToastError = vi.mocked(toast.error)
+
+function makeDef(key: string, valueType: string, options?: string): PropertyDefinition {
+  return {
+    key,
+    value_type: valueType,
+    options: options ?? null,
+    created_at: '2026-01-01T00:00:00Z',
+  }
+}
+
+function makeProp(key: string, overrides?: Partial<PropertyRow>): PropertyRow {
+  return {
+    key,
+    value_text: null,
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+    ...overrides,
+  }
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
+
+/** Standard mock: returns given properties and definitions for relevant commands. */
+function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
+  mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+    if (cmd === 'get_properties') return props
+    if (cmd === 'list_property_defs') return defs
+    if (cmd === 'set_property') return undefined
+    if (cmd === 'delete_property') return undefined
+    if (cmd === 'create_property_def') {
+      return makeDef(args?.key ?? 'new', args?.valueType ?? 'text')
+    }
+    // PageHeader also calls these in integration
+    if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+    if (cmd === 'list_tags_for_block') return []
+    return null
+  })
+}
+
+describe('PagePropertyTable rendering', () => {
+  it('renders collapsed by default with toggle button', () => {
+    setupMock()
+    render(<PagePropertyTable pageId="PAGE_1" />)
+
+    const toggle = screen.getByRole('button', { name: /toggle properties/i })
+    expect(toggle).toBeInTheDocument()
+    expect(toggle).toHaveTextContent('Properties')
+    // Should not show any property rows when collapsed
+    expect(screen.queryByLabelText(/value$/i)).not.toBeInTheDocument()
+  })
+
+  it('expands to show property rows after clicking toggle', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('status', { value_text: 'active' })], [makeDef('status', 'text')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+
+    const toggle = screen.getByRole('button', { name: /toggle properties/i })
+    await user.click(toggle)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('status value')).toBeInTheDocument()
+    })
+  })
+
+  it('shows loading skeletons while data loads', async () => {
+    const user = userEvent.setup()
+    // Never-resolving promise to simulate loading
+    mockedInvoke.mockImplementation(() => new Promise(() => {}))
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+
+    const toggle = screen.getByRole('button', { name: /toggle properties/i })
+    await user.click(toggle)
+
+    expect(screen.getByTestId('property-loading')).toBeInTheDocument()
+  })
+
+  it('renders property count in toggle label', async () => {
+    setupMock(
+      [makeProp('status', { value_text: 'active' }), makeProp('priority', { value_num: 1 })],
+      [makeDef('status', 'text'), makeDef('priority', 'number')],
+    )
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+
+    await waitFor(() => {
+      const toggle = screen.getByRole('button', { name: /toggle properties/i })
+      expect(toggle).toHaveTextContent('Properties (2)')
+    })
+  })
+})
+
+describe('PagePropertyTable property display', () => {
+  it('text property renders as text input with correct value', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      const input = screen.getByLabelText('author value') as HTMLInputElement
+      expect(input).toBeInTheDocument()
+      expect(input.type).toBe('text')
+      expect(input.value).toBe('Alice')
+    })
+  })
+
+  it('number property renders as number input', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('priority', { value_num: 42 })], [makeDef('priority', 'number')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      const input = screen.getByLabelText('priority value') as HTMLInputElement
+      expect(input.type).toBe('number')
+      expect(input.value).toBe('42')
+    })
+  })
+
+  it('date property renders as date input', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('due', { value_date: '2026-06-15' })], [makeDef('due', 'date')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      const input = screen.getByLabelText('due value') as HTMLInputElement
+      expect(input.type).toBe('date')
+      expect(input.value).toBe('2026-06-15')
+    })
+  })
+
+  it('select property renders as dropdown with options', async () => {
+    const user = userEvent.setup()
+    setupMock(
+      [makeProp('stage', { value_text: 'DOING' })],
+      [makeDef('stage', 'select', '["TODO","DOING","DONE"]')],
+    )
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      const select = screen.getByLabelText('stage value') as HTMLSelectElement
+      expect(select.tagName).toBe('SELECT')
+      expect(select.value).toBe('DOING')
+      // Check options
+      const opts = Array.from(select.options).map((o) => o.value)
+      expect(opts).toContain('TODO')
+      expect(opts).toContain('DOING')
+      expect(opts).toContain('DONE')
+    })
+  })
+})
+
+describe('PagePropertyTable property editing', () => {
+  it('text input saves value on blur via setProperty', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('author value')).toBeInTheDocument()
+    })
+
+    const input = screen.getByLabelText('author value') as HTMLInputElement
+    await user.clear(input)
+    await user.type(input, 'Bob')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'PAGE_1',
+        key: 'author',
+        valueText: 'Bob',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('number input saves on blur', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('priority', { value_num: 1 })], [makeDef('priority', 'number')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('priority value')).toBeInTheDocument()
+    })
+
+    const input = screen.getByLabelText('priority value') as HTMLInputElement
+    await user.clear(input)
+    await user.type(input, '99')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'PAGE_1',
+        key: 'priority',
+        valueNum: 99,
+        valueText: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('select dropdown saves on change', async () => {
+    const user = userEvent.setup()
+    setupMock(
+      [makeProp('stage', { value_text: 'TODO' })],
+      [makeDef('stage', 'select', '["TODO","DOING","DONE"]')],
+    )
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('stage value')).toBeInTheDocument()
+    })
+
+    const select = screen.getByLabelText('stage value') as HTMLSelectElement
+    await user.selectOptions(select, 'DONE')
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'PAGE_1',
+        key: 'stage',
+        valueText: 'DONE',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('delete button calls deleteProperty', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByLabelText('Delete property author'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_property', {
+        blockId: 'PAGE_1',
+        key: 'author',
+      })
+    })
+  })
+})
+
+describe('PagePropertyTable add property flow', () => {
+  it('"Add property" opens popover with definition list', async () => {
+    const user = userEvent.setup()
+    setupMock([], [makeDef('status', 'text'), makeDef('priority', 'number')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /add property/i })).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /add property/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
+      expect(screen.getByText('status')).toBeInTheDocument()
+      expect(screen.getByText('priority')).toBeInTheDocument()
+    })
+  })
+
+  it('search filters definitions', async () => {
+    const user = userEvent.setup()
+    setupMock([], [makeDef('status', 'text'), makeDef('priority', 'number')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /add property/i })).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /add property/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+    })
+
+    await user.type(screen.getByLabelText('Search definitions'), 'stat')
+
+    await waitFor(() => {
+      expect(screen.getByText('status')).toBeInTheDocument()
+      expect(screen.queryByText('priority')).not.toBeInTheDocument()
+    })
+  })
+
+  it('clicking a definition adds the property', async () => {
+    const user = userEvent.setup()
+    setupMock([], [makeDef('status', 'text')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /add property/i })).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /add property/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('status')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByText('status'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'PAGE_1',
+        key: 'status',
+        valueText: '',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('"Create definition" flow: creates def then adds property', async () => {
+    const user = userEvent.setup()
+    // Start with no definitions so "Create" button appears
+    const props: PropertyRow[] = []
+    const defs: PropertyDefinition[] = []
+
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_properties') return [...props]
+      if (cmd === 'list_property_defs') return [...defs]
+      if (cmd === 'create_property_def') {
+        const newDef = makeDef(args?.key, args?.valueType)
+        defs.push(newDef)
+        return newDef
+      }
+      if (cmd === 'set_property') return undefined
+      if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_tags_for_block') return []
+      return null
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /add property/i })).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /add property/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+    })
+
+    await user.type(screen.getByLabelText('Search definitions'), 'newfield')
+
+    // Click the "Create" prompt
+    await waitFor(() => {
+      expect(screen.getByText(/Create "newfield"/)).toBeInTheDocument()
+    })
+    await user.click(screen.getByText(/Create "newfield"/))
+
+    // Should show type selector
+    await waitFor(() => {
+      expect(screen.getByLabelText('Value type')).toBeInTheDocument()
+    })
+
+    // Click "Create definition" button
+    await user.click(screen.getByRole('button', { name: /create definition/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
+        key: 'newfield',
+        valueType: 'text',
+        options: null,
+      })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'PAGE_1',
+        key: 'newfield',
+        valueText: '',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+})
+
+describe('PagePropertyTable error handling', () => {
+  it('load error shows toast', async () => {
+    mockedInvoke.mockImplementation(async () => {
+      throw new Error('backend error')
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to load properties')
+    })
+  })
+
+  it('save error shows toast', async () => {
+    const user = userEvent.setup()
+    let callCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_properties') return [makeProp('author', { value_text: 'Alice' })]
+      if (cmd === 'list_property_defs') return [makeDef('author', 'text')]
+      if (cmd === 'set_property') {
+        callCount++
+        if (callCount >= 1) throw new Error('save failed')
+      }
+      return null
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('author value')).toBeInTheDocument()
+    })
+
+    const input = screen.getByLabelText('author value') as HTMLInputElement
+    await user.clear(input)
+    await user.type(input, 'Bob')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to save property')
+    })
+  })
+})
+
+describe('PagePropertyTable accessibility', () => {
+  it('collapsed state has no a11y violations', async () => {
+    setupMock()
+
+    const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('expanded state has no a11y violations', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
+
+    const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
+
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('author value')).toBeInTheDocument()
+    })
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+})

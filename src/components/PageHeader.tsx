@@ -18,6 +18,7 @@ import { editBlock } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
+import { PagePropertyTable } from './PagePropertyTable'
 
 export interface PageHeaderProps {
   pageId: string
@@ -196,6 +197,8 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           </PopoverContent>
         </Popover>
       </div>
+
+      <PagePropertyTable pageId={pageId} />
     </div>
   )
 }

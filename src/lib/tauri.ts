@@ -14,6 +14,7 @@ export type {
   HistoryEntry,
   MoveResponse,
   PageResponse,
+  PropertyDefinition,
   PurgeResponse,
   RestoreResponse,
   SortDir,
@@ -33,6 +34,7 @@ import type {
   HistoryEntry,
   MoveResponse,
   PageResponse,
+  PropertyDefinition,
   PurgeResponse,
   RestoreResponse,
   StatusInfo,
@@ -406,6 +408,41 @@ export async function listBacklinksGrouped(params: {
 /** List all distinct property keys currently in use. */
 export async function listPropertyKeys(): Promise<string[]> {
   return invoke('list_property_keys')
+}
+
+// ---------------------------------------------------------------------------
+// Property definition commands
+// ---------------------------------------------------------------------------
+
+/** Create a new property definition. */
+export async function createPropertyDef(params: {
+  key: string
+  valueType: string
+  options?: string | null
+}): Promise<PropertyDefinition> {
+  return invoke('create_property_def', {
+    key: params.key,
+    valueType: params.valueType,
+    options: params.options ?? null,
+  })
+}
+
+/** List all property definitions. */
+export async function listPropertyDefs(): Promise<PropertyDefinition[]> {
+  return invoke('list_property_defs')
+}
+
+/** Update the options JSON for a select-type property definition. */
+export async function updatePropertyDefOptions(
+  key: string,
+  options: string,
+): Promise<PropertyDefinition> {
+  return invoke('update_property_def_options', { key, options })
+}
+
+/** Delete a property definition by key. */
+export async function deletePropertyDef(key: string): Promise<void> {
+  return invoke('delete_property_def', { key })
 }
 
 // ---------------------------------------------------------------------------

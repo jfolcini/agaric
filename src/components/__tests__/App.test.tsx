@@ -34,6 +34,11 @@ vi.mock('../LinkedReferences', () => ({
   LinkedReferences: () => <div data-testid="linked-references" />,
 }))
 
+// Mock PagePropertyTable to prevent get_properties/list_property_defs IPC calls
+vi.mock('../PagePropertyTable', () => ({
+  PagePropertyTable: () => <div data-testid="page-property-table" />,
+}))
+
 // Mock useSyncTrigger to prevent automatic sync in tests
 vi.mock('../../hooks/useSyncTrigger', () => ({
   useSyncTrigger: () => ({ syncing: false, syncAll: vi.fn() }),
