@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 55 — 2026-04-02 — Phase 5 Wave 2: PagePropertyTable (#553, #554)
+
+2 remaining Phase 5 Wave 2 items resolved: schema-driven property table UI + property key suggestions. Completes Wave 2.
+
+### Changes
+Built by 1 subagent, reviewed by 1 subagent (PASS WITH FIXES — Biome formatting, import ordering, test mock mutation bug).
+
+| File | Change |
+|------|--------|
+| `tauri.ts` | Added 4 property definition wrappers: createPropertyDef, listPropertyDefs, updatePropertyDefOptions, deletePropertyDef. Added PropertyDefinition to re-exports. |
+| `PagePropertyTable.tsx` (new) | #553+#554: Collapsible property table below tags. Type-specific widgets (text/number/date/select) driven by property_definitions. "Add property" popover with key suggestion dropdown and inline definition creation. |
+| `PageHeader.tsx` | Integrated PagePropertyTable below tag badges row. |
+| `PagePropertyTable.test.tsx` (new) | 20 tests — render (4), display (4), editing (4), add flow (4), error (2), a11y (2). |
+| `PageHeader.test.tsx` | Added ChevronDown/Right to lucide mock, get_properties/list_property_defs handlers. |
+| `App.test.tsx` | Added PagePropertyTable mock to prevent IPC calls in App-level tests. Defensive Array.isArray check in component. |
+
+### Stats
+- Frontend: 78/78 test files, 2183 tests pass (2163 + 20 new)
+- Commit: `b3c5247`
+- REVIEW-LATER.md: 25 → 23 open items (resolved #553, #554)
+
 ## Session 54 — 2026-04-02 — Phase 5 Wave 2: Property Definitions + PageHeader (#548-#552, #555-#557)
 
 8 Phase 5 Wave 2 items resolved in two batches. Also cleaned up 4 stale Wave 1 items (#541, #542, #546, #547).
