@@ -15,12 +15,12 @@
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
 import {
+  AtSign,
   Bold,
   CalendarDays,
   Code,
   FileCode2,
   FileSymlink,
-  Hash,
   Italic,
   Link2,
   Redo2,
@@ -198,7 +198,7 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
               editor.chain().focus().insertContent('@').run()
             }}
           >
-            <Hash size={14} />
+            <AtSign size={14} />
           </Button>
         </Tip>
 
@@ -220,7 +220,7 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
 
         <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-        <Tip label="Priority 1 (high)">
+        <Tip label="Priority 1 — high (Ctrl+Shift+1)">
           <Button
             variant="ghost"
             size="icon-xs"
@@ -234,7 +234,7 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <span className="ml-0.5 text-[10px] font-bold">1</span>
           </Button>
         </Tip>
-        <Tip label="Priority 2 (medium)">
+        <Tip label="Priority 2 — medium (Ctrl+Shift+2)">
           <Button
             variant="ghost"
             size="icon-xs"
@@ -248,7 +248,7 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <span className="ml-0.5 text-[10px] font-bold">2</span>
           </Button>
         </Tip>
-        <Tip label="Priority 3 (low)">
+        <Tip label="Priority 3 — low (Ctrl+Shift+3)">
           <Button
             variant="ghost"
             size="icon-xs"

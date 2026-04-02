@@ -294,7 +294,7 @@ function SortableBlockInner({
         {/* ── Inline controls — chevron, checkbox, priority ─────── */}
         <div className="inline-controls flex items-start flex-shrink-0 gap-1">
           {/* Chevron — only when hasChildren, always visible */}
-          {hasChildren && (
+          {hasChildren ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -314,6 +314,9 @@ function SortableBlockInner({
                 {isCollapsed ? 'Expand (Ctrl+.)' : 'Collapse (Ctrl+.)'}
               </TooltipContent>
             </Tooltip>
+          ) : (
+            /* Spacer matching chevron width so leaf blocks align with parents */
+            <div className="flex-shrink-0 w-[18px] [@media(pointer:coarse)]:w-[44px]" />
           )}
 
           {/* Checkbox — always rendered */}
@@ -387,7 +390,7 @@ function SortableBlockInner({
             <span
               role="img"
               className={cn(
-                'due-date-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 mt-1 text-[10px] font-medium leading-none select-none',
+                'due-date-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 mt-1.5 text-[10px] font-medium leading-none select-none',
                 dueDateColor(dueDate),
               )}
               aria-label={`Due ${formatCompactDate(dueDate)}`}

@@ -398,6 +398,23 @@ describe('SortableBlock collapse/expand chevron', () => {
     expect(screen.queryByTestId('chevron-right-icon')).not.toBeInTheDocument()
   })
 
+  it('renders a spacer matching chevron width when hasChildren is false', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren={false}
+      />,
+    )
+
+    const inlineControls = container.querySelector('.inline-controls')
+    const spacer = inlineControls?.querySelector('.w-\\[18px\\]')
+    expect(spacer).toBeInTheDocument()
+    expect(spacer?.tagName.toLowerCase()).toBe('div')
+  })
+
   it('applies rotate-90 class when expanded (not collapsed)', () => {
     render(
       <SortableBlock
@@ -785,6 +802,21 @@ describe('gutter alignment', () => {
     const deleteBtn = screen.getByRole('button', { name: /delete/i })
     expect(deleteBtn.className).toContain('mt-1.5')
     expect(deleteBtn.className).toContain('p-0.5')
+  })
+
+  it('due date chip has mt-1.5 for vertical alignment with gutter elements', () => {
+    mockUseSortable.mockReturnValue(makeSortable())
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate="2026-12-25"
+      />,
+    )
+    const chip = container.querySelector('.due-date-chip')
+    expect(chip?.className).toContain('mt-1.5')
   })
 })
 

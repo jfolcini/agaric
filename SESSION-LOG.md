@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 57 — 2026-04-02 — UI/UX polish batch 1 (#580, #582, #583, #585)
+
+### Batch 1 — Small visual/toolbar UX fixes
+4 small S-cost UI/UX items resolved: tag button icon, priority tooltip shortcuts, leaf block alignment spacer, due date chip vertical alignment.
+
+Built directly by orchestrator (all trivial CSS/JSX changes), reviewed by 1 subagent (caught incomplete Priority 1/2 tooltip fix — corrected before commit). All PASS.
+
+| File | Change |
+|------|--------|
+| `FormattingToolbar.tsx` | #583: Changed tag button icon from `Hash` to `AtSign` (import + JSX). #582: Updated priority tooltip labels to include keyboard shortcut hints (Ctrl+Shift+1/2/3). |
+| `SortableBlock.tsx` | #585: Added spacer div (`w-[18px]`, `w-[44px]` on coarse pointer) for leaf blocks without chevron. #580: Fixed due date chip `mt-1` → `mt-1.5` for consistent vertical alignment. |
+| `SortableBlock.test.tsx` | 2 new tests: leaf spacer presence + due date chip alignment. |
+
+### Stats
+- Frontend: 146 tests pass (106 SortableBlock + 40 FormattingToolbar)
+- Commit: `ccbea2f`
+- REVIEW-LATER.md: 37 → 33 open items (resolved #580, #582, #583, #585)
+
 ## Session 56 — 2026-04-02 — Phase 5 Wave 3 batch 6: block fixed fields tests (#569) + priority bug fix
 
 ### Batch 6 — Comprehensive test pass + priority A/B/C→1/2/3 fix (#569)
