@@ -310,20 +310,23 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p4-t10 | mDNS peer discovery | backend | | [ADR-09] Local network only. Announce on launch, scan for peers. Tauri event on discovery. |
-| p4-t11 | 4-word EFF passphrase generation | backend | | [ADR-09] ~51 bits entropy. Ephemeral — discarded after pairing or 5-minute timeout. Host generates per session. |
-| p4-t12 | QR code display (passphrase + host address) | frontend | | [ADR-09] Both QR and 4-word text paths derive identical session keys. QR: encode passphrase + address. |
-| p4-t13 | tokio-tungstenite + rustls transport | backend | | [ADR-09, ADR-11] WebSocket over TLS. Session key derived from passphrase. No persistent shared key. |
+| p4-t10 | mDNS peer discovery | backend | | Done — `MdnsService` announce/browse in sync_net.rs. Continuous discovery loop in sync_daemon.rs (500ms poll, paired peer filtering). |
+| p4-t11 | 4-word EFF passphrase generation | backend | | Done — `PairingSession::new()` generates passphrase from EFF wordlist. |
+| p4-t12 | QR code display (passphrase + host address) | frontend | | Done — `pairing_qr_payload()` + `generate_qr_svg()`. PairingDialog displays QR + 4-word text. |
+| p4-t13 | tokio-tungstenite + rustls transport | backend | | Done — TLS WebSocket in sync_net.rs. `SyncServer::start()`, `connect_to_peer()` with cert pinning via `PinningCertVerifier`. Persistent certs via sync_cert.rs. |
 
 ### Sync Protocol
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p4-t14 | Head exchange + divergence walk | backend | **YES** | [ADR-09] Exchange latest (device_id, seq, hash) per device. Walk parent_seqs DAG to find common ancestor. Determine diverging ops. |
-| p4-t15 | Op streaming (sender + receiver) | backend | | [ADR-09] Stream diverging ops. Receiver: INSERT OR IGNORE on composite PK — duplicate delivery is idempotent. |
-| p4-t16 | RESET_REQUIRED detection + protocol | backend | **YES** | [ADR-09] Peer's last known op predates oldest retained op AND no snapshot covers it → RESET_REQUIRED. Never silent — explicit user confirm. |
-| p4-t17 | peer_refs maintenance (atomic) | backend | | [ADR-09] last_hash, last_sent_hash, synced_at updated atomically at end of successful sync only. Failure = no update = safe restart. |
-| p4-t18 | Sync UI — pairing, progress, conflicts | frontend | | [ADR-09] XState machine drives UI states. RESET_REQUIRED: explicit confirm dialog. Never a silent replace. |
+| p4-t14 | Head exchange + divergence walk | backend | **YES** | Done — `SyncOrchestrator::start()` sends HeadExchange. `compute_ops_to_send()` computes divergence. |
+| p4-t15 | Op streaming (sender + receiver) | backend | | Done — OpBatch messages via `SyncConnection::send_json/recv_json`. Batch inserts in single transaction. `BatchApplyOps` materializer variant. |
+| p4-t16 | RESET_REQUIRED detection + protocol | backend | **YES** | Done — `check_reset_required()` in SyncOrchestrator. ResetRequired state transition. |
+| p4-t17 | peer_refs maintenance (atomic) | backend | | Done — `complete_sync()` updates last_hash/last_sent_hash/synced_at atomically. cert_hash + device_name columns added. |
+| p4-t18 | Sync UI — pairing, progress, conflicts | frontend | | Done — PairingDialog (passphrase + QR + countdown + retry on expiry), DeviceManagement (peer list + sync + rename + unpair), ConflictList (keep/discard), StatusPanel (sync metrics + tooltips), useSyncEvents (progress/complete/error toasts + conflict check). |
+| p4-t18a | Tauri sync commands | backend | | Done — 5 commands registered: start_pairing, confirm_pairing, cancel_pairing, start_sync, cancel_sync. PairingState + Arc\<SyncScheduler\> managed state. Specta bindings generated. |
+| p4-t18b | SyncDaemon background service | backend | | Done — sync_daemon.rs (~350 lines). TLS WebSocket server + mDNS announce + continuous browse + three sync triggers (discovery, change-debounce, periodic resync). Per-peer backoff via SyncScheduler. |
+| p4-t18c | Frontend sync integration | frontend | | Done — useSyncTrigger (exponential backoff 60s→600s), useSyncEvents (3 event listeners), useOnlineStatus (navigator.onLine), sidebar sync button (offline indicator). |
 
 ### Snapshot + Compaction
 
