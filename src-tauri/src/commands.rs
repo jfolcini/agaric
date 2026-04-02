@@ -9,7 +9,7 @@
 //! `Serialize` for Tauri 2 command error propagation.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use specta::Type;
@@ -2352,9 +2352,10 @@ pub fn cancel_pairing_inner(
 
 /// Start a sync session with a remote peer.
 ///
-/// Checks the backoff schedule, acquires the per-peer lock, and returns
-/// a placeholder result. Actual network sync (#383) will be wired later;
-/// this allows the frontend flow to work end-to-end.
+/// Checks the backoff schedule, acquires the per-peer lock, and wakes
+/// the SyncDaemon (#382) to sync now.  Actual network sync happens in
+/// the daemon; this returns immediately with a "complete" status to
+/// indicate the trigger was accepted.
 pub fn start_sync_inner(
     scheduler: &SyncScheduler,
     device_id: &str,
@@ -2372,7 +2373,9 @@ pub fn start_sync_inner(
         AppError::InvalidOperation("Sync already in progress for this peer".into())
     })?;
 
-    // Placeholder: no actual network exchange yet (#383).
+    // Wake the SyncDaemon to sync now (#382)
+    scheduler.notify_change();
+
     // Record success so the backoff state stays clean.
     scheduler.record_success(&peer_id);
 
@@ -3091,7 +3094,7 @@ pub async fn cancel_pairing(
 pub async fn start_sync(
     peer_id: String,
     device_id: State<'_, DeviceId>,
-    scheduler: State<'_, SyncScheduler>,
+    scheduler: State<'_, Arc<SyncScheduler>>,
 ) -> Result<SyncSessionInfo, AppError> {
     start_sync_inner(&scheduler, device_id.as_str(), peer_id).map_err(sanitize_internal_error)
 }

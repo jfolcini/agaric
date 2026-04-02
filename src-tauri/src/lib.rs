@@ -20,6 +20,7 @@ pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;
 pub mod sync_cert;
+pub mod sync_daemon;
 pub mod sync_events;
 pub mod sync_net;
 pub mod sync_protocol;
@@ -271,6 +272,19 @@ pub fn run() {
             // Create materializer (spawns consumer tasks) — uses write pool for cache rebuilds
             let materializer = Materializer::new(pools.write.clone());
 
+            // Create scheduler wrapped in Arc for sharing with the SyncDaemon
+            let scheduler = std::sync::Arc::new(sync_scheduler::SyncScheduler::new());
+
+            // Clone everything the SyncDaemon needs before moving into managed state
+            let daemon_pool = pools.write.clone();
+            let daemon_device_id = device_id.clone();
+            let daemon_materializer = materializer.clone();
+            let daemon_scheduler = scheduler.clone();
+            let daemon_cert = sync_cert.clone();
+            let daemon_sink: std::sync::Arc<dyn sync_events::SyncEventSink> =
+                std::sync::Arc::new(sync_events::TauriEventSink(app.handle().clone()));
+            let daemon_app_handle = app.handle().clone();
+
             // Store all in Tauri managed state
             app.manage(WritePool(pools.write));
             app.manage(ReadPool(pools.read));
@@ -280,7 +294,27 @@ pub fn run() {
 
             // Sync state (#275, #278)
             app.manage(commands::PairingState(std::sync::Mutex::new(None)));
-            app.manage(sync_scheduler::SyncScheduler::new());
+            app.manage(scheduler);
+
+            // Spawn SyncDaemon (#382, #383, #278)
+            tauri::async_runtime::spawn(async move {
+                match sync_daemon::SyncDaemon::start(
+                    daemon_pool,
+                    daemon_device_id,
+                    daemon_materializer,
+                    daemon_scheduler,
+                    daemon_cert,
+                    daemon_sink,
+                )
+                .await
+                {
+                    Ok(daemon) => {
+                        tracing::info!("SyncDaemon started successfully");
+                        daemon_app_handle.manage(daemon);
+                    }
+                    Err(e) => tracing::error!("Failed to start SyncDaemon: {e}"),
+                }
+            });
 
             Ok(())
         })
