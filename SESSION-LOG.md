@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 58 — 2026-04-02 — Picker/linking UX batch (#586, #587, #588)
+
+### Bug fix + new feature for picker/linking workflows
+3 items resolved: bracket stripping bug fix, "Create page" verification, inline tag creation.
+
+Built by orchestrator (#586 fix + tests) + 1 subagent (#588 implementation), reviewed by 1 subagent (PASS — no blockers, reviewer's cache concern was a false positive since searchTags always queries backend).
+
+| File | Change |
+|------|--------|
+| `useBlockResolve.ts` | #586: Strip trailing `]`/`]]` from searchPages and searchTags queries (both the search `q` and the "Create new" label). #588: New `onCreateTag` callback + "Create new tag" option in searchTags + interface update. |
+| `at-tag-picker.ts` | #588: Added `onCreate` option, updated command handler for `isCreate` items (mirrors block-link-picker pattern). |
+| `use-roving-editor.ts` | #588: Wired `onCreateTag` through `RovingEditorOptions` + `onCreateTagRef` + AtTagPicker.configure(). |
+| `BlockTree.tsx` | #588: Pass `onCreateTag: resolve.onCreateTag` to useRovingEditor(). |
+| `useBlockResolve.test.ts` | #586: 5 new bracket-stripping tests. #588: 8 new tests (4 searchTags create option + 4 onCreateTag). Updated 2 existing searchTags tests for create option. |
+| `BlockTree.test.tsx` | Updated 2 searchTags tests to account for new "Create new tag" option. |
+
+### Stats
+- Frontend: 78/78 test files, 2235 tests pass (2221 + 14 new/updated)
+- Commit: `a9f7a29`
+
 ## Session 57 — 2026-04-02 — UI/UX polish batch 1 (#580, #582, #583, #585)
 
 ### Batch 1 — Small visual/toolbar UX fixes

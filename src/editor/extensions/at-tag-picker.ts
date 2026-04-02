@@ -19,6 +19,8 @@ const atTagPickerPluginKey = new PluginKey('atTagPicker')
 export interface AtTagPickerOptions {
   /** Return tags matching the query. Called on every keystroke after @. */
   items: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  /** Create a new tag with the given name. Returns the new tag's ULID. */
+  onCreate?: (name: string) => Promise<string>
 }
 
 export const AtTagPicker = Extension.create<AtTagPickerOptions>({
@@ -27,10 +29,12 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
   addOptions() {
     return {
       items: () => [],
+      onCreate: undefined,
     }
   },
 
   addProseMirrorPlugins() {
+    const extensionOptions = this.options
     return [
       Suggestion({
         editor: this.editor,
@@ -40,7 +44,18 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
         items: ({ query }) => this.options.items(query),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
-          editor.chain().focus().deleteRange(range).insertTagRef(item.id).run()
+          if (item.isCreate && extensionOptions.onCreate) {
+            extensionOptions
+              .onCreate(item.label)
+              .then((newId) => {
+                editor.chain().focus().deleteRange(range).insertTagRef(newId).run()
+              })
+              .catch((err) => {
+                console.error('Failed to create tag:', err)
+              })
+          } else {
+            editor.chain().focus().deleteRange(range).insertTagRef(item.id).run()
+          }
         },
         render: () => createSuggestionRenderer('Tags'),
       }),

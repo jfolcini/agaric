@@ -245,13 +245,15 @@ describe('searchTags', () => {
     })
 
     expect(mockedListTagsByPrefix).toHaveBeenCalledWith({ prefix: 'pr' })
+    // Non-exact match, so a "Create new tag" option is appended
     expect(items).toEqual([
       { id: 'T1', label: 'project' },
       { id: 'T2', label: 'priority' },
+      { id: '__create__', label: 'pr', isCreate: true },
     ])
   })
 
-  it('returns empty array when no tags match', async () => {
+  it('returns only "Create new tag" option when no tags match', async () => {
     mockedListTagsByPrefix.mockResolvedValue([])
 
     const { result } = renderHook(() => useBlockResolve())
@@ -261,7 +263,7 @@ describe('searchTags', () => {
       items = await result.current.searchTags('zzz')
     })
 
-    expect(items).toEqual([])
+    expect(items).toEqual([{ id: '__create__', label: 'zzz', isCreate: true }])
   })
 
   it('populates the resolve cache with fetched tags', async () => {
@@ -295,6 +297,167 @@ describe('searchTags', () => {
 
     // Version should not change — no batchSet call
     expect(useResolveStore.getState().version).toBe(initialVersion)
+  })
+
+  it('does NOT append "Create new tag" when exact match exists (case-insensitive)', async () => {
+    mockedListTagsByPrefix.mockResolvedValue([
+      { tag_id: 'T20', name: 'project', usage_count: 5, updated_at: '2024-01-01' },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('project')
+    })
+
+    const createOption = items.find((i) => i.isCreate)
+    expect(createOption).toBeUndefined()
+  })
+
+  it('does NOT append "Create new tag" for empty query', async () => {
+    mockedListTagsByPrefix.mockResolvedValue([
+      { tag_id: 'T30', name: 'any-tag', usage_count: 1, updated_at: '2024-01-01' },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+
+    const createOption = items.find((i) => i.isCreate)
+    expect(createOption).toBeUndefined()
+  })
+
+  it('preserves original casing in "Create new tag" label', async () => {
+    mockedListTagsByPrefix.mockResolvedValue([])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('  MyTag  ')
+    })
+
+    const createOption = items.find((i) => i.isCreate)
+    expect(createOption).toEqual({ id: '__create__', label: 'MyTag', isCreate: true })
+  })
+
+  it('strips trailing ] from tag query', async () => {
+    mockedListTagsByPrefix.mockResolvedValue([
+      { tag_id: 'T40', name: 'todo', usage_count: 2, updated_at: '2024-01-01' },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('todo]')
+    })
+
+    // Sends stripped prefix to listTagsByPrefix
+    expect(mockedListTagsByPrefix).toHaveBeenCalledWith({ prefix: 'todo' })
+    // Exact match after stripping — no create option
+    const createOption = items.find((i) => i.isCreate)
+    expect(createOption).toBeUndefined()
+  })
+})
+
+// ── onCreateTag ─────────────────────────────────────────────────────────
+
+describe('onCreateTag', () => {
+  it('calls createBlock with tag type and content', async () => {
+    mockedCreateBlock.mockResolvedValue({
+      id: 'NEW_TAG_1',
+      block_type: 'tag',
+      content: 'urgent',
+      parent_id: null,
+      position: null,
+      deleted_at: null,
+      archived_at: null,
+      is_conflict: false,
+      conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let newId = ''
+    await act(async () => {
+      newId = await result.current.onCreateTag('urgent')
+    })
+
+    expect(mockedCreateBlock).toHaveBeenCalledWith({
+      blockType: 'tag',
+      content: 'urgent',
+    })
+    expect(newId).toBe('NEW_TAG_1')
+  })
+
+  it('updates the resolve store with the new tag', async () => {
+    mockedCreateBlock.mockResolvedValue({
+      id: 'NEW_TAG_2',
+      block_type: 'tag',
+      content: 'important',
+      parent_id: null,
+      position: null,
+      deleted_at: null,
+      archived_at: null,
+      is_conflict: false,
+      conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.onCreateTag('important')
+    })
+
+    const cached = useResolveStore.getState().cache.get('NEW_TAG_2')
+    expect(cached).toEqual({ title: 'important', deleted: false })
+  })
+
+  it('returns the new block id', async () => {
+    mockedCreateBlock.mockResolvedValue({
+      id: 'TAG_RETURNED_ID',
+      block_type: 'tag',
+      content: 'test',
+      parent_id: null,
+      position: null,
+      deleted_at: null,
+      archived_at: null,
+      is_conflict: false,
+      conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let newId = ''
+    await act(async () => {
+      newId = await result.current.onCreateTag('test')
+    })
+
+    expect(newId).toBe('TAG_RETURNED_ID')
+  })
+
+  it('propagates createBlock rejection', async () => {
+    mockedCreateBlock.mockRejectedValue(new Error('tag creation failed'))
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await expect(result.current.onCreateTag('bad')).rejects.toThrow('tag creation failed')
+    })
   })
 })
 
@@ -872,6 +1035,150 @@ describe('searchPages — "Create new" option', () => {
     // allSource = matches (PickerItem[]) → 'label' in p → p.label.toLowerCase() === q
     const createOption = items.find((i) => i.isCreate)
     expect(createOption).toBeUndefined()
+  })
+})
+
+describe('searchPages — trailing bracket stripping (#586)', () => {
+  it('strips trailing ]] from query so [[text]] resolves to "text"', async () => {
+    mockedSearchBlocks.mockResolvedValue({
+      items: [
+        {
+          id: 'P2',
+          block_type: 'page',
+          content: 'Text Document',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('text]]')
+    })
+
+    // FTS receives "text" (stripped), not "text]]"
+    expect(mockedSearchBlocks).toHaveBeenCalledWith({ query: 'text', limit: 20 })
+    const nonCreate = items.filter((i) => !i.isCreate)
+    expect(nonCreate).toEqual([{ id: 'P2', label: 'Text Document' }])
+  })
+
+  it('strips single trailing ] from query', async () => {
+    mockedSearchBlocks.mockResolvedValue({
+      items: [
+        {
+          id: 'P1',
+          block_type: 'page',
+          content: 'Test Page',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('test]')
+    })
+
+    expect(mockedSearchBlocks).toHaveBeenCalledWith({ query: 'test', limit: 20 })
+    const nonCreate = items.filter((i) => !i.isCreate)
+    expect(nonCreate).toEqual([{ id: 'P1', label: 'Test Page' }])
+  })
+
+  it('"Create new" label strips trailing ]] too', async () => {
+    mockedSearchBlocks.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('New Page]]')
+    })
+
+    const createOption = items.find((i) => i.isCreate)
+    expect(createOption).toEqual({
+      id: '__create__',
+      label: 'New Page',
+      isCreate: true,
+    })
+  })
+
+  it('exact match after stripping ]] suppresses "Create new" option', async () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [{ id: 'P1', title: 'My Page' }]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('My Page]]')
+    })
+
+    const createOption = items.find((i) => i.isCreate)
+    expect(createOption).toBeUndefined()
+  })
+
+  it('works correctly for long queries (>2 chars) with trailing ]]', async () => {
+    mockedSearchBlocks.mockResolvedValue({
+      items: [
+        {
+          id: 'F60',
+          block_type: 'page',
+          content: 'Meeting Notes',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('meeting]]')
+    })
+
+    // FTS receives "meeting" (stripped), returns Meeting Notes
+    expect(mockedSearchBlocks).toHaveBeenCalledWith({ query: 'meeting', limit: 20 })
+    const nonCreate = items.filter((i) => !i.isCreate)
+    expect(nonCreate).toEqual([{ id: 'F60', label: 'Meeting Notes' }])
   })
 })
 

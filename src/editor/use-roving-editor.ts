@@ -113,6 +113,8 @@ export interface RovingEditorOptions {
   searchPages?: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Create a new page with the given title. Returns the new block's ULID. */
   onCreatePage?: (label: string) => Promise<string>
+  /** Create a new tag with the given name. Returns the new tag's ULID. */
+  onCreateTag?: (name: string) => Promise<string>
   /** Called when user clicks a [[block link]] chip to navigate. */
   onNavigate?: (id: string) => void
   /** Return slash commands matching query (for / picker). */
@@ -163,6 +165,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     searchTags = () => [],
     searchPages = () => [],
     onCreatePage,
+    onCreateTag,
     onNavigate,
     searchSlashCommands = () => [],
     onSlashCommand,
@@ -188,6 +191,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   resolveTagStatusRef.current = resolveTagStatus
   const onCreatePageRef = useRef(onCreatePage)
   onCreatePageRef.current = onCreatePage
+  const onCreateTagRef = useRef(onCreateTag)
+  onCreateTagRef.current = onCreateTag
   const onSlashCommandRef = useRef(onSlashCommand)
   onSlashCommandRef.current = onSlashCommand
 
@@ -215,7 +220,14 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         onNavigate: (id: string) => onNavigateRef.current?.(id),
         resolveStatus: (id: string) => resolveBlockStatusRef.current?.(id) ?? 'active',
       }),
-      AtTagPicker.configure({ items: searchTags }),
+      AtTagPicker.configure({
+        items: searchTags,
+        onCreate: (name: string) => {
+          const fn = onCreateTagRef.current
+          if (!fn) return Promise.reject(new Error('onCreateTag not provided'))
+          return fn(name)
+        },
+      }),
       BlockLinkPicker.configure({
         items: searchPages,
         onCreate: (label: string) => {

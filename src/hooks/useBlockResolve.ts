@@ -23,6 +23,7 @@ export interface UseBlockResolveReturn {
   searchTags: (query: string) => Promise<PickerItem[]>
   searchPages: (query: string) => Promise<PickerItem[]>
   onCreatePage: (label: string) => Promise<string>
+  onCreateTag: (name: string) => Promise<string>
   /** Ref to the pages list cache for search. Updated by the preload effect. */
   pagesListRef: React.MutableRefObject<Array<{ id: string; title: string }>>
 }
@@ -67,7 +68,10 @@ export function useBlockResolve(): UseBlockResolveReturn {
 
   // ── Picker callbacks ────────────────────────────────────────────────
   const searchTags = useCallback(async (query: string): Promise<PickerItem[]> => {
-    const tags = await listTagsByPrefix({ prefix: query })
+    // Strip trailing ] so @tag] resolves to "tag", not "tag]"
+    const q = query.replace(/\]+$/, '').toLowerCase().trim()
+
+    const tags = await listTagsByPrefix({ prefix: q })
     // Populate the resolve cache so tag_ref nodes can resolve the name
     // after the block is saved (serialized as #[ULID]) and reloaded.
     if (tags.length > 0) {
@@ -75,14 +79,24 @@ export function useBlockResolve(): UseBlockResolveReturn {
         .getState()
         .batchSet(tags.map((t) => ({ id: t.tag_id, title: t.name, deleted: false })))
     }
-    return tags.map((tag) => ({
+    const result: PickerItem[] = tags.map((tag) => ({
       id: tag.tag_id,
       label: tag.name,
     }))
+
+    // Append a "Create new tag" option when the query doesn't exactly match an existing tag
+    if (q.length > 0) {
+      const exactMatch = tags.some((t) => t.name.toLowerCase() === q)
+      if (!exactMatch) {
+        result.push({ id: '__create__', label: query.replace(/\]+$/, '').trim(), isCreate: true })
+      }
+    }
+    return result
   }, [])
 
   const searchPages = useCallback(async (query: string): Promise<PickerItem[]> => {
-    const q = query.toLowerCase().trim()
+    // Strip trailing ]] so [[text]] resolves to "text", not "text]]"
+    const q = query.replace(/\]+$/, '').toLowerCase().trim()
 
     // For short/empty queries, use the preloaded pages cache for instant results.
     // For longer queries, use FTS5 server-side search for relevance-ranked results.
@@ -136,7 +150,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
         (p) => ('title' in p ? p.title : p.label).toLowerCase() === q,
       )
       if (!exactMatch) {
-        matches.push({ id: '__create__', label: query.trim(), isCreate: true })
+        matches.push({ id: '__create__', label: query.replace(/\]+$/, '').trim(), isCreate: true })
       }
     }
     return matches
@@ -150,6 +164,13 @@ export function useBlockResolve(): UseBlockResolveReturn {
     return block.id
   }, [])
 
+  const onCreateTag = useCallback(async (name: string): Promise<string> => {
+    const block = await createBlock({ blockType: 'tag', content: name })
+    // Populate resolve cache so the tag chip shows the name immediately
+    useResolveStore.getState().set(block.id, name, false)
+    return block.id
+  }, [])
+
   return {
     resolveBlockTitle,
     resolveBlockStatus,
@@ -158,6 +179,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
     searchTags,
     searchPages,
     onCreatePage,
+    onCreateTag,
     pagesListRef,
   }
 }

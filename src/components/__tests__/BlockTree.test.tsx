@@ -241,10 +241,11 @@ describe('BlockTree picker wiring', () => {
     expect(results).toEqual([
       { id: 'TAG_01', label: 'important' },
       { id: 'TAG_02', label: 'improvement' },
+      { id: '__create__', label: 'imp', isCreate: true },
     ])
   })
 
-  it('searchTags returns empty array when no tags match', async () => {
+  it('searchTags returns "Create new tag" option when no tags match', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
     render(<BlockTree />)
@@ -257,7 +258,7 @@ describe('BlockTree picker wiring', () => {
 
     const results = await capturedSearchTags?.('nonexistent')
 
-    expect(results).toEqual([])
+    expect(results).toEqual([{ id: '__create__', label: 'nonexistent', isCreate: true }])
   })
 
   it('searchPages uses FTS5 for longer queries and filters to pages', async () => {

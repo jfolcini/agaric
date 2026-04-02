@@ -266,6 +266,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     searchTags: resolve.searchTags,
     searchPages: resolve.searchPages,
     onCreatePage: resolve.onCreatePage,
+    onCreateTag: resolve.onCreateTag,
     searchSlashCommands,
     onSlashCommand: (item: PickerItem) => handleSlashCommandRef.current(item),
   })
