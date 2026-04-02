@@ -222,6 +222,33 @@ All 5 downgraded to P2. React 18 doesn't crash on unhandled promise rejections. 
 - Backend: merge tests pass
 - REVIEW-LATER.md: 9 → 4 open items (resolved #508-#512)
 
+### Phase 13: CSS/Dark Mode + Component Pattern Reviews
+
+2 parallel reviews covering CSS/dark mode consistency and component composition/performance.
+Cross-validated 5 P1 claims with a separate subagent.
+
+**Reviews:**
+- CSS + dark mode: 16 findings (4 P1, 6 P2, 4 P3, 2 P4)
+- Component patterns: 7 findings (1 P1, 2 P2, 3 P3, 1 P4)
+
+**Cross-validation of 5 P1 claims:**
+- 2 REJECTED: checkmark contrast fine in both modes, QR white background intentional
+- 1 EXAGGERATED: destructive button contrast adequate (P2/P3)
+- 1 CONFIRMED P3: inline functions break memo but negligible for <20 blocks
+- 1 CONFIRMED P2: DiffDisplay dark mode text unreadable
+
+**3 dark mode fixes applied directly (#513-#515):**
+
+| File | Change |
+|------|--------|
+| `DiffDisplay.tsx` | #513: Added `dark:text-red-400` and `dark:text-green-400` for diff display readability. |
+| `HistoryView.tsx` | #514: Added `dark:text-emerald-400`, `dark:text-blue-400`, `dark:text-purple-400`, `dark:text-amber-400` to op badge classes. |
+| `StatusPanel.tsx` | #515: Added `dark:border-emerald-800 dark:text-emerald-400` and `dark:border-amber-800 dark:text-amber-400` to queue health indicators. |
+
+### Phase 13 Stats
+- Frontend: 71/71 test files, 2063 tests pass
+- REVIEW-LATER.md: 4 open items (unchanged — dark mode fixes were new findings, fixed immediately)
+
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 
 Resolved all 18 Tier 7.5 items. 7 BacklinkFilterBuilder UX/a11y fixes, 6 BacklinksPanel fixes, 1 button.tsx touch target, 3 backend perf optimizations, 2 already resolved by Tier 7.

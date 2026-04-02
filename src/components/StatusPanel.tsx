@@ -32,8 +32,8 @@ const TOOLTIP_TEXT: Record<string, string> = {
 }
 
 function queueHealthClasses(depth: number): string {
-  if (depth === 0) return 'border-emerald-200 text-emerald-600'
-  if (depth > 10) return 'border-amber-200 text-amber-600'
+  if (depth === 0) return 'border-emerald-200 text-emerald-600 dark:border-emerald-800 dark:text-emerald-400'
+  if (depth > 10) return 'border-amber-200 text-amber-600 dark:border-amber-800 dark:text-amber-400'
   return ''
 }
 
