@@ -37,6 +37,19 @@ vi.mock('../PairingDialog', () => ({
     ) : null,
 }))
 
+vi.mock('../RenameDialog', () => ({
+  RenameDialog: ({ open, onOpenChange, onConfirm, currentName }: {
+    open: boolean; onOpenChange: (v: boolean) => void; onConfirm: (name: string) => void; currentName: string
+  }) =>
+    open ? (
+      <div data-testid="rename-dialog">
+        <input data-testid="rename-input" defaultValue={currentName} />
+        <button data-testid="rename-save" onClick={() => onConfirm('New Device Name')}>Save</button>
+        <button data-testid="rename-cancel" onClick={() => onOpenChange(false)}>Cancel</button>
+      </div>
+    ) : null,
+}))
+
 vi.mock('../../stores/sync', () => ({
   useSyncStore: (selector: (s: Record<string, unknown>) => unknown) =>
     selector({
@@ -801,13 +814,22 @@ describe('DeviceManagement', () => {
     expect(names[2]).toBe('peer-3')
   })
 
+  it('opens rename dialog when rename button clicked (#422)', async () => {
+    mockInvokeByCommand({ get_device_id: mockDeviceId, list_peer_refs: mockPeers })
+    render(<DeviceManagement />)
+    await screen.findByText(mockDeviceId)
+
+    const renameBtn = document.querySelector('.device-rename-btn') as HTMLButtonElement
+    await userEvent.click(renameBtn)
+
+    expect(screen.getByTestId('rename-dialog')).toBeInTheDocument()
+  })
+
   it('shows loading state during rename (#435)', async () => {
     let resolveRename: () => void
     const renamePromise = new Promise<void>((resolve) => {
       resolveRename = resolve
     })
-
-    vi.spyOn(window, 'prompt').mockReturnValue('New Name')
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_device_id') return mockDeviceId
@@ -823,12 +845,17 @@ describe('DeviceManagement', () => {
 
     await screen.findByText('peer-abc-123...')
 
+    // Click rename to open dialog
     const renameBtns = container.querySelectorAll('.device-rename-btn')
     expect(renameBtns.length).toBeGreaterThan(0)
-
-    // Click rename on the first peer
     await act(async () => {
       fireEvent.click(renameBtns[0])
+    })
+
+    // Click Save in the mock dialog
+    const saveBtn = screen.getByTestId('rename-save')
+    await act(async () => {
+      fireEvent.click(saveBtn)
     })
 
     // The button should be disabled and show a spinner while renaming
@@ -849,8 +876,6 @@ describe('DeviceManagement', () => {
   })
 
   it('shows error when rename fails (#444)', async () => {
-    vi.spyOn(window, 'prompt').mockReturnValue('New Name')
-
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_device_id') return mockDeviceId
       if (cmd === 'list_peer_refs') return [mockPeers[0]]
@@ -863,9 +888,16 @@ describe('DeviceManagement', () => {
       expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
     })
 
+    // Click rename to open dialog
     const renameBtn = container.querySelector('.device-rename-btn') as HTMLButtonElement
     await act(async () => {
       fireEvent.click(renameBtn)
+    })
+
+    // Click Save in the mock dialog
+    const saveBtn = screen.getByTestId('rename-save')
+    await act(async () => {
+      fireEvent.click(saveBtn)
     })
 
     await waitFor(() => {

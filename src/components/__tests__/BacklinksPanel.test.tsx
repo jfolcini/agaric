@@ -1450,4 +1450,67 @@ describe('BacklinksPanel', () => {
       expect((loadMoreCall[1] as Record<string, unknown>).cursor).toBe('cursor-abc')
     })
   })
+
+  // -- Resolve cache behavior (#406) ------------------------------------------
+
+  describe('resolve cache behavior (#406)', () => {
+    it('calls batch_resolve for new ULIDs on pagination', async () => {
+      const user = userEvent.setup()
+      const batchResolveCalls: string[][] = []
+
+      const page1 = {
+        items: [makeBlock('BL1', 'Link to [[01AAAAAAAAAAAAAAAAAAAAAAAA]]')],
+        next_cursor: 'c1',
+        has_more: true,
+        total_count: 2,
+      }
+      const page2 = {
+        items: [makeBlock('BL2', 'Link to [[01BBBBBBBBBBBBBBBBBBBBBBBB]]')],
+        next_cursor: null,
+        has_more: false,
+        total_count: 2,
+      }
+
+      let callCount = 0
+      // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+      mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+        if (cmd === 'query_backlinks_filtered') {
+          callCount++
+          return callCount === 1 ? page1 : page2
+        }
+        if (cmd === 'list_property_keys') return []
+        if (cmd === 'list_tags_by_prefix') return []
+        if (cmd === 'batch_resolve') {
+          const ids = (args as { ids: string[] }).ids
+          batchResolveCalls.push(ids)
+          return ids.map((id: string) => ({
+            id,
+            title: `Title ${id.slice(0, 8)}`,
+            block_type: 'page',
+            deleted: false,
+          }))
+        }
+        return null
+      })
+
+      render(<BacklinksPanel blockId="BLOCK1" />)
+      await screen.findByText(/Title 01AAAAAA/)
+
+      // First batch_resolve should include the ULID from page 1
+      expect(batchResolveCalls.length).toBeGreaterThanOrEqual(1)
+      expect(batchResolveCalls[0]).toContain('01AAAAAAAAAAAAAAAAAAAAAAAA')
+
+      // Load page 2
+      const loadMoreBtn = screen.getByRole('button', { name: /Load more/i })
+      await user.click(loadMoreBtn)
+
+      await screen.findByText(/Title 01BBBBBB/)
+
+      // Second batch_resolve should include the NEW ULID from page 2
+      // but NOT the cached one from page 1
+      const lastCall = batchResolveCalls[batchResolveCalls.length - 1]
+      expect(lastCall).toContain('01BBBBBBBBBBBBBBBBBBBBBBBB')
+      expect(lastCall).not.toContain('01AAAAAAAAAAAAAAAAAAAAAAAA')
+    })
+  })
 })

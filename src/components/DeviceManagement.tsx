@@ -30,6 +30,7 @@ import {
   updatePeerName,
 } from '../lib/tauri'
 import { PairingDialog } from './PairingDialog'
+import { RenameDialog } from './RenameDialog'
 import { UnpairConfirmDialog } from './UnpairConfirmDialog'
 
 export function DeviceManagement(): React.ReactElement {
@@ -42,6 +43,7 @@ export function DeviceManagement(): React.ReactElement {
   const [syncingPeerId, setSyncingPeerId] = useState<string | null>(null)
   const [syncingAll, setSyncingAll] = useState(false)
   const [renamingPeerId, setRenamingPeerId] = useState<string | null>(null)
+  const [renamePeerId, setRenamePeerId] = useState<string | null>(null)
   const [, setTick] = useState(0)
 
   // #437: Auto-clear stale errors after 10 seconds
@@ -161,6 +163,20 @@ export function DeviceManagement(): React.ReactElement {
     },
     [loadData],
   )
+
+  const handleRename = useCallback(async (name: string) => {
+    if (!renamePeerId) return
+    setRenamingPeerId(renamePeerId)
+    try {
+      await updatePeerName(renamePeerId, name || null)
+      await loadData()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to rename')
+    } finally {
+      setRenamingPeerId(null)
+      setRenamePeerId(null)
+    }
+  }, [renamePeerId, loadData])
 
   return (
     <div className="device-management space-y-4">
@@ -292,20 +308,7 @@ export function DeviceManagement(): React.ReactElement {
                             variant="ghost"
                             size="sm"
                             className="device-rename-btn"
-                            onClick={async () => {
-                              const name = window.prompt('Device name:', peer.device_name ?? '')
-                              if (name !== null) {
-                                setRenamingPeerId(peer.peer_id)
-                                try {
-                                  await updatePeerName(peer.peer_id, name.trim() || null)
-                                  await loadData()
-                                } catch (e) {
-                                  setError(e instanceof Error ? e.message : 'Failed to rename')
-                                } finally {
-                                  setRenamingPeerId(null)
-                                }
-                              }
-                            }}
+                            onClick={() => setRenamePeerId(peer.peer_id)}
                             disabled={renamingPeerId === peer.peer_id}
                             aria-label={`Rename device ${peer.device_name || truncateId(peer.peer_id)}`}
                           >
@@ -373,6 +376,14 @@ export function DeviceManagement(): React.ReactElement {
         }}
         deviceName={peers.find(p => p.peer_id === unpairPeerId)?.device_name ?? truncateId(unpairPeerId ?? '')}
         className="device-unpair-confirm"
+      />
+
+      {/* Rename dialog (#422) */}
+      <RenameDialog
+        open={!!renamePeerId}
+        onOpenChange={(o) => { if (!o) setRenamePeerId(null) }}
+        onConfirm={handleRename}
+        currentName={peers.find(p => p.peer_id === renamePeerId)?.device_name ?? ''}
       />
     </div>
   )

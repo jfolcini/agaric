@@ -927,4 +927,28 @@ describe('BacklinkFilterBuilder', () => {
       expect(toast.error).not.toHaveBeenCalled()
     })
   })
+
+  // ====================================================================
+  // #405 — Touch target sizes h-11/44px (#323/#324 fix)
+  // ====================================================================
+
+  describe('44px touch target class on select elements (#405)', () => {
+    it('applies 44px touch target class to select elements', async () => {
+      const user = userEvent.setup()
+      renderBuilder()
+
+      // Open the add-filter form
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+
+      // The filter category select should have the coarse pointer h-11 class
+      const categorySelect = screen.getByLabelText('Filter category')
+      expect(categorySelect.className).toContain('[@media(pointer:coarse)]:h-11')
+    })
+
+    it('applies 44px touch target class to sort select', () => {
+      renderBuilder()
+      const sortSelect = screen.getByLabelText('Sort by')
+      expect(sortSelect.className).toContain('[@media(pointer:coarse)]:h-11')
+    })
+  })
 })
