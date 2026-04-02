@@ -8,12 +8,13 @@
 
 import { Activity, AlertTriangle, RefreshCw } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTimestamp } from '@/lib/format'
+import { usePollingQuery } from '../hooks/usePollingQuery'
 import type { StatusInfo } from '../lib/tauri'
 import { getStatus } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
@@ -32,7 +33,8 @@ const TOOLTIP_TEXT: Record<string, string> = {
 }
 
 function queueHealthClasses(depth: number): string {
-  if (depth === 0) return 'border-emerald-200 text-emerald-600 dark:border-emerald-800 dark:text-emerald-400'
+  if (depth === 0)
+    return 'border-emerald-200 text-emerald-600 dark:border-emerald-800 dark:text-emerald-400'
   if (depth > 10) return 'border-amber-200 text-amber-600 dark:border-amber-800 dark:text-amber-400'
   return ''
 }
@@ -89,27 +91,15 @@ function syncStateDotClasses(state: string): string {
 }
 
 export function StatusPanel(): React.ReactElement {
-  const [status, setStatus] = useState<StatusInfo | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const loadStatus = useCallback(async () => {
-    setLoading(true)
-    try {
-      const resp = await getStatus()
-      setStatus(resp)
-      setError(null)
-    } catch {
-      setError('Failed to load status')
-    }
-    setLoading(false)
-  }, [])
-
-  useEffect(() => {
-    loadStatus()
-    const interval = setInterval(loadStatus, 5000)
-    return () => clearInterval(interval)
-  }, [loadStatus])
+  const queryFn = useCallback(() => getStatus(), [])
+  const {
+    data: status,
+    loading,
+    error,
+  } = usePollingQuery<StatusInfo>(queryFn, {
+    intervalMs: 5000,
+    errorMessage: 'Failed to load status',
+  })
 
   const fgErrors = status?.fg_errors ?? 0
   const bgErrors = status?.bg_errors ?? 0
@@ -194,10 +184,14 @@ export function StatusPanel(): React.ReactElement {
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                       <p>
                         {[
-                          fgErrors > 0 && `${fgErrors} foreground error${fgErrors !== 1 ? 's' : ''}`,
-                          bgErrors > 0 && `${bgErrors} background error${bgErrors !== 1 ? 's' : ''}`,
-                          fgPanics > 0 && `${fgPanics} foreground panic${fgPanics !== 1 ? 's' : ''}`,
-                          bgPanics > 0 && `${bgPanics} background panic${bgPanics !== 1 ? 's' : ''}`,
+                          fgErrors > 0 &&
+                            `${fgErrors} foreground error${fgErrors !== 1 ? 's' : ''}`,
+                          bgErrors > 0 &&
+                            `${bgErrors} background error${bgErrors !== 1 ? 's' : ''}`,
+                          fgPanics > 0 &&
+                            `${fgPanics} foreground panic${fgPanics !== 1 ? 's' : ''}`,
+                          bgPanics > 0 &&
+                            `${bgPanics} background panic${bgPanics !== 1 ? 's' : ''}`,
                         ]
                           .filter(Boolean)
                           .join(', ')}
@@ -247,9 +241,7 @@ export function StatusPanel(): React.ReactElement {
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="rounded-lg border bg-muted/30 p-4 text-center">
                     <dd className="sync-peer-count text-2xl font-bold">{syncPeers.length}</dd>
-                    <MetricLabel
-                      label={`Peer${syncPeers.length !== 1 ? 's' : ''}`}
-                    />
+                    <MetricLabel label={`Peer${syncPeers.length !== 1 ? 's' : ''}`} />
                   </div>
 
                   <div className="rounded-lg border bg-muted/30 p-4 text-center">

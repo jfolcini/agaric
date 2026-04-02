@@ -44,8 +44,9 @@ import {
   useSidebar,
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
-import { useSyncEvents } from './hooks/useSyncEvents'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
+import { usePollingQuery } from './hooks/usePollingQuery'
+import { useSyncEvents } from './hooks/useSyncEvents'
 import { useSyncTrigger } from './hooks/useSyncTrigger'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { announce } from './lib/announcer'
@@ -110,37 +111,14 @@ function syncDotClass(syncState: string, hasPeers: boolean): string {
 
 /** Returns true when at least one unresolved conflict exists. Polls every 30 s and on focus. */
 function useHasConflicts(): boolean {
-  const [hasConflicts, setHasConflicts] = useState(false)
   const currentView = useNavigationStore((s) => s.currentView)
-
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view changes (user may have resolved conflicts)
-  useEffect(() => {
-    let cancelled = false
-
-    async function poll() {
-      try {
-        const resp = await getConflicts({ limit: 1 })
-        if (!cancelled) setHasConflicts(resp.items.length > 0)
-      } catch {
-        if (!cancelled) setHasConflicts(false)
-      }
-    }
-
-    poll()
-    const id = setInterval(poll, 30_000)
-
-    // Re-poll immediately when the window regains focus (e.g. after resolving
-    // conflicts and switching apps, the badge updates without waiting 30 s).
-    window.addEventListener('focus', poll)
-
-    return () => {
-      cancelled = true
-      clearInterval(id)
-      window.removeEventListener('focus', poll)
-    }
-  }, [currentView])
-
-  return hasConflicts
+  const queryFn = useCallback(() => getConflicts({ limit: 1 }), [currentView])
+  const { data } = usePollingQuery(queryFn, {
+    intervalMs: 30_000,
+    refetchOnFocus: true,
+  })
+  return (data?.items.length ?? 0) > 0
 }
 
 function App() {

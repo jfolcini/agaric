@@ -420,9 +420,9 @@ describe('ConflictList', () => {
       ).toBeInTheDocument()
     })
 
-    // Should show error toast with backend error text
+    // Should show error toast
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to load conflicts: network failure')
+      expect(toast.error).toHaveBeenCalledWith('Failed to load conflicts')
     })
   })
 

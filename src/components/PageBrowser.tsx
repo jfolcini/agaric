@@ -8,7 +8,7 @@
 
 import { FileText, Loader2, Plus, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -23,6 +23,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
@@ -33,41 +34,33 @@ interface PageBrowserProps {
 }
 
 export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElement {
-  const [pages, setPages] = useState<BlockRow[]>([])
-  const [loading, setLoading] = useState(false)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
+  const queryFn = useCallback(
+    (cursor?: string) => listBlocks({ blockType: 'page', cursor, limit: 50 }),
+    [],
+  )
+  const {
+    items: pages,
+    loading,
+    hasMore,
+    loadMore,
+    setItems: setPages,
+  } = usePaginatedQuery(queryFn, { onError: 'Failed to load pages' })
+
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [isCreating, setIsCreating] = useState(false)
   const [newPageName, setNewPageName] = useState('')
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
 
-  const loadPages = useCallback(async (cursor?: string) => {
-    setLoading(true)
-    try {
-      const resp = await listBlocks({ blockType: 'page', cursor, limit: 50 })
-      if (cursor) {
-        setPages((prev) => [...prev, ...resp.items])
-        setLoadMoreAnnouncement(`Loaded ${resp.items.length} more pages`)
-      } else {
-        setPages(resp.items)
-        setLoadMoreAnnouncement('')
-      }
-      setNextCursor(resp.next_cursor)
-      setHasMore(resp.has_more)
-    } catch (error) {
-      toast.error(`Failed to load pages: ${String(error)}`)
-    }
-    setLoading(false)
-  }, [])
-
+  // Track load-more announcements for screen readers
+  const prevLengthRef = useRef(0)
   useEffect(() => {
-    loadPages()
-  }, [loadPages])
-
-  const loadMore = useCallback(() => {
-    if (nextCursor) loadPages(nextCursor)
-  }, [nextCursor, loadPages])
+    if (pages.length > prevLengthRef.current && prevLengthRef.current > 0) {
+      setLoadMoreAnnouncement(`Loaded ${pages.length - prevLengthRef.current} more pages`)
+    } else if (pages.length < prevLengthRef.current) {
+      setLoadMoreAnnouncement('')
+    }
+    prevLengthRef.current = pages.length
+  }, [pages.length])
 
   const handleCreatePage = useCallback(async () => {
     const name = newPageName.trim() || 'Untitled'
@@ -93,19 +86,22 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       })
     }
     setIsCreating(false)
-  }, [newPageName])
+  }, [newPageName, setPages])
 
-  const handleDeletePage = useCallback(async (pageId: string) => {
-    try {
-      await deleteBlock(pageId)
-      setPages((prev) => prev.filter((p) => p.id !== pageId))
-      useResolveStore.getState().set(pageId, '(deleted)', true)
-    } catch (error) {
-      toast.error(`Failed to delete page: ${String(error)}`, {
-        action: { label: 'Retry', onClick: () => handleDeletePage(pageId) },
-      })
-    }
-  }, [])
+  const handleDeletePage = useCallback(
+    async (pageId: string) => {
+      try {
+        await deleteBlock(pageId)
+        setPages((prev) => prev.filter((p) => p.id !== pageId))
+        useResolveStore.getState().set(pageId, '(deleted)', true)
+      } catch (error) {
+        toast.error(`Failed to delete page: ${String(error)}`, {
+          action: { label: 'Retry', onClick: () => handleDeletePage(pageId) },
+        })
+      }
+    },
+    [setPages],
+  )
 
   const handleConfirmDelete = useCallback(() => {
     if (deleteTarget) {
@@ -165,8 +161,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         </div>
       )}
 
+      {/* biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn */}
       <div className="page-browser-list space-y-1" role="list">
         {pages.map((page) => (
+          // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
           <div
             key={page.id}
             role="listitem"

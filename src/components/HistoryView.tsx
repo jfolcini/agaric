@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { formatTimestamp } from '../lib/format'
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
 import { computeEditDiff, listPageHistory, revertOps } from '../lib/tauri'
@@ -115,18 +116,13 @@ function getPayloadPreview(entry: HistoryEntry): string | null {
 // ---------------------------------------------------------------------------
 
 export function HistoryView(): React.ReactElement {
-  const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [focusedIndex, setFocusedIndex] = useState(-1)
   const [lastClickedIndex, setLastClickedIndex] = useState(-1)
-  const [loading, setLoading] = useState(false)
   const [reverting, setReverting] = useState(false)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
   const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
   const [confirmRevert, setConfirmRevert] = useState(false)
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
-  const [error, setError] = useState<string | null>(null)
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const [diffCache, setDiffCache] = useState<Map<string, DiffSpan[]>>(new Map())
   const [loadingDiffs, setLoadingDiffs] = useState<Set<string>>(new Set())
@@ -134,44 +130,44 @@ export function HistoryView(): React.ReactElement {
   const listRef = useRef<HTMLDivElement>(null)
 
   // ── Data loading ─────────────────────────────────────────────────
-  const loadHistory = useCallback(
-    async (cursor?: string) => {
-      setLoading(true)
-      try {
-        setError(null)
-        const resp = await listPageHistory({
-          pageId: '__all__',
-          opTypeFilter: opTypeFilter ?? undefined,
-          cursor,
-          limit: 50,
-        })
-        if (cursor) {
-          setEntries((prev) => [...prev, ...resp.items])
-          setLoadMoreAnnouncement(`Loaded ${resp.items.length} more entries`)
-        } else {
-          setEntries(resp.items)
-          setLoadMoreAnnouncement('')
-        }
-        setNextCursor(resp.next_cursor)
-        setHasMore(resp.has_more)
-      } catch {
-        setError('Failed to load history')
-      }
-      setLoading(false)
-    },
+  const queryFn = useCallback(
+    (cursor?: string) =>
+      listPageHistory({
+        pageId: '__all__',
+        opTypeFilter: opTypeFilter ?? undefined,
+        cursor,
+        limit: 50,
+      }),
     [opTypeFilter],
   )
+  const {
+    items: entries,
+    loading,
+    hasMore,
+    error,
+    loadMore,
+    reload,
+    setItems: setEntries,
+  } = usePaginatedQuery(queryFn, { onError: 'Failed to load history' })
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset and reload when filter changes
+  // Track load-more announcements for screen readers
+  const prevLengthRef = useRef(0)
   useEffect(() => {
-    setEntries([])
-    setNextCursor(null)
-    setHasMore(false)
+    if (entries.length > prevLengthRef.current && prevLengthRef.current > 0) {
+      setLoadMoreAnnouncement(`Loaded ${entries.length - prevLengthRef.current} more entries`)
+    } else if (entries.length < prevLengthRef.current) {
+      setLoadMoreAnnouncement('')
+    }
+    prevLengthRef.current = entries.length
+  }, [entries.length])
+
+  // Reset selection when filter changes (entries are replaced by the hook)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset UI state when filter changes
+  useEffect(() => {
     setSelected(new Set())
     setFocusedIndex(-1)
     setLastClickedIndex(-1)
-    loadHistory()
-  }, [opTypeFilter, loadHistory])
+  }, [opTypeFilter])
 
   // Set initial focus when entries load
   useEffect(() => {
@@ -179,10 +175,6 @@ export function HistoryView(): React.ReactElement {
       setFocusedIndex(0)
     }
   }, [entries.length, focusedIndex])
-
-  const loadMore = useCallback(() => {
-    if (nextCursor) loadHistory(nextCursor)
-  }, [nextCursor, loadHistory])
 
   // ── Selection helpers ────────────────────────────────────────────
 
@@ -259,15 +251,13 @@ export function HistoryView(): React.ReactElement {
       setSelected(new Set())
       // Reload after revert
       setEntries([])
-      setNextCursor(null)
-      setHasMore(false)
-      await loadHistory()
+      await reload()
     } catch {
       toast.error('Failed to revert operations')
     }
     setReverting(false)
     setConfirmRevert(false)
-  }, [selected, entries, loadHistory])
+  }, [selected, entries, reload, setEntries])
 
   const handleToggleDiff = useCallback(
     async (entry: HistoryEntry) => {
@@ -452,14 +442,7 @@ export function HistoryView(): React.ReactElement {
           role="alert"
         >
           <p className="text-sm text-destructive">{error}</p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setError(null)
-              loadHistory()
-            }}
-          >
+          <Button variant="outline" size="sm" onClick={() => reload()}>
             Retry
           </Button>
         </div>

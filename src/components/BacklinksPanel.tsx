@@ -13,6 +13,7 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import type { BacklinkFilter, BacklinkSort, BlockRow } from '../lib/tauri'
 import {
   batchResolve,
@@ -32,22 +33,45 @@ interface BacklinksPanelProps {
 }
 
 export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactElement {
-  const [blocks, setBlocks] = useState<BlockRow[]>([])
-  const [loading, setLoading] = useState(false)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
-  const [totalCount, setTotalCount] = useState(0)
-  const [resolveVersion, setResolveVersion] = useState(0)
-  const resolveCache = useRef<Map<string, { title: string; deleted: boolean; cachedAt: number }>>(new Map())
-  const requestIdRef = useRef(0)
-  const prevBlockIdRef = useRef(blockId)
-
   // Filter & sort state
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
   const [sort, setSort] = useState<BacklinkSort | null>(null)
+  const [totalCount, setTotalCount] = useState(0)
   const [propertyKeys, setPropertyKeys] = useState<string[]>([])
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
+  const [resolveVersion, setResolveVersion] = useState(0)
+  const resolveCache = useRef<Map<string, { title: string; deleted: boolean; cachedAt: number }>>(
+    new Map(),
+  )
+  const prevBlockIdRef = useRef(blockId)
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+
+  // Paginated query — re-fetches when blockId, filters, or sort change
+  const queryFn = useCallback(
+    async (cursor?: string) => {
+      if (!blockId) return { items: [] as BlockRow[], next_cursor: null, has_more: false }
+      const resp = await queryBacklinksFiltered({
+        blockId,
+        filters: filters.length > 0 ? filters : undefined,
+        sort: sort ?? undefined,
+        cursor,
+        limit: 50,
+      })
+      setTotalCount(resp.total_count)
+      return resp
+    },
+    [blockId, filters, sort],
+  )
+  const {
+    items: blocks,
+    loading,
+    hasMore,
+    loadMore,
+    setItems: setBlocks,
+  } = usePaginatedQuery(queryFn, {
+    onError: 'Failed to load backlinks',
+    enabled: !!blockId,
+  })
 
   // Load property keys on mount
   useEffect(() => {
@@ -69,48 +93,8 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
       })
   }, [])
 
-  const loadBacklinks = useCallback(
-    async (cursor?: string) => {
-      if (!blockId) return
-      const currentRequestId = ++requestIdRef.current
-      setLoading(true)
-      try {
-        const resp = await queryBacklinksFiltered({
-          blockId,
-          filters: filters.length > 0 ? filters : undefined,
-          sort: sort ?? undefined,
-          cursor,
-          limit: 50,
-        })
-        if (requestIdRef.current !== currentRequestId) return // stale response
-        if (cursor) {
-          setBlocks((prev) => {
-            const existingIds = new Set(prev.map((b) => b.id))
-            const newItems = resp.items.filter((b) => !existingIds.has(b.id))
-            return [...prev, ...newItems]
-          })
-        } else {
-          setBlocks(resp.items)
-        }
-        setNextCursor(resp.next_cursor)
-        setHasMore(resp.has_more)
-        setTotalCount(resp.total_count)
-      } catch {
-        if (requestIdRef.current !== currentRequestId) return // stale response
-        toast.error('Failed to load backlinks')
-      }
-      setLoading(false)
-    },
-    [blockId, filters, sort],
-  )
-
-  // Reset and reload when blockId changes
+  // Clear blocks and filters when navigating to a different block (#341)
   useEffect(() => {
-    // Only clear blocks + filters when navigating to a different block (#341)
-    // When filters/sort change (same block), keep stale results visible
-    // until the new query response replaces them — avoids flash of empty state.
-    // Design choice (#343): re-navigating to the same blockId preserves filters
-    // since they're tied to the view, not the navigation event.
     if (prevBlockIdRef.current !== blockId) {
       setBlocks([])
       setFilters([])
@@ -118,15 +102,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
       resolveCache.current.clear()
       prevBlockIdRef.current = blockId
     }
-    // Always reset pagination when re-querying (blockId or filter/sort change)
-    setNextCursor(null)
-    setHasMore(false)
-    // total_count is updated by the response; not cleared here to avoid
-    // a stale "0 of 0" flash. Acceptable for a personal app (#342).
-    loadBacklinks()
-  }, [blockId, loadBacklinks])
-
-  // Reset pagination when filters/sort change (handled via loadBacklinks dep)
+  }, [blockId, setBlocks])
 
   // Resolve [[ULID]] and #[ULID] tokens found in backlink content
   useEffect(() => {
@@ -146,7 +122,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
     const TTL_MS = 5 * 60 * 1000
     for (const id of idsToResolve) {
       const cached = resolveCache.current.get(id)
-      if (cached && (Date.now() - cached.cachedAt <= TTL_MS)) {
+      if (cached && Date.now() - cached.cachedAt <= TTL_MS) {
         idsToResolve.delete(id)
       }
     }
@@ -192,7 +168,11 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
         // Mark unresolved IDs as deleted (not found in DB)
         for (const id of idsToResolve) {
           if (!resolveCache.current.has(id)) {
-            resolveCache.current.set(id, { title: `[[${id.slice(0, 8)}...]]`, deleted: true, cachedAt: Date.now() })
+            resolveCache.current.set(id, {
+              title: `[[${id.slice(0, 8)}...]]`,
+              deleted: true,
+              cachedAt: Date.now(),
+            })
           }
         }
         setResolveVersion((v) => v + 1)
@@ -230,10 +210,6 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
     },
     [resolveVersion],
   )
-
-  const loadMore = useCallback(() => {
-    if (nextCursor) loadBacklinks(nextCursor)
-  }, [nextCursor, loadBacklinks])
 
   const handleFiltersChange = useCallback((newFilters: BacklinkFilter[]) => {
     setFilters(newFilters)
@@ -320,6 +296,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
           <li
             key={block.id}
             className="backlink-item flex items-center gap-3 border-b py-2 px-1 last:border-b-0 cursor-pointer hover:bg-muted/50 [@media(pointer:coarse)]:flex-col [@media(pointer:coarse)]:items-start [@media(pointer:coarse)]:gap-1"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
             tabIndex={0}
             onClick={() => handleNavigate(block)}
             onKeyDown={(e) => {
@@ -356,9 +333,19 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
           onClick={loadMore}
           disabled={loading}
           aria-busy={loading}
-          aria-label={loading ? 'Loading more backlinks' : `Load more backlinks (${blocks.length} of ${totalCount} loaded)`}
+          aria-label={
+            loading
+              ? 'Loading more backlinks'
+              : `Load more backlinks (${blocks.length} of ${totalCount} loaded)`
+          }
         >
-          {loading ? <><Loader2 className="h-4 w-4 animate-spin" /> Loading...</> : 'Load more'}
+          {loading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+            </>
+          ) : (
+            'Load more'
+          )}
         </Button>
       )}
     </div>

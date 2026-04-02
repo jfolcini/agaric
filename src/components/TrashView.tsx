@@ -7,7 +7,7 @@
 
 import { RotateCcw, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { formatTimestamp } from '../lib/format'
 import type { BlockRow } from '../lib/tauri'
 import { listBlocks, purgeBlock, restoreBlock } from '../lib/tauri'
@@ -30,61 +31,50 @@ import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 
 export function TrashView(): React.ReactElement {
-  const [blocks, setBlocks] = useState<BlockRow[]>([])
-  const [loading, setLoading] = useState(false)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
+  const queryFn = useCallback(
+    (cursor?: string) => listBlocks({ showDeleted: true, cursor, limit: 50 }),
+    [],
+  )
+  const {
+    items: blocks,
+    loading,
+    hasMore,
+    loadMore,
+    setItems: setBlocks,
+  } = usePaginatedQuery(queryFn, { onError: 'Failed to load trash' })
+
   const [confirmPurgeId, setConfirmPurgeId] = useState<string | null>(null)
 
-  const loadTrash = useCallback(async (cursor?: string) => {
-    setLoading(true)
-    try {
-      const resp = await listBlocks({ showDeleted: true, cursor, limit: 50 })
-      if (cursor) {
-        setBlocks((prev) => [...prev, ...resp.items])
-      } else {
-        setBlocks(resp.items)
+  const handleRestore = useCallback(
+    async (block: BlockRow) => {
+      if (!block.deleted_at) return
+      try {
+        await restoreBlock(block.id, block.deleted_at)
+        setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+        if (block.block_type === 'page' || block.block_type === 'tag') {
+          useResolveStore.getState().set(block.id, block.content ?? 'Untitled', false)
+        }
+        toast.success('Block restored')
+      } catch {
+        toast.error('Failed to restore block')
       }
-      setNextCursor(resp.next_cursor)
-      setHasMore(resp.has_more)
-    } catch {
-      toast.error('Failed to load trash')
-    }
-    setLoading(false)
-  }, [])
+    },
+    [setBlocks],
+  )
 
-  useEffect(() => {
-    loadTrash()
-  }, [loadTrash])
-
-  const handleRestore = useCallback(async (block: BlockRow) => {
-    if (!block.deleted_at) return
-    try {
-      await restoreBlock(block.id, block.deleted_at)
-      setBlocks((prev) => prev.filter((b) => b.id !== block.id))
-      if (block.block_type === 'page' || block.block_type === 'tag') {
-        useResolveStore.getState().set(block.id, block.content ?? 'Untitled', false)
+  const handlePurge = useCallback(
+    async (blockId: string) => {
+      try {
+        await purgeBlock(blockId)
+        setBlocks((prev) => prev.filter((b) => b.id !== blockId))
+        setConfirmPurgeId(null)
+        toast.success('Block permanently deleted')
+      } catch {
+        toast.error('Failed to purge block')
       }
-      toast.success('Block restored')
-    } catch {
-      toast.error('Failed to restore block')
-    }
-  }, [])
-
-  const handlePurge = useCallback(async (blockId: string) => {
-    try {
-      await purgeBlock(blockId)
-      setBlocks((prev) => prev.filter((b) => b.id !== blockId))
-      setConfirmPurgeId(null)
-      toast.success('Block permanently deleted')
-    } catch {
-      toast.error('Failed to purge block')
-    }
-  }, [])
-
-  const loadMore = useCallback(() => {
-    if (nextCursor) loadTrash(nextCursor)
-  }, [nextCursor, loadTrash])
+    },
+    [setBlocks],
+  )
 
   return (
     <div className="trash-view space-y-4">
@@ -99,8 +89,10 @@ export function TrashView(): React.ReactElement {
         <EmptyState icon={Trash2} message="Nothing in trash. Deleted items will appear here." />
       )}
 
+      {/* biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn */}
       <div className="trash-view-list space-y-2" role="list">
         {blocks.map((block) => (
+          // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
           <div
             key={block.id}
             role="listitem"

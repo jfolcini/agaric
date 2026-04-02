@@ -21,7 +21,7 @@
 
 import { Check, ChevronDown, ExternalLink, GitMerge, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -38,6 +38,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatTimestamp, truncateId, ulidToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import type { BlockRow } from '../lib/tauri'
 import { deleteBlock, editBlock, getBlock, getConflicts } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
@@ -68,16 +69,51 @@ function conflictTypeBadgeClass(type: 'Text' | 'Property' | 'Move'): string {
 }
 
 export function ConflictList(): React.ReactElement {
-  const [blocks, setBlocks] = useState<BlockRow[]>([])
-  const [loading, setLoading] = useState(false)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
+  const queryFn = useCallback((cursor?: string) => getConflicts({ cursor, limit: 50 }), [])
+  const {
+    items: blocks,
+    loading,
+    hasMore,
+    loadMore,
+    setItems: setBlocks,
+  } = usePaginatedQuery(queryFn, { onError: 'Failed to load conflicts' })
+
   const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null)
   const [confirmKeepBlock, setConfirmKeepBlock] = useState<BlockRow | null>(null)
   const [originals, setOriginals] = useState<Map<string, BlockRow>>(new Map())
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const fetchedParentsRef = useRef(new Set<string>())
 
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+
+  // Fetch original blocks for comparison when new conflict blocks arrive
+  useEffect(() => {
+    const parentIds = blocks
+      .map((b) => b.parent_id)
+      .filter((pid): pid is string => pid != null && !fetchedParentsRef.current.has(pid))
+    const uniqueIds = [...new Set(parentIds)]
+    if (uniqueIds.length === 0) return
+
+    let cancelled = false
+    for (const pid of uniqueIds) fetchedParentsRef.current.add(pid)
+
+    Promise.allSettled(
+      uniqueIds.map((pid) => getBlock(pid).then((orig) => [pid, orig] as const)),
+    ).then((results) => {
+      if (cancelled) return
+      setOriginals((prev) => {
+        const next = new Map(prev)
+        for (const r of results) {
+          if (r.status === 'fulfilled') next.set(r.value[0], r.value[1])
+        }
+        return next
+      })
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [blocks])
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -91,81 +127,51 @@ export function ConflictList(): React.ReactElement {
     })
   }, [])
 
-  const loadConflicts = useCallback(async (cursor?: string) => {
-    setLoading(true)
-    try {
-      const resp = await getConflicts({ cursor, limit: 50 })
-      const items = resp?.items ?? []
-      if (cursor) {
-        setBlocks((prev) => [...prev, ...items])
-      } else {
-        setBlocks(items)
-      }
-      setNextCursor(resp?.next_cursor ?? null)
-      setHasMore(resp?.has_more ?? false)
-
-      // Fetch original blocks for comparison
-      const parentIds = [
-        ...new Set(items.map((b) => b.parent_id).filter((pid): pid is string => pid != null)),
-      ]
-      const fetchedOriginals = new Map<string, BlockRow>()
-      await Promise.allSettled(
-        parentIds.map((pid) => getBlock(pid).then((orig) => fetchedOriginals.set(pid, orig))),
-      )
-      setOriginals((prev) => {
-        const next = new Map(prev)
-        for (const [k, v] of fetchedOriginals) next.set(k, v)
-        return next
-      })
-    } catch (err: unknown) {
-      toast.error(`Failed to load conflicts: ${err instanceof Error ? err.message : String(err)}`)
-    }
-    setLoading(false)
-  }, [])
-
-  useEffect(() => {
-    loadConflicts()
-  }, [loadConflicts])
-
-  const handleKeep = useCallback(async (block: BlockRow) => {
-    try {
-      // Apply conflict content to the original block (parent_id is the original)
-      if (block.parent_id && block.content != null) {
-        await editBlock(block.parent_id, block.content)
-      }
-      // Delete the conflict block
+  const handleKeep = useCallback(
+    async (block: BlockRow) => {
       try {
-        await deleteBlock(block.id)
-      } catch (_deleteErr: unknown) {
-        // editBlock succeeded but deleteBlock failed — partial success
-        toast.success(
-          'Updated original but failed to remove conflict copy — please delete it manually.',
-        )
+        // Apply conflict content to the original block (parent_id is the original)
+        if (block.parent_id && block.content != null) {
+          await editBlock(block.parent_id, block.content)
+        }
+        // Delete the conflict block
+        try {
+          await deleteBlock(block.id)
+        } catch (_deleteErr: unknown) {
+          // editBlock succeeded but deleteBlock failed — partial success
+          toast.success(
+            'Updated original but failed to remove conflict copy — please delete it manually.',
+          )
+          setConfirmKeepBlock(null)
+          return
+        }
+        setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         setConfirmKeepBlock(null)
-        return
+        toast.success('Kept selected version')
+      } catch (err: unknown) {
+        toast.error(
+          `Failed to resolve conflict: ${err instanceof Error ? err.message : String(err)}`,
+        )
       }
-      setBlocks((prev) => prev.filter((b) => b.id !== block.id))
-      setConfirmKeepBlock(null)
-      toast.success('Kept selected version')
-    } catch (err: unknown) {
-      toast.error(`Failed to resolve conflict: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }, [])
+    },
+    [setBlocks],
+  )
 
-  const handleDiscard = useCallback(async (blockId: string) => {
-    try {
-      await deleteBlock(blockId)
-      setBlocks((prev) => prev.filter((b) => b.id !== blockId))
-      setConfirmDiscardId(null)
-      toast.success('Conflict discarded')
-    } catch (err: unknown) {
-      toast.error(`Failed to discard conflict: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }, [])
-
-  const loadMore = useCallback(() => {
-    if (nextCursor) loadConflicts(nextCursor)
-  }, [nextCursor, loadConflicts])
+  const handleDiscard = useCallback(
+    async (blockId: string) => {
+      try {
+        await deleteBlock(blockId)
+        setBlocks((prev) => prev.filter((b) => b.id !== blockId))
+        setConfirmDiscardId(null)
+        toast.success('Conflict discarded')
+      } catch (err: unknown) {
+        toast.error(
+          `Failed to discard conflict: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    },
+    [setBlocks],
+  )
 
   /** Resolve the display timestamp for a conflict block from its ULID. */
   function getConflictTimestamp(block: BlockRow): string {
@@ -214,7 +220,12 @@ export function ConflictList(): React.ReactElement {
                 aria-expanded={isExpanded}
               >
                 <div className="flex items-center gap-2 flex-wrap">
-                  <ChevronDown className={cn('h-4 w-4 shrink-0 transition-transform', isExpanded && 'rotate-180')} />
+                  <ChevronDown
+                    className={cn(
+                      'h-4 w-4 shrink-0 transition-transform',
+                      isExpanded && 'rotate-180',
+                    )}
+                  />
                   <Badge variant="secondary" className="conflict-item-type shrink-0">
                     {block.block_type}
                   </Badge>
