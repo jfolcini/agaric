@@ -17,7 +17,11 @@ export function BootGate({ children }: { children: React.ReactNode }) {
 
   if (state === 'booting') {
     return (
-      <div role="status" aria-live="polite" className="flex h-screen flex-col items-center justify-center gap-3 transition-opacity duration-200">
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex h-screen flex-col items-center justify-center gap-3 transition-opacity duration-200"
+      >
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden="true" />
         <p className="text-sm text-muted-foreground">Starting Agaric&hellip;</p>
       </div>
@@ -26,7 +30,11 @@ export function BootGate({ children }: { children: React.ReactNode }) {
 
   if (state === 'recovering') {
     return (
-      <div role="status" aria-live="polite" className="flex h-screen flex-col items-center justify-center gap-2 transition-opacity duration-200">
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex h-screen flex-col items-center justify-center gap-2 transition-opacity duration-200"
+      >
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden="true" />
         <p className="text-sm text-muted-foreground">Recovering&hellip;</p>
       </div>

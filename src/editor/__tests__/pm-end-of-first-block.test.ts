@@ -26,7 +26,9 @@ describe('pmEndOfFirstBlock', () => {
 
   it('mixed text and atom node', () => {
     // doc(paragraph("hi ", tagRef)) → pos 1 + 3 + 1 = 5
-    expect(pmEndOfFirstBlock(doc(paragraph(text('hi '), tagRef('01ARZ3NDEKTSV4RRFFQ69G5FAV'))))).toBe(5)
+    expect(
+      pmEndOfFirstBlock(doc(paragraph(text('hi '), tagRef('01ARZ3NDEKTSV4RRFFQ69G5FAV')))),
+    ).toBe(5)
   })
 
   it('multiple atom nodes', () => {

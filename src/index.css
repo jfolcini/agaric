@@ -353,12 +353,12 @@
 /* ── Accessibility: prefers-contrast ───────────────────────────────── */
 @media (prefers-contrast: more) {
   * {
-    --border: oklch(0.7 0 0) !important;
+    --border: oklch(0.7 0 0);
   }
 
   :focus-visible {
-    outline: 3px solid currentColor !important;
-    outline-offset: 2px !important;
+    outline: 3px solid currentColor;
+    outline-offset: 2px;
   }
 }
 
@@ -377,9 +377,9 @@
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    transition-duration: 0.01ms;
+    scroll-behavior: auto;
   }
 }

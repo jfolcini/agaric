@@ -665,12 +665,8 @@ describe('BacklinkFilterBuilder', () => {
         filters: [{ type: 'HasTag', tag_id: '01ARZTAGAAAAAAAAAAAAAAAAAA' }],
       })
 
-      expect(
-        screen.getByRole('group', { name: 'Filter: has tag Project' }),
-      ).toBeInTheDocument()
-      expect(
-        screen.getByLabelText('Remove filter has tag Project'),
-      ).toBeInTheDocument()
+      expect(screen.getByRole('group', { name: 'Filter: has tag Project' })).toBeInTheDocument()
+      expect(screen.getByLabelText('Remove filter has tag Project')).toBeInTheDocument()
     })
   })
 
@@ -713,9 +709,7 @@ describe('BacklinkFilterBuilder', () => {
       expect(screen.queryByLabelText('Filter category')).not.toBeInTheDocument()
       // Wait for requestAnimationFrame focus
       await new Promise((r) => requestAnimationFrame(r))
-      expect(document.activeElement).toBe(
-        screen.getByRole('button', { name: /Add filter/i }),
-      )
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: /Add filter/i }))
     })
   })
 

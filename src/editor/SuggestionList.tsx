@@ -87,7 +87,10 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
         className="suggestion-list flex flex-col gap-0.5 overflow-y-auto rounded-lg border bg-popover p-1 shadow-md"
         role="listbox"
         aria-label={label ?? 'Suggestions'}
-        aria-activedescendant={items[selectedIndex] ? `suggestion-${items[selectedIndex].id}` : undefined}
+        aria-activedescendant={
+          items[selectedIndex] ? `suggestion-${items[selectedIndex].id}` : undefined
+        }
+        tabIndex={0}
       >
         {items.map((item, index) => (
           <button

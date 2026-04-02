@@ -356,10 +356,8 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn debounce_rapid_notifications_collapse_to_one() {
-        let sched = SyncScheduler::with_intervals(
-            Duration::from_millis(50),
-            Duration::from_secs(60),
-        );
+        let sched =
+            SyncScheduler::with_intervals(Duration::from_millis(50), Duration::from_secs(60));
         let sched = Arc::new(sched);
         let s = sched.clone();
 
@@ -397,36 +395,29 @@ mod tests {
     fn peers_due_for_resync_empty_list() {
         let sched = SyncScheduler::new();
         let result = sched.peers_due_for_resync(&[]);
-        assert!(result.is_empty(), "empty peer list should return empty result");
+        assert!(
+            result.is_empty(),
+            "empty peer list should return empty result"
+        );
     }
 
     #[test]
     fn peers_due_for_resync_unparseable_timestamp() {
-        let sched = SyncScheduler::with_intervals(
-            Duration::from_secs(3),
-            Duration::from_secs(60),
-        );
-        let peers = vec![
-            ("PEER_BAD".to_string(), Some("not-a-date".to_string())),
-        ];
+        let sched = SyncScheduler::with_intervals(Duration::from_secs(3), Duration::from_secs(60));
+        let peers = vec![("PEER_BAD".to_string(), Some("not-a-date".to_string()))];
         let due = sched.peers_due_for_resync(&peers);
         assert_eq!(
-            due, vec!["PEER_BAD"],
+            due,
+            vec!["PEER_BAD"],
             "unparseable timestamp should be treated as overdue"
         );
     }
 
     #[test]
     fn peers_due_for_resync_future_timestamp() {
-        let sched = SyncScheduler::with_intervals(
-            Duration::from_secs(3),
-            Duration::from_secs(60),
-        );
-        let future = (chrono::Utc::now() + chrono::Duration::hours(1))
-            .to_rfc3339();
-        let peers = vec![
-            ("PEER_FUTURE".to_string(), Some(future)),
-        ];
+        let sched = SyncScheduler::with_intervals(Duration::from_secs(3), Duration::from_secs(60));
+        let future = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+        let peers = vec![("PEER_FUTURE".to_string(), Some(future))];
         let due = sched.peers_due_for_resync(&peers);
         assert!(
             due.is_empty(),
@@ -436,17 +427,11 @@ mod tests {
 
     #[test]
     fn peers_due_for_resync_all_backed_off_returns_empty() {
-        let sched = SyncScheduler::with_intervals(
-            Duration::from_secs(3),
-            Duration::from_secs(60),
-        );
+        let sched = SyncScheduler::with_intervals(Duration::from_secs(3), Duration::from_secs(60));
         // Put both peers in backoff
         sched.record_failure("P1");
         sched.record_failure("P2");
-        let peers = vec![
-            ("P1".to_string(), None),
-            ("P2".to_string(), None),
-        ];
+        let peers = vec![("P1".to_string(), None), ("P2".to_string(), None)];
         let due = sched.peers_due_for_resync(&peers);
         assert!(
             due.is_empty(),

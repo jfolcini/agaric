@@ -130,7 +130,8 @@ function SidebarProvider({
         if (target) {
           const tag = target.tagName?.toLowerCase()
           if (tag === 'input' || tag === 'textarea') return
-          if (target.isContentEditable || target.getAttribute?.('contenteditable') === 'true') return
+          if (target.isContentEditable || target.getAttribute?.('contenteditable') === 'true')
+            return
         }
         event.preventDefault()
         toggleSidebar()

@@ -297,7 +297,11 @@ mod tests {
         }
 
         let events = sink.events();
-        assert_eq!(events.len(), 100, "4 threads × 25 events = 100 total events");
+        assert_eq!(
+            events.len(),
+            100,
+            "4 threads × 25 events = 100 total events"
+        );
     }
 
     #[test]

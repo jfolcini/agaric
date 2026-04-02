@@ -473,7 +473,7 @@ async cancelSync() : Promise<Result<null, { kind: string; message: string }>> {
 
 /**
  * Tagged union of filter predicates for backlink queries.
- * 
+ *
  * Filters are combined with AND semantics at the top level.
  * Use `And`/`Or`/`Not` variants for compound boolean logic.
  */
@@ -514,7 +514,7 @@ export type MoveResponse = { block_id: string; new_parent_id: string | null; new
 export type OpRef = { device_id: string; seq: number }
 /**
  * Paginated response.
- * 
+ *
  * `total_count` is intentionally omitted — see module docs.
  */
 export type PageResponse<T> = { items: T[]; next_cursor: string | null; has_more: boolean }
@@ -525,12 +525,12 @@ export type PairingInfo = { passphrase: string; qr_svg: string; port: number }
 /**
  * A row from the `peer_refs` table representing a remote sync peer.
  */
-export type PeerRef = { peer_id: string; last_hash: string | null; last_sent_hash: string | null; synced_at: string | null; reset_count: number; last_reset_at: string | null; 
+export type PeerRef = { peer_id: string; last_hash: string | null; last_sent_hash: string | null; synced_at: string | null; reset_count: number; last_reset_at: string | null;
 /**
  * SHA-256 hex of the peer's TLS certificate, observed during pairing.
  * Used for certificate pinning on reconnection.
  */
-cert_hash: string | null; 
+cert_hash: string | null;
 /**
  * Human-readable name/label for this peer (e.g. "Javier's Phone").
  */
@@ -540,7 +540,7 @@ export type PurgeResponse = { block_id: string; purged_count: number }
 /**
  * Lightweight metadata returned by [`batch_resolve_inner`].
  */
-export type ResolvedBlock = { id: string; 
+export type ResolvedBlock = { id: string;
 /**
  * `content` column — page title, tag name, or content text (truncated).
  */
@@ -552,7 +552,7 @@ export type RestoreResponse = { block_id: string; restored_count: number }
 export type SortDir = "Asc" | "Desc"
 /**
  * Serializable status snapshot of the materializer queues.
- * 
+ *
  * Built from [`QueueMetrics`] (atomic counters) and channel capacity info.
  * Exposed by the `get_status` command.
  */
@@ -569,19 +569,19 @@ export type TagResponse = { block_id: string; tag_id: string }
 /**
  * Result of an undo or redo operation.
  */
-export type UndoResult = { 
+export type UndoResult = {
 /**
  * The op that was reversed (the original op for undo, the undo-op for redo).
  */
-reversed_op: OpRef; 
+reversed_op: OpRef;
 /**
  * The newly appended reverse op.
  */
-new_op_ref: OpRef; 
+new_op_ref: OpRef;
 /**
  * The op_type of the newly appended op.
  */
-new_op_type: string; 
+new_op_type: string;
 /**
  * Whether this was a redo (true) or undo (false).
  */

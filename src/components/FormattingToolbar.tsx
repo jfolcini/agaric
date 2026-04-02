@@ -230,7 +230,8 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
               document.dispatchEvent(new CustomEvent('set-priority-1'))
             }}
           >
-            <Signal size={14} className="text-red-500" /><span className="ml-0.5 text-[10px] font-bold">1</span>
+            <Signal size={14} className="text-red-500" />
+            <span className="ml-0.5 text-[10px] font-bold">1</span>
           </Button>
         </Tip>
         <Tip label="Priority 2 (medium)">
@@ -243,7 +244,8 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
               document.dispatchEvent(new CustomEvent('set-priority-2'))
             }}
           >
-            <Signal size={14} className="text-yellow-500" /><span className="ml-0.5 text-[10px] font-bold">2</span>
+            <Signal size={14} className="text-yellow-500" />
+            <span className="ml-0.5 text-[10px] font-bold">2</span>
           </Button>
         </Tip>
         <Tip label="Priority 3 (low)">
@@ -256,7 +258,8 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
               document.dispatchEvent(new CustomEvent('set-priority-3'))
             }}
           >
-            <Signal size={14} className="text-blue-500" /><span className="ml-0.5 text-[10px] font-bold">3</span>
+            <Signal size={14} className="text-blue-500" />
+            <span className="ml-0.5 text-[10px] font-bold">3</span>
           </Button>
         </Tip>
         <Tip label="Insert date">

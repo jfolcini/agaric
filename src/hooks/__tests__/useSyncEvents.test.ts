@@ -71,7 +71,9 @@ vi.mock('@/stores/resolve', () => ({
 
 // -- Mock @/lib/tauri ----------------------------------------------------------
 
-const mockGetConflicts = vi.fn().mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+const mockGetConflicts = vi
+  .fn()
+  .mockResolvedValue({ items: [], next_cursor: null, has_more: false })
 
 vi.mock('@/lib/tauri', () => ({
   getConflicts: (...args: unknown[]) => mockGetConflicts(...args),
@@ -497,7 +499,18 @@ describe('useSyncEvents', () => {
 
     it('shows conflict warning toast when conflicts exist after sync (#438)', async () => {
       mockGetConflicts.mockResolvedValue({
-        items: [{ id: 'CONFLICT1', block_type: 'content', content: 'conflict', parent_id: null, position: null, deleted_at: null, archived_at: null, is_conflict: true }],
+        items: [
+          {
+            id: 'CONFLICT1',
+            block_type: 'content',
+            content: 'conflict',
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+            archived_at: null,
+            is_conflict: true,
+          },
+        ],
         next_cursor: null,
         has_more: false,
       })

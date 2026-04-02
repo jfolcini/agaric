@@ -50,23 +50,21 @@ export function RenameDialog({
       <AlertDialogContent className={className}>
         <AlertDialogHeader>
           <AlertDialogTitle>Rename device</AlertDialogTitle>
-          <AlertDialogDescription>
-            Enter a name for this device.
-          </AlertDialogDescription>
+          <AlertDialogDescription>Enter a name for this device.</AlertDialogDescription>
         </AlertDialogHeader>
         <Input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') handleSave() }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSave()
+          }}
           placeholder="Device name"
           aria-label="Device name"
           autoFocus
         />
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={handleSave}>
-            Save
-          </AlertDialogAction>
+          <AlertDialogAction onClick={handleSave}>Save</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

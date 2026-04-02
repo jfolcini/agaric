@@ -2848,7 +2848,10 @@ mod tests {
         // No page blocks should be in the result
         for i in 0..510 {
             let id = format!("PAGE_{i:04}");
-            assert!(!set.contains(&id), "page block {id} should NOT be in Not(page) set");
+            assert!(
+                !set.contains(&id),
+                "page block {id} should NOT be in Not(page) set"
+            );
         }
     }
 

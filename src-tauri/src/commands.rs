@@ -1982,14 +1982,13 @@ pub async fn apply_reverse_in_tx(
         }
         OpPayload::AddAttachment(p) => {
             // Preserve original created_at from the existing (soft-deleted) attachment record
-            let original_created_at: Option<String> = sqlx::query_scalar(
-                "SELECT created_at FROM attachments WHERE id = ?"
-            )
-            .bind(p.attachment_id.as_str())
-            .fetch_optional(&mut **tx)
-            .await?;
+            let original_created_at: Option<String> =
+                sqlx::query_scalar("SELECT created_at FROM attachments WHERE id = ?")
+                    .bind(p.attachment_id.as_str())
+                    .fetch_optional(&mut **tx)
+                    .await?;
 
-            let created_at = original_created_at.unwrap_or_else(|| now_rfc3339());
+            let created_at = original_created_at.unwrap_or_else(now_rfc3339);
 
             sqlx::query(
                 "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at) \
@@ -2341,9 +2340,7 @@ pub async fn confirm_pairing_inner(
 /// Cancel an in-progress pairing session.
 ///
 /// Clears the stored session; no-op if no session is active.
-pub fn cancel_pairing_inner(
-    pairing_state: &Mutex<Option<PairingSession>>,
-) -> Result<(), AppError> {
+pub fn cancel_pairing_inner(pairing_state: &Mutex<Option<PairingSession>>) -> Result<(), AppError> {
     *pairing_state
         .lock()
         .map_err(|_| AppError::InvalidOperation("pairing state lock poisoned".into()))? = None;
@@ -3080,9 +3077,7 @@ pub async fn confirm_pairing(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
-pub async fn cancel_pairing(
-    pairing_state: State<'_, PairingState>,
-) -> Result<(), AppError> {
+pub async fn cancel_pairing(pairing_state: State<'_, PairingState>) -> Result<(), AppError> {
     cancel_pairing_inner(&pairing_state.0).map_err(sanitize_internal_error)
 }
 
@@ -9504,7 +9499,10 @@ mod tests {
 
         // Cancel with no active session — should succeed
         let result = cancel_pairing_inner(&pairing_state);
-        assert!(result.is_ok(), "cancel_pairing with no session must succeed");
+        assert!(
+            result.is_ok(),
+            "cancel_pairing with no session must succeed"
+        );
     }
 
     // ======================================================================

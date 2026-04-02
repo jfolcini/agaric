@@ -16,11 +16,11 @@ use crate::materializer::Materializer;
 use crate::op_log;
 use crate::peer_refs;
 use crate::soft_delete;
+use crate::sync_scheduler::SyncScheduler;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
-use std::sync::Mutex;
-use crate::sync_scheduler::SyncScheduler;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
@@ -5174,7 +5174,9 @@ async fn update_peer_name_nonexistent_returns_not_found() {
 async fn delete_peer_ref_removes_peer() {
     let (pool, _dir) = test_pool().await;
 
-    peer_refs::upsert_peer_ref(&pool, "PEER_KEEP").await.unwrap();
+    peer_refs::upsert_peer_ref(&pool, "PEER_KEEP")
+        .await
+        .unwrap();
     peer_refs::upsert_peer_ref(&pool, "PEER_DEL").await.unwrap();
 
     delete_peer_ref_inner(&pool, "PEER_DEL".into())

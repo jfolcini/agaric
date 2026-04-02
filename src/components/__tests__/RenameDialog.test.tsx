@@ -7,14 +7,24 @@ import { RenameDialog } from '../RenameDialog'
 describe('RenameDialog', () => {
   it('renders nothing when not open', () => {
     render(
-      <RenameDialog open={false} onOpenChange={vi.fn()} onConfirm={vi.fn()} currentName="My Device" />,
+      <RenameDialog
+        open={false}
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn()}
+        currentName="My Device"
+      />,
     )
     expect(screen.queryByText('Rename device')).not.toBeInTheDocument()
   })
 
   it('renders title, description, input and buttons when open', () => {
     render(
-      <RenameDialog open={true} onOpenChange={vi.fn()} onConfirm={vi.fn()} currentName="My Device" />,
+      <RenameDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn()}
+        currentName="My Device"
+      />,
     )
     expect(screen.getByText('Rename device')).toBeInTheDocument()
     expect(screen.getByText('Enter a name for this device.')).toBeInTheDocument()
@@ -33,9 +43,7 @@ describe('RenameDialog', () => {
   it('calls onConfirm with trimmed value when Save is clicked', async () => {
     const user = userEvent.setup()
     const onConfirm = vi.fn()
-    render(
-      <RenameDialog open={true} onOpenChange={vi.fn()} onConfirm={onConfirm} currentName="" />,
-    )
+    render(<RenameDialog open={true} onOpenChange={vi.fn()} onConfirm={onConfirm} currentName="" />)
     const input = screen.getByRole('textbox', { name: /device name/i })
     await user.clear(input)
     await user.type(input, '  New Name  ')
@@ -60,7 +68,12 @@ describe('RenameDialog', () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
     render(
-      <RenameDialog open={true} onOpenChange={onOpenChange} onConfirm={vi.fn()} currentName="Test" />,
+      <RenameDialog
+        open={true}
+        onOpenChange={onOpenChange}
+        onConfirm={vi.fn()}
+        currentName="Test"
+      />,
     )
     await user.click(screen.getByRole('button', { name: /cancel/i }))
     expect(onOpenChange).toHaveBeenCalledWith(false)

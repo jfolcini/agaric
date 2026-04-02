@@ -791,6 +791,7 @@ describe('ConflictList', () => {
   })
 
   it('renders Property conflict type badge when backend provides it', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'get_conflicts') {
         return {
@@ -835,6 +836,7 @@ describe('ConflictList', () => {
   })
 
   it('renders Move conflict type badge when backend provides it', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'get_conflicts') {
         return {

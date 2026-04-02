@@ -114,11 +114,13 @@ export function useSyncEvents(): void {
 
       // Check for conflicts after sync (#438)
       if (ops_received > 0) {
-        getConflicts({ limit: 1 }).then((resp) => {
-          if (resp.items.length > 0) {
-            toast.warning('Sync completed with conflicts — review in Conflicts view')
-          }
-        }).catch(() => {})
+        getConflicts({ limit: 1 })
+          .then((resp) => {
+            if (resp.items.length > 0) {
+              toast.warning('Sync completed with conflicts — review in Conflicts view')
+            }
+          })
+          .catch(() => {})
       }
     })
       .then((unlisten) => {

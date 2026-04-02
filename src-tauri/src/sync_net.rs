@@ -944,8 +944,7 @@ mod tests {
         let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
 
         // Connect with wrong hash
-        let wrong_hash =
-            "0000000000000000000000000000000000000000000000000000000000000000";
+        let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
         let result = connect_to_peer(&format!("127.0.0.1:{port}"), Some(wrong_hash)).await;
         assert!(
             result.is_err(),

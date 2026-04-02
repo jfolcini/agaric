@@ -236,9 +236,7 @@ describe('useSyncTrigger', () => {
       await result.current.syncAll()
     })
 
-    expect(toast.error).toHaveBeenCalledWith(
-      'Sync failed for device PEER_FAIL_12...',
-    )
+    expect(toast.error).toHaveBeenCalledWith('Sync failed for device PEER_FAIL_12...')
   })
 
   it('shows toast.error when listPeerRefs fails', async () => {

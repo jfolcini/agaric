@@ -106,9 +106,10 @@ export function DeviceManagement(): React.ReactElement {
         await loadData()
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Sync failed'
-        const displayMessage = message === 'Sync timed out'
-          ? 'Sync took too long — check your connection and try again'
-          : message
+        const displayMessage =
+          message === 'Sync timed out'
+            ? 'Sync took too long — check your connection and try again'
+            : message
         console.error('Sync failed:', err)
         setError(displayMessage)
         if (message === 'Sync timed out') {
@@ -146,9 +147,7 @@ export function DeviceManagement(): React.ReactElement {
       }
       setSyncingPeerId(null)
     }
-    const failureMessage = failures.length > 0
-      ? `Sync failed for: ${failures.join(', ')}`
-      : null
+    const failureMessage = failures.length > 0 ? `Sync failed for: ${failures.join(', ')}` : null
     await loadData()
     if (failureMessage) {
       setError(failureMessage)
@@ -164,19 +163,22 @@ export function DeviceManagement(): React.ReactElement {
     [loadData],
   )
 
-  const handleRename = useCallback(async (name: string) => {
-    if (!renamePeerId) return
-    setRenamingPeerId(renamePeerId)
-    try {
-      await updatePeerName(renamePeerId, name || null)
-      await loadData()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to rename')
-    } finally {
-      setRenamingPeerId(null)
-      setRenamePeerId(null)
-    }
-  }, [renamePeerId, loadData])
+  const handleRename = useCallback(
+    async (name: string) => {
+      if (!renamePeerId) return
+      setRenamingPeerId(renamePeerId)
+      try {
+        await updatePeerName(renamePeerId, name || null)
+        await loadData()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to rename')
+      } finally {
+        setRenamingPeerId(null)
+        setRenamePeerId(null)
+      }
+    },
+    [renamePeerId, loadData],
+  )
 
   return (
     <div className="device-management space-y-4">
@@ -374,16 +376,21 @@ export function DeviceManagement(): React.ReactElement {
         onConfirm={() => {
           if (unpairPeerId) handleUnpair(unpairPeerId)
         }}
-        deviceName={peers.find(p => p.peer_id === unpairPeerId)?.device_name ?? truncateId(unpairPeerId ?? '')}
+        deviceName={
+          peers.find((p) => p.peer_id === unpairPeerId)?.device_name ??
+          truncateId(unpairPeerId ?? '')
+        }
         className="device-unpair-confirm"
       />
 
       {/* Rename dialog (#422) */}
       <RenameDialog
         open={!!renamePeerId}
-        onOpenChange={(o) => { if (!o) setRenamePeerId(null) }}
+        onOpenChange={(o) => {
+          if (!o) setRenamePeerId(null)
+        }}
         onConfirm={handleRename}
-        currentName={peers.find(p => p.peer_id === renamePeerId)?.device_name ?? ''}
+        currentName={peers.find((p) => p.peer_id === renamePeerId)?.device_name ?? ''}
       />
     </div>
   )

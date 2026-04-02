@@ -58,7 +58,7 @@ describe('DiffDisplay', () => {
     // Equal spans render as <span> inside the <p>
     const p = container.querySelector('p.diff-display')
     expect(p).not.toBeNull()
-    const span = p!.querySelector('span')
+    const span = p?.querySelector('span')
     expect(span).not.toBeNull()
     expect(span).toHaveTextContent('unchanged')
   })
@@ -75,6 +75,7 @@ describe('DiffDisplay', () => {
     const p = container.querySelector('p.diff-display')
     expect(p).not.toBeNull()
 
+    // biome-ignore lint/style/noNonNullAssertion: guarded by toBeNull assertion above
     const children = Array.from(p!.children)
     expect(children).toHaveLength(3)
 
@@ -96,6 +97,7 @@ describe('DiffDisplay', () => {
 
     const span = container.querySelector('p.diff-display span')
     expect(span).not.toBeNull()
+    // biome-ignore lint/style/noNonNullAssertion: guarded by toBeNull assertion above
     expect(span!.textContent).toHaveLength(10000)
   })
 
@@ -111,6 +113,7 @@ describe('DiffDisplay', () => {
     const p = container.querySelector('p.diff-display')
     expect(p).not.toBeNull()
 
+    // biome-ignore lint/style/noNonNullAssertion: guarded by toBeNull assertion above
     const children = Array.from(p!.children)
     expect(children).toHaveLength(3)
     expect(children[0].tagName).toBe('DEL')

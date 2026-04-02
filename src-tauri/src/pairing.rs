@@ -544,8 +544,7 @@ mod tests {
     fn session_key_works_after_session_expires() {
         let mut session = PairingSession::new("A", "B");
         // Force session past the 300s timeout
-        session.created_at =
-            std::time::Instant::now() - std::time::Duration::from_secs(301);
+        session.created_at = std::time::Instant::now() - std::time::Duration::from_secs(301);
         assert!(session.is_expired(), "session should be expired after 301s");
 
         let plaintext = b"secret message";
@@ -567,7 +566,10 @@ mod tests {
         let plaintext = vec![0xAB_u8; 1_048_576]; // 1 MB
         let encrypted = encrypt_message(&key, &plaintext).unwrap();
         let decrypted = decrypt_message(&key, &encrypted).unwrap();
-        assert_eq!(decrypted, plaintext, "1 MB plaintext should roundtrip correctly");
+        assert_eq!(
+            decrypted, plaintext,
+            "1 MB plaintext should roundtrip correctly"
+        );
         // Verify ciphertext is larger than plaintext (nonce + tag overhead)
         assert_eq!(
             encrypted.len(),
@@ -595,10 +597,7 @@ mod tests {
         for len in [1, 12, 15, 27] {
             let garbage = vec![0xAA; len];
             let result = decrypt_message(&key, &garbage);
-            assert!(
-                result.is_err(),
-                "ciphertext of {len} bytes should fail"
-            );
+            assert!(result.is_err(), "ciphertext of {len} bytes should fail");
         }
     }
 }

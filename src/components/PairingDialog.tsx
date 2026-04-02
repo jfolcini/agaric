@@ -377,8 +377,7 @@ export function PairingDialog({
                 )}
                 {/* #424: SR-only countdown — announces at key intervals only */}
                 <p className="sr-only" aria-live="polite" aria-atomic="true">
-                  {countdown !== null && countdown > 0
-                    && (countdown % 60 === 0 || countdown === 30)
+                  {countdown !== null && countdown > 0 && (countdown % 60 === 0 || countdown === 30)
                     ? `Session expires in ${
                         countdown >= 60
                           ? `${Math.floor(countdown / 60)} minute${
@@ -390,9 +389,7 @@ export function PairingDialog({
                 </p>
                 {isExpired && !error && (
                   <div className="pairing-expired flex items-center gap-2 mt-1">
-                    <p className="text-xs text-destructive font-medium flex-1">
-                      Session expired
-                    </p>
+                    <p className="text-xs text-destructive font-medium flex-1">Session expired</p>
                     <Button
                       variant="outline"
                       size="sm"

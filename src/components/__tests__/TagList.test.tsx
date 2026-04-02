@@ -173,7 +173,7 @@ describe('TagList', () => {
       expect(await screen.findByText('to-delete')).toBeInTheDocument()
 
       // Click the trash icon (ghost variant button, not the tag name button)
-      const tagRow = screen.getByText('to-delete').closest('div.group') as HTMLElement
+      const tagRow = screen.getByText('to-delete').closest('li') as HTMLElement
       const deleteBtn = findTrashButton(tagRow)
       expect(deleteBtn).toBeTruthy()
       await user.click(deleteBtn)
@@ -199,7 +199,7 @@ describe('TagList', () => {
       expect(await screen.findByText('keep-me')).toBeInTheDocument()
 
       // Open dialog
-      const tagRow = screen.getByText('keep-me').closest('div.group') as HTMLElement
+      const tagRow = screen.getByText('keep-me').closest('li') as HTMLElement
       const deleteBtn = findTrashButton(tagRow)
       await user.click(deleteBtn)
 
@@ -232,7 +232,7 @@ describe('TagList', () => {
       })
 
       // Open dialog
-      const tagRow = screen.getByText('to-delete').closest('div.group') as HTMLElement
+      const tagRow = screen.getByText('to-delete').closest('li') as HTMLElement
       const deleteBtn = findTrashButton(tagRow)
       await user.click(deleteBtn)
 
@@ -352,7 +352,7 @@ describe('TagList', () => {
       mockedInvoke.mockRejectedValueOnce(new Error('Delete failed'))
 
       // Open dialog and confirm
-      const tagRow = screen.getByText('fail-delete').closest('div.group') as HTMLElement
+      const tagRow = screen.getByText('fail-delete').closest('li') as HTMLElement
       const deleteBtn = findTrashButton(tagRow)
       await user.click(deleteBtn)
       const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })

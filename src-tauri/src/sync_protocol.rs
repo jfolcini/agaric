@@ -2004,8 +2004,8 @@ mod tests {
 
         // Build a bad-hash op: clone a valid transfer and corrupt its hash
         let mut bad_op = t2.clone();
-        bad_op.hash = "BADHASH0000000000000000000000000000000000000000000000000000000000"
-            .to_string();
+        bad_op.hash =
+            "BADHASH0000000000000000000000000000000000000000000000000000000000".to_string();
         bad_op.seq = 99; // different seq so it's not just a duplicate of t2
 
         // Batch: duplicate (t1 again) + valid new (t2) + bad hash
@@ -2013,7 +2013,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.duplicates, 1, "op1 already in DB should be duplicate");
+        assert_eq!(
+            result.duplicates, 1,
+            "op1 already in DB should be duplicate"
+        );
         assert_eq!(result.inserted, 1, "op2 should be newly inserted");
         assert_eq!(
             result.hash_mismatches, 1,

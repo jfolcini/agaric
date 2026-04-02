@@ -51,7 +51,10 @@ export function createSuggestionRenderer(label?: string) {
     onStart(props: SuggestionProps) {
       // Clean up any previous popup to prevent DOM accumulation
       if (renderer) renderer.destroy()
-      if (popup) { popup.remove(); popup = null }
+      if (popup) {
+        popup.remove()
+        popup = null
+      }
 
       renderer = new ReactRenderer(SuggestionList, {
         props: { ...props, label },

@@ -37,7 +37,8 @@ export function UnpairConfirmDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Unpair device?</AlertDialogTitle>
           <AlertDialogDescription>
-            This will remove {deviceName ? `"${deviceName}"` : 'the paired device'}. You will need to pair again to sync.
+            This will remove {deviceName ? `"${deviceName}"` : 'the paired device'}. You will need
+            to pair again to sync.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

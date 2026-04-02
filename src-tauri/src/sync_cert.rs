@@ -438,11 +438,18 @@ mod tests {
         let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
         // All should succeed
         for (i, r) in results.iter().enumerate() {
-            assert!(r.is_ok(), "thread {i} should succeed, got: {:?}", r.as_ref().err());
+            assert!(
+                r.is_ok(),
+                "thread {i} should succeed, got: {:?}",
+                r.as_ref().err()
+            );
         }
 
         // All should return the same cert hash (first writer wins, others read)
-        let hashes: Vec<_> = results.iter().map(|r| r.as_ref().unwrap().cert_hash.clone()).collect();
+        let hashes: Vec<_> = results
+            .iter()
+            .map(|r| r.as_ref().unwrap().cert_hash.clone())
+            .collect();
         let first = &hashes[0];
         for (i, h) in hashes.iter().enumerate() {
             assert_eq!(h, first, "thread {i} hash should match first thread's hash");

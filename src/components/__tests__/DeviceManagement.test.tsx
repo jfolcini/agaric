@@ -38,14 +38,30 @@ vi.mock('../PairingDialog', () => ({
 }))
 
 vi.mock('../RenameDialog', () => ({
-  RenameDialog: ({ open, onOpenChange, onConfirm, currentName }: {
-    open: boolean; onOpenChange: (v: boolean) => void; onConfirm: (name: string) => void; currentName: string
+  RenameDialog: ({
+    open,
+    onOpenChange,
+    onConfirm,
+    currentName,
+  }: {
+    open: boolean
+    onOpenChange: (v: boolean) => void
+    onConfirm: (name: string) => void
+    currentName: string
   }) =>
     open ? (
       <div data-testid="rename-dialog">
         <input data-testid="rename-input" defaultValue={currentName} />
-        <button data-testid="rename-save" onClick={() => onConfirm('New Device Name')}>Save</button>
-        <button data-testid="rename-cancel" onClick={() => onOpenChange(false)}>Cancel</button>
+        <button
+          type="button"
+          data-testid="rename-save"
+          onClick={() => onConfirm('New Device Name')}
+        >
+          Save
+        </button>
+        <button type="button" data-testid="rename-cancel" onClick={() => onOpenChange(false)}>
+          Cancel
+        </button>
       </div>
     ) : null,
 }))
@@ -456,7 +472,9 @@ describe('DeviceManagement', () => {
         await vi.advanceTimersByTimeAsync(60000)
       })
 
-      expect(screen.getByText('Sync took too long — check your connection and try again')).toBeInTheDocument()
+      expect(
+        screen.getByText('Sync took too long — check your connection and try again'),
+      ).toBeInTheDocument()
       expect(mockedInvoke).toHaveBeenCalledWith('cancel_sync')
     })
   })
@@ -554,6 +572,7 @@ describe('DeviceManagement', () => {
 
   it('Sync All calls startSync for each peer sequentially', async () => {
     const syncCalls: string[] = []
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     vi.mocked(invoke).mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_device_id') return 'device-123'
       if (cmd === 'list_peer_refs')
@@ -631,30 +650,32 @@ describe('DeviceManagement', () => {
 
   it('Sync All continues when first peer fails (#421)', async () => {
     const syncCalls: string[] = []
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     vi.mocked(invoke).mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_device_id') return 'device-123'
-      if (cmd === 'list_peer_refs') return [
-        {
-          peer_id: 'peer-1',
-          last_hash: null,
-          last_sent_hash: null,
-          synced_at: null,
-          reset_count: 0,
-          last_reset_at: null,
-          cert_hash: null,
-          device_name: null,
-        },
-        {
-          peer_id: 'peer-2',
-          last_hash: null,
-          last_sent_hash: null,
-          synced_at: null,
-          reset_count: 0,
-          last_reset_at: null,
-          cert_hash: null,
-          device_name: null,
-        },
-      ]
+      if (cmd === 'list_peer_refs')
+        return [
+          {
+            peer_id: 'peer-1',
+            last_hash: null,
+            last_sent_hash: null,
+            synced_at: null,
+            reset_count: 0,
+            last_reset_at: null,
+            cert_hash: null,
+            device_name: null,
+          },
+          {
+            peer_id: 'peer-2',
+            last_hash: null,
+            last_sent_hash: null,
+            synced_at: null,
+            reset_count: 0,
+            last_reset_at: null,
+            cert_hash: null,
+            device_name: null,
+          },
+        ]
       if (cmd === 'start_sync') {
         const peerId = (args as Record<string, string>).peerId
         syncCalls.push(peerId)
@@ -675,9 +696,7 @@ describe('DeviceManagement', () => {
       expect(container.querySelector('.device-sync-all-btn')).toBeTruthy()
     })
 
-    await userEvent.click(
-      container.querySelector('.device-sync-all-btn') as HTMLButtonElement,
-    )
+    await userEvent.click(container.querySelector('.device-sync-all-btn') as HTMLButtonElement)
 
     await waitFor(() => {
       expect(syncCalls).toEqual(['peer-1', 'peer-2'])
@@ -795,9 +814,36 @@ describe('DeviceManagement', () => {
     mockInvokeByCommand({
       get_device_id: mockDeviceId,
       list_peer_refs: [
-        { peer_id: 'peer-3', last_hash: null, last_sent_hash: null, synced_at: '2025-01-03T00:00:00Z', reset_count: 0, last_reset_at: null, cert_hash: null, device_name: null },
-        { peer_id: 'peer-1', last_hash: null, last_sent_hash: null, synced_at: '2025-01-01T00:00:00Z', reset_count: 0, last_reset_at: null, cert_hash: null, device_name: 'Zebra' },
-        { peer_id: 'peer-2', last_hash: null, last_sent_hash: null, synced_at: '2025-01-02T00:00:00Z', reset_count: 0, last_reset_at: null, cert_hash: null, device_name: 'Apple' },
+        {
+          peer_id: 'peer-3',
+          last_hash: null,
+          last_sent_hash: null,
+          synced_at: '2025-01-03T00:00:00Z',
+          reset_count: 0,
+          last_reset_at: null,
+          cert_hash: null,
+          device_name: null,
+        },
+        {
+          peer_id: 'peer-1',
+          last_hash: null,
+          last_sent_hash: null,
+          synced_at: '2025-01-01T00:00:00Z',
+          reset_count: 0,
+          last_reset_at: null,
+          cert_hash: null,
+          device_name: 'Zebra',
+        },
+        {
+          peer_id: 'peer-2',
+          last_hash: null,
+          last_sent_hash: null,
+          synced_at: '2025-01-02T00:00:00Z',
+          reset_count: 0,
+          last_reset_at: null,
+          cert_hash: null,
+          device_name: 'Apple',
+        },
       ],
     })
 
@@ -806,9 +852,7 @@ describe('DeviceManagement', () => {
       expect(container.querySelectorAll('.device-peer-name')).toHaveLength(3)
     })
 
-    const names = [...container.querySelectorAll('.device-peer-name')].map(
-      (el) => el.textContent,
-    )
+    const names = [...container.querySelectorAll('.device-peer-name')].map((el) => el.textContent)
     expect(names[0]).toBe('Apple')
     expect(names[1]).toBe('Zebra')
     expect(names[2]).toBe('peer-3')
@@ -866,7 +910,7 @@ describe('DeviceManagement', () => {
 
     // Resolve the rename to clean up
     await act(async () => {
-      resolveRename!()
+      resolveRename?.()
     })
 
     // After completion, button should be re-enabled
@@ -936,16 +980,18 @@ describe('DeviceManagement', () => {
   it('shows truncated peer_id when device_name is null (#444)', async () => {
     mockInvokeByCommand({
       get_device_id: mockDeviceId,
-      list_peer_refs: [{
-        peer_id: 'ABCDEFGHIJKLMNOP',
-        last_hash: null,
-        last_sent_hash: null,
-        synced_at: null,
-        reset_count: 0,
-        last_reset_at: null,
-        cert_hash: null,
-        device_name: null,
-      }],
+      list_peer_refs: [
+        {
+          peer_id: 'ABCDEFGHIJKLMNOP',
+          last_hash: null,
+          last_sent_hash: null,
+          synced_at: null,
+          reset_count: 0,
+          last_reset_at: null,
+          cert_hash: null,
+          device_name: null,
+        },
+      ],
     })
 
     render(<DeviceManagement />)

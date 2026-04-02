@@ -1202,8 +1202,9 @@ describe('BacklinksPanel', () => {
 
       render(<BacklinksPanel blockId="TARGET01" />)
 
-      await screen.findByText('My Page Title')
-      const item = screen.getByText('My Page Title').closest('li')!
+      const text = await screen.findByText('My Page Title')
+      // biome-ignore lint/style/noNonNullAssertion: component renders backlinks inside <li> elements
+      const item = text.closest('li')!
       await user.click(item)
 
       const state = useNavigationStore.getState()
@@ -1246,8 +1247,9 @@ describe('BacklinksPanel', () => {
 
       render(<BacklinksPanel blockId="TARGET01" />)
 
-      await screen.findByText('Child block content')
-      const item = screen.getByText('Child block content').closest('li')!
+      const text = await screen.findByText('Child block content')
+      // biome-ignore lint/style/noNonNullAssertion: component renders backlinks inside <li> elements
+      const item = text.closest('li')!
       await user.click(item)
 
       await waitFor(() => {
@@ -1285,8 +1287,9 @@ describe('BacklinksPanel', () => {
 
       render(<BacklinksPanel blockId="TARGET01" />)
 
-      await screen.findByText('Orphan content')
-      const item = screen.getByText('Orphan content').closest('li')!
+      const text = await screen.findByText('Orphan content')
+      // biome-ignore lint/style/noNonNullAssertion: component renders backlinks inside <li> elements
+      const item = text.closest('li')!
       await user.click(item)
 
       await waitFor(() => {
@@ -1314,8 +1317,9 @@ describe('BacklinksPanel', () => {
 
       render(<BacklinksPanel blockId="TARGET01" />)
 
-      await screen.findByText('Keyboard Nav Page')
-      const item = screen.getByText('Keyboard Nav Page').closest('li')!
+      const text = await screen.findByText('Keyboard Nav Page')
+      // biome-ignore lint/style/noNonNullAssertion: component renders backlinks inside <li> elements
+      const item = text.closest('li')!
       item.focus()
       await user.keyboard('{Enter}')
 
@@ -1343,8 +1347,9 @@ describe('BacklinksPanel', () => {
 
       render(<BacklinksPanel blockId="TARGET01" />)
 
-      await screen.findByText('Space Nav Page')
-      const item = screen.getByText('Space Nav Page').closest('li')!
+      const text = await screen.findByText('Space Nav Page')
+      // biome-ignore lint/style/noNonNullAssertion: component renders backlinks inside <li> elements
+      const item = text.closest('li')!
       item.focus()
       await user.keyboard(' ')
 

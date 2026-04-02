@@ -195,9 +195,7 @@ export function SearchPanel(): React.ReactElement {
             ))}
           </div>
         )}
-        {searched && !loading && (
-          <span className="sr-only">{results.length} results found</span>
-        )}
+        {searched && !loading && <span className="sr-only">{results.length} results found</span>}
       </div>
 
       {hasMore && (

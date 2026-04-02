@@ -136,11 +136,10 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       )}
 
       {tags.length > 0 && (
-        <div className="space-y-2" role="list">
+        <ul className="space-y-2">
           {tags.map((tag) => (
-            <div
+            <li
               key={tag.id}
-              role="listitem"
               className="group flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-accent/50"
             >
               <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -161,9 +160,9 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
 
       {/* Delete confirmation dialog */}

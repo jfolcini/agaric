@@ -131,11 +131,13 @@ export function useBlockResolve(): UseBlockResolveReturn {
 
     // Populate resolve cache so page links show titles instead of raw ULIDs
     if (matches.length > 0) {
-      useResolveStore.getState().batchSet(
-        matches
-          .filter((m) => !m.isCreate)
-          .map((m) => ({ id: m.id, title: m.label, deleted: false })),
-      )
+      useResolveStore
+        .getState()
+        .batchSet(
+          matches
+            .filter((m) => !m.isCreate)
+            .map((m) => ({ id: m.id, title: m.label, deleted: false })),
+        )
     }
 
     // Append a "Create new" option when the query doesn't exactly match an existing page

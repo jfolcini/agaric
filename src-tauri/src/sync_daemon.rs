@@ -310,9 +310,8 @@ async fn try_sync_with_peer(
 
     // 7. Run sync protocol through the orchestrator
     let event_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(Arc::clone(event_sink)));
-    let mut orch =
-        SyncOrchestrator::new(pool.clone(), device_id.to_string(), materializer.clone())
-            .with_event_sink(event_sink_box);
+    let mut orch = SyncOrchestrator::new(pool.clone(), device_id.to_string(), materializer.clone())
+        .with_event_sink(event_sink_box);
 
     match run_sync_session(&mut orch, &mut conn).await {
         Ok(()) => {

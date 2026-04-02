@@ -140,7 +140,12 @@ interface AddFilterRowProps {
   onCancel: () => void
 }
 
-function AddFilterRow({ propertyKeys, tags, onApply, onCancel }: AddFilterRowProps): React.ReactElement {
+function AddFilterRow({
+  propertyKeys,
+  tags,
+  onApply,
+  onCancel,
+}: AddFilterRowProps): React.ReactElement {
   const [category, setCategory] = useState<FilterCategory | ''>('')
   const [blockType, setBlockType] = useState('content')
   const [statusValue, setStatusValue] = useState('TODO')
