@@ -458,7 +458,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         setFocused(targetId)
         rovingEditor.mount(targetId, targetBlock.content ?? '')
       } catch {
-        // Block not found (deleted/purged) — no-op, don't crash
+        toast.error('Link target not found')
       }
     },
     [handleFlush, load, setFocused, rovingEditor, rootParentId, onNavigateToPage],
@@ -475,21 +475,25 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
       if (item.id === 'todo' || item.id === 'doing' || item.id === 'done') {
         const state = item.id.toUpperCase()
-        await setProperty({ blockId: focusedBlockId, key: 'todo', valueText: state })
-        // Update local properties cache
-        setBlockProperties((prev) => {
-          const next = new Map(prev)
-          const props = (next.get(focusedBlockId) ?? []).filter((p) => p.key !== 'todo')
-          props.push({
-            key: 'todo',
-            value_text: state,
-            value_num: null,
-            value_date: null,
-            value_ref: null,
+        try {
+          await setProperty({ blockId: focusedBlockId, key: 'todo', valueText: state })
+          // Update local properties cache
+          setBlockProperties((prev) => {
+            const next = new Map(prev)
+            const props = (next.get(focusedBlockId) ?? []).filter((p) => p.key !== 'todo')
+            props.push({
+              key: 'todo',
+              value_text: state,
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+            })
+            next.set(focusedBlockId, props)
+            return next
           })
-          next.set(focusedBlockId, props)
-          return next
-        })
+        } catch {
+          toast.error('Failed to set task state')
+        }
       }
 
       if (item.id === 'date') {
@@ -506,20 +510,24 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       ) {
         const priority =
           item.id === 'priority-high' ? 'A' : item.id === 'priority-medium' ? 'B' : 'C'
-        await setProperty({ blockId: focusedBlockId, key: 'priority', valueText: priority })
-        setBlockProperties((prev) => {
-          const next = new Map(prev)
-          const props = (next.get(focusedBlockId) ?? []).filter((p) => p.key !== 'priority')
-          props.push({
-            key: 'priority',
-            value_text: priority,
-            value_num: null,
-            value_date: null,
-            value_ref: null,
+        try {
+          await setProperty({ blockId: focusedBlockId, key: 'priority', valueText: priority })
+          setBlockProperties((prev) => {
+            const next = new Map(prev)
+            const props = (next.get(focusedBlockId) ?? []).filter((p) => p.key !== 'priority')
+            props.push({
+              key: 'priority',
+              value_text: priority,
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+            })
+            next.set(focusedBlockId, props)
+            return next
           })
-          next.set(focusedBlockId, props)
-          return next
-        })
+        } catch {
+          toast.error('Failed to set priority')
+        }
       }
 
       const headingMatch = item.id.match(/^h([1-6])$/)
@@ -538,15 +546,19 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         const headingRegex = /^#{1,6}\s/
         const stripped = currentContent.replace(headingRegex, '')
         const newContent = `${'#'.repeat(level)} ${stripped}`
-        await editBlock(focusedBlockId, newContent)
-        // Reload the block in the store
-        useBlockStore.setState((state) => ({
-          blocks: state.blocks.map((b) =>
-            b.id === focusedBlockId ? { ...b, content: newContent } : b,
-          ),
-        }))
-        // Re-mount editor so the heading renders immediately
-        rovingEditor.mount(focusedBlockId, newContent)
+        try {
+          await editBlock(focusedBlockId, newContent)
+          // Reload the block in the store
+          useBlockStore.setState((state) => ({
+            blocks: state.blocks.map((b) =>
+              b.id === focusedBlockId ? { ...b, content: newContent } : b,
+            ),
+          }))
+          // Re-mount editor so the heading renders immediately
+          rovingEditor.mount(focusedBlockId, newContent)
+        } catch {
+          toast.error('Failed to set heading')
+        }
       }
     },
     [focusedBlockId, setBlockProperties],
@@ -692,8 +704,15 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
     // Update previous block with merged content, then remove current block.
     // Await edit before remove to prevent data loss if edit fails.
-    await edit(prevBlock.id, mergedContent)
-    await remove(focusedBlockId)
+    try {
+      await edit(prevBlock.id, mergedContent)
+      await remove(focusedBlockId)
+    } catch {
+      // Re-mount the editor on the current block so the user can retry
+      rovingEditor.mount(focusedBlockId, currentContent)
+      toast.error('Failed to merge blocks')
+      return
+    }
 
     // Focus previous block at the join point
     setFocused(prevBlock.id)

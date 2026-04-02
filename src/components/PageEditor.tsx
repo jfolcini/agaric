@@ -113,10 +113,16 @@ export function PageEditor({
       return
     }
     if (newTitle !== title) {
-      await editBlock(pageId, newTitle)
-      useUndoStore.getState().onNewAction(pageId)
-      useNavigationStore.getState().replacePage(pageId, newTitle)
-      useResolveStore.getState().set(pageId, newTitle, false)
+      try {
+        await editBlock(pageId, newTitle)
+        useUndoStore.getState().onNewAction(pageId)
+        useNavigationStore.getState().replacePage(pageId, newTitle)
+        useResolveStore.getState().set(pageId, newTitle, false)
+      } catch {
+        toast.error('Failed to rename page')
+        setEditableTitle(title)
+        if (titleRef.current) titleRef.current.textContent = title
+      }
     }
   }, [editableTitle, title, pageId])
 

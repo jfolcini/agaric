@@ -321,8 +321,8 @@ pub fn resolve_property_conflict(
 /// 2. Calls `merge_text()` for three-way merge.
 /// 3. On clean merge: creates an `edit_block` op via `dag::append_merge_op`.
 /// 4. On conflict: creates a conflict copy with "theirs" content, then
-///    creates a merge op on the original to unify the DAG and set its
-///    content to the ancestor text (ADR-06).
+///    creates a merge op on the original to unify the DAG and preserve
+///    the local ("ours") content in-place (user's edits are retained).
 ///
 /// **TODO (F04):** This orchestrator handles **text** conflicts only.
 /// `resolve_property_conflict` (LWW) exists but is not called here \u2014 the

@@ -205,6 +205,23 @@ All 5 downgraded to P2. React 18 doesn't crash on unhandled promise rejections. 
 ### Phase 11 Stats
 - REVIEW-LATER.md: 4 → 9 open items (+5 from reviews)
 
+### Phase 12: Fix Error Handling + Doc (#508-#512)
+
+5 S-cost items fixed directly.
+
+| File | Change |
+|------|--------|
+| `PageEditor.tsx` | #508: handleTitleBlur wrapped in try/catch + toast + revert title on failure. |
+| `BlockTree.tsx` | #509: handleSlashCommand — 3 branches (TODO, priority, heading) wrapped in try/catch + toast. |
+| `BlockTree.tsx` | #510: handleMergeWithPrev wrapped in try/catch + toast + re-mount editor on failure. |
+| `BlockTree.tsx` | #511: handleNavigate catch shows "Link target not found" toast instead of silent no-op. |
+| `merge.rs` | #512: Fixed doc comment — says "ours" instead of "ancestor text". |
+
+### Phase 12 Stats
+- Frontend: 71/71 test files, 2063 tests pass
+- Backend: merge tests pass
+- REVIEW-LATER.md: 9 → 4 open items (resolved #508-#512)
+
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 
 Resolved all 18 Tier 7.5 items. 7 BacklinkFilterBuilder UX/a11y fixes, 6 BacklinksPanel fixes, 1 button.tsx touch target, 3 backend perf optimizations, 2 already resolved by Tier 7.
