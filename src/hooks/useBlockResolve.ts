@@ -28,53 +28,42 @@ export interface UseBlockResolveReturn {
 }
 
 export function useBlockResolve(): UseBlockResolveReturn {
-  const version = useResolveStore((s) => s.version)
+  // Subscribe to version so the component re-renders when the cache updates,
+  // keeping cacheRef.current fresh for the stable callbacks below.
+  useResolveStore((s) => s.version)
   const cache = useResolveStore((s) => s.cache)
+
+  const cacheRef = useRef(cache)
+  cacheRef.current = cache
 
   // Local ref for pagesListRef used in searchPages caching.
   // This mirrors the old BlockTree behavior where pagesListRef was used
   // for short-query caching. Updated by the preload effect in BlockTree.
   const pagesListRef = useRef<Array<{ id: string; title: string }>>([])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
-  const resolveBlockTitle = useCallback(
-    (id: string): string => {
-      const cached = cache.get(id)
-      if (cached) return cached.title
-      return `[[${id.slice(0, 8)}...]]`
-    },
-    [version],
-  )
+  const resolveBlockTitle = useCallback((id: string): string => {
+    const cached = cacheRef.current.get(id)
+    if (cached) return cached.title
+    return `[[${id.slice(0, 8)}...]]`
+  }, [])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
-  const resolveBlockStatus = useCallback(
-    (id: string): 'active' | 'deleted' => {
-      const cached = cache.get(id)
-      if (cached) return cached.deleted ? 'deleted' : 'active'
-      return 'active'
-    },
-    [version],
-  )
+  const resolveBlockStatus = useCallback((id: string): 'active' | 'deleted' => {
+    const cached = cacheRef.current.get(id)
+    if (cached) return cached.deleted ? 'deleted' : 'active'
+    return 'active'
+  }, [])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
-  const resolveTagName = useCallback(
-    (id: string): string => {
-      const cached = cache.get(id)
-      if (cached) return cached.title
-      return `#${id.slice(0, 8)}...`
-    },
-    [version],
-  )
+  const resolveTagName = useCallback((id: string): string => {
+    const cached = cacheRef.current.get(id)
+    if (cached) return cached.title
+    return `#${id.slice(0, 8)}...`
+  }, [])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
-  const resolveTagStatus = useCallback(
-    (id: string): 'active' | 'deleted' => {
-      const cached = cache.get(id)
-      if (cached) return cached.deleted ? 'deleted' : 'active'
-      return 'active'
-    },
-    [version],
-  )
+  const resolveTagStatus = useCallback((id: string): 'active' | 'deleted' => {
+    const cached = cacheRef.current.get(id)
+    if (cached) return cached.deleted ? 'deleted' : 'active'
+    return 'active'
+  }, [])
 
   // ── Picker callbacks ────────────────────────────────────────────────
   const searchTags = useCallback(async (query: string): Promise<PickerItem[]> => {

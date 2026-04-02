@@ -16,7 +16,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { EditableBlock } from '../EditableBlock'
+import { EDITOR_PORTAL_SELECTORS, EditableBlock } from '../EditableBlock'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
@@ -543,6 +543,49 @@ describe('EditableBlock', () => {
 
       const toolbar = screen.getByTestId('formatting-toolbar')
       expect(toolbar).toHaveAttribute('data-block-id', 'B1')
+    })
+  })
+
+  // ── EDITOR_PORTAL_SELECTORS constant ──────────────────────────────
+
+  describe('EDITOR_PORTAL_SELECTORS', () => {
+    it('is exported and contains at least 5 entries', () => {
+      expect(Array.isArray(EDITOR_PORTAL_SELECTORS)).toBe(true)
+      expect(EDITOR_PORTAL_SELECTORS.length).toBeGreaterThanOrEqual(5)
+    })
+
+    it('includes expected selectors for suggestion popup and date picker', () => {
+      expect(EDITOR_PORTAL_SELECTORS).toContain('.suggestion-popup')
+      expect(EDITOR_PORTAL_SELECTORS).toContain('.date-picker-popup')
+      expect(EDITOR_PORTAL_SELECTORS).toContain('[data-radix-popper-content-wrapper]')
+    })
+
+    it('handleBlur does not unmount when relatedTarget is inside a suggestion popup', () => {
+      const mockUnmount = vi.fn(() => 'changed')
+      const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="Hello"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      // Simulate relatedTarget being inside a suggestion popup
+      const popup = document.createElement('div')
+      popup.classList.add('suggestion-popup')
+      const btn = document.createElement('button')
+      popup.appendChild(btn)
+      document.body.appendChild(popup)
+
+      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      fireEvent.blur(editorWrapper, { relatedTarget: btn })
+
+      expect(mockUnmount).not.toHaveBeenCalled()
+
+      document.body.removeChild(popup)
     })
   })
 })

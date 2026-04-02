@@ -741,6 +741,43 @@ describe('PageEditor undo/redo integration', () => {
     })
   })
 
+  it('clears undo state for the page on unmount', () => {
+    // Seed undo state for the page
+    const pages = new Map()
+    pages.set('PAGE_1', { redoStack: [], undoDepth: 3 })
+    useUndoStore.setState({ pages })
+
+    const { unmount } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Undo state exists before unmount
+    expect(useUndoStore.getState().pages.has('PAGE_1')).toBe(true)
+
+    unmount()
+
+    // After unmount, clearPage should have removed the entry
+    expect(useUndoStore.getState().pages.has('PAGE_1')).toBe(false)
+  })
+
+  it('clears undo state for the old page when pageId changes', () => {
+    // Seed undo state for both pages
+    const pages = new Map()
+    pages.set('PAGE_A', { redoStack: [], undoDepth: 2 })
+    pages.set('PAGE_B', { redoStack: [], undoDepth: 1 })
+    useUndoStore.setState({ pages })
+
+    const { rerender } = render(<PageEditor pageId="PAGE_A" title="Page A" />)
+
+    // PAGE_A state exists
+    expect(useUndoStore.getState().pages.has('PAGE_A')).toBe(true)
+
+    // Navigate to PAGE_B — cleanup effect runs for PAGE_A
+    rerender(<PageEditor pageId="PAGE_B" title="Page B" />)
+
+    // PAGE_A should be cleared, PAGE_B should still exist
+    expect(useUndoStore.getState().pages.has('PAGE_A')).toBe(false)
+    expect(useUndoStore.getState().pages.has('PAGE_B')).toBe(true)
+  })
+
   it('does not call onNewAction when title is unchanged', async () => {
     const user = userEvent.setup()
 

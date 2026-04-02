@@ -105,6 +105,13 @@ export function PageEditor({
     setEditableTitle(title)
   }, [title])
 
+  // Clear undo state for the previous page when navigating away or unmounting
+  useEffect(() => {
+    return () => {
+      useUndoStore.getState().clearPage(pageId)
+    }
+  }, [pageId])
+
   const handleTitleBlur = useCallback(async () => {
     const newTitle = editableTitle.trim()
     if (!newTitle) {

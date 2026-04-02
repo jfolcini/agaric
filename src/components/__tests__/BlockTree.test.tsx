@@ -143,6 +143,15 @@ vi.mock('../../lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
+// Mock Calendar to immediately invoke onSelect with a known date when rendered
+let mockCalendarOnSelect: ((day: Date | undefined) => void) | undefined
+vi.mock('../ui/calendar', () => ({
+  Calendar: (props: { onSelect?: (day: Date | undefined) => void }) => {
+    mockCalendarOnSelect = props.onSelect
+    return <div data-testid="mock-calendar">Calendar</div>
+  },
+}))
+
 // Minimal mock for @dnd-kit
 vi.mock('@dnd-kit/core', () => ({
   DndContext: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -176,6 +185,7 @@ beforeEach(() => {
   capturedSearchSlashCommands = undefined
   capturedOnSlashCommand = undefined
   capturedBlockKeyboardOpts = undefined
+  mockCalendarOnSelect = undefined
   useBlockStore.setState({
     blocks: [],
     rootParentId: null,
@@ -2764,5 +2774,129 @@ describe('BlockTree priority keyboard shortcuts', () => {
 
     await new Promise((r) => setTimeout(r, 50))
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+  })
+})
+
+// =========================================================================
+// #536: handleDatePick creates date pages in YYYY-MM-DD format
+// =========================================================================
+
+describe('BlockTree handleDatePick date format', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('creates date page in YYYY-MM-DD format (not DD/MM/YYYY)', async () => {
+    const tree = [makeBlock('A', null, 0, 'Some block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    // Default response for load/preload/batch-resolve effects
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    // Trigger the /date command to open the date picker
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'date', label: 'DATE — Link to a date page' })
+    })
+
+    // The date picker should now be open, and mockCalendarOnSelect captured
+    await waitFor(() => {
+      expect(mockCalendarOnSelect).toBeDefined()
+    })
+
+    // Mock listBlocks to return no existing date page (so a new one is created)
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    // Mock createBlock response for the new date page
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'DATE_PAGE_1',
+      block_type: 'page',
+      content: '2025-03-15',
+      parent_id: null,
+      position: 0,
+    })
+
+    // Simulate selecting March 15, 2025 from the calendar
+    await act(async () => {
+      mockCalendarOnSelect?.(new Date(2025, 2, 15)) // month is 0-indexed
+    })
+
+    // Verify createBlock was called with YYYY-MM-DD format
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+        blockType: 'page',
+        content: '2025-03-15',
+        parentId: null,
+        position: null,
+      })
+    })
+
+    // Ensure it was NOT called with the old DD/MM/YYYY format
+    expect(mockedInvoke).not.toHaveBeenCalledWith('create_block', {
+      blockType: 'page',
+      content: '15/03/2025',
+      parentId: null,
+      position: null,
+    })
+  })
+
+  it('finds existing date page by YYYY-MM-DD format', async () => {
+    const tree = [makeBlock('A', null, 0, 'Some block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'date', label: 'DATE — Link to a date page' })
+    })
+
+    await waitFor(() => {
+      expect(mockCalendarOnSelect).toBeDefined()
+    })
+
+    // Mock listBlocks to return an existing page in YYYY-MM-DD format
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'EXISTING_DATE_PAGE',
+          block_type: 'page',
+          content: '2025-03-15',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    await act(async () => {
+      mockCalendarOnSelect?.(new Date(2025, 2, 15))
+    })
+
+    // Should NOT call create_block since the page already exists
+    await new Promise((r) => setTimeout(r, 50))
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({ content: '2025-03-15' }),
+    )
   })
 })

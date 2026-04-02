@@ -572,13 +572,13 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       const dd = String(d.getDate()).padStart(2, '0')
       const mm = String(d.getMonth() + 1).padStart(2, '0')
       const yyyy = d.getFullYear()
-      const dateStr = `${dd}/${mm}/${yyyy}`
-      // Also check for the journal YYYY-MM-DD format to avoid duplicates
-      const isoStr = `${yyyy}-${mm}-${dd}`
+      const dateStr = `${yyyy}-${mm}-${dd}`
+      // Also check for the legacy DD/MM/YYYY format to avoid duplicates
+      const legacyStr = `${dd}/${mm}/${yyyy}`
 
       // Find existing date page (check both formats) or create
       const resp = await listBlocks({ blockType: 'page', limit: 500 })
-      let datePageId = resp.items.find((b) => b.content === dateStr || b.content === isoStr)?.id
+      let datePageId = resp.items.find((b) => b.content === dateStr || b.content === legacyStr)?.id
       if (!datePageId) {
         const newPage = await createBlock({ blockType: 'page', content: dateStr })
         datePageId = newPage.id

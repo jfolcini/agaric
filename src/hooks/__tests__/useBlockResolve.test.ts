@@ -138,6 +138,51 @@ describe('resolve callbacks react to store version changes', () => {
     expect(result.current.resolveBlockTitle(id)).toBe('Updated Title')
   })
 
+  it('resolve callback references are stable across version bumps', () => {
+    const { result, rerender } = renderHook(() => useBlockResolve())
+
+    // Capture initial references
+    const initialBlockTitle = result.current.resolveBlockTitle
+    const initialBlockStatus = result.current.resolveBlockStatus
+    const initialTagName = result.current.resolveTagName
+    const initialTagStatus = result.current.resolveTagStatus
+
+    // Bump the store version by adding a cache entry
+    act(() => {
+      useResolveStore.getState().set('BUMP_ID', 'Bump Title', false)
+    })
+
+    rerender()
+
+    // All callback references should be the same (stable)
+    expect(result.current.resolveBlockTitle).toBe(initialBlockTitle)
+    expect(result.current.resolveBlockStatus).toBe(initialBlockStatus)
+    expect(result.current.resolveTagName).toBe(initialTagName)
+    expect(result.current.resolveTagStatus).toBe(initialTagStatus)
+  })
+
+  it('stable callbacks still read updated cache via ref', () => {
+    const id = 'STABLE_REF_TEST'
+
+    const { result, rerender } = renderHook(() => useBlockResolve())
+
+    // Initially uncached
+    expect(result.current.resolveBlockTitle(id)).toBe('[[STABLE_R...]]')
+
+    // Update cache
+    act(() => {
+      useResolveStore.getState().set(id, 'Fresh Value', false)
+    })
+
+    rerender()
+
+    // Same callback reference reads updated cache through ref
+    expect(result.current.resolveBlockTitle(id)).toBe('Fresh Value')
+    expect(result.current.resolveBlockStatus(id)).toBe('active')
+    expect(result.current.resolveTagName(id)).toBe('Fresh Value')
+    expect(result.current.resolveTagStatus(id)).toBe('active')
+  })
+
   it('resolveBlockStatus picks up deleted status after version bump', () => {
     const { result } = renderHook(() => useBlockResolve())
 

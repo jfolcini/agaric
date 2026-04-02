@@ -13,6 +13,20 @@ import { useBlockStore } from '../stores/blocks'
 import { FormattingToolbar } from './FormattingToolbar'
 import { StaticBlock } from './StaticBlock'
 
+/**
+ * CSS selectors for transient UI elements (popups, toolbars, pickers) that
+ * should NOT cause the editor to unmount when they receive focus.
+ * Add new entries here when introducing new popup-style UI.
+ */
+export const EDITOR_PORTAL_SELECTORS = [
+  '.suggestion-popup',
+  '.suggestion-list',
+  '.formatting-toolbar',
+  '[data-radix-popper-content-wrapper]',
+  '.rdp',
+  '.date-picker-popup',
+]
+
 interface EditableBlockProps {
   blockId: string
   content: string
@@ -93,21 +107,13 @@ function EditableBlockInner({
       // or date picker — these are transient UI elements that need the editor to stay mounted.
       const related = e.relatedTarget as HTMLElement | null
       if (related) {
-        if (
-          related.closest('.suggestion-popup') ||
-          related.closest('.suggestion-list') ||
-          related.closest('.formatting-toolbar') ||
-          related.closest('[data-radix-popper-content-wrapper]') ||
-          related.closest('.rdp')
-        ) {
+        if (EDITOR_PORTAL_SELECTORS.some((sel) => related.closest(sel))) {
           return
         }
       }
 
       // Also check if a suggestion popup, date picker, or popover is currently open in the DOM
-      if (document.querySelector('.suggestion-popup')) return
-      if (document.querySelector('.date-picker-popup')) return
-      if (document.querySelector('[data-radix-popper-content-wrapper]')) return
+      if (EDITOR_PORTAL_SELECTORS.some((sel) => document.querySelector(sel))) return
 
       const changed = rovingEditor.unmount()
       if (changed !== null) {
