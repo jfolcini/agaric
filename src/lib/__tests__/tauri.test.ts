@@ -51,6 +51,7 @@ import {
   startPairing,
   startSync,
   undoPageOp,
+  updatePeerName,
 } from '../tauri'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -547,6 +548,7 @@ describe('listTagsByPrefix', () => {
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('list_tags_by_prefix', {
       prefix: 'work',
+      limit: null,
     })
     expect(result).toEqual(expected)
   })
@@ -558,6 +560,7 @@ describe('listTagsByPrefix', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_tags_by_prefix', {
       prefix: 'nonexistent',
+      limit: null,
     })
     expect(result).toEqual([])
   })
@@ -1068,6 +1071,8 @@ describe('listPeerRefs', () => {
         synced_at: '2025-01-15T00:00:00Z',
         reset_count: 0,
         last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
       },
     ]
     mockedInvoke.mockResolvedValueOnce(expected)
@@ -1106,6 +1111,8 @@ describe('getPeerRef', () => {
       synced_at: '2025-01-15T00:00:00Z',
       reset_count: 0,
       last_reset_at: null,
+      cert_hash: null,
+      device_name: null,
     }
     mockedInvoke.mockResolvedValueOnce(expected)
 
@@ -1140,6 +1147,30 @@ describe('deletePeerRef', () => {
     mockedInvoke.mockResolvedValueOnce(undefined)
     await deletePeerRef('peer-to-delete')
     expect(mockedInvoke).toHaveBeenCalledWith('delete_peer_ref', { peerId: 'peer-to-delete' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// updatePeerName
+// ---------------------------------------------------------------------------
+
+describe('updatePeerName', () => {
+  it('invokes update_peer_name with peerId and deviceName', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+    await updatePeerName('peer-1', "Javier's Phone")
+    expect(mockedInvoke).toHaveBeenCalledWith('update_peer_name', {
+      peerId: 'peer-1',
+      deviceName: "Javier's Phone",
+    })
+  })
+
+  it('passes null to clear the name', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+    await updatePeerName('peer-1', null)
+    expect(mockedInvoke).toHaveBeenCalledWith('update_peer_name', {
+      peerId: 'peer-1',
+      deviceName: null,
+    })
   })
 })
 
@@ -1371,6 +1402,7 @@ describe('cross-cutting', () => {
     await listPeerRefs()
     await getPeerRef('peer-1')
     await deletePeerRef('peer-1')
+    await updatePeerName('peer-1', 'My Phone')
     await getDeviceId()
     await startPairing()
     await confirmPairing('passphrase', 'remote-id')
@@ -1413,6 +1445,7 @@ describe('cross-cutting', () => {
       'list_peer_refs',
       'get_peer_ref',
       'delete_peer_ref',
+      'update_peer_name',
       'get_device_id',
       'start_pairing',
       'confirm_pairing',

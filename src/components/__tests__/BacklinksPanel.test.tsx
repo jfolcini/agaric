@@ -1178,6 +1178,7 @@ describe('BacklinksPanel', () => {
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('list_tags_by_prefix', {
           prefix: '',
+          limit: null,
         })
       })
     })

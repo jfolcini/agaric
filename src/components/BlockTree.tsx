@@ -925,6 +925,12 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
             )}
           </div>
         </SortableContext>
+        {/* SR announcement for DnD projected drop position */}
+        {dnd.activeId && dnd.projected && (
+          <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+            {`Moving to depth ${dnd.projected.depth}`}
+          </div>
+        )}
         {/* Drag overlay: floating preview of the dragged block */}
         <DragOverlay dropAnimation={null}>
           {activeBlock ? (

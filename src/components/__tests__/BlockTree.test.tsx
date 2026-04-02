@@ -226,6 +226,7 @@ describe('BlockTree picker wiring', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_tags_by_prefix', {
       prefix: 'imp',
+      limit: null,
     })
     expect(results).toEqual([
       { id: 'TAG_01', label: 'important' },

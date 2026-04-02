@@ -117,6 +117,7 @@ describe('TagFilterPanel', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_tags_by_prefix', {
       prefix: 'work',
+      limit: null,
     })
 
     expect(findTagSpan(/work\/meeting/)).toBeInTheDocument()

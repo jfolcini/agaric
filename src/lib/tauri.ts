@@ -216,7 +216,7 @@ export async function listTagsByPrefix(params: {
 }): Promise<TagCacheRow[]> {
   return invoke('list_tags_by_prefix', {
     prefix: params.prefix,
-    ...(params.limit != null && { limit: params.limit }),
+    limit: params.limit ?? null,
   })
 }
 
@@ -404,6 +404,8 @@ export interface PeerRefRow {
   synced_at: string | null
   reset_count: number
   last_reset_at: string | null
+  cert_hash: string | null
+  device_name: string | null
 }
 
 /** List all known peer references. */
@@ -419,6 +421,11 @@ export async function getPeerRef(peerId: string): Promise<PeerRefRow | null> {
 /** Delete a peer reference by ID. */
 export async function deletePeerRef(peerId: string): Promise<void> {
   return invoke('delete_peer_ref', { peerId })
+}
+
+/** Update the display name for a paired peer. Pass null to clear. */
+export async function updatePeerName(peerId: string, deviceName: string | null): Promise<void> {
+  return invoke('update_peer_name', { peerId, deviceName })
 }
 
 /** Get the local device ID. */

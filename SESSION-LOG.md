@@ -149,6 +149,27 @@ Cross-validated P1 claims with a separate subagent.
 - Frontend: 71/71 test files, 2063 tests pass
 - REVIEW-LATER.md: 10 → 6 open items (resolved #501, #502, #504, #505)
 
+### Phase 9: Fix #503 + IPC/Boot/E2E Reviews + Fixes
+
+Fixed #503 (DnD ARIA live region), #506 (listTagsByPrefix param), #507 (BootGate semantic HTML).
+Reviewed Tauri IPC + boot process and E2E test suite in parallel.
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | #503: Added sr-only live region announcing DnD projected depth during drag. |
+| `tauri.ts` | #506: listTagsByPrefix uses `limit: params.limit ?? null` (consistent pattern). |
+| `tauri.test.ts` | Updated 2 assertions for new limit: null signature. |
+| `BacklinksPanel.test.tsx` | Updated assertion for list_tags_by_prefix with limit: null. |
+| `BlockTree.test.tsx` | Updated assertion for list_tags_by_prefix with limit: null. |
+| `TagFilterPanel.test.tsx` | Updated assertion for list_tags_by_prefix with limit: null. |
+| `BootGate.tsx` | #507: Replaced `<output>` with `<div role="status" aria-live="polite">` + `aria-hidden` on spinner. |
+
+Reviews: Tauri IPC (8 findings) + E2E (11 findings). Cross-validation rejected all 5 P1 claims (setProperty void wrapper is intentional, boot health check is valid, mock missing commands are P3).
+
+### Phase 9 Stats
+- Frontend: 71/71 test files, 2063 tests pass
+- REVIEW-LATER.md: 6 → 5 open items (resolved #503, added+resolved #506, #507)
+
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 
 Resolved all 18 Tier 7.5 items. 7 BacklinkFilterBuilder UX/a11y fixes, 6 BacklinksPanel fixes, 1 button.tsx touch target, 3 backend perf optimizations, 2 already resolved by Tier 7.
