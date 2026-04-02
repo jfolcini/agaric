@@ -1950,9 +1950,19 @@ pub async fn apply_reverse_in_tx(
             }
         }
         OpPayload::AddAttachment(p) => {
+            // Preserve original created_at from the existing (soft-deleted) attachment record
+            let original_created_at: Option<String> = sqlx::query_scalar(
+                "SELECT created_at FROM attachments WHERE id = ?"
+            )
+            .bind(p.attachment_id.as_str())
+            .fetch_optional(&mut **tx)
+            .await?;
+
+            let created_at = original_created_at.unwrap_or_else(|| now_rfc3339());
+
             sqlx::query(
                 "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, datetime('now'), NULL)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?, NULL)"
             )
             .bind(p.attachment_id.as_str())
             .bind(p.block_id.as_str())
@@ -1960,6 +1970,7 @@ pub async fn apply_reverse_in_tx(
             .bind(&p.filename)
             .bind(p.size_bytes)
             .bind(&p.fs_path)
+            .bind(&created_at)
             .execute(&mut **tx)
             .await?;
         }
@@ -2215,6 +2226,14 @@ pub async fn get_peer_ref_inner(
 /// Returns [`AppError::NotFound`] if the peer does not exist.
 pub async fn delete_peer_ref_inner(pool: &SqlitePool, peer_id: String) -> Result<(), AppError> {
     peer_refs::delete_peer_ref(pool, &peer_id).await
+}
+
+pub async fn update_peer_name_inner(
+    pool: &SqlitePool,
+    peer_id: String,
+    device_name: Option<String>,
+) -> Result<(), AppError> {
+    peer_refs::update_device_name(pool, &peer_id, device_name.as_deref()).await
 }
 
 /// Return the local device's persistent UUID.
@@ -2843,6 +2862,18 @@ pub async fn get_peer_ref(
 #[specta::specta]
 pub async fn delete_peer_ref(pool: State<'_, WritePool>, peer_id: String) -> Result<(), AppError> {
     delete_peer_ref_inner(&pool.0, peer_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn update_peer_name(
+    pool: State<'_, WritePool>,
+    peer_id: String,
+    device_name: Option<String>,
+) -> Result<(), AppError> {
+    update_peer_name_inner(&pool.0, peer_id, device_name)
         .await
         .map_err(sanitize_internal_error)
 }
