@@ -684,9 +684,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     const mergedContent = prevContent + currentContent
     const joinPoint = prevContent.length
 
-    // Update previous block with merged content and remove current block
-    edit(prevBlock.id, mergedContent)
-    remove(focusedBlockId)
+    // Update previous block with merged content, then remove current block.
+    // Await edit before remove to prevent data loss if edit fails.
+    await edit(prevBlock.id, mergedContent)
+    await remove(focusedBlockId)
 
     // Focus previous block at the join point
     setFocused(prevBlock.id)
