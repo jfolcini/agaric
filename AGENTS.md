@@ -8,41 +8,27 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React +
 
 | Document | Purpose |
 |----------|---------|
-| **AGENTS.md** (this file) | Build commands, invariants, conventions |
+| **AGENTS.md** (this file) | Invariants, conventions, architecture overview |
+| **[BUILD.md](BUILD.md)** | Build guide: prerequisites, platforms, Android, CI, troubleshooting |
 | **ARCHITECTURE.md** | Deep-dive: data model, op log, materializer, editor, sync, search (~1160 lines) |
 | `src-tauri/tests/AGENTS.md` | Rust test patterns, fixtures, pitfalls |
 | `src/__tests__/AGENTS.md` | Frontend test patterns, mocking, a11y |
-| `.devin/rules/workflow.md` | Subagent workflow, worktrees, compilation costs |
 | `REVIEW-LATER.md` | Deferred items, tech debt backlog, future features |
 
 ## Build Commands
 
+See **[BUILD.md](BUILD.md)** for the full build guide (prerequisites, platform-specific instructions, Android signing, CI pipeline, troubleshooting).
+
 ```bash
-# Frontend
-npm run dev              # Vite dev server on :5173
-npm run build            # Production build (tsc + vite)
-npm run lint             # Biome check
-npm run lint:fix         # Biome auto-fix
-npm run test             # Vitest run
-npm run test:coverage    # Vitest with v8 coverage
-npx playwright test      # E2E tests
-
-# Backend (source cargo env first: . "$HOME/.cargo/env")
+# Quick reference
+cargo tauri dev              # Dev mode with hot reload
+cargo tauri build            # Production build (per-platform)
+npm run test                 # Vitest (2063 tests)
 cd src-tauri && cargo nextest run   # Rust tests
-cd src-tauri && cargo fmt --check   # Formatting
-cd src-tauri && cargo clippy -- -D warnings  # Lint
-
-# Full Tauri app (build on each target platform — no cross-compilation)
-cargo tauri dev          # Dev mode with hot reload
-cargo tauri build        # Production build
-
-# Android (requires Android SDK + NDK 27 + emulator)
-cargo tauri android build --target x86_64 --debug   # Debug APK for emulator
-cargo tauri android dev --target x86_64             # Build + install + run
-
-# Pre-commit (this IS the verification)
-prek run --all-files     # All hooks, entire repo
-prek run                 # Staged files only
+npx playwright test          # E2E tests
+cargo tauri android build --target x86_64 --debug   # Android debug APK
+cargo tauri android build --target x86_64            # Android release APK (24 MB)
+prek run --all-files         # Pre-commit hooks
 ```
 
 ## Key Architectural Invariants
