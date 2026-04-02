@@ -47,7 +47,14 @@ import { Calendar } from '@/components/ui/calendar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import type { BlockRow } from '../lib/tauri'
-import { createBlock, getBlock, listBlocks, queryByProperty } from '../lib/tauri'
+import {
+  countAgendaBatch,
+  countBacklinksBatch,
+  createBlock,
+  getBlock,
+  listBlocks,
+  queryByProperty,
+} from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
 import { useResolveStore } from '../stores/resolve'
@@ -352,12 +359,22 @@ export function JournalPage({
   onBlockClick: _onBlockClick,
   onNavigateToPage,
 }: JournalPageProps): React.ReactElement {
-  const { mode, currentDate, navigateToDate, scrollToDate, clearScrollTarget } = useJournalStore()
+  const {
+    mode,
+    currentDate,
+    navigateToDate,
+    scrollToDate,
+    scrollToPanel,
+    clearScrollTarget,
+    goToDateAndPanel,
+  } = useJournalStore()
   const [pageMap, setPageMap] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(false)
   // Track per-day pageIds that were created by handleAddBlock so we can
   // immediately show BlockTree without waiting for a full refetch.
   const [createdPages, setCreatedPages] = useState<Map<string, string>>(new Map())
+  const [agendaCounts, setAgendaCounts] = useState<Record<string, number>>({})
+  const [backlinkCounts, setBacklinkCounts] = useState<Record<string, number>>({})
   const load = useBlockStore((s) => s.load)
 
   /** Fetch all pages and build a dateStr->pageId lookup. */
@@ -396,6 +413,18 @@ export function JournalPage({
     })
   }, [scrollToDate, clearScrollTarget])
 
+  // Scroll to a specific panel (due/references/done) when requested from badges
+  useEffect(() => {
+    if (!scrollToPanel) return
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`journal-${scrollToPanel}-panel`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+      clearScrollTarget()
+    })
+  }, [scrollToPanel, clearScrollTarget])
+
   /** Build a DayEntry from a Date. */
   const makeDayEntry = useCallback(
     (d: Date): DayEntry => {
@@ -409,6 +438,41 @@ export function JournalPage({
     },
     [pageMap, createdPages],
   )
+
+  /** Entries for the current view (weekly/monthly) — used for badge count fetching. */
+  const entries = useMemo(() => {
+    if (mode === 'daily' || mode === 'agenda') return []
+    const days =
+      mode === 'weekly'
+        ? getWeekDays(currentDate)
+        : eachDayOfInterval({ start: startOfMonth(currentDate), end: endOfMonth(currentDate) })
+    return days.map(makeDayEntry)
+  }, [mode, currentDate, makeDayEntry])
+
+  // Fetch badge counts for weekly/monthly views
+  useEffect(() => {
+    if (mode === 'daily' || mode === 'agenda') return
+    const dates = entries.map((e) => e.dateStr)
+    const pageIds = entries.filter((e) => e.pageId).map((e) => e.pageId as string)
+
+    let cancelled = false
+    async function fetchCounts() {
+      const [agenda, backlinks] = await Promise.all([
+        countAgendaBatch({ dates }),
+        pageIds.length > 0
+          ? countBacklinksBatch({ pageIds })
+          : Promise.resolve({} as Record<string, number>),
+      ])
+      if (!cancelled) {
+        setAgendaCounts(agenda)
+        setBacklinkCounts(backlinks)
+      }
+    }
+    fetchCounts().catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [mode, entries])
 
   /** Add a new block under a specific day's page, creating the page if needed. */
   async function handleAddBlock(dateStr: string) {
@@ -484,6 +548,35 @@ export function JournalPage({
                 <span className="ml-2 text-xs text-muted-foreground font-normal">(Today)</span>
               )}
             </Heading>
+            {/* Count badges for weekly/monthly modes */}
+            {mode !== 'daily' && mode !== 'agenda' && (
+              <>
+                {(agendaCounts[entry.dateStr] ?? 0) > 0 && (
+                  <button
+                    type="button"
+                    className="inline-flex items-center rounded-full bg-orange-100 px-1.5 py-0.5 text-xs font-medium text-orange-800 dark:bg-orange-900/30 dark:text-orange-300 hover:bg-orange-200 dark:hover:bg-orange-900/50"
+                    onClick={() => goToDateAndPanel(entry.date, 'due')}
+                    aria-label={`${agendaCounts[entry.dateStr]} due items, click to view`}
+                  >
+                    {(agendaCounts[entry.dateStr] ?? 0) > 99 ? '99+' : agendaCounts[entry.dateStr]}{' '}
+                    due
+                  </button>
+                )}
+                {entry.pageId && (backlinkCounts[entry.pageId] ?? 0) > 0 && (
+                  <button
+                    type="button"
+                    className="inline-flex items-center rounded-full bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50"
+                    onClick={() => goToDateAndPanel(entry.date, 'references')}
+                    aria-label={`${backlinkCounts[entry.pageId]} references, click to view`}
+                  >
+                    {(backlinkCounts[entry.pageId] ?? 0) > 99
+                      ? '99+'
+                      : backlinkCounts[entry.pageId]}{' '}
+                    refs
+                  </button>
+                )}
+              </>
+            )}
             {entry.pageId && onNavigateToPage && (
               <Button
                 variant="ghost"
@@ -517,8 +610,12 @@ export function JournalPage({
         {/* DuePanel + LinkedReferences — only in daily mode */}
         {mode === 'daily' && entry.pageId && (
           <>
-            <DuePanel date={entry.dateStr} onNavigateToPage={onNavigateToPage} />
-            <LinkedReferences pageId={entry.pageId} onNavigateToPage={onNavigateToPage} />
+            <div id="journal-due-panel">
+              <DuePanel date={entry.dateStr} onNavigateToPage={onNavigateToPage} />
+            </div>
+            <div id="journal-references-panel">
+              <LinkedReferences pageId={entry.pageId} onNavigateToPage={onNavigateToPage} />
+            </div>
           </>
         )}
 

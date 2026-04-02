@@ -278,6 +278,24 @@ export async function getBatchProperties(
 }
 
 // ---------------------------------------------------------------------------
+// Batch count commands (#604)
+// ---------------------------------------------------------------------------
+
+/** Batch-count agenda items per date. Returns a map of date -> count. */
+export async function countAgendaBatch(params: {
+  dates: string[]
+}): Promise<Record<string, number>> {
+  return invoke('count_agenda_batch', { dates: params.dates })
+}
+
+/** Batch-count backlinks per target page. Returns a map of pageId -> count. */
+export async function countBacklinksBatch(params: {
+  pageIds: string[]
+}): Promise<Record<string, number>> {
+  return invoke('count_backlinks_batch', { pageIds: params.pageIds })
+}
+
+// ---------------------------------------------------------------------------
 // Block fixed-field commands (thin wrappers for reserved properties)
 // ---------------------------------------------------------------------------
 

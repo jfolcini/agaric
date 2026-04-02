@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 62 — 2026-04-03 — Phase 6 Wave 3: Batch Counts + Badges + Scroll-to-Panel (#604, #605, #610)
+
+### Backend batch counts + weekly/monthly badges + scroll-to-panel wiring
+3 items resolved: two batch count Tauri commands, badge pills in weekly/monthly views, scroll-to-panel journal store integration.
+
+Built by 2 parallel subagents (Rust: batch count commands + 6 tests; Frontend: badges + 8 tests) + orchestrator (#610 store + panel IDs + conflict block test from review). Reviewed by 1 subagent (FAIL — found missing conflict block test + false positive race condition; test added, race dismissed).
+
+| File | Change |
+|------|--------|
+| `commands.rs` | #604: `count_agenda_batch_inner` + `count_backlinks_batch_inner` with dynamic IN clause + bind params. 7 tests (incl. conflict exclusion from review). |
+| `lib.rs` | #604: Registered both commands. |
+| `bindings.ts` | #604: Auto-regenerated with batch count bindings. |
+| `tauri.ts` | #604: `countAgendaBatch` + `countBacklinksBatch` wrappers. |
+| `journal.ts` | #610: `scrollToPanel: JournalPanel \| null`, `goToDateAndPanel` action, `clearScrollTarget` clears both. |
+| `JournalPage.tsx` | #605+#610: Badge rendering in `renderDaySection()`, count fetching effect, scroll-to-panel effect, panel wrapper divs with IDs. |
+| `JournalPage.test.tsx` | #605: 8 new badge tests (counts, zero-hide, click nav, scroll-to-panel, multi-day, monthly, 99+ cap, a11y). |
+
+### Stats
+- Rust: 1422 tests pass (1415 + 7 new)
+- Frontend: 78/78 test files, 2194 tests pass (2186 + 8 new)
+- Commit: `c0f094a`
+
 ## Session 61 — 2026-04-03 — Phase 6 Wave 1+2: DuePanel + Journal Panels + References Rename (#600-#603)
 
 ### DuePanel component + journal daily view panels + label rename

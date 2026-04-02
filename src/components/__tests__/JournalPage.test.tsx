@@ -1710,4 +1710,206 @@ describe('JournalPage', () => {
       ).toBeTruthy()
     })
   })
+
+  // ── Count badges in weekly/monthly modes (#605) ─────────────────────
+
+  describe('count badges in weekly/monthly modes', () => {
+    // Use a fixed Monday so weekly views are deterministic
+    const monday = new Date(2025, 0, 6) // Mon Jan 6, 2025
+    const mondayStr = '2025-01-06'
+    const tuesdayStr = '2025-01-07'
+    const wednesdayStr = '2025-01-08'
+
+    /**
+     * Helper: set up invoke mocks that return pages + badge counts.
+     * Override individual count maps via options.
+     */
+    function setupBadgeMocks(opts?: {
+      agendaCounts?: Record<string, number>
+      backlinkCounts?: Record<string, number>
+      pages?: Array<{ id: string; dateStr: string }>
+    }) {
+      const pages = opts?.pages ?? [
+        { id: 'DP-MON', dateStr: mondayStr },
+        { id: 'DP-TUE', dateStr: tuesdayStr },
+      ]
+      const agendaCounts = opts?.agendaCounts ?? { [mondayStr]: 3 }
+      const backlinkCounts = opts?.backlinkCounts ?? { 'DP-MON': 5 }
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_blocks') {
+          return {
+            items: pages.map((p) => makeDailyPage(p.id, p.dateStr)),
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        if (cmd === 'count_agenda_batch') {
+          return agendaCounts
+        }
+        if (cmd === 'count_backlinks_batch') {
+          return backlinkCounts
+        }
+        return emptyPage
+      })
+    }
+
+    it('badges render with correct counts in weekly mode', async () => {
+      setupBadgeMocks({
+        agendaCounts: { [mondayStr]: 3 },
+        backlinkCounts: { 'DP-MON': 5 },
+      })
+
+      useJournalStore.setState({ mode: 'weekly', currentDate: monday })
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByText(/3\s+due/)).toBeInTheDocument()
+        expect(screen.getByText(/5\s+refs/)).toBeInTheDocument()
+      })
+    })
+
+    it('zero-count badges are hidden', async () => {
+      setupBadgeMocks({
+        agendaCounts: { [mondayStr]: 0, [tuesdayStr]: 0 },
+        backlinkCounts: { 'DP-MON': 0, 'DP-TUE': 0 },
+      })
+
+      useJournalStore.setState({ mode: 'weekly', currentDate: monday })
+      renderJournal()
+
+      // Wait for the component to finish loading
+      await waitFor(() => {
+        expect(screen.getAllByRole('region').length).toBe(7)
+      })
+
+      // No badge buttons should be rendered
+      expect(screen.queryByText(/due/)).toBeNull()
+      expect(screen.queryByText(/refs/)).toBeNull()
+    })
+
+    it('badge click navigates to daily view', async () => {
+      const user = userEvent.setup()
+      setupBadgeMocks({
+        agendaCounts: { [mondayStr]: 3 },
+        backlinkCounts: {},
+      })
+
+      useJournalStore.setState({ mode: 'weekly', currentDate: monday })
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByText(/3\s+due/)).toBeInTheDocument()
+      })
+
+      const dueBadge = screen.getByText(/3\s+due/)
+      await user.click(dueBadge)
+
+      // After clicking, mode should change to daily
+      await waitFor(() => {
+        expect(screen.getByRole('tab', { name: /daily view/i })).toHaveAttribute(
+          'aria-selected',
+          'true',
+        )
+      })
+    })
+
+    it('badge click triggers scroll-to-panel', async () => {
+      const user = userEvent.setup()
+      setupBadgeMocks({
+        agendaCounts: {},
+        backlinkCounts: { 'DP-MON': 5 },
+      })
+
+      useJournalStore.setState({ mode: 'weekly', currentDate: monday })
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByText(/5\s+refs/)).toBeInTheDocument()
+      })
+
+      const refsBadge = screen.getByText(/5\s+refs/)
+      await user.click(refsBadge)
+
+      // After clicking, we navigate to daily mode and the references panel should render
+      await waitFor(() => {
+        expect(screen.getByTestId('linked-references')).toBeInTheDocument()
+      })
+    })
+
+    it('multiple days show independent counts', async () => {
+      setupBadgeMocks({
+        pages: [
+          { id: 'DP-MON', dateStr: mondayStr },
+          { id: 'DP-TUE', dateStr: tuesdayStr },
+          { id: 'DP-WED', dateStr: wednesdayStr },
+        ],
+        agendaCounts: { [mondayStr]: 2, [tuesdayStr]: 7, [wednesdayStr]: 0 },
+        backlinkCounts: { 'DP-MON': 1, 'DP-TUE': 0, 'DP-WED': 12 },
+      })
+
+      useJournalStore.setState({ mode: 'weekly', currentDate: monday })
+      renderJournal()
+
+      await waitFor(() => {
+        // Monday: 2 due, 1 ref
+        expect(screen.getByText(/2\s+due/)).toBeInTheDocument()
+        expect(screen.getByText(/1\s+refs/)).toBeInTheDocument()
+        // Tuesday: 7 due (0 refs hidden)
+        expect(screen.getByText(/7\s+due/)).toBeInTheDocument()
+        // Wednesday: 0 due hidden, 12 refs
+        expect(screen.getByText(/12\s+refs/)).toBeInTheDocument()
+      })
+    })
+
+    it('monthly mode shows badges', async () => {
+      // Use January 2025 — the 6th has a page with counts
+      setupBadgeMocks({
+        agendaCounts: { [mondayStr]: 4 },
+        backlinkCounts: { 'DP-MON': 8 },
+      })
+
+      useJournalStore.setState({ mode: 'monthly', currentDate: monday })
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByText(/4\s+due/)).toBeInTheDocument()
+        expect(screen.getByText(/8\s+refs/)).toBeInTheDocument()
+      })
+    })
+
+    it('"99+" cap for counts over 99', async () => {
+      setupBadgeMocks({
+        agendaCounts: { [mondayStr]: 150 },
+        backlinkCounts: { 'DP-MON': 200 },
+      })
+
+      useJournalStore.setState({ mode: 'weekly', currentDate: monday })
+      renderJournal()
+
+      await waitFor(() => {
+        // Both badges should show "99+" instead of the actual count
+        const dueBadge = screen.getByLabelText(/150 due items/)
+        expect(dueBadge).toHaveTextContent(/99\+\s+due/)
+
+        const refsBadge = screen.getByLabelText(/200 references/)
+        expect(refsBadge).toHaveTextContent(/99\+\s+refs/)
+      })
+    })
+
+    it('badges have aria-labels with counts', async () => {
+      setupBadgeMocks({
+        agendaCounts: { [mondayStr]: 3 },
+        backlinkCounts: { 'DP-MON': 5 },
+      })
+
+      useJournalStore.setState({ mode: 'weekly', currentDate: monday })
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('3 due items, click to view')).toBeInTheDocument()
+        expect(screen.getByLabelText('5 references, click to view')).toBeInTheDocument()
+      })
+    })
+  })
 })

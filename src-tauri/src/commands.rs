@@ -2767,6 +2767,96 @@ pub fn cancel_sync_inner(cancel_flag: &AtomicBool) -> Result<(), AppError> {
 }
 
 // ---------------------------------------------------------------------------
+// Batch count helpers
+// ---------------------------------------------------------------------------
+
+/// Count agenda items per date for a batch of dates in a single query.
+///
+/// Returns a `HashMap<date, count>` for dates that have at least one matching
+/// agenda entry whose owning block is not soft-deleted.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
+pub(crate) async fn count_agenda_batch_inner(
+    pool: &SqlitePool,
+    dates: Vec<String>,
+) -> Result<HashMap<String, usize>, AppError> {
+    if dates.is_empty() {
+        return Ok(HashMap::new());
+    }
+    // Validate all dates
+    for d in &dates {
+        validate_date_format(d)?;
+    }
+    // Build IN clause with bind parameters
+    let placeholders: String = dates
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT ac.date, COUNT(*) as cnt \
+         FROM agenda_cache ac \
+         JOIN blocks b ON b.id = ac.block_id \
+         WHERE ac.date IN ({placeholders}) \
+           AND b.deleted_at IS NULL \
+         GROUP BY ac.date"
+    );
+    let mut query = sqlx::query_as::<_, (String, i64)>(&sql);
+    for d in &dates {
+        query = query.bind(d);
+    }
+    let rows = query.fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(|(date, cnt)| (date, cnt as usize))
+        .collect())
+}
+
+/// Count backlinks per target page for a batch of page IDs in a single query.
+///
+/// Returns a `HashMap<page_id, count>` for pages that have at least one
+/// incoming link whose source block is not soft-deleted and is not a conflict.
+///
+/// # Errors
+///
+/// - Database errors propagated from sqlx.
+pub(crate) async fn count_backlinks_batch_inner(
+    pool: &SqlitePool,
+    page_ids: Vec<String>,
+) -> Result<HashMap<String, usize>, AppError> {
+    if page_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let placeholders: String = page_ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT bl.target_id, COUNT(*) as cnt \
+         FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         WHERE bl.target_id IN ({placeholders}) \
+           AND b.deleted_at IS NULL \
+           AND b.is_conflict = 0 \
+         GROUP BY bl.target_id"
+    );
+    let mut query = sqlx::query_as::<_, (String, i64)>(&sql);
+    for id in &page_ids {
+        query = query.bind(id);
+    }
+    let rows = query.fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, cnt)| (id, cnt as usize))
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
@@ -3599,6 +3689,32 @@ pub async fn start_sync(
 #[specta::specta]
 pub async fn cancel_sync(cancel_flag: State<'_, crate::SyncCancelFlag>) -> Result<(), AppError> {
     cancel_sync_inner(&cancel_flag.0).map_err(sanitize_internal_error)
+}
+
+/// Tauri command: batch-count agenda items per date. Delegates to [`count_agenda_batch_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn count_agenda_batch(
+    read_pool: State<'_, ReadPool>,
+    dates: Vec<String>,
+) -> Result<HashMap<String, usize>, AppError> {
+    count_agenda_batch_inner(&read_pool.0, dates)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn count_backlinks_batch(
+    read_pool: State<'_, ReadPool>,
+    page_ids: Vec<String>,
+) -> Result<HashMap<String, usize>, AppError> {
+    count_backlinks_batch_inner(&read_pool.0, page_ids)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -10688,5 +10804,254 @@ mod tests {
         );
 
         mat.shutdown();
+    }
+
+    // ======================================================================
+    // count_agenda_batch
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_agenda_batch_empty_dates_returns_empty() {
+        let (pool, _dir) = test_pool().await;
+        let result = count_agenda_batch_inner(&pool, vec![]).await.unwrap();
+        assert!(
+            result.is_empty(),
+            "empty dates input should return empty map"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_agenda_batch_returns_correct_counts() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert blocks that own the agenda entries
+        insert_block(&pool, "AG_BLK1", "content", "task 1", None, None).await;
+        insert_block(&pool, "AG_BLK2", "content", "task 2", None, None).await;
+        insert_block(&pool, "AG_BLK3", "content", "task 3", None, None).await;
+
+        // Insert agenda_cache entries: 2 items on 2025-06-01, 1 on 2025-06-02
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-06-01")
+            .bind("AG_BLK1")
+            .bind("property:due_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-06-01")
+            .bind("AG_BLK2")
+            .bind("property:due_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-06-02")
+            .bind("AG_BLK3")
+            .bind("property:due_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = count_agenda_batch_inner(
+            &pool,
+            vec![
+                "2025-06-01".into(),
+                "2025-06-02".into(),
+                "2025-06-03".into(),
+            ],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.get("2025-06-01"), Some(&2));
+        assert_eq!(result.get("2025-06-02"), Some(&1));
+        assert_eq!(
+            result.get("2025-06-03"),
+            None,
+            "date with no entries should not appear in result"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_agenda_batch_excludes_deleted_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert one live and one soft-deleted block
+        insert_block(&pool, "AG_LIVE", "content", "live", None, None).await;
+        insert_block(&pool, "AG_DEL", "content", "deleted", None, None).await;
+        // Soft-delete AG_DEL
+        sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = ?")
+            .bind("AG_DEL")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Both blocks have agenda entries on the same date
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-07-01")
+            .bind("AG_LIVE")
+            .bind("property:due_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-07-01")
+            .bind("AG_DEL")
+            .bind("property:due_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = count_agenda_batch_inner(&pool, vec!["2025-07-01".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.get("2025-07-01"),
+            Some(&1),
+            "only the live block should be counted"
+        );
+    }
+
+    // ======================================================================
+    // count_backlinks_batch
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_backlinks_batch_empty_page_ids_returns_empty() {
+        let (pool, _dir) = test_pool().await;
+        let result = count_backlinks_batch_inner(&pool, vec![]).await.unwrap();
+        assert!(
+            result.is_empty(),
+            "empty page_ids input should return empty map"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_backlinks_batch_returns_correct_counts() {
+        let (pool, _dir) = test_pool().await;
+
+        // Target pages
+        insert_block(&pool, "BLB_TGT1", "page", "target 1", None, None).await;
+        insert_block(&pool, "BLB_TGT2", "page", "target 2", None, None).await;
+        // Source blocks
+        insert_block(&pool, "BLB_SRC1", "content", "src 1", None, None).await;
+        insert_block(&pool, "BLB_SRC2", "content", "src 2", None, None).await;
+        insert_block(&pool, "BLB_SRC3", "content", "src 3", None, None).await;
+
+        // 2 links to TGT1, 1 link to TGT2
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind("BLB_SRC1")
+            .bind("BLB_TGT1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind("BLB_SRC2")
+            .bind("BLB_TGT1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind("BLB_SRC3")
+            .bind("BLB_TGT2")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = count_backlinks_batch_inner(
+            &pool,
+            vec!["BLB_TGT1".into(), "BLB_TGT2".into(), "NONEXISTENT".into()],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.get("BLB_TGT1"), Some(&2));
+        assert_eq!(result.get("BLB_TGT2"), Some(&1));
+        assert_eq!(
+            result.get("NONEXISTENT"),
+            None,
+            "page with no backlinks should not appear in result"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_backlinks_batch_excludes_deleted_source_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLD_TGT", "page", "target", None, None).await;
+        insert_block(&pool, "BLD_LIVE", "content", "live src", None, None).await;
+        insert_block(&pool, "BLD_DEL", "content", "deleted src", None, None).await;
+
+        // Soft-delete BLD_DEL
+        sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = ?")
+            .bind("BLD_DEL")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Both link to the same target
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind("BLD_LIVE")
+            .bind("BLD_TGT")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind("BLD_DEL")
+            .bind("BLD_TGT")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = count_backlinks_batch_inner(&pool, vec!["BLD_TGT".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.get("BLD_TGT"),
+            Some(&1),
+            "only the live source block should be counted"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn count_backlinks_batch_excludes_conflict_source_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "CTGT", "page", "target", None, None).await;
+        insert_block(&pool, "CLIVE", "content", "live src", None, None).await;
+        insert_block(&pool, "CCONF", "content", "conflict src", None, None).await;
+
+        // Mark CCONF as conflict
+        sqlx::query("UPDATE blocks SET is_conflict = 1 WHERE id = ?")
+            .bind("CCONF")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Both link to the same target
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind("CLIVE")
+            .bind("CTGT")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind("CCONF")
+            .bind("CTGT")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = count_backlinks_batch_inner(&pool, vec!["CTGT".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.get("CTGT"),
+            Some(&1),
+            "only the non-conflict source block should be counted"
+        );
     }
 }

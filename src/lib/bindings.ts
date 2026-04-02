@@ -556,6 +556,28 @@ async cancelSync() : Promise<Result<null, { kind: string; message: string }>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: batch-count agenda items per date. Delegates to [`count_agenda_batch_inner`].
+ */
+async countAgendaBatch(dates: string[]) : Promise<Result<Partial<{ [key in string]: number }>, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("count_agenda_batch", { dates }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`].
+ */
+async countBacklinksBatch(pageIds: string[]) : Promise<Result<Partial<{ [key in string]: number }>, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("count_backlinks_batch", { pageIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

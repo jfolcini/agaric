@@ -108,6 +108,9 @@ mod specta_tests {
             crate::commands::cancel_pairing,
             crate::commands::start_sync,
             crate::commands::cancel_sync,
+            // Batch count commands (#604)
+            crate::commands::count_agenda_batch,
+            crate::commands::count_backlinks_batch,
         ])
     }
 
@@ -260,6 +263,9 @@ pub fn run() {
         commands::cancel_pairing,
         commands::start_sync,
         commands::cancel_sync,
+        // Batch count commands (#604)
+        commands::count_agenda_batch,
+        commands::count_backlinks_batch,
     ]);
 
     tauri::Builder::default()
