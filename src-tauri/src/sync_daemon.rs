@@ -169,7 +169,10 @@ async fn daemon_loop(
                                 // If this peer is already paired, sync immediately
                                 let refs = peer_refs::list_peer_refs(&pool)
                                     .await
-                                    .unwrap_or_default();
+                                    .unwrap_or_else(|e| {
+                                        tracing::warn!("list_peer_refs failed: {e}");
+                                        vec![]
+                                    });
                                 if refs.iter().any(|p| p.peer_id == peer.device_id) {
                                     try_sync_with_peer(
                                         &pool,
@@ -190,7 +193,10 @@ async fn daemon_loop(
 
             // Branch B: debounced local-change notification
             _ = scheduler.wait_for_debounced_change() => {
-                let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_default();
+                let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_else(|e| {
+                    tracing::warn!("list_peer_refs failed: {e}");
+                    vec![]
+                });
                 for peer_ref in &refs {
                     if let Some(dp) = discovered.get(&peer_ref.peer_id) {
                         try_sync_with_peer(
@@ -209,7 +215,10 @@ async fn daemon_loop(
         }
 
         // Periodic resync check (runs every loop iteration, ~500ms cadence)
-        let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_default();
+        let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_else(|e| {
+            tracing::warn!("list_peer_refs failed: {e}");
+            vec![]
+        });
         let peer_tuples: Vec<(String, Option<String>)> = refs
             .iter()
             .map(|p| (p.peer_id.clone(), p.synced_at.clone()))

@@ -81,7 +81,7 @@ impl SyncScheduler {
     /// Returns `None` if another sync is already in progress for this peer.
     pub fn try_lock_peer(&self, peer_id: &str) -> Option<PeerSyncGuard> {
         let mutex = {
-            let mut locks = self.peer_locks.lock().expect("peer_locks poisoned");
+            let mut locks = self.peer_locks.lock().unwrap_or_else(|e| e.into_inner());
             Arc::clone(
                 locks
                     .entry(peer_id.to_string())
@@ -101,7 +101,7 @@ impl SyncScheduler {
 
     /// Check whether `peer_id` is allowed to retry now.
     pub fn may_retry(&self, peer_id: &str) -> bool {
-        let backoff = self.backoff.lock().expect("backoff poisoned");
+        let backoff = self.backoff.lock().unwrap_or_else(|e| e.into_inner());
         match backoff.get(peer_id) {
             None => true,
             Some(state) => Instant::now() >= state.next_retry_at,
@@ -110,7 +110,7 @@ impl SyncScheduler {
 
     /// Record a sync failure for `peer_id`, doubling the backoff.
     pub fn record_failure(&self, peer_id: &str) {
-        let mut backoff = self.backoff.lock().expect("backoff poisoned");
+        let mut backoff = self.backoff.lock().unwrap_or_else(|e| e.into_inner());
         let state = backoff.entry(peer_id.to_string()).or_insert(BackoffState {
             next_retry_at: Instant::now(),
             backoff: MIN_BACKOFF,
@@ -123,13 +123,13 @@ impl SyncScheduler {
 
     /// Record a successful sync, resetting the backoff for `peer_id`.
     pub fn record_success(&self, peer_id: &str) {
-        let mut backoff = self.backoff.lock().expect("backoff poisoned");
+        let mut backoff = self.backoff.lock().unwrap_or_else(|e| e.into_inner());
         backoff.remove(peer_id);
     }
 
     /// Return the current consecutive failure count for a peer (0 if none).
     pub fn failure_count(&self, peer_id: &str) -> u32 {
-        let backoff = self.backoff.lock().expect("backoff poisoned");
+        let backoff = self.backoff.lock().unwrap_or_else(|e| e.into_inner());
         backoff.get(peer_id).map_or(0, |s| s.consecutive_failures)
     }
 

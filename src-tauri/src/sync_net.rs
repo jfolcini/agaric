@@ -493,6 +493,13 @@ impl SyncConnection {
         let msg = self.recv_message().await?;
         match msg {
             Message::Text(text) => {
+                if text.len() > Self::MAX_MSG_SIZE {
+                    return Err(sync_err(format!(
+                        "text message too large: {} bytes (max {})",
+                        text.len(),
+                        Self::MAX_MSG_SIZE
+                    )));
+                }
                 serde_json::from_str(&text).map_err(|e| sync_err(format!("deserialize: {e}")))
             }
             other => Err(sync_err(format!("expected text message, got {:?}", other))),
@@ -509,7 +516,16 @@ impl SyncConnection {
     pub async fn recv_binary(&mut self) -> Result<Vec<u8>, AppError> {
         let msg = self.recv_message().await?;
         match msg {
-            Message::Binary(data) => Ok(data.to_vec()),
+            Message::Binary(data) => {
+                if data.len() > Self::MAX_MSG_SIZE {
+                    return Err(sync_err(format!(
+                        "binary message too large: {} bytes (max {})",
+                        data.len(),
+                        Self::MAX_MSG_SIZE
+                    )));
+                }
+                Ok(data.to_vec())
+            }
             other => Err(sync_err(format!(
                 "expected binary message, got {:?}",
                 other
@@ -543,6 +559,11 @@ impl SyncConnection {
     /// silent (e.g. WiFi drop without TCP RST, peer crash), the sync session
     /// will fail rather than hang indefinitely.
     const RECV_TIMEOUT: Duration = Duration::from_secs(30);
+
+    /// Maximum allowed WebSocket message size (10 MB).  Only paired devices
+    /// on the user's own LAN can connect (TLS cert pinning + passphrase),
+    /// so this is defense-in-depth against runaway payloads.
+    const MAX_MSG_SIZE: usize = 10_000_000;
 
     async fn send_message(&mut self, msg: Message) -> Result<(), AppError> {
         match &mut self.inner {
