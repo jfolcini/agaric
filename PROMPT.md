@@ -8,9 +8,11 @@ Work through REVIEW-LATER.md in manageable batches. If it's empty, generate new 
 
 Read REVIEW-LATER.md. Group 2-4 related items into a batch (same domain: e.g., all sync items, all test gaps, all Android items). Leave the rest for future batches — don't try to clear everything at once.
 
-### 2. BUILD
+### 2. BUILD (parallel by default)
 
-Launch build subagent(s) for the batch. Each subagent prompt must include:
+Split the batch into **parallel subagents by domain/file-boundary** — e.g., one Rust subagent, one frontend subagent, or one per non-overlapping feature. Launch them all as background subagents simultaneously. Don't wait for one to finish before launching the next.
+
+Each subagent prompt must include:
 
 - Working directory path
 - `. "$HOME/.cargo/env"` for Rust subagents
@@ -19,15 +21,11 @@ Launch build subagent(s) for the batch. Each subagent prompt must include:
 - Verification command: `cd src-tauri && cargo nextest run` for Rust, `npx vitest run` for frontend
 - Do NOT paste file contents, long docs, or environment tables into subagent prompts — keep them minimal
 
-**Worktrees:** Use `git worktree add` only when ALL three conditions are met:
+**While subagents build:** The orchestrator should not idle. Apply trivial 1-line fixes directly, update documentation, or pre-read source files for the next batch.
 
-- Two or more subagents running in parallel
-- Each touches different files with no overlap
-- Each involves 3+ file changes
+**Worktrees:** Use `git worktree add` only when parallel subagents touch **overlapping directories** and need independent git state. If subagents touch non-overlapping files, they can safely work in the main tree without worktrees. Skip worktrees for sequential work, single-file edits, or review-only subagents.
 
-Otherwise work directly in the main tree. Skip worktrees for sequential work, single-file edits, or review-only subagents.
-
-**Sizing:** Prefer fewer, larger subagents (2-5 related tasks per subagent, same domain). Each new worktree pays ~15s cold-compile overhead. Batch trivial 1-line fixes together, or apply them directly as orchestrator.
+**Sizing:** Prefer 2-3 focused parallel subagents grouped by domain over 1 large sequential subagent. Each worktree pays ~15s cold-compile overhead, but that's recouped if the parallel wall-clock time is shorter. Batch trivial 1-line fixes together and apply them as orchestrator (in parallel with subagent work).
 
 **Subagent verification scope:** Build subagents verify only their own work by running the relevant tests. Do NOT run clippy, fmt, biome, or prek inside subagents — the orchestrator runs prek once after merging.
 
@@ -40,9 +38,11 @@ Every new or changed code path must have tests:
 
 This is non-negotiable — no code ships without tests.
 
-### 4. REVIEW
+### 4. REVIEW (pipelined with BUILD)
 
-Launch a separate review subagent for each build subagent. No self-reviews — the reviewer must be a different subagent than the builder. Reviewers check:
+**Don't wait for all builds to finish.** As each build subagent completes, immediately launch its review subagent while remaining builds continue. If multiple builds finish close together, launch all their review subagents in parallel.
+
+No self-reviews — the reviewer must be a different subagent than the builder. Reviewers check:
 
 - **Correctness:** Does the fix actually address the REVIEW-LATER item?
 - **Test coverage:** Are all branches covered? Missing edge cases?
@@ -73,11 +73,11 @@ In REVIEW-LATER.md: remove resolved items entirely — both the summary table ro
 
 Pick one large feature area to review. Good candidates: sync (`sync_daemon.rs`, `sync_cert.rs`, `merge.rs`), materializer (`materializer.rs`, `cache.rs`, `fts.rs`), editor (`markdown-serializer.ts`, TipTap extensions, `BlockTree.tsx`), stores (`blocks.ts`, `navigation.ts`, `undo.ts`), or any area not recently reviewed in SESSION-LOG.md.
 
-Launch 2-3 subagents to do a thorough code review — looking for bugs, missing error handling, test gaps, performance issues, a11y problems, UX regressions.
+Launch 2-3 review subagents **in parallel**, each covering a different slice of the feature area (e.g., one for error handling, one for test gaps, one for performance). Don't assign the same files to multiple reviewers.
 
-### Step B: Cross-validate
+### Step B: Cross-validate (pipelined with Step A)
 
-Launch a different set of subagents to validate findings from Step A. Their specific job:
+**Don't wait for all reviewers to finish.** As each Step A subagent completes, immediately launch a validator subagent for its findings while other reviews continue. Validator subagents check:
 
 - **Hallucinated issues** — Does the problem actually exist in the code? Read the actual source.
 - **Exaggerated severity** — Is this really P1/P2, or is it P3/P4? Does it cause data loss or just a minor UX hiccup?
