@@ -307,6 +307,34 @@ describe('DeviceManagement', () => {
     expect(errorEl?.getAttribute('aria-live')).toBe('polite')
   })
 
+  it('announces sync errors to screen readers via sr-only aria-live region (#423)', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_device_id') return mockDeviceId
+      if (cmd === 'list_peer_refs') return mockPeers
+      if (cmd === 'start_sync') throw new Error('Connection refused by peer')
+      return undefined
+    })
+
+    const { container } = render(<DeviceManagement />)
+
+    await screen.findByText('peer-abc-123...')
+
+    const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+    await user.click(syncBtns[0])
+
+    // Wait for the visible error to appear first
+    await waitFor(() => {
+      expect(screen.getByText('Connection refused by peer')).toBeInTheDocument()
+    })
+
+    // The sr-only aria-live region should announce the error
+    const srRegions = container.querySelectorAll('[aria-live="polite"]')
+    const srOnly = Array.from(srRegions).find((el) => el.classList.contains('sr-only'))
+    expect(srOnly).toBeTruthy()
+    expect(srOnly?.textContent).toContain('Sync error: Connection refused by peer')
+  })
+
   // --- New tests ---
 
   it('refreshes peer list when PairingDialog closes', async () => {
@@ -642,9 +670,9 @@ describe('DeviceManagement', () => {
       expect(syncCalls).toEqual(['peer-1', 'peer-2'])
     })
 
-    // Error should mention the failed peer
+    // Error should mention the failed peer (both visible + sr-only region)
     await waitFor(() => {
-      expect(screen.getByText(/Sync failed for/)).toBeInTheDocument()
+      expect(screen.getAllByText(/Sync failed for/).length).toBeGreaterThan(0)
     })
   })
 

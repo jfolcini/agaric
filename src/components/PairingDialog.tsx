@@ -331,7 +331,7 @@ export function PairingDialog({
         {/* Loading state */}
         {loading && (
           <div className="pairing-loading flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             <span className="ml-2 text-sm text-muted-foreground">Starting pairing...</span>
           </div>
         )}
@@ -386,7 +386,7 @@ export function PairingDialog({
                   value={words[i]}
                   onChange={(e) => handleWordChange(i, e.target.value)}
                   onKeyDown={(e) => handleWordKeyDown(i, e)}
-                  placeholder={`word ${i + 1}`}
+                  placeholder={`${['1st', '2nd', '3rd', '4th'][i]} word`}
                   aria-label={`Passphrase word ${i + 1}`}
                   className="text-center [@media(pointer:coarse)]:min-h-[44px]"
                   disabled={pairLoading || isExpired}

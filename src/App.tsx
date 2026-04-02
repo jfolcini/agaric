@@ -282,9 +282,8 @@ function App() {
                         )}
                         {item.id === 'status' && (
                           <span
-                            role="status"
-                            className={`ml-auto h-2 w-2 rounded-full ${syncDotClass(syncState, syncPeers.length > 0)}`}
-                            aria-label={`Sync: ${syncPeers.length > 0 ? syncState : 'no peers'}`}
+                            className={`ml-auto h-2.5 w-2.5 rounded-full ${syncDotClass(syncState, syncPeers.length > 0)}`}
+                            aria-hidden="true"
                           />
                         )}
                       </SidebarMenuButton>
