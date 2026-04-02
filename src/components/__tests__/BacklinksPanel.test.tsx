@@ -1416,4 +1416,38 @@ describe('BacklinksPanel', () => {
       })
     })
   })
+
+  describe('pagination parameters (#408)', () => {
+    it('passes cursor on Load More and appends results', async () => {
+      const user = userEvent.setup()
+      mockInvokeWith({
+        items: [makeBlock('BL1', 'first')],
+        next_cursor: 'cursor-abc',
+        has_more: true,
+        total_count: 2,
+      })
+
+      render(<BacklinksPanel blockId="BLOCK1" />)
+      await screen.findByText('first')
+
+      mockInvokeWith({
+        items: [makeBlock('BL2', 'second')],
+        next_cursor: null,
+        has_more: false,
+        total_count: 2,
+      })
+
+      const loadMoreBtn = screen.getByRole('button', { name: /Load more/i })
+      await user.click(loadMoreBtn)
+
+      await screen.findByText('second')
+      expect(screen.getByText('first')).toBeInTheDocument()
+
+      const filteredCalls = mockedInvoke.mock.calls.filter(
+        (c) => c[0] === 'query_backlinks_filtered'
+      )
+      const loadMoreCall = filteredCalls[filteredCalls.length - 1]
+      expect((loadMoreCall[1] as Record<string, unknown>).cursor).toBe('cursor-abc')
+    })
+  })
 })

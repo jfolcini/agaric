@@ -67,6 +67,8 @@ const mockPeers = [
     synced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
     reset_count: 0,
     last_reset_at: null,
+    cert_hash: null,
+    device_name: null,
   },
   {
     peer_id: 'peer-def-0987654321',
@@ -75,6 +77,8 @@ const mockPeers = [
     synced_at: null,
     reset_count: 1,
     last_reset_at: '2025-01-01T00:00:00Z',
+    cert_hash: null,
+    device_name: null,
   },
 ]
 
@@ -494,6 +498,8 @@ describe('DeviceManagement', () => {
             synced_at: null,
             reset_count: 0,
             last_reset_at: null,
+            cert_hash: null,
+            device_name: null,
           },
         ]
       return null
@@ -518,6 +524,8 @@ describe('DeviceManagement', () => {
             synced_at: null,
             reset_count: 0,
             last_reset_at: null,
+            cert_hash: null,
+            device_name: null,
           },
           {
             peer_id: 'peer-2',
@@ -526,6 +534,8 @@ describe('DeviceManagement', () => {
             synced_at: null,
             reset_count: 0,
             last_reset_at: null,
+            cert_hash: null,
+            device_name: null,
           },
         ]
       if (cmd === 'start_sync') {
@@ -551,6 +561,123 @@ describe('DeviceManagement', () => {
 
     await waitFor(() => {
       expect(syncCalls).toEqual(['peer-1', 'peer-2'])
+    })
+  })
+
+  it('displays device name when set', async () => {
+    mockInvokeByCommand({
+      get_device_id: mockDeviceId,
+      list_peer_refs: [
+        {
+          peer_id: 'PEER01',
+          last_hash: null,
+          last_sent_hash: null,
+          synced_at: null,
+          reset_count: 0,
+          last_reset_at: null,
+          cert_hash: null,
+          device_name: "Javier's Phone",
+        },
+      ],
+    })
+    const { container } = render(<DeviceManagement />)
+    await waitFor(() => {
+      expect(screen.getByText("Javier's Phone")).toBeInTheDocument()
+    })
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('Sync All continues when first peer fails (#421)', async () => {
+    const syncCalls: string[] = []
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'get_device_id') return 'device-123'
+      if (cmd === 'list_peer_refs') return [
+        {
+          peer_id: 'peer-1',
+          last_hash: null,
+          last_sent_hash: null,
+          synced_at: null,
+          reset_count: 0,
+          last_reset_at: null,
+          cert_hash: null,
+          device_name: null,
+        },
+        {
+          peer_id: 'peer-2',
+          last_hash: null,
+          last_sent_hash: null,
+          synced_at: null,
+          reset_count: 0,
+          last_reset_at: null,
+          cert_hash: null,
+          device_name: null,
+        },
+      ]
+      if (cmd === 'start_sync') {
+        const peerId = (args as Record<string, string>).peerId
+        syncCalls.push(peerId)
+        if (peerId === 'peer-1') throw new Error('Connection refused')
+        return {
+          state: 'completed',
+          local_device_id: 'device-123',
+          remote_device_id: peerId,
+          ops_received: 0,
+          ops_sent: 0,
+        }
+      }
+      return null
+    })
+
+    const { container } = render(<DeviceManagement />)
+    await waitFor(() => {
+      expect(container.querySelector('.device-sync-all-btn')).toBeTruthy()
+    })
+
+    await userEvent.click(
+      container.querySelector('.device-sync-all-btn') as HTMLButtonElement,
+    )
+
+    await waitFor(() => {
+      expect(syncCalls).toEqual(['peer-1', 'peer-2'])
+    })
+
+    // Error should mention the failed peer
+    await waitFor(() => {
+      expect(screen.getByText(/Sync failed for/)).toBeInTheDocument()
+    })
+  })
+
+  it('error can be dismissed with X button (#419)', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_device_id') return mockDeviceId
+      if (cmd === 'list_peer_refs') return mockPeers
+      if (cmd === 'start_sync') throw new Error('sync failed')
+      return undefined
+    })
+
+    render(<DeviceManagement />)
+
+    // Wait for peers to load
+    await screen.findByText('peer-abc-123...')
+
+    // Trigger a sync error
+    const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+    await user.click(syncBtns[0])
+
+    // Wait for error to appear
+    await waitFor(() => {
+      expect(screen.getByText('sync failed')).toBeInTheDocument()
+    })
+
+    // Click dismiss button
+    const dismissBtn = screen.getByRole('button', { name: /Dismiss error/i })
+    await user.click(dismissBtn)
+
+    // Error should be gone
+    await waitFor(() => {
+      expect(screen.queryByText('sync failed')).not.toBeInTheDocument()
     })
   })
 })

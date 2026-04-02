@@ -11,7 +11,7 @@
  * Follows StatusPanel.tsx layout patterns.
  */
 
-import { Loader2, RefreshCw, Smartphone, Unplug } from 'lucide-react'
+import { Loader2, Pencil, RefreshCw, Smartphone, Unplug, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
@@ -20,7 +20,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatLastSynced, truncateId } from '@/lib/format'
 import type { PeerRefRow } from '../lib/tauri'
-import { cancelSync, deletePeerRef, getDeviceId, listPeerRefs, startSync } from '../lib/tauri'
+import {
+  cancelSync,
+  deletePeerRef,
+  getDeviceId,
+  listPeerRefs,
+  startSync,
+  updatePeerName,
+} from '../lib/tauri'
 import { PairingDialog } from './PairingDialog'
 import { UnpairConfirmDialog } from './UnpairConfirmDialog'
 
@@ -91,6 +98,7 @@ export function DeviceManagement(): React.ReactElement {
   const handleSyncAll = useCallback(async () => {
     setSyncingAll(true)
     setError(null)
+    const failures: string[] = []
     for (const peer of peers) {
       setSyncingPeerId(peer.peer_id)
       let timeoutId: ReturnType<typeof setTimeout> | undefined
@@ -102,17 +110,22 @@ export function DeviceManagement(): React.ReactElement {
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Sync failed'
         console.error(`Sync failed for ${peer.peer_id}:`, err)
-        setError(message)
+        failures.push(peer.device_name || truncateId(peer.peer_id))
         if (message === 'Sync timed out') {
           await cancelSync()
         }
-        break
       } finally {
         clearTimeout(timeoutId)
       }
       setSyncingPeerId(null)
     }
+    const failureMessage = failures.length > 0
+      ? `Sync failed for: ${failures.join(', ')}`
+      : null
     await loadData()
+    if (failureMessage) {
+      setError(failureMessage)
+    }
     setSyncingAll(false)
   }, [peers, loadData])
 
@@ -146,9 +159,17 @@ export function DeviceManagement(): React.ReactElement {
               className="device-management-error flex items-center gap-2 mb-3"
               aria-live="polite"
             >
-              <p className="text-sm text-destructive">{error}</p>
+              <p className="text-sm text-destructive flex-1">{error}</p>
               <Button variant="outline" size="sm" onClick={() => loadData()}>
                 Retry
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setError(null)}
+                aria-label="Dismiss error"
+              >
+                <X className="h-4 w-4" />
               </Button>
             </div>
           )}
@@ -205,9 +226,14 @@ export function DeviceManagement(): React.ReactElement {
                         <div className="flex items-center gap-2 min-w-0">
                           <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
                           <div className="min-w-0">
-                            <p className="device-peer-id text-sm font-mono truncate">
-                              {truncateId(peer.peer_id)}
+                            <p className="device-peer-name text-sm font-medium truncate">
+                              {peer.device_name || truncateId(peer.peer_id)}
                             </p>
+                            {peer.device_name && (
+                              <p className="device-peer-id text-xs font-mono text-muted-foreground truncate">
+                                {truncateId(peer.peer_id)}
+                              </p>
+                            )}
                             <p className="text-xs text-muted-foreground">
                               Last: {formatLastSynced(peer.synced_at)}
                             </p>
@@ -219,6 +245,25 @@ export function DeviceManagement(): React.ReactElement {
                           </div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="device-rename-btn"
+                            onClick={async () => {
+                              const name = window.prompt('Device name:', peer.device_name ?? '')
+                              if (name !== null) {
+                                try {
+                                  await updatePeerName(peer.peer_id, name.trim() || null)
+                                  await loadData()
+                                } catch (e) {
+                                  setError(e instanceof Error ? e.message : 'Failed to rename')
+                                }
+                              }
+                            }}
+                            aria-label={`Rename device ${peer.device_name || truncateId(peer.peer_id)}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
                           <Button
                             variant="outline"
                             size="sm"

@@ -38,7 +38,7 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
   const [hasMore, setHasMore] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
   const [resolveVersion, setResolveVersion] = useState(0)
-  const resolveCache = useRef<Map<string, { title: string; deleted: boolean }>>(new Map())
+  const resolveCache = useRef<Map<string, { title: string; deleted: boolean; cachedAt: number }>>(new Map())
   const requestIdRef = useRef(0)
   const prevBlockIdRef = useRef(blockId)
 
@@ -142,9 +142,13 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
       for (const m of block.content.matchAll(TAG_RE)) idsToResolve.add(m[1])
     }
 
-    // Remove already-cached IDs
+    // Remove already-cached IDs (skip expired entries so they get re-fetched)
+    const TTL_MS = 5 * 60 * 1000
     for (const id of idsToResolve) {
-      if (resolveCache.current.has(id)) idsToResolve.delete(id)
+      const cached = resolveCache.current.get(id)
+      if (cached && (Date.now() - cached.cachedAt <= TTL_MS)) {
+        idsToResolve.delete(id)
+      }
     }
 
     if (idsToResolve.size === 0) {
@@ -158,6 +162,13 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
     batchResolve([...idsToResolve])
       .then((resolved) => {
         if (cancelled) return
+        // Evict entries older than 5 minutes
+        const now = Date.now()
+        for (const [key, entry] of resolveCache.current) {
+          if (now - entry.cachedAt > TTL_MS) {
+            resolveCache.current.delete(key)
+          }
+        }
         // Cap resolve cache at 1000 entries to prevent unbounded growth
         const MAX_CACHE_SIZE = 1000
         if (resolveCache.current.size + idsToResolve.size > MAX_CACHE_SIZE) {
@@ -175,12 +186,13 @@ export function BacklinksPanel({ blockId }: BacklinksPanelProps): React.ReactEle
               r.title?.slice(0, 60) ||
               (r.block_type === 'tag' ? `#${r.id.slice(0, 8)}...` : `[[${r.id.slice(0, 8)}...]]`),
             deleted: r.deleted,
+            cachedAt: Date.now(),
           })
         }
         // Mark unresolved IDs as deleted (not found in DB)
         for (const id of idsToResolve) {
           if (!resolveCache.current.has(id)) {
-            resolveCache.current.set(id, { title: `[[${id.slice(0, 8)}...]]`, deleted: true })
+            resolveCache.current.set(id, { title: `[[${id.slice(0, 8)}...]]`, deleted: true, cachedAt: Date.now() })
           }
         }
         setResolveVersion((v) => v + 1)

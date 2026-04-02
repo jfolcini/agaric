@@ -1,5 +1,13 @@
 import { act, renderHook } from '@testing-library/react'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}))
 
 // Mock tauri.ts
 vi.mock('../../lib/tauri', () => ({
@@ -173,5 +181,63 @@ describe('useSyncTrigger', () => {
     await act(async () => {
       resolveSync?.()
     })
+  })
+
+  it('shows toast.success when all peers sync successfully', async () => {
+    mockListPeerRefs.mockResolvedValue([
+      {
+        peer_id: 'PEER1',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+      },
+    ])
+
+    const { result } = renderHook(() => useSyncTrigger())
+
+    await act(async () => {
+      await result.current.syncAll()
+    })
+
+    expect(toast.success).toHaveBeenCalledWith('Sync complete')
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('shows toast.error for per-peer sync failure', async () => {
+    mockListPeerRefs.mockResolvedValue([
+      {
+        peer_id: 'PEER_FAIL_12345',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+      },
+    ])
+    mockStartSync.mockRejectedValue(new Error('connection refused'))
+
+    const { result } = renderHook(() => useSyncTrigger())
+
+    await act(async () => {
+      await result.current.syncAll()
+    })
+
+    expect(toast.error).toHaveBeenCalledWith(
+      'Sync failed for device PEER_FAIL_12...',
+    )
+  })
+
+  it('shows toast.error when listPeerRefs fails', async () => {
+    mockListPeerRefs.mockRejectedValue(new Error('DB error'))
+
+    const { result } = renderHook(() => useSyncTrigger())
+
+    await act(async () => {
+      await result.current.syncAll()
+    })
+
+    expect(toast.error).toHaveBeenCalledWith('Sync failed')
   })
 })
