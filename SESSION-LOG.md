@@ -64,6 +64,33 @@ Review: PASS — reviewer flagged missing test for #483 message, added before co
 - Frontend: 71/71 test files, 2062 tests pass (+1 file, +8 tests)
 - REVIEW-LATER.md: 8 → 5 open items (resolved #483, #493, #494)
 
+### Phase 5: Feature Reviews
+
+3 parallel review subagents covering Journal, Block Store + Navigation, and Markdown + Editor.
+Cross-validated P1 claims with a separate subagent.
+
+**Reviews:**
+- Journal subsystem: 14 findings (3 P1, 3 P2, 4 P3, 4 P4)
+- Block Store + Navigation: 14 findings (3 P1, 3 P2, 6 P3, 2 P4)
+- Markdown + Editor: 5 findings (all P3 test gaps), no P1/P2 — serializer is solid
+
+**Cross-validation of 6 P1 claims:**
+- 3 REJECTED: timezone date parsing (false positive — both sides use local time), date formatting mismatch (false positive), merge stale data (false positive — roving editor flush ensures freshness)
+- 1 EXAGGERATED: TaskSection error swallowing (intentional graceful degradation, P3)
+- 1 CONFIRMED but downgraded: delete check wrong array (P2/P3, not P1)
+- 1 REJECTED: reorder off-by-one (false positive — position calculated before mutations)
+
+**6 confirmed findings added to REVIEW-LATER.md (#495-#500):**
+- #495: Delete check uses wrong array (blocks vs collapsedVisible)
+- #496: Missing a11y announcements for indent/dedent/move
+- #497: Navigation store duplicate pages in stack
+- #498: TaskSection silently swallows errors
+- #499: Calendar dropdown missing role/aria-label
+- #500: TaskSection header missing focus-visible ring
+
+### Phase 5 Stats
+- REVIEW-LATER.md: 5 → 11 open items (+6 from feature reviews)
+
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 
 Resolved all 18 Tier 7.5 items. 7 BacklinkFilterBuilder UX/a11y fixes, 6 BacklinksPanel fixes, 1 button.tsx touch target, 3 backend perf optimizations, 2 already resolved by Tier 7.
