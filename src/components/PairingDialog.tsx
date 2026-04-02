@@ -57,6 +57,7 @@ export function PairingDialog({
   const [countdown, setCountdown] = useState<number | null>(null)
 
   const dialogRef = useRef<HTMLDivElement>(null)
+  const retryBtnRef = useRef<HTMLButtonElement>(null)
 
   // Helper: query word inputs from the DOM (Input component doesn't forward refs)
   const getWordInputs = useCallback(
@@ -279,6 +280,13 @@ export function PairingDialog({
       ? `${Math.floor(countdown / 60)}:${String(countdown % 60).padStart(2, '0')}`
       : null
 
+  // #430: Move focus to Retry button when error or expiry occurs
+  useEffect(() => {
+    if ((error || isExpired) && retryBtnRef.current) {
+      retryBtnRef.current.focus()
+    }
+  }, [error, isExpired])
+
   if (!open) return null
 
   return (
@@ -320,6 +328,7 @@ export function PairingDialog({
             <Button
               variant="outline"
               size="sm"
+              ref={retryBtnRef}
               onClick={() => init()}
               className="pairing-retry-btn shrink-0"
             >
@@ -363,10 +372,21 @@ export function PairingDialog({
                     Session expires in {countdownDisplay}
                   </p>
                 )}
-                {isExpired && (
-                  <p className="pairing-expired text-xs text-destructive mt-1 font-medium">
-                    Session expired
-                  </p>
+                {isExpired && !error && (
+                  <div className="pairing-expired flex items-center gap-2 mt-1">
+                    <p className="text-xs text-destructive font-medium flex-1">
+                      Session expired
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      ref={retryBtnRef}
+                      onClick={() => init()}
+                      className="pairing-retry-expired-btn shrink-0"
+                    >
+                      Retry
+                    </Button>
+                  </div>
                 )}
               </div>
             </div>

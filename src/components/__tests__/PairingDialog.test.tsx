@@ -677,4 +677,58 @@ describe('PairingDialog', () => {
 
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
+
+  it('shows Retry button when session expires and focuses it (#420, #430)', async () => {
+    vi.useFakeTimers()
+
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+      cancel_pairing: undefined,
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    // Wait for pairing info to load
+    await act(async () => {
+      await vi.runAllTimersAsync()
+    })
+
+    expect(screen.getByText('alpha bravo charlie delta')).toBeInTheDocument()
+
+    // Advance past the full 300-second timeout
+    await act(async () => {
+      vi.advanceTimersByTime(301_000)
+    })
+
+    // #420: Retry button should appear in the expiry section
+    expect(screen.getByText('Session expired')).toBeInTheDocument()
+    const retryBtn = screen.getByRole('button', { name: /Retry/i })
+    expect(retryBtn).toBeInTheDocument()
+
+    // #430: Focus should have moved to the Retry button
+    expect(document.activeElement).toBe(retryBtn)
+
+    vi.useRealTimers()
+  })
+
+  it('moves focus to Retry button when error occurs (#430)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'start_pairing') throw new Error('network error')
+      if (cmd === 'list_peer_refs') return []
+      return undefined
+    })
+
+    const { container } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+
+    // Wait for error to appear (use container query to avoid sr-only duplicate)
+    await waitFor(() => {
+      const errorEl = container.querySelector('.pairing-error p')
+      expect(errorEl).toBeTruthy()
+      expect(errorEl?.textContent).toContain('network error')
+    })
+
+    const retryBtn = screen.getByRole('button', { name: /Retry/i })
+    expect(document.activeElement).toBe(retryBtn)
+  })
 })

@@ -267,4 +267,71 @@ mod tests {
             other => panic!("expected Complete, got {:?}", other),
         }
     }
+
+    // #459 — edge cases
+
+    #[test]
+    fn recording_event_sink_concurrent_emission() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let sink = Arc::new(RecordingEventSink::new());
+        let mut handles = vec![];
+
+        for t in 0..4 {
+            let s = sink.clone();
+            handles.push(thread::spawn(move || {
+                for i in 0..25 {
+                    s.on_sync_event(SyncEvent::Progress {
+                        state: format!("msg-{i}"),
+                        remote_device_id: format!("peer-{t}"),
+                        ops_received: 0,
+                        ops_sent: 0,
+                    });
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let events = sink.events();
+        assert_eq!(events.len(), 100, "4 threads × 25 events = 100 total events");
+    }
+
+    #[test]
+    fn recording_event_sink_large_volume() {
+        let sink = RecordingEventSink::new();
+        for i in 0..1000 {
+            sink.on_sync_event(SyncEvent::Progress {
+                state: format!("event-{i}"),
+                remote_device_id: "PEER".to_string(),
+                ops_received: 0,
+                ops_sent: 0,
+            });
+        }
+        let events = sink.events();
+        assert_eq!(events.len(), 1000, "sink should hold 1000+ events");
+    }
+
+    #[test]
+    fn recording_event_sink_special_characters_in_message() {
+        let sink = RecordingEventSink::new();
+        let special = "emoji: 📱 — unicode: é à ü — control: \t\n — quotes: \"hello\"";
+        sink.on_sync_event(SyncEvent::Progress {
+            state: special.to_string(),
+            remote_device_id: "PEER".to_string(),
+            ops_received: 0,
+            ops_sent: 0,
+        });
+        let events = sink.events();
+        assert_eq!(events.len(), 1, "one event should be recorded");
+        match &events[0] {
+            SyncEvent::Progress { state, .. } => {
+                assert_eq!(state, special, "special characters should roundtrip");
+            }
+            _ => panic!("expected Progress event"),
+        }
+    }
 }
