@@ -101,6 +101,7 @@ export const BlockLink = Node.create<BlockLinkOptions>({
       const clickHandler = (e: MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
+        if (dom.classList.contains('block-link-deleted')) return
         extension.options.onNavigate?.(currentId)
       }
       dom.addEventListener('click', clickHandler)
