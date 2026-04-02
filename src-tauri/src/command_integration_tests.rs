@@ -18,6 +18,8 @@ use crate::peer_refs;
 use crate::soft_delete;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
+use std::sync::Mutex;
+use crate::sync_scheduler::SyncScheduler;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -5217,5 +5219,231 @@ async fn update_peer_name_special_characters() {
         peers[0].device_name.as_deref(),
         Some(fancy_name),
         "unicode/special-char device name should roundtrip correctly"
+    );
+}
+
+// =========================================================================
+// Sync command integration tests — pairing + sync workflows
+// =========================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pairing_lifecycle_creates_peer_ref() {
+    let (pool, _dir) = test_pool().await;
+    let pairing = PairingState(Mutex::new(None));
+    let device_id = "dev-local";
+
+    // Start pairing
+    let info = start_pairing_inner(&pairing.0, device_id).unwrap();
+    assert!(!info.passphrase.is_empty(), "passphrase must be non-empty");
+
+    // Confirm pairing with remote device
+    confirm_pairing_inner(
+        &pool,
+        &pairing.0,
+        device_id,
+        info.passphrase.clone(),
+        "dev-remote".into(),
+    )
+    .await
+    .unwrap();
+
+    // Verify peer_ref was created
+    let peers = crate::commands::list_peer_refs_inner(&pool).await.unwrap();
+    assert_eq!(peers.len(), 1, "one peer_ref should exist after confirm");
+    assert_eq!(
+        peers[0].peer_id, "dev-remote",
+        "peer_id should be the remote device"
+    );
+
+    // Verify pairing session was cleared
+    assert!(
+        pairing.0.lock().unwrap().is_none(),
+        "pairing session must be cleared after confirm"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pairing_start_then_cancel_clears_session() {
+    let pairing = PairingState(Mutex::new(None));
+
+    let _info = start_pairing_inner(&pairing.0, "dev-1").unwrap();
+    assert!(
+        pairing.0.lock().unwrap().is_some(),
+        "session must exist after start"
+    );
+
+    cancel_pairing_inner(&pairing.0).unwrap();
+    assert!(
+        pairing.0.lock().unwrap().is_none(),
+        "session must be cleared after cancel"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn confirm_without_prior_start_still_creates_peer() {
+    let (pool, _dir) = test_pool().await;
+    let pairing = PairingState(Mutex::new(None));
+
+    // Confirm without starting — confirm_pairing_inner doesn't validate against
+    // a stored session; it creates a new one from the passphrase directly.
+    confirm_pairing_inner(
+        &pool,
+        &pairing.0,
+        "dev-1",
+        "some random phrase".into(),
+        "dev-remote".into(),
+    )
+    .await
+    .unwrap();
+
+    let peers = crate::commands::list_peer_refs_inner(&pool).await.unwrap();
+    assert_eq!(
+        peers.len(),
+        1,
+        "peer_ref should be created on confirm regardless of prior start"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_sync_returns_complete_info() {
+    let scheduler = SyncScheduler::new();
+
+    let info = start_sync_inner(&scheduler, "dev-local", "dev-remote".into()).unwrap();
+    assert_eq!(info.state, "complete", "sync state should be complete");
+    assert_eq!(info.local_device_id, "dev-local");
+    assert_eq!(info.remote_device_id, "dev-remote");
+    assert_eq!(info.ops_received, 0);
+    assert_eq!(info.ops_sent, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_sync_rejects_peer_in_backoff() {
+    let scheduler = SyncScheduler::new();
+
+    // Record a failure to trigger backoff
+    scheduler.record_failure("dev-remote");
+
+    let result = start_sync_inner(&scheduler, "dev-local", "dev-remote".into());
+    assert!(
+        result.is_err(),
+        "sync should be rejected when peer is in backoff"
+    );
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("backoff"),
+        "error should mention backoff"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn full_pair_then_sync_workflow() {
+    let (pool, _dir) = test_pool().await;
+    let pairing = PairingState(Mutex::new(None));
+    let scheduler = SyncScheduler::new();
+
+    // Pair
+    let info = start_pairing_inner(&pairing.0, "dev-local").unwrap();
+    confirm_pairing_inner(
+        &pool,
+        &pairing.0,
+        "dev-local",
+        info.passphrase,
+        "dev-remote".into(),
+    )
+    .await
+    .unwrap();
+
+    // Sync
+    let sync_info = start_sync_inner(&scheduler, "dev-local", "dev-remote".into()).unwrap();
+    assert_eq!(sync_info.state, "complete");
+
+    // Verify peer_ref persists
+    let peers = crate::commands::list_peer_refs_inner(&pool).await.unwrap();
+    assert_eq!(peers.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_sync_succeeds() {
+    let result = cancel_sync_inner();
+    assert!(
+        result.is_ok(),
+        "cancel_sync should always succeed (placeholder)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pair_multiple_devices_creates_separate_peer_refs() {
+    let (pool, _dir) = test_pool().await;
+    let pairing = PairingState(Mutex::new(None));
+    let device_id = "dev-local";
+
+    // Pair with first device
+    let info1 = start_pairing_inner(&pairing.0, device_id).unwrap();
+    confirm_pairing_inner(
+        &pool,
+        &pairing.0,
+        device_id,
+        info1.passphrase,
+        "dev-phone".into(),
+    )
+    .await
+    .unwrap();
+
+    // Pair with second device
+    let info2 = start_pairing_inner(&pairing.0, device_id).unwrap();
+    confirm_pairing_inner(
+        &pool,
+        &pairing.0,
+        device_id,
+        info2.passphrase,
+        "dev-tablet".into(),
+    )
+    .await
+    .unwrap();
+
+    let peers = crate::commands::list_peer_refs_inner(&pool).await.unwrap();
+    assert_eq!(peers.len(), 2, "two separate peer_refs should exist");
+
+    let ids: Vec<&str> = peers.iter().map(|p| p.peer_id.as_str()).collect();
+    assert!(ids.contains(&"dev-phone"), "phone peer should exist");
+    assert!(ids.contains(&"dev-tablet"), "tablet peer should exist");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn re_pairing_same_device_upserts_peer_ref() {
+    let (pool, _dir) = test_pool().await;
+    let pairing = PairingState(Mutex::new(None));
+    let device_id = "dev-local";
+
+    // Pair with device
+    let info1 = start_pairing_inner(&pairing.0, device_id).unwrap();
+    confirm_pairing_inner(
+        &pool,
+        &pairing.0,
+        device_id,
+        info1.passphrase,
+        "dev-remote".into(),
+    )
+    .await
+    .unwrap();
+
+    // Re-pair with same device
+    let info2 = start_pairing_inner(&pairing.0, device_id).unwrap();
+    confirm_pairing_inner(
+        &pool,
+        &pairing.0,
+        device_id,
+        info2.passphrase,
+        "dev-remote".into(),
+    )
+    .await
+    .unwrap();
+
+    // Should still be 1 peer_ref (upsert, not duplicate)
+    let peers = crate::commands::list_peer_refs_inner(&pool).await.unwrap();
+    assert_eq!(
+        peers.len(),
+        1,
+        "re-pairing same device should upsert, not create duplicate"
     );
 }

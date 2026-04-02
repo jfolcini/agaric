@@ -170,6 +170,22 @@ Reviews: Tauri IPC (8 findings) + E2E (11 findings). Cross-validation rejected a
 - Frontend: 71/71 test files, 2063 tests pass
 - REVIEW-LATER.md: 6 → 5 open items (resolved #503, added+resolved #506, #507)
 
+### Phase 10: Sync Command Integration Tests (#492)
+
+9 new integration tests for the 5 sync commands. Built in worktree, reviewed by subagent.
+
+| File | Change |
+|------|--------|
+| `command_integration_tests.rs` | #492: Added 9 integration tests covering pairing lifecycle, cancel, sync, backoff, multi-peer, re-pairing upsert, and cancel_sync placeholder. |
+
+Tests: `pairing_lifecycle_creates_peer_ref`, `pairing_start_then_cancel_clears_session`, `confirm_without_prior_start_still_creates_peer`, `start_sync_returns_complete_info`, `start_sync_rejects_peer_in_backoff`, `full_pair_then_sync_workflow`, `cancel_sync_succeeds`, `pair_multiple_devices_creates_separate_peer_refs`, `re_pairing_same_device_upserts_peer_ref`.
+
+Review: Reviewer flagged duplication with unit tests and missing edge cases. Fixed misleading test name, added 2 multi-peer/upsert workflow tests for better integration value.
+
+### Phase 10 Stats
+- Backend: 139 command integration tests pass (130 existing + 9 new)
+- REVIEW-LATER.md: 5 → 4 open items (resolved #492)
+
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 
 Resolved all 18 Tier 7.5 items. 7 BacklinkFilterBuilder UX/a11y fixes, 6 BacklinksPanel fixes, 1 button.tsx touch target, 3 backend perf optimizations, 2 already resolved by Tier 7.
