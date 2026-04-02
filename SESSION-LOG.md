@@ -1,5 +1,39 @@
 # Session Log
 
+## Session 56 — 2026-04-02 — Phase 5 Wave 3 batch 6: block fixed fields tests (#569) + priority bug fix
+
+### Batch 6 — Comprehensive test pass + priority A/B/C→1/2/3 fix (#569)
+46 new tests (22 Rust + 24 TS) covering all block fixed fields (todo_state, priority, due_date). During review, discovered frontend was sending "A"/"B"/"C" for priority values but backend validates "1"/"2"/"3" — fixed across all production and test files.
+
+Built by 2 parallel subagents (backend + frontend), reviewed by 3 subagents (backend review, frontend review, combined final review). All PASS.
+
+| File | Change |
+|------|--------|
+| `commands.rs` | 8 new tests: nonexistent/deleted block error paths for set_priority/set_due_date/set_todo_state, op log verification for all 3. |
+| `materializer.rs` | 3 new tests: SetProperty routing for priority + due_date reserved keys, DeleteProperty clearing todo_state column. Fixed priority value "B"→"2". |
+| `cache.rs` | 2 new tests: rebuild_agenda_cache includes blocks.due_date column, excludes NULL. |
+| `backlink_query.rs` | 4 new tests: DueDate filter operators Gt, Gte, Lte, Ne. |
+| `op.rs` | 2 new tests: is_reserved_property_key recognizes all 3 keys + rejects non-reserved. |
+| `command_integration_tests.rs` | 3 new tests: set_todo_state→query_by_property, set_due_date→query_by_property, thin_commands_survive_delete_property_cycle. |
+| `tauri.test.ts` | 6 new tests: setTodoState/setPriority/setDueDate wrapper contracts (happy + null). Updated cross-cutting test. |
+| `tauri-mock.test.ts` | 6 new tests: set_todo_state/set_priority/set_due_date mock IPC (set + clear). |
+| `SortableBlock.test.tsx` | 3 new tests: amber today styling, combined indicators, axe audit with all indicators. |
+| `BlockTree.test.tsx` | 3 new tests: /due slash command search, label, non-matching query. |
+| `useBlockProperties.test.ts` | 6 new tests: toast error + announcer coverage for todo/priority. |
+| **Priority fix (A/B/C→1/2/3):** | |
+| `useBlockProperties.ts` | PRIORITY_CYCLE: [null, 'A', 'B', 'C'] → [null, '1', '2', '3'] |
+| `SortableBlock.tsx` | PRIORITY_DISPLAY keys + className comparisons: A/B/C → 1/2/3 |
+| `BlockTree.tsx` | Slash command + keyboard event priority mapping: A/B/C → 1/2/3 |
+| `BlockContextMenu.tsx` | getPriorityLabel switch cases: A/B/C → 1/2/3 |
+| `BacklinkFilterBuilder.tsx` | Default state + option values: A/B/C → 1/2/3 |
+| 6 test files | Updated priority values in assertions, mocks, props: A/B/C → 1/2/3 |
+
+### Stats
+- Rust: 1407 tests pass (1385 + 22 new)
+- Frontend: 78/78 test files, 2220 tests pass (2196 + 24 new)
+- Commit: `66b8863`
+- REVIEW-LATER.md: 12 → 11 open items (resolved #569)
+
 ## Session 55 — 2026-04-02 — Phase 5 Wave 2 + Wave 3 batches 1-5
 
 ### Batch 1 — Wave 2 completion: PagePropertyTable (#553, #554)
