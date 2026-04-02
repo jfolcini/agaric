@@ -174,18 +174,18 @@ describe('BlockContextMenu', () => {
     expect(screen.getByText('DONE → Clear')).toBeInTheDocument()
   })
 
-  it('shows "Priority 1 → 2" when priority is A', () => {
-    renderMenu({ priority: 'A' })
+  it('shows "Priority 1 → 2" when priority is 1', () => {
+    renderMenu({ priority: '1' })
     expect(screen.getByText('Priority 1 → 2')).toBeInTheDocument()
   })
 
-  it('shows "Priority 2 → 3" when priority is B', () => {
-    renderMenu({ priority: 'B' })
+  it('shows "Priority 2 → 3" when priority is 2', () => {
+    renderMenu({ priority: '2' })
     expect(screen.getByText('Priority 2 → 3')).toBeInTheDocument()
   })
 
-  it('shows "Priority 3 → Clear" when priority is C', () => {
-    renderMenu({ priority: 'C' })
+  it('shows "Priority 3 → Clear" when priority is 3', () => {
+    renderMenu({ priority: '3' })
     expect(screen.getByText('Priority 3 → Clear')).toBeInTheDocument()
   })
 

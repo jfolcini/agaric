@@ -1427,4 +1427,65 @@ mod tests {
             "NULL-content block must produce zero block_links rows"
         );
     }
+
+    // ====================================================================
+    // agenda_cache — blocks.due_date column source
+    // ====================================================================
+
+    #[tokio::test]
+    async fn rebuild_agenda_cache_includes_due_date_from_blocks_column() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLK_DUE1", "content", "has due date").await;
+
+        // Set blocks.due_date directly via SQL UPDATE
+        sqlx::query("UPDATE blocks SET due_date = '2026-06-15' WHERE id = 'BLK_DUE1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        let rows = sqlx::query!(
+            "SELECT date, block_id, source FROM agenda_cache WHERE block_id = 'BLK_DUE1'"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            rows.len(),
+            1,
+            "agenda_cache should contain one entry for the block with due_date"
+        );
+        assert_eq!(rows[0].date, "2026-06-15", "date should match due_date");
+        assert_eq!(rows[0].block_id, "BLK_DUE1");
+        assert_eq!(
+            rows[0].source, "column:due_date",
+            "source should be column:due_date"
+        );
+    }
+
+    #[tokio::test]
+    async fn rebuild_agenda_cache_excludes_null_due_date_from_blocks_column() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create a content block with NULL due_date (the default)
+        insert_block(&pool, "BLK_NULL", "content", "no due date").await;
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        // Check that no agenda entry exists from the column:due_date source
+        let rows = sqlx::query!(
+            "SELECT COUNT(*) as cnt FROM agenda_cache WHERE block_id = 'BLK_NULL' AND source = 'column:due_date'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            rows.cnt, 0,
+            "NULL due_date should NOT produce an agenda_cache entry from column:due_date"
+        );
+    }
 }

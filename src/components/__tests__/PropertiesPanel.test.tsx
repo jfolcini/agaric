@@ -59,7 +59,7 @@ function makeProp(overrides: Partial<PropertyRow> & { key: string }): PropertyRo
 }
 
 const mockProperties: PropertyRow[] = [
-  makeProp({ key: 'priority', value_text: 'A' }),
+  makeProp({ key: 'priority', value_text: '1' }),
   makeProp({ key: 'due', value_date: '2025-06-15' }),
 ]
 
@@ -142,7 +142,7 @@ describe('PropertiesPanel', () => {
     expect(screen.getByText('due')).toBeInTheDocument()
 
     // Values
-    expect(screen.getByText('A')).toBeInTheDocument()
+    expect(screen.getByText('1')).toBeInTheDocument()
     expect(screen.getByText('2025-06-15')).toBeInTheDocument()
   })
 
@@ -201,7 +201,7 @@ describe('PropertiesPanel', () => {
   it('delete button calls delete_property and removes from list', async () => {
     const user = userEvent.setup()
     mockInvokeWith([
-      makeProp({ key: 'priority', value_text: 'A' }),
+      makeProp({ key: 'priority', value_text: '1' }),
       makeProp({ key: 'due', value_date: '2025-06-15' }),
     ])
 
@@ -236,7 +236,7 @@ describe('PropertiesPanel', () => {
 
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
-      if (cmd === 'get_properties') return [makeProp({ key: 'priority', value_text: 'A' })]
+      if (cmd === 'get_properties') return [makeProp({ key: 'priority', value_text: '1' })]
       if (cmd === 'delete_property') throw new Error('fail')
       return null
     })
@@ -284,7 +284,7 @@ describe('PropertiesPanel', () => {
     const user = userEvent.setup()
 
     const updatedProperties = [
-      makeProp({ key: 'priority', value_text: 'A' }),
+      makeProp({ key: 'priority', value_text: '1' }),
       makeProp({ key: 'status', value_text: 'active' }),
     ]
 
@@ -295,7 +295,7 @@ describe('PropertiesPanel', () => {
         getPropertiesCallCount++
         // First call returns initial list, subsequent calls return updated list
         return getPropertiesCallCount === 1
-          ? [makeProp({ key: 'priority', value_text: 'A' })]
+          ? [makeProp({ key: 'priority', value_text: '1' })]
           : updatedProperties
       }
       if (cmd === 'set_property') return null

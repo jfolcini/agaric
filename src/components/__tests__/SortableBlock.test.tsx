@@ -798,14 +798,14 @@ describe('SortableBlock priority badge', () => {
     mockUseSortable.mockReturnValue(makeSortable())
   })
 
-  it('displays "1" for priority A', () => {
+  it('displays "1" for priority 1', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="A"
+        priority="1"
       />,
     )
 
@@ -813,14 +813,14 @@ describe('SortableBlock priority badge', () => {
     expect(badge).toHaveTextContent('1')
   })
 
-  it('displays "2" for priority B', () => {
+  it('displays "2" for priority 2', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="B"
+        priority="2"
       />,
     )
 
@@ -828,14 +828,14 @@ describe('SortableBlock priority badge', () => {
     expect(badge).toHaveTextContent('2')
   })
 
-  it('displays "3" for priority C', () => {
+  it('displays "3" for priority 3', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="C"
+        priority="3"
       />,
     )
 
@@ -867,7 +867,7 @@ describe('SortableBlock priority badge', () => {
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="A"
+        priority="1"
         onTogglePriority={onTogglePriority}
       />,
     )
@@ -888,7 +888,7 @@ describe('SortableBlock priority badge', () => {
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="A"
+        priority="1"
       />,
     )
 
@@ -897,14 +897,14 @@ describe('SortableBlock priority badge', () => {
     await user.click(badge)
   })
 
-  it('applies red styling for priority A', () => {
+  it('applies red styling for priority 1', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="A"
+        priority="1"
       />,
     )
 
@@ -915,14 +915,14 @@ describe('SortableBlock priority badge', () => {
     expect(badge?.className).toContain('ring-red-400')
   })
 
-  it('applies yellow styling for priority B', () => {
+  it('applies yellow styling for priority 2', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="B"
+        priority="2"
       />,
     )
 
@@ -931,14 +931,14 @@ describe('SortableBlock priority badge', () => {
     expect(badge?.className).toContain('text-yellow-700')
   })
 
-  it('applies blue styling for priority C', () => {
+  it('applies blue styling for priority 3', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="C"
+        priority="3"
       />,
     )
 
@@ -970,7 +970,7 @@ describe('SortableBlock priority badge', () => {
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="B"
+        priority="2"
       />,
     )
 
@@ -985,35 +985,35 @@ describe('SortableBlock priority badge', () => {
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="B"
+        priority="2"
       />,
     )
 
     expect(screen.getByRole('button', { name: 'Priority 2. Click to cycle.' })).toBeInTheDocument()
   })
 
-  it('priority badge has correct aria-label for priority A', () => {
+  it('priority badge has correct aria-label for priority 1', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="A"
+        priority="1"
       />,
     )
 
     expect(screen.getByRole('button', { name: /Priority 1.*Click to cycle/i })).toBeInTheDocument()
   })
 
-  it('priority badge has correct aria-label for priority C', () => {
+  it('priority badge has correct aria-label for priority 3', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="C"
+        priority="3"
       />,
     )
 
@@ -1027,7 +1027,7 @@ describe('SortableBlock priority badge', () => {
         content="test"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="A"
+        priority="1"
       />,
     )
 
@@ -1248,7 +1248,7 @@ describe('SortableBlock inline controls', () => {
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="A"
+        priority="1"
       />,
     )
 
@@ -1328,7 +1328,7 @@ describe('SortableBlock inline controls', () => {
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="A"
+        priority="1"
         onTogglePriority={vi.fn()}
       />,
     )
@@ -1346,7 +1346,7 @@ describe('SortableBlock inline controls', () => {
         rovingEditor={makeRovingEditor()}
         onDelete={vi.fn()}
         onToggleTodo={vi.fn()}
-        priority="A"
+        priority="1"
         onTogglePriority={vi.fn()}
       />,
     )
@@ -1472,7 +1472,7 @@ describe('SortableBlock a11y enhancements', () => {
         rovingEditor={makeRovingEditor()}
         onDelete={vi.fn()}
         hasChildren
-        priority="A"
+        priority="1"
       />,
     )
 
@@ -2000,7 +2000,7 @@ describe('SortableBlock due date chip', () => {
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
-        priority="A"
+        priority="1"
         dueDate="2025-06-15"
       />,
     )
@@ -2032,5 +2032,69 @@ describe('SortableBlock due date chip', () => {
     const chip = container.querySelector('.due-date-chip')
     expect(chip).toBeInTheDocument()
     expect(chip?.textContent).toContain('not-a-date')
+  })
+
+  it('applies amber styling for today due date', () => {
+    const now = new Date()
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate={todayStr}
+      />,
+    )
+
+    const chip = container.querySelector('.due-date-chip')
+    expect(chip?.className).toContain('bg-amber-100')
+    expect(chip?.className).toContain('text-amber-700')
+  })
+
+  it('renders all three indicators simultaneously', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="TODO"
+        priority="1"
+        dueDate="2026-06-15"
+      />,
+    )
+
+    // Task checkbox is visible
+    const todoCheckbox = container.querySelector('.task-checkbox-todo')
+    expect(todoCheckbox).toBeInTheDocument()
+
+    // Priority badge is visible
+    const priorityBadge = container.querySelector('.priority-badge')
+    expect(priorityBadge).toBeInTheDocument()
+
+    // Due date chip is visible
+    const dueChip = container.querySelector('.due-date-chip')
+    expect(dueChip).toBeInTheDocument()
+  })
+
+  it('has no a11y violations with all indicators', async () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        todoState="TODO"
+        priority="1"
+        dueDate="2026-06-15"
+      />,
+    )
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 })

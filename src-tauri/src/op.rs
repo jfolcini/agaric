@@ -1235,4 +1235,40 @@ mod tests {
             "reserved key with all-null values should be allowed (clear)"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // is_reserved_property_key
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_reserved_property_key_recognizes_all_three() {
+        assert!(
+            is_reserved_property_key("todo_state"),
+            "todo_state must be recognized as reserved"
+        );
+        assert!(
+            is_reserved_property_key("priority"),
+            "priority must be recognized as reserved"
+        );
+        assert!(
+            is_reserved_property_key("due_date"),
+            "due_date must be recognized as reserved"
+        );
+    }
+
+    #[test]
+    fn is_reserved_property_key_rejects_non_reserved() {
+        assert!(
+            !is_reserved_property_key("custom_key"),
+            "custom_key must not be recognized as reserved"
+        );
+        assert!(
+            !is_reserved_property_key("todo"),
+            "todo must not be recognized as reserved"
+        );
+        assert!(
+            !is_reserved_property_key(""),
+            "empty string must not be recognized as reserved"
+        );
+    }
 }

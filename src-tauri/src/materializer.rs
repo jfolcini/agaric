@@ -3655,4 +3655,172 @@ mod tests {
             "reserved key should NOT be stored in block_properties"
         );
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dispatch_op_set_property_priority_reserved_key_writes_blocks_column() {
+        use crate::op::is_reserved_property_key;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Insert a block to act on
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, is_conflict) \
+             VALUES ('BLK-PRI', 'content', 'test', 1, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(is_reserved_property_key("priority"));
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK-PRI"),
+                key: "priority".into(),
+                value_text: Some("2".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        // Verify blocks.priority column is updated
+        let priority: Option<String> =
+            sqlx::query_scalar("SELECT priority FROM blocks WHERE id = 'BLK-PRI'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            priority,
+            Some("2".into()),
+            "blocks.priority column should be 2"
+        );
+
+        // Verify block_properties does NOT have a row for this key
+        let prop_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'BLK-PRI' AND key = 'priority'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            prop_count, 0,
+            "reserved key should NOT be stored in block_properties"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dispatch_op_set_property_due_date_reserved_key_writes_blocks_column() {
+        use crate::op::is_reserved_property_key;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Insert a block to act on
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, is_conflict) \
+             VALUES ('BLK-DUE', 'content', 'test', 1, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(is_reserved_property_key("due_date"));
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK-DUE"),
+                key: "due_date".into(),
+                value_text: None,
+                value_num: None,
+                value_date: Some("2026-05-15".into()),
+                value_ref: None,
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        // Verify blocks.due_date column is updated
+        let due_date: Option<String> =
+            sqlx::query_scalar("SELECT due_date FROM blocks WHERE id = 'BLK-DUE'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            due_date,
+            Some("2026-05-15".into()),
+            "blocks.due_date column should be 2026-05-15"
+        );
+
+        // Verify block_properties does NOT have a row for this key
+        let prop_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'BLK-DUE' AND key = 'due_date'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            prop_count, 0,
+            "reserved key should NOT be stored in block_properties"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dispatch_op_delete_property_reserved_key_clears_blocks_column() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Insert a block with todo_state set via direct SQL
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, is_conflict, todo_state) \
+             VALUES ('BLK-DEL', 'content', 'test', 1, 0, 'TODO')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Verify todo_state is set
+        let before: Option<String> =
+            sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = 'BLK-DEL'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            before,
+            Some("TODO".into()),
+            "precondition: todo_state = TODO"
+        );
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::DeleteProperty(DeletePropertyPayload {
+                block_id: BlockId::test_id("BLK-DEL"),
+                key: "todo_state".into(),
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        // Verify blocks.todo_state column is NULL
+        let after: Option<String> =
+            sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = 'BLK-DEL'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            after.is_none(),
+            "blocks.todo_state should be NULL after DeleteProperty, got: {after:?}"
+        );
+    }
 }

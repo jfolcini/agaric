@@ -4126,4 +4126,137 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::Validation(_)));
     }
+
+    #[tokio::test]
+    async fn filter_due_date_gt_returns_later_dates() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BLK_1", "content", "block 1").await;
+        insert_block(&pool, "BLK_2", "content", "block 2").await;
+
+        sqlx::query("UPDATE blocks SET due_date = '2026-04-10' WHERE id = ?")
+            .bind("BLK_1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET due_date = '2026-04-20' WHERE id = ?")
+            .bind("BLK_2")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let filter = BacklinkFilter::DueDate {
+            op: CompareOp::Gt,
+            value: "2026-04-15".into(),
+        };
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+        assert_eq!(set.len(), 1, "only the later-dated block should match");
+        assert!(
+            !set.contains("BLK_1"),
+            "BLK_1 (04-10) should not match Gt 04-15"
+        );
+        assert!(set.contains("BLK_2"), "BLK_2 (04-20) should match Gt 04-15");
+    }
+
+    #[tokio::test]
+    async fn filter_due_date_gte_returns_equal_or_later() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BLK_1", "content", "block 1").await;
+        insert_block(&pool, "BLK_2", "content", "block 2").await;
+
+        sqlx::query("UPDATE blocks SET due_date = '2026-04-15' WHERE id = ?")
+            .bind("BLK_1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET due_date = '2026-04-20' WHERE id = ?")
+            .bind("BLK_2")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let filter = BacklinkFilter::DueDate {
+            op: CompareOp::Gte,
+            value: "2026-04-15".into(),
+        };
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+        assert_eq!(set.len(), 2, "both equal and later dates should match");
+        assert!(
+            set.contains("BLK_1"),
+            "BLK_1 (04-15) should match Gte 04-15"
+        );
+        assert!(
+            set.contains("BLK_2"),
+            "BLK_2 (04-20) should match Gte 04-15"
+        );
+    }
+
+    #[tokio::test]
+    async fn filter_due_date_lte_returns_equal_or_earlier() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BLK_1", "content", "block 1").await;
+        insert_block(&pool, "BLK_2", "content", "block 2").await;
+
+        sqlx::query("UPDATE blocks SET due_date = '2026-04-10' WHERE id = ?")
+            .bind("BLK_1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET due_date = '2026-04-20' WHERE id = ?")
+            .bind("BLK_2")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let filter = BacklinkFilter::DueDate {
+            op: CompareOp::Lte,
+            value: "2026-04-10".into(),
+        };
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+        assert_eq!(set.len(), 1, "only equal or earlier dates should match");
+        assert!(
+            set.contains("BLK_1"),
+            "BLK_1 (04-10) should match Lte 04-10"
+        );
+        assert!(
+            !set.contains("BLK_2"),
+            "BLK_2 (04-20) should not match Lte 04-10"
+        );
+    }
+
+    #[tokio::test]
+    async fn filter_due_date_ne_returns_not_equal() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BLK_1", "content", "block 1").await;
+        insert_block(&pool, "BLK_2", "content", "block 2").await;
+
+        sqlx::query("UPDATE blocks SET due_date = '2026-04-10' WHERE id = ?")
+            .bind("BLK_1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET due_date = '2026-04-20' WHERE id = ?")
+            .bind("BLK_2")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let filter = BacklinkFilter::DueDate {
+            op: CompareOp::Neq,
+            value: "2026-04-10".into(),
+        };
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+        assert_eq!(
+            set.len(),
+            1,
+            "only the non-matching block should be returned"
+        );
+        assert!(
+            !set.contains("BLK_1"),
+            "BLK_1 (04-10) should not match Neq 04-10"
+        );
+        assert!(
+            set.contains("BLK_2"),
+            "BLK_2 (04-20) should match Neq 04-10"
+        );
+    }
 }

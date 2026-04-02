@@ -466,7 +466,7 @@ describe('property commands', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'priority',
-      valueText: 'A',
+      valueText: '1',
       valueNum: null,
       valueDate: null,
       valueRef: null,
@@ -476,14 +476,14 @@ describe('property commands', () => {
       unknown
     >[]
     expect(props).toHaveLength(1)
-    expect(props[0]).toMatchObject({ key: 'priority', value_text: 'A' })
+    expect(props[0]).toMatchObject({ key: 'priority', value_text: '1' })
   })
 
   it('set_property overwrites existing key', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'priority',
-      valueText: 'A',
+      valueText: '1',
       valueNum: null,
       valueDate: null,
       valueRef: null,
@@ -491,7 +491,7 @@ describe('property commands', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'priority',
-      valueText: 'B',
+      valueText: '2',
       valueNum: null,
       valueDate: null,
       valueRef: null,
@@ -501,14 +501,14 @@ describe('property commands', () => {
       unknown
     >[]
     expect(props).toHaveLength(1)
-    expect(props[0].value_text).toBe('B')
+    expect(props[0].value_text).toBe('2')
   })
 
   it('delete_property removes a property', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
       key: 'priority',
-      valueText: 'A',
+      valueText: '1',
       valueNum: null,
       valueDate: null,
       valueRef: null,
@@ -547,7 +547,7 @@ describe('get_batch_properties', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_2,
       key: 'priority',
-      valueText: 'B',
+      valueText: '2',
       valueNum: null,
       valueDate: null,
       valueRef: null,
@@ -1413,6 +1413,102 @@ describe('query_by_property', () => {
     expect(result).toHaveProperty('items')
     expect(result).toHaveProperty('next_cursor', null)
     expect(result).toHaveProperty('has_more', false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Fixed-field commands (set_todo_state / set_priority / set_due_date)
+// ---------------------------------------------------------------------------
+
+describe('fixed-field commands', () => {
+  it('set_todo_state updates block todo_state column', () => {
+    const result = invoke('set_todo_state', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      state: 'TODO',
+    }) as Record<string, unknown>
+
+    expect(result.todo_state).toBe('TODO')
+    expect(result.id).toBe(SEED_IDS.BLOCK_GS_1)
+
+    // Verify persisted
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(block.todo_state).toBe('TODO')
+  })
+
+  it('set_todo_state with null clears todo_state', () => {
+    // First set a state
+    invoke('set_todo_state', { blockId: SEED_IDS.BLOCK_GS_1, state: 'TODO' })
+    const before = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(before.todo_state).toBe('TODO')
+
+    // Now clear it
+    const result = invoke('set_todo_state', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      state: null,
+    }) as Record<string, unknown>
+
+    expect(result.todo_state).toBeNull()
+
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(block.todo_state).toBeNull()
+  })
+
+  it('set_priority updates block priority column', () => {
+    const result = invoke('set_priority', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      level: '2',
+    }) as Record<string, unknown>
+
+    expect(result.priority).toBe('2')
+    expect(result.id).toBe(SEED_IDS.BLOCK_GS_1)
+
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(block.priority).toBe('2')
+  })
+
+  it('set_priority with null clears priority', () => {
+    invoke('set_priority', { blockId: SEED_IDS.BLOCK_GS_1, level: '1' })
+    const before = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(before.priority).toBe('1')
+
+    const result = invoke('set_priority', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      level: null,
+    }) as Record<string, unknown>
+
+    expect(result.priority).toBeNull()
+
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(block.priority).toBeNull()
+  })
+
+  it('set_due_date updates block due_date column', () => {
+    const result = invoke('set_due_date', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      date: '2026-06-15',
+    }) as Record<string, unknown>
+
+    expect(result.due_date).toBe('2026-06-15')
+    expect(result.id).toBe(SEED_IDS.BLOCK_GS_1)
+
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(block.due_date).toBe('2026-06-15')
+  })
+
+  it('set_due_date with null clears due_date', () => {
+    invoke('set_due_date', { blockId: SEED_IDS.BLOCK_GS_1, date: '2026-06-15' })
+    const before = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(before.due_date).toBe('2026-06-15')
+
+    const result = invoke('set_due_date', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      date: null,
+    }) as Record<string, unknown>
+
+    expect(result.due_date).toBeNull()
+
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(block.due_date).toBeNull()
   })
 })
 

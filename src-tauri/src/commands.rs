@@ -10373,4 +10373,287 @@ mod tests {
 
         mat.shutdown();
     }
+
+    // ======================================================================
+    // set_priority / set_due_date — nonexistent block returns NotFound
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_priority_nonexistent_block_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result =
+            set_priority_inner(&pool, DEV, &mat, "nonexistent-id".into(), Some("1".into())).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "nonexistent block should return NotFound, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_due_date_nonexistent_block_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            "nonexistent-id".into(),
+            Some("2026-05-15".into()),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "nonexistent block should return NotFound, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    // ======================================================================
+    // Deleted block returns NotFound for all three thin commands
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_todo_state_deleted_block_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "will delete".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        delete_block_inner(&pool, DEV, &mat, block.id.clone())
+            .await
+            .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result =
+            set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into())).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "set_todo_state on deleted block should return NotFound, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_priority_deleted_block_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "will delete".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        delete_block_inner(&pool, DEV, &mat, block.id.clone())
+            .await
+            .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_priority_inner(&pool, DEV, &mat, block.id.clone(), Some("2".into())).await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "set_priority on deleted block should return NotFound, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_due_date_deleted_block_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "will delete".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        delete_block_inner(&pool, DEV, &mat, block.id.clone())
+            .await
+            .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2026-05-15".into()),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "set_due_date on deleted block should return NotFound, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    // ======================================================================
+    // Op log verification for thin commands
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_todo_state_writes_op_log_entry() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "op log test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let set_prop_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_property").collect();
+        assert_eq!(
+            set_prop_ops.len(),
+            1,
+            "exactly one set_property op should be logged"
+        );
+        assert!(
+            set_prop_ops[0].payload.contains("\"todo_state\""),
+            "op payload must contain key 'todo_state'"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_priority_writes_op_log_entry() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "op log test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        set_priority_inner(&pool, DEV, &mat, block.id.clone(), Some("1".into()))
+            .await
+            .unwrap();
+
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let set_prop_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_property").collect();
+        assert_eq!(
+            set_prop_ops.len(),
+            1,
+            "exactly one set_property op should be logged"
+        );
+        assert!(
+            set_prop_ops[0].payload.contains("\"priority\""),
+            "op payload must contain key 'priority'"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_due_date_writes_op_log_entry() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "op log test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2026-05-15".into()),
+        )
+        .await
+        .unwrap();
+
+        let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+        let set_prop_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_property").collect();
+        assert_eq!(
+            set_prop_ops.len(),
+            1,
+            "exactly one set_property op should be logged"
+        );
+        assert!(
+            set_prop_ops[0].payload.contains("\"due_date\""),
+            "op payload must contain key 'due_date'"
+        );
+
+        mat.shutdown();
+    }
 }

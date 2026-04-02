@@ -6871,3 +6871,140 @@ async fn delete_property_clears_reserved_key_column() {
 
     mat.shutdown();
 }
+
+// ---------------------------------------------------------------------------
+// Block fixed fields integration tests: thin commands + query_by_property
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_todo_state_then_query_by_property_returns_match() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task for query".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let result =
+        query_by_property_inner(&pool, "todo_state".into(), Some("TODO".into()), None, None)
+            .await
+            .unwrap();
+    assert_eq!(
+        result.items.len(),
+        1,
+        "query_by_property with todo_state=TODO must find the block"
+    );
+    assert_eq!(result.items[0].id, block.id);
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_due_date_then_query_by_property_returns_match() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "due date query".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_due_date_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        Some("2026-06-01".into()),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let result = query_by_property_inner(
+        &pool,
+        "due_date".into(),
+        Some("2026-06-01".into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result.items.len(),
+        1,
+        "query_by_property with due_date=2026-06-01 must find the block"
+    );
+    assert_eq!(result.items[0].id, block.id);
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thin_commands_survive_delete_property_cycle() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "cycle test".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Set todo_state
+    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Verify it's set
+    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert_eq!(
+        fetched.todo_state.as_deref(),
+        Some("TODO"),
+        "todo_state should be TODO before delete"
+    );
+
+    // Delete the todo_state property
+    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "todo_state".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Verify todo_state is NULL
+    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert!(
+        fetched.todo_state.is_none(),
+        "todo_state should be NULL after delete_property"
+    );
+
+    mat.shutdown();
+}

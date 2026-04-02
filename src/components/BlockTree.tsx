@@ -469,7 +469,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         item.id === 'priority-low'
       ) {
         const priority =
-          item.id === 'priority-high' ? 'A' : item.id === 'priority-medium' ? 'B' : 'C'
+          item.id === 'priority-high' ? '1' : item.id === 'priority-medium' ? '2' : '3'
         try {
           await setPriorityCmd(focusedBlockId, priority)
           useBlockStore.setState((s) => ({
@@ -767,7 +767,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       if (!focusedBlockId) return
       const eventType = e.type
       const priority =
-        eventType === 'set-priority-1' ? 'A' : eventType === 'set-priority-2' ? 'B' : 'C'
+        eventType === 'set-priority-1' ? '1' : eventType === 'set-priority-2' ? '2' : '3'
       try {
         await setPriorityCmd(focusedBlockId, priority)
         useBlockStore.setState((s) => ({

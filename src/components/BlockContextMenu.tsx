@@ -71,11 +71,11 @@ function getTodoLabel(todoState: string | null | undefined): string {
 
 function getPriorityLabel(priority: string | null | undefined): string {
   switch (priority) {
-    case 'A':
+    case '1':
       return 'Priority 1 → 2'
-    case 'B':
+    case '2':
       return 'Priority 2 → 3'
-    case 'C':
+    case '3':
       return 'Priority 3 → Clear'
     default:
       return 'Set priority 1'

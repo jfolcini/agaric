@@ -1700,7 +1700,7 @@ describe('BlockTree priority slash commands', () => {
     expect(ids).not.toContain('priority-low')
   })
 
-  it('onSlashCommand sets priority A for priority-high', async () => {
+  it('onSlashCommand sets priority 1 for priority-high', async () => {
     const tree = [makeBlock('A', null, 0, 'Block')]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
@@ -1721,12 +1721,12 @@ describe('BlockTree priority slash commands', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        level: 'A',
+        level: '1',
       })
     })
   })
 
-  it('onSlashCommand sets priority B for priority-medium', async () => {
+  it('onSlashCommand sets priority 2 for priority-medium', async () => {
     const tree = [makeBlock('A', null, 0, 'Block')]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
@@ -1747,12 +1747,12 @@ describe('BlockTree priority slash commands', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        level: 'B',
+        level: '2',
       })
     })
   })
 
-  it('onSlashCommand sets priority C for priority-low', async () => {
+  it('onSlashCommand sets priority 3 for priority-low', async () => {
     const tree = [makeBlock('A', null, 0, 'Block')]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
@@ -1773,13 +1773,13 @@ describe('BlockTree priority slash commands', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        level: 'C',
+        level: '3',
       })
     })
   })
 
   it('passes priority prop to SortableBlock from block store field', async () => {
-    const tree = [{ ...makeBlock('A', null, 0, 'Priority block'), priority: 'B' }]
+    const tree = [{ ...makeBlock('A', null, 0, 'Priority block'), priority: '2' }]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue([])
@@ -1787,7 +1787,7 @@ describe('BlockTree priority slash commands', () => {
     render(<BlockTree />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', 'B')
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', '2')
     })
   })
 
@@ -1821,18 +1821,70 @@ describe('BlockTree priority slash commands', () => {
 
     await user.click(screen.getByTestId('priority-toggle-A'))
 
-    // Should have called set_priority with A (cycling from none)
+    // Should have called set_priority with 1 (cycling from none)
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        level: 'A',
+        level: '1',
       })
     })
 
-    // State should update to A
+    // State should update to 1
     await waitFor(() => {
-      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', 'A')
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', '1')
     })
+  })
+})
+
+// =========================================================================
+// Due date slash command tests
+// =========================================================================
+
+describe('BlockTree due slash command', () => {
+  it('searchSlashCommands returns due command when query matches "due"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('due')
+
+    expect(results).toBeDefined()
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).toContain('due')
+  })
+
+  it('due command has correct label', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('due')
+
+    const dueItem = results?.find((r) => r.id === 'due')
+    expect(dueItem).toBeDefined()
+    expect(dueItem?.label).toContain('DUE')
+  })
+
+  it('due command is not returned for non-matching query', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('zzz_nothing')
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).not.toContain('due')
   })
 })
 
@@ -2524,7 +2576,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     mockedInvoke.mockReset()
   })
 
-  it('set-priority-1 event sets priority A on focused block', async () => {
+  it('set-priority-1 event sets priority 1 on focused block', async () => {
     const tree = [makeBlock('A', null, 0, 'Block')]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
@@ -2543,17 +2595,17 @@ describe('BlockTree priority keyboard shortcuts', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        level: 'A',
+        level: '1',
       })
     })
 
     // Priority should update in UI
     await waitFor(() => {
-      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', 'A')
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', '1')
     })
   })
 
-  it('set-priority-2 event sets priority B on focused block', async () => {
+  it('set-priority-2 event sets priority 2 on focused block', async () => {
     const tree = [makeBlock('A', null, 0, 'Block')]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
@@ -2572,16 +2624,16 @@ describe('BlockTree priority keyboard shortcuts', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        level: 'B',
+        level: '2',
       })
     })
 
     await waitFor(() => {
-      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', 'B')
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', '2')
     })
   })
 
-  it('set-priority-3 event sets priority C on focused block', async () => {
+  it('set-priority-3 event sets priority 3 on focused block', async () => {
     const tree = [makeBlock('A', null, 0, 'Block')]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
@@ -2600,12 +2652,12 @@ describe('BlockTree priority keyboard shortcuts', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        level: 'C',
+        level: '3',
       })
     })
 
     await waitFor(() => {
-      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', 'C')
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', '3')
     })
   })
 

@@ -29,7 +29,7 @@ export const INDENT_WIDTH = 24
 const GUTTER_WIDTH = 'w-[44px]'
 
 /** Display labels for stored priority values. */
-const PRIORITY_DISPLAY: Record<string, string> = { A: '1', B: '2', C: '3' }
+const PRIORITY_DISPLAY: Record<string, string> = { '1': '1', '2': '2', '3': '3' }
 
 /** Minimum touch hold duration (ms) to trigger the context menu. */
 const LONG_PRESS_DELAY = 400
@@ -103,9 +103,9 @@ interface SortableBlockProps {
   todoState?: string | null
   /** Callback to cycle task state. */
   onToggleTodo?: (blockId: string) => void
-  /** Priority level: 'A' (high), 'B' (medium), 'C' (low), or null/undefined. */
+  /** Priority level: '1' (high), '2' (medium), '3' (low), or null/undefined. */
   priority?: string | null
-  /** Callback to cycle priority: none → A → B → C → none. */
+  /** Callback to cycle priority: none → 1 → 2 → 3 → none. */
   onTogglePriority?: (blockId: string) => void
   /** Due date in YYYY-MM-DD format, or null/undefined if not set. */
   dueDate?: string | null
@@ -364,11 +364,11 @@ function SortableBlockInner({
                   <div
                     className={cn(
                       'w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold',
-                      priority === 'A' &&
+                      priority === '1' &&
                         'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 ring-2 ring-red-400 dark:ring-red-500',
-                      priority === 'B' &&
+                      priority === '2' &&
                         'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
-                      priority === 'C' &&
+                      priority === '3' &&
                         'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-dashed border-blue-400 dark:border-blue-500',
                     )}
                   >

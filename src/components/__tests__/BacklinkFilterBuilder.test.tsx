@@ -121,11 +121,11 @@ describe('BacklinkFilterBuilder', () => {
 
       await user.click(screen.getByRole('button', { name: /Add filter/i }))
       await user.selectOptions(screen.getByLabelText('Filter category'), 'priority')
-      await user.selectOptions(screen.getByLabelText('Priority value'), 'A')
+      await user.selectOptions(screen.getByLabelText('Priority value'), '1')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        { type: 'PropertyText', key: 'priority', op: 'Eq', value: 'A' },
+        { type: 'PropertyText', key: 'priority', op: 'Eq', value: '1' },
       ])
     })
 

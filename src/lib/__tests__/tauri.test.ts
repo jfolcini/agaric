@@ -47,7 +47,10 @@ import {
   restoreBlock,
   revertOps,
   searchBlocks,
+  setDueDate,
+  setPriority,
   setProperty,
+  setTodoState,
   startPairing,
   startSync,
   undoPageOp,
@@ -1362,6 +1365,90 @@ describe('listPropertyKeys', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Thin fixed-field commands (setTodoState, setPriority, setDueDate)
+// ---------------------------------------------------------------------------
+
+describe('thin fixed-field commands', () => {
+  it('setTodoState calls invoke with set_todo_state command', async () => {
+    const expected = { id: 'BLOCK1', todo_state: 'TODO' }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await setTodoState('BLOCK1', 'TODO')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
+      blockId: 'BLOCK1',
+      state: 'TODO',
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('setTodoState with null sends null state', async () => {
+    const expected = { id: 'BLOCK1', todo_state: null }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    await setTodoState('BLOCK1', null)
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
+      blockId: 'BLOCK1',
+      state: null,
+    })
+  })
+
+  it('setPriority calls invoke with set_priority command', async () => {
+    const expected = { id: 'BLOCK1', priority: '1' }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await setPriority('BLOCK1', '1')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
+      blockId: 'BLOCK1',
+      level: '1',
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('setPriority with null sends null level', async () => {
+    const expected = { id: 'BLOCK1', priority: null }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    await setPriority('BLOCK1', null)
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
+      blockId: 'BLOCK1',
+      level: null,
+    })
+  })
+
+  it('setDueDate calls invoke with set_due_date command', async () => {
+    const expected = { id: 'BLOCK1', due_date: '2026-06-15' }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await setDueDate('BLOCK1', '2026-06-15')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('set_due_date', {
+      blockId: 'BLOCK1',
+      date: '2026-06-15',
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('setDueDate with null sends null date', async () => {
+    const expected = { id: 'BLOCK1', due_date: null }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    await setDueDate('BLOCK1', null)
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_due_date', {
+      blockId: 'BLOCK1',
+      date: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Cross-cutting concerns
 // ---------------------------------------------------------------------------
 
@@ -1397,6 +1484,9 @@ describe('cross-cutting', () => {
     await queryByProperty({ key: 'k' })
     await queryBacklinksFiltered({ blockId: 'id' })
     await listPropertyKeys()
+    await setTodoState('id', 'TODO')
+    await setPriority('id', '1')
+    await setDueDate('id', '2026-06-15')
     await undoPageOp({ pageId: 'id', undoDepth: 1 })
     await redoPageOp({ undoDeviceId: 'd', undoSeq: 1 })
     await listPeerRefs()
@@ -1440,6 +1530,9 @@ describe('cross-cutting', () => {
       'query_by_property',
       'query_backlinks_filtered',
       'list_property_keys',
+      'set_todo_state',
+      'set_priority',
+      'set_due_date',
       'undo_page_op',
       'redo_page_op',
       'list_peer_refs',

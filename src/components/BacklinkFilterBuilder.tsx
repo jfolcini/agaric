@@ -153,7 +153,7 @@ function AddFilterRow({
   const [category, setCategory] = useState<FilterCategory | ''>('')
   const [blockType, setBlockType] = useState('content')
   const [statusValue, setStatusValue] = useState('TODO')
-  const [priorityValue, setPriorityValue] = useState('A')
+  const [priorityValue, setPriorityValue] = useState('1')
   const [containsQuery, setContainsQuery] = useState('')
   const [propKey, setPropKey] = useState(propertyKeys[0] ?? '')
   const [propOp, setPropOp] = useState<CompareOp>('Eq')
@@ -353,9 +353,9 @@ function AddFilterRow({
           onChange={(e) => setPriorityValue(e.target.value)}
           aria-label="Priority value"
         >
-          <option value="A">High [A]</option>
-          <option value="B">Medium [B]</option>
-          <option value="C">Low [C]</option>
+          <option value="1">High [1]</option>
+          <option value="2">Medium [2]</option>
+          <option value="3">Low [3]</option>
         </select>
       )}
 

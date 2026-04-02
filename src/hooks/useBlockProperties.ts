@@ -4,7 +4,7 @@
  * Manages:
  * - getTodoState callback (reads from block store)
  * - handleToggleTodo callback (cycles through TODO/DOING/DONE/none)
- * - handleTogglePriority callback (cycles through A/B/C/none)
+ * - handleTogglePriority callback (cycles through 1/2/3/none)
  *
  * Uses thin commands (set_todo_state / set_priority) instead of the generic
  * set_property / delete_property, and reads state from the block store
@@ -23,8 +23,8 @@ const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE']
 /** Display labels for screen reader announcements. */
 const STATE_LABELS: Record<string, string> = { TODO: 'To do', DOING: 'In progress', DONE: 'Done' }
 
-/** Priority cycle: none -> A -> B -> C -> none. */
-const PRIORITY_CYCLE: readonly (string | null)[] = [null, 'A', 'B', 'C']
+/** Priority cycle: none -> 1 -> 2 -> 3 -> none. */
+const PRIORITY_CYCLE: readonly (string | null)[] = [null, '1', '2', '3']
 
 export interface UseBlockPropertiesReturn {
   getTodoState: (blockId: string) => string | null
@@ -65,7 +65,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
     announce(`Task state: ${nextState ? (STATE_LABELS[nextState] ?? nextState) : 'none'}`)
   }, [])
 
-  /** Cycle through priority levels: none -> A -> B -> C -> none. */
+  /** Cycle through priority levels: none -> 1 -> 2 -> 3 -> none. */
   const handleTogglePriority = useCallback(async (blockId: string) => {
     const current = useBlockStore.getState().blocks.find((b) => b.id === blockId)?.priority ?? null
     const currentIdx = PRIORITY_CYCLE.indexOf(current)

@@ -6,14 +6,16 @@
  * - handleToggleTodo cycles none → TODO → DOING → DONE → none
  * - handleToggleTodo calls set_todo_state IPC command
  * - handleToggleTodo does optimistic update + revert on failure
- * - handleTogglePriority cycles none → A → B → C → none
+ * - handleTogglePriority cycles none → 1 → 2 → 3 → none
  * - handleTogglePriority calls set_priority IPC command
  * - handleTogglePriority does optimistic update + revert on failure
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { announce } from '../../lib/announcer'
 import { useBlockStore } from '../../stores/blocks'
 import { useBlockProperties } from '../useBlockProperties'
 
@@ -166,7 +168,7 @@ describe('useBlockProperties handleToggleTodo', () => {
 })
 
 describe('useBlockProperties handleTogglePriority', () => {
-  it('cycles from none to A', async () => {
+  it('cycles from none to 1', async () => {
     useBlockStore.setState({ blocks: [makeBlock('BLOCK_1')] })
 
     const { result } = renderHook(() => useBlockProperties())
@@ -177,15 +179,15 @@ describe('useBlockProperties handleTogglePriority', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
       blockId: 'BLOCK_1',
-      level: 'A',
+      level: '1',
     })
 
     const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
-    expect(block?.priority).toBe('A')
+    expect(block?.priority).toBe('1')
   })
 
-  it('cycles from A to B', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, 'A')] })
+  it('cycles from 1 to 2', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
 
     const { result } = renderHook(() => useBlockProperties())
 
@@ -195,15 +197,15 @@ describe('useBlockProperties handleTogglePriority', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
       blockId: 'BLOCK_1',
-      level: 'B',
+      level: '2',
     })
 
     const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
-    expect(block?.priority).toBe('B')
+    expect(block?.priority).toBe('2')
   })
 
-  it('cycles from B to C', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, 'B')] })
+  it('cycles from 2 to 3', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '2')] })
 
     const { result } = renderHook(() => useBlockProperties())
 
@@ -213,15 +215,15 @@ describe('useBlockProperties handleTogglePriority', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
       blockId: 'BLOCK_1',
-      level: 'C',
+      level: '3',
     })
 
     const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
-    expect(block?.priority).toBe('C')
+    expect(block?.priority).toBe('3')
   })
 
-  it('cycles from C to none', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, 'C')] })
+  it('cycles from 3 to none', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '3')] })
 
     const { result } = renderHook(() => useBlockProperties())
 
@@ -255,7 +257,7 @@ describe('useBlockProperties handleTogglePriority', () => {
   })
 
   it('reverts optimistic update on IPC failure', async () => {
-    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, 'A')] })
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
     const { result } = renderHook(() => useBlockProperties())
@@ -264,14 +266,14 @@ describe('useBlockProperties handleTogglePriority', () => {
       await result.current.handleTogglePriority('BLOCK_1')
     })
 
-    // Should revert to original A priority
+    // Should revert to original 1 priority
     const block = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
-    expect(block?.priority).toBe('A')
+    expect(block?.priority).toBe('1')
   })
 
   it('does not affect other blocks in the store', async () => {
     useBlockStore.setState({
-      blocks: [makeBlock('BLOCK_1', null, 'A'), makeBlock('BLOCK_2', 'TODO', 'B')],
+      blocks: [makeBlock('BLOCK_1', null, '1'), makeBlock('BLOCK_2', 'TODO', '2')],
     })
 
     const { result } = renderHook(() => useBlockProperties())
@@ -282,7 +284,95 @@ describe('useBlockProperties handleTogglePriority', () => {
 
     // BLOCK_2 should be unchanged
     const block2 = useBlockStore.getState().blocks.find((b) => b.id === 'BLOCK_2')
-    expect(block2?.priority).toBe('B')
+    expect(block2?.priority).toBe('2')
     expect(block2?.todo_state).toBe('TODO')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Toast error and announcer tests
+// ---------------------------------------------------------------------------
+
+const mockedToastError = vi.mocked(toast.error)
+const mockedAnnounce = vi.mocked(announce)
+
+describe('useBlockProperties handleToggleTodo toast and announcer', () => {
+  it('shows toast error on IPC failure', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
+    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+    })
+
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to update task state')
+  })
+
+  it('announces new state via announcer on successful toggle', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1')] })
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+    })
+
+    // none → TODO, display label is "To do"
+    expect(mockedAnnounce).toHaveBeenCalledWith('Task state: To do')
+  })
+
+  it('announces "none" when cycling back to no state', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'DONE')] })
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+    })
+
+    // DONE → none
+    expect(mockedAnnounce).toHaveBeenCalledWith('Task state: none')
+  })
+
+  it('does not announce on IPC failure', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')] })
+    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+    })
+
+    expect(mockedAnnounce).not.toHaveBeenCalled()
+  })
+})
+
+describe('useBlockProperties handleTogglePriority toast and announcer', () => {
+  it('shows toast error on IPC failure', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
+    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
+
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to update priority')
+  })
+
+  it('does not call toast error on successful toggle', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')] })
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
+
+    expect(mockedToastError).not.toHaveBeenCalled()
   })
 })
