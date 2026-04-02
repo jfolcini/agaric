@@ -108,6 +108,30 @@ Review: BlockTree reviewer caught build subagent missed #495 + 3 of 4 announce()
 - Frontend: 71/71 test files, 2063 tests pass (+1 nav test)
 - REVIEW-LATER.md: 11 → 5 open items (resolved #495-#500)
 
+### Phase 7: Feature Reviews (DnD + Hooks)
+
+2 parallel review subagents covering DnD/reorder and hooks/resolve/attachment systems.
+Cross-validated P1 claims with a separate subagent.
+
+**Reviews:**
+- DnD + Reorder: 12 findings (3 P1, 3 P2, 4 P3, 2 P4)
+- Hooks + Resolve + Attachments: 13 findings (3 P1, 3 P2, 4 P3, 3 P4)
+
+**Cross-validation of 6 P1 claims:**
+- 1 CONFIRMED (downgraded to P2): reorder() position uses last flat-tree block, not last sibling
+- 2 REJECTED: cross-parent reorder fallback is correct behavior; stale closure is theoretical only
+- 3 EXAGGERATED: all memory leak claims under 500KB (heightsRef ~17KB, pagesListRef replaced on query, resolve cache ~457KB for 6K entries)
+
+**5 confirmed findings added to REVIEW-LATER.md (#501-#505):**
+- #501: reorder() position calculation (confirmed P2 bug)
+- #502: DnD drag handle missing keyboard a11y label
+- #503: No ARIA live region for DnD drop position
+- #504: useBlockProperties race on rapid toggles
+- #505: searchPages doesn't populate resolve cache
+
+### Phase 7 Stats
+- REVIEW-LATER.md: 5 → 10 open items (+5 from reviews)
+
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 
 Resolved all 18 Tier 7.5 items. 7 BacklinkFilterBuilder UX/a11y fixes, 6 BacklinksPanel fixes, 1 button.tsx touch target, 3 backend perf optimizations, 2 already resolved by Tier 7.
