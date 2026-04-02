@@ -348,10 +348,10 @@ export function PairingDialog({
         {/* QR + Passphrase display */}
         {!loading && pairingInfo && (
           <>
-            <div className="flex flex-col sm:flex-row gap-4 items-center mb-4">
+            <div className="flex flex-col sm:flex-row [@media(pointer:coarse)]:flex-col gap-4 items-center mb-4">
               {/* #290: Use backend QR SVG instead of react-qr-code */}
               <div
-                className="pairing-qr shrink-0 rounded-lg border bg-white p-3"
+                className="pairing-qr shrink-0 max-w-full rounded-lg border bg-white p-3"
                 role="img"
                 aria-label="QR code for device pairing"
                 data-testid="pairing-qr-code"
@@ -368,10 +368,26 @@ export function PairingDialog({
                 </p>
                 {/* #294: Countdown timer */}
                 {countdownDisplay && (
-                  <p className="pairing-countdown text-xs text-muted-foreground mt-1">
+                  <p
+                    className="pairing-countdown text-xs text-muted-foreground mt-1"
+                    aria-hidden="true"
+                  >
                     Session expires in {countdownDisplay}
                   </p>
                 )}
+                {/* #424: SR-only countdown — announces at key intervals only */}
+                <p className="sr-only" aria-live="polite" aria-atomic="true">
+                  {countdown !== null && countdown > 0
+                    && (countdown % 60 === 0 || countdown === 30)
+                    ? `Session expires in ${
+                        countdown >= 60
+                          ? `${Math.floor(countdown / 60)} minute${
+                              Math.floor(countdown / 60) !== 1 ? 's' : ''
+                            }`
+                          : `${countdown} seconds`
+                      }`
+                    : ''}
+                </p>
                 {isExpired && !error && (
                   <div className="pairing-expired flex items-center gap-2 mt-1">
                     <p className="text-xs text-destructive font-medium flex-1">

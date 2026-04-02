@@ -847,4 +847,78 @@ describe('DeviceManagement', () => {
       expect(container.querySelector('.device-rename-btn:disabled')).toBeNull()
     })
   })
+
+  it('shows error when rename fails (#444)', async () => {
+    vi.spyOn(window, 'prompt').mockReturnValue('New Name')
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_device_id') return mockDeviceId
+      if (cmd === 'list_peer_refs') return [mockPeers[0]]
+      if (cmd === 'update_peer_name') throw new Error('DB write failed')
+      return undefined
+    })
+
+    const { container } = render(<DeviceManagement />)
+    await waitFor(() => {
+      expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
+    })
+
+    const renameBtn = container.querySelector('.device-rename-btn') as HTMLButtonElement
+    await act(async () => {
+      fireEvent.click(renameBtn)
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('DB write failed')).toBeInTheDocument()
+    })
+  })
+
+  it('shows error when unpair fails (#444)', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_device_id') return mockDeviceId
+      if (cmd === 'list_peer_refs') return [mockPeers[0]]
+      if (cmd === 'delete_peer_ref') throw new Error('FK constraint')
+      return undefined
+    })
+
+    render(<DeviceManagement />)
+    await waitFor(() => {
+      expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
+    })
+
+    // Click Unpair
+    const unpairBtn = screen.getByRole('button', { name: /Unpair/i })
+    await user.click(unpairBtn)
+
+    // Confirm in the dialog
+    const confirmBtn = screen.getByRole('button', { name: /Yes, unpair/i })
+    await user.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to unpair device')).toBeInTheDocument()
+    })
+  })
+
+  it('shows truncated peer_id when device_name is null (#444)', async () => {
+    mockInvokeByCommand({
+      get_device_id: mockDeviceId,
+      list_peer_refs: [{
+        peer_id: 'ABCDEFGHIJKLMNOP',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
+      }],
+    })
+
+    render(<DeviceManagement />)
+    await waitFor(() => {
+      expect(screen.getByText('ABCDEFGHIJKL...')).toBeInTheDocument()
+    })
+  })
 })

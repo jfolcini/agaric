@@ -44,6 +44,13 @@ export function DeviceManagement(): React.ReactElement {
   const [renamingPeerId, setRenamingPeerId] = useState<string | null>(null)
   const [, setTick] = useState(0)
 
+  // #437: Auto-clear stale errors after 10 seconds
+  useEffect(() => {
+    if (!error) return
+    const id = setTimeout(() => setError(null), 10_000)
+    return () => clearTimeout(id)
+  }, [error])
+
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 60_000)
     return () => clearInterval(id)
