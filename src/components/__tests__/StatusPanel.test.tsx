@@ -300,6 +300,25 @@ describe('StatusPanel', () => {
       await screen.findByText('Foreground Queue')
       expect(screen.queryByText(/foreground error/)).not.toBeInTheDocument()
     })
+
+    it('shows cache staleness warning when bgErrors > 0', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        fg_errors: 0,
+        bg_errors: 3,
+        fg_panics: 0,
+        bg_panics: 0,
+        fg_high_water: 0,
+        bg_high_water: 0,
+      })
+
+      render(<StatusPanel />)
+
+      expect(await screen.findByText('3 background errors')).toBeInTheDocument()
+      expect(
+        screen.getByText('Cache data may be stale. Restart the app to retry.'),
+      ).toBeInTheDocument()
+    })
   })
 
   describe('high-water marks', () => {

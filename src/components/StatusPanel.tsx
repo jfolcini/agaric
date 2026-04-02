@@ -189,18 +189,25 @@ export function StatusPanel(): React.ReactElement {
                 </dl>
 
                 {hasErrors && (
-                  <div className="status-panel-errors mt-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-destructive dark:border-red-900 dark:bg-red-950">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <p>
-                      {[
-                        fgErrors > 0 && `${fgErrors} foreground error${fgErrors !== 1 ? 's' : ''}`,
-                        bgErrors > 0 && `${bgErrors} background error${bgErrors !== 1 ? 's' : ''}`,
-                        fgPanics > 0 && `${fgPanics} foreground panic${fgPanics !== 1 ? 's' : ''}`,
-                        bgPanics > 0 && `${bgPanics} background panic${bgPanics !== 1 ? 's' : ''}`,
-                      ]
-                        .filter(Boolean)
-                        .join(', ')}
-                    </p>
+                  <div className="status-panel-errors mt-4 flex flex-col gap-1 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-destructive dark:border-red-900 dark:bg-red-950">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <p>
+                        {[
+                          fgErrors > 0 && `${fgErrors} foreground error${fgErrors !== 1 ? 's' : ''}`,
+                          bgErrors > 0 && `${bgErrors} background error${bgErrors !== 1 ? 's' : ''}`,
+                          fgPanics > 0 && `${fgPanics} foreground panic${fgPanics !== 1 ? 's' : ''}`,
+                          bgPanics > 0 && `${bgPanics} background panic${bgPanics !== 1 ? 's' : ''}`,
+                        ]
+                          .filter(Boolean)
+                          .join(', ')}
+                      </p>
+                    </div>
+                    {bgErrors > 0 && (
+                      <p className="ml-6 text-xs text-muted-foreground">
+                        Cache data may be stale. Restart the app to retry.
+                      </p>
+                    )}
                   </div>
                 )}
               </output>

@@ -47,6 +47,23 @@ Review: CONDITIONAL PASS → added missing F08 tests → PASS.
 - Backend: 86 fts+recovery tests pass (including 3 new F08 tests)
 - REVIEW-LATER.md: 16 → 8 open items (resolved #482, #484, #485, #486, #487, #488, #489, #490)
 
+### Phase 4: Small Fixes (#483, #493, #494)
+
+3 remaining S-cost items resolved directly.
+
+| File | Change |
+|------|--------|
+| `vitest.config.ts` | #493: Added coverage thresholds (lines/functions/statements 80%, branches 75%). |
+| `RenameDialog.test.tsx` | #494: New test file — 7 tests: closed/open state, input binding, Enter/Save/Cancel, trim, axe audit. |
+| `StatusPanel.tsx` | #483: Added descriptive cache staleness message when bgErrors > 0. |
+| `StatusPanel.test.tsx` | Added test verifying cache staleness warning renders. |
+
+Review: PASS — reviewer flagged missing test for #483 message, added before commit.
+
+### Phase 4 Stats
+- Frontend: 71/71 test files, 2062 tests pass (+1 file, +8 tests)
+- REVIEW-LATER.md: 8 → 5 open items (resolved #483, #493, #494)
+
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 
 Resolved all 18 Tier 7.5 items. 7 BacklinkFilterBuilder UX/a11y fixes, 6 BacklinksPanel fixes, 1 button.tsx touch target, 3 backend perf optimizations, 2 already resolved by Tier 7.

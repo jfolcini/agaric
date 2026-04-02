@@ -16,6 +16,12 @@ export default defineConfig({
         'src/main.tsx',
         'src/test-setup.ts',
       ],
+      thresholds: {
+        lines: 80,
+        functions: 80,
+        branches: 75,
+        statements: 80,
+      },
     },
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
