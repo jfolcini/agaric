@@ -5366,10 +5366,12 @@ async fn full_pair_then_sync_workflow() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancel_sync_succeeds() {
-    let result = cancel_sync_inner();
+    let flag = std::sync::atomic::AtomicBool::new(false);
+    let result = cancel_sync_inner(&flag);
+    assert!(result.is_ok(), "cancel_sync should always succeed");
     assert!(
-        result.is_ok(),
-        "cancel_sync should always succeed (placeholder)"
+        flag.load(std::sync::atomic::Ordering::Acquire),
+        "cancel flag must be set after cancel_sync"
     );
 }
 

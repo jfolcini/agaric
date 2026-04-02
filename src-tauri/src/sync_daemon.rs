@@ -53,6 +53,7 @@ impl SyncEventSink for SharedEventSink {
 /// exiting.
 pub struct SyncDaemon {
     shutdown: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
     #[allow(dead_code)]
     handle: Option<JoinHandle<()>>,
 }
@@ -73,9 +74,11 @@ impl SyncDaemon {
         scheduler: Arc<SyncScheduler>,
         cert: SyncCert,
         event_sink: Arc<dyn SyncEventSink>,
+        cancel: Arc<AtomicBool>,
     ) -> Result<Self, AppError> {
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_flag = shutdown.clone();
+        let cancel_flag = cancel.clone();
 
         let handle = tokio::spawn(async move {
             if let Err(e) = daemon_loop(
@@ -86,6 +89,7 @@ impl SyncDaemon {
                 cert,
                 event_sink,
                 shutdown_flag,
+                cancel_flag,
             )
             .await
             {
@@ -95,6 +99,7 @@ impl SyncDaemon {
 
         Ok(Self {
             shutdown,
+            cancel,
             handle: Some(handle),
         })
     }
@@ -102,6 +107,15 @@ impl SyncDaemon {
     /// Signal the daemon to shut down gracefully.
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
+    }
+
+    /// Signal the active sync session to cancel.
+    ///
+    /// The cancellation flag is checked each iteration of the message exchange
+    /// loop in `run_sync_session`.  If no sync is active the flag is harmlessly
+    /// cleared on the next session attempt.
+    pub fn cancel_active_sync(&self) {
+        self.cancel.store(true, Ordering::Release);
     }
 }
 
@@ -114,6 +128,7 @@ impl SyncDaemon {
 /// Alternates between polling mDNS discovery events and waiting for
 /// debounced local-change notifications.  On every iteration it also
 /// checks whether any peers are due for a periodic resync.
+#[allow(clippy::too_many_arguments)]
 async fn daemon_loop(
     pool: SqlitePool,
     device_id: String,
@@ -122,6 +137,7 @@ async fn daemon_loop(
     cert: SyncCert,
     event_sink: Arc<dyn SyncEventSink>,
     shutdown: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
 ) -> Result<(), AppError> {
     // 1. Start mDNS service
     let mdns = MdnsService::new()?;
@@ -182,6 +198,7 @@ async fn daemon_loop(
                                         &event_sink,
                                         &peer,
                                         &refs,
+                                        &cancel,
                                     )
                                     .await;
                                 }
@@ -207,6 +224,7 @@ async fn daemon_loop(
                             &event_sink,
                             dp,
                             &refs,
+                            &cancel,
                         )
                         .await;
                     }
@@ -234,6 +252,7 @@ async fn daemon_loop(
                     &event_sink,
                     dp,
                     &refs,
+                    &cancel,
                 )
                 .await;
             }
@@ -258,6 +277,7 @@ async fn daemon_loop(
 /// Respects the scheduler's per-peer backoff (#278) and mutual-exclusion
 /// lock.  On success the backoff is reset; on failure a failure is recorded
 /// which doubles the next retry delay.
+#[allow(clippy::too_many_arguments)]
 async fn try_sync_with_peer(
     pool: &SqlitePool,
     device_id: &str,
@@ -266,6 +286,7 @@ async fn try_sync_with_peer(
     event_sink: &Arc<dyn SyncEventSink>,
     peer: &DiscoveredPeer,
     peer_refs: &[PeerRef],
+    cancel: &AtomicBool,
 ) {
     let peer_id = &peer.device_id;
 
@@ -322,7 +343,7 @@ async fn try_sync_with_peer(
     let mut orch = SyncOrchestrator::new(pool.clone(), device_id.to_string(), materializer.clone())
         .with_event_sink(event_sink_box);
 
-    match run_sync_session(&mut orch, &mut conn).await {
+    match run_sync_session(&mut orch, &mut conn, cancel).await {
         Ok(()) => {
             scheduler.record_success(peer_id);
             let session = orch.session();
@@ -348,6 +369,9 @@ async fn try_sync_with_peer(
         }
     }
 
+    // Clear cancel flag after session completes (whether by success, error, or cancellation)
+    cancel.store(false, Ordering::Release);
+
     let _ = conn.close().await;
 }
 
@@ -365,6 +389,7 @@ async fn try_sync_with_peer(
 async fn run_sync_session(
     orch: &mut SyncOrchestrator,
     conn: &mut SyncConnection,
+    cancel: &AtomicBool,
 ) -> Result<(), AppError> {
     // Initiator sends first message
     let first_msg = orch.start().await?;
@@ -372,14 +397,17 @@ async fn run_sync_session(
 
     // Exchange messages until complete
     while !orch.is_complete() {
+        // Check cancellation before waiting for the next message
+        if cancel.load(Ordering::Acquire) {
+            return Err(AppError::InvalidOperation("sync cancelled by user".into()));
+        }
+
         let incoming: SyncMessage = conn.recv_json().await?;
         match orch.handle_message(incoming).await? {
             Some(response) => {
                 conn.send_json(&response).await?;
             }
             None => {
-                // No response to send — check if we hit a terminal error state
-                // so we don't hang waiting for a message that will never arrive.
                 let state = &orch.session().state;
                 if matches!(state, SyncState::Failed(_) | SyncState::ResetRequired) {
                     return Err(AppError::InvalidOperation(format!(
@@ -391,4 +419,151 @@ async fn run_sync_session(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sync_events::RecordingEventSink;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn shared_event_sink_forwards_to_inner() {
+        let inner = Arc::new(RecordingEventSink::new());
+        let shared = SharedEventSink(inner.clone());
+        shared.on_sync_event(SyncEvent::Progress {
+            state: "testing".into(),
+            remote_device_id: "PEER_A".into(),
+            ops_received: 0,
+            ops_sent: 0,
+        });
+        let events = inner.events();
+        assert_eq!(
+            events.len(),
+            1,
+            "SharedEventSink must forward exactly one event"
+        );
+        assert!(
+            matches!(&events[0], SyncEvent::Progress { state, .. } if state == "testing"),
+            "forwarded event must match the original"
+        );
+    }
+
+    #[test]
+    fn shutdown_sets_flag() {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let daemon = SyncDaemon {
+            shutdown: shutdown.clone(),
+            cancel: Arc::new(AtomicBool::new(false)),
+            handle: None,
+        };
+        assert!(!shutdown.load(Ordering::Acquire), "flag must start false");
+        daemon.shutdown();
+        assert!(
+            shutdown.load(Ordering::Acquire),
+            "shutdown must set the flag"
+        );
+    }
+
+    #[test]
+    fn cancel_active_sync_sets_flag() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let daemon = SyncDaemon {
+            shutdown: Arc::new(AtomicBool::new(false)),
+            cancel: cancel.clone(),
+            handle: None,
+        };
+        assert!(
+            !cancel.load(Ordering::Acquire),
+            "cancel flag must start false"
+        );
+        daemon.cancel_active_sync();
+        assert!(
+            cancel.load(Ordering::Acquire),
+            "cancel_active_sync must set the flag"
+        );
+    }
+
+    #[test]
+    fn shutdown_and_cancel_are_independent() {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let daemon = SyncDaemon {
+            shutdown: shutdown.clone(),
+            cancel: cancel.clone(),
+            handle: None,
+        };
+        daemon.shutdown();
+        assert!(shutdown.load(Ordering::Acquire), "shutdown must be set");
+        assert!(!cancel.load(Ordering::Acquire), "cancel must remain unset");
+
+        daemon.cancel_active_sync();
+        assert!(cancel.load(Ordering::Acquire), "cancel must now be set");
+        assert!(
+            shutdown.load(Ordering::Acquire),
+            "shutdown must still be set"
+        );
+    }
+
+    #[test]
+    fn cancel_flag_clear_after_session() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let daemon = SyncDaemon {
+            shutdown: Arc::new(AtomicBool::new(false)),
+            cancel: cancel.clone(),
+            handle: None,
+        };
+        daemon.cancel_active_sync();
+        assert!(cancel.load(Ordering::Acquire), "cancel must be set");
+
+        // Simulate what try_sync_with_peer does after the session ends
+        cancel.store(false, Ordering::Release);
+        assert!(!cancel.load(Ordering::Acquire), "cancel must be cleared");
+    }
+
+    #[test]
+    fn shared_event_sink_concurrent_emission() {
+        let inner = Arc::new(RecordingEventSink::new());
+        let shared = Arc::new(SharedEventSink(inner.clone()));
+        let mut handles = vec![];
+
+        for i in 0..4 {
+            let s = shared.clone();
+            handles.push(std::thread::spawn(move || {
+                s.on_sync_event(SyncEvent::Progress {
+                    state: format!("thread-{i}"),
+                    remote_device_id: "PEER".into(),
+                    ops_received: 0,
+                    ops_sent: 0,
+                });
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(
+            inner.events().len(),
+            4,
+            "all 4 concurrent events must be captured"
+        );
+    }
+
+    #[test]
+    fn cancel_is_idempotent() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let daemon = SyncDaemon {
+            shutdown: Arc::new(AtomicBool::new(false)),
+            cancel: cancel.clone(),
+            handle: None,
+        };
+        daemon.cancel_active_sync();
+        daemon.cancel_active_sync();
+        daemon.cancel_active_sync();
+        assert!(
+            cancel.load(Ordering::Acquire),
+            "flag must remain set after multiple calls"
+        );
+    }
 }

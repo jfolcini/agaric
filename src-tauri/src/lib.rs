@@ -173,6 +173,14 @@ mod specta_tests {
     }
 }
 
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+/// Shared cancel flag for sync — registered in managed state before
+/// the `SyncDaemon` spawns so `cancel_sync` can access it even if the
+/// daemon hasn't started yet.
+pub struct SyncCancelFlag(pub Arc<AtomicBool>);
+
 #[cfg(not(tarpaulin_include))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -296,6 +304,11 @@ pub fn run() {
             app.manage(commands::PairingState(std::sync::Mutex::new(None)));
             app.manage(scheduler);
 
+            // Sync cancel flag (#528) — registered before daemon spawns so
+            // cancel_sync can always resolve managed state.
+            let cancel_flag = Arc::new(AtomicBool::new(false));
+            app.manage(SyncCancelFlag(cancel_flag.clone()));
+
             // Spawn SyncDaemon (#382, #383, #278)
             tauri::async_runtime::spawn(async move {
                 match sync_daemon::SyncDaemon::start(
@@ -305,6 +318,7 @@ pub fn run() {
                     daemon_scheduler,
                     daemon_cert,
                     daemon_sink,
+                    cancel_flag,
                 )
                 .await
                 {

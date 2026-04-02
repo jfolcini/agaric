@@ -449,7 +449,6 @@ async startSync(peerId: string) : Promise<Result<SyncSessionInfo, { kind: string
 },
 /**
  * Tauri command: cancel an active sync session.
- * Placeholder until SyncDaemon (#382) provides task handle tracking.
  */
 async cancelSync() : Promise<Result<null, { kind: string; message: string }>> {
     try {

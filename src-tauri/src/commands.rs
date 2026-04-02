@@ -9,6 +9,7 @@
 //! `Serialize` for Tauri 2 command error propagation.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -2387,9 +2388,11 @@ pub fn start_sync_inner(
 
 /// Cancel an active sync session.
 ///
-/// Placeholder — actual cancellation requires tracking the active sync
-/// task handle, which will be added when the SyncDaemon lands (#382).
-pub fn cancel_sync_inner() -> Result<(), AppError> {
+/// Sets the cancel flag that is checked each iteration of the sync message
+/// exchange loop.  If no sync is active the flag is harmlessly cleared on
+/// the next session start.
+pub fn cancel_sync_inner(cancel_flag: &AtomicBool) -> Result<(), AppError> {
+    cancel_flag.store(true, Ordering::Release);
     Ok(())
 }
 
@@ -3095,12 +3098,11 @@ pub async fn start_sync(
 }
 
 /// Tauri command: cancel an active sync session.
-/// Placeholder until SyncDaemon (#382) provides task handle tracking.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
-pub async fn cancel_sync() -> Result<(), AppError> {
-    cancel_sync_inner()
+pub async fn cancel_sync(cancel_flag: State<'_, crate::SyncCancelFlag>) -> Result<(), AppError> {
+    cancel_sync_inner(&cancel_flag.0).map_err(sanitize_internal_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -9559,7 +9561,12 @@ mod tests {
 
     #[test]
     fn sync_cancel_sync_succeeds() {
-        let result = cancel_sync_inner();
-        assert!(result.is_ok(), "cancel_sync must succeed (placeholder)");
+        let flag = AtomicBool::new(false);
+        let result = cancel_sync_inner(&flag);
+        assert!(result.is_ok(), "cancel_sync must succeed");
+        assert!(
+            flag.load(Ordering::Acquire),
+            "cancel flag must be set after cancel_sync"
+        );
     }
 }
