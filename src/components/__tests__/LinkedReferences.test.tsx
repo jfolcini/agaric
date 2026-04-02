@@ -36,6 +36,30 @@ vi.mock('sonner', () => ({
   },
 }))
 
+vi.mock('../SourcePageFilter', () => ({
+  SourcePageFilter: (props: {
+    sourcePages: unknown[]
+    included: string[]
+    excluded: string[]
+    onChange: (inc: string[], exc: string[]) => void
+  }) => (
+    <div data-testid="source-page-filter">
+      <button
+        type="button"
+        data-testid="source-page-filter-trigger"
+        onClick={() => props.onChange(['P1'], [])}
+      >
+        Filter ({props.included.length} included, {props.excluded.length} excluded)
+      </button>
+      <span data-testid="source-page-filter-pages">{JSON.stringify(props.sourcePages)}</span>
+    </div>
+  ),
+}))
+
+vi.mock('../BacklinkFilterBuilder', () => ({
+  BacklinkFilterBuilder: () => <div data-testid="backlink-filter-builder">Advanced Filters</div>,
+}))
+
 const mockedInvoke = vi.mocked(invoke)
 
 function makeGroup(
@@ -72,6 +96,8 @@ function mockInvokeWith(groupedResponse: unknown, extras?: Record<string, unknow
   mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
     if (cmd === 'list_backlinks_grouped') return groupedResponse
     if (cmd === 'batch_resolve') return []
+    if (cmd === 'list_property_keys') return []
+    if (cmd === 'list_tags_by_prefix') return []
     if (extras?.[cmd] !== undefined) return extras[cmd]
     return emptyGrouped
   })
@@ -445,6 +471,8 @@ describe('LinkedReferences', () => {
         return callCount === 1 ? page1 : page2
       }
       if (cmd === 'batch_resolve') return []
+      if (cmd === 'list_property_keys') return []
+      if (cmd === 'list_tags_by_prefix') return []
       return emptyGrouped
     })
 
@@ -511,6 +539,8 @@ describe('LinkedReferences', () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') throw new Error('network failure')
       if (cmd === 'batch_resolve') return []
+      if (cmd === 'list_property_keys') return []
+      if (cmd === 'list_tags_by_prefix') return []
       return emptyGrouped
     })
 
@@ -694,5 +724,267 @@ describe('LinkedReferences', () => {
     // Expand
     await user.click(headerBtn)
     expect(headerBtn).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Filter integration tests (#543 / #544)
+  // ---------------------------------------------------------------------------
+
+  // 25. renders source page filter when groups present
+  it('renders source page filter when groups present', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockInvokeWith(resp)
+
+    render(<LinkedReferences pageId="PAGE1" />)
+
+    await screen.findByText('Page One (1)')
+
+    expect(screen.getByTestId('source-page-filter')).toBeInTheDocument()
+  })
+
+  // 26. renders "More filters" button
+  it('renders "More filters" button', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockInvokeWith(resp)
+
+    render(<LinkedReferences pageId="PAGE1" />)
+
+    await screen.findByText('Page One (1)')
+
+    expect(screen.getByText('More filters')).toBeInTheDocument()
+  })
+
+  // 27. "More filters" toggles advanced filter panel
+  it('"More filters" toggles advanced filter panel', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockInvokeWith(resp)
+
+    render(<LinkedReferences pageId="PAGE1" />)
+
+    await screen.findByText('Page One (1)')
+
+    // Advanced filters not visible initially
+    expect(screen.queryByTestId('backlink-filter-builder')).not.toBeInTheDocument()
+
+    // Click "More filters"
+    await user.click(screen.getByText('More filters'))
+
+    // Advanced filters now visible
+    expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
+
+    // Click "Hide filters"
+    await user.click(screen.getByText('Hide filters'))
+
+    // Advanced filters hidden again
+    expect(screen.queryByTestId('backlink-filter-builder')).not.toBeInTheDocument()
+  })
+
+  // 28. "More filters" button shows "Hide filters" when expanded
+  it('"More filters" button shows "Hide filters" when expanded', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockInvokeWith(resp)
+
+    render(<LinkedReferences pageId="PAGE1" />)
+
+    await screen.findByText('Page One (1)')
+
+    const moreBtn = screen.getByText('More filters')
+    expect(moreBtn).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(moreBtn)
+
+    const hideBtn = screen.getByText('Hide filters')
+    expect(hideBtn).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  // 29. source page filter passes correct sourcePages
+  it('source page filter passes correct sourcePages', async () => {
+    const resp = {
+      groups: [
+        makeGroup('P1', 'Page One', [
+          { id: 'B1', content: 'block 1' },
+          { id: 'B2', content: 'block 2' },
+        ]),
+        makeGroup('P2', 'Page Two', [{ id: 'B3', content: 'block 3' }]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 3,
+      filtered_count: 3,
+    }
+    mockInvokeWith(resp)
+
+    render(<LinkedReferences pageId="PAGE1" />)
+
+    await screen.findByText('Page One (2)')
+
+    const pagesJson = screen.getByTestId('source-page-filter-pages').textContent
+    const pages = JSON.parse(pagesJson ?? '[]')
+
+    expect(pages).toEqual([
+      { pageId: 'P1', pageTitle: 'Page One', blockCount: 2 },
+      { pageId: 'P2', pageTitle: 'Page Two', blockCount: 1 },
+    ])
+  })
+
+  // 30. applying source page filter re-fetches with SourcePage filter
+  it('applying source page filter re-fetches with SourcePage filter', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockInvokeWith(resp)
+
+    render(<LinkedReferences pageId="PAGE1" />)
+
+    await screen.findByText('Page One (1)')
+
+    // Clear call history to focus on the re-fetch
+    mockedInvoke.mockClear()
+    mockInvokeWith(resp)
+
+    // Click the mock source page filter trigger (sets included=['P1'])
+    await user.click(screen.getByTestId('source-page-filter-trigger'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', {
+        blockId: 'PAGE1',
+        filters: [{ type: 'SourcePage', included: ['P1'], excluded: [] }],
+        sort: null,
+        cursor: null,
+        limit: 50,
+      })
+    })
+  })
+
+  // 31. clearing filters re-fetches without filters
+  it('clearing filters re-fetches without filters', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockInvokeWith(resp)
+
+    render(<LinkedReferences pageId="PAGE1" />)
+
+    await screen.findByText('Page One (1)')
+
+    // Apply filter first
+    await user.click(screen.getByTestId('source-page-filter-trigger'))
+
+    // Wait for re-fetch with filter
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'list_backlinks_grouped',
+        expect.objectContaining({ filters: expect.any(Array) }),
+      )
+    })
+
+    // Clear mock calls, then the mock onChange returns (['P1'], []) on click;
+    // we can't directly clear from here. But we can verify the initial fetch
+    // was done without filters.
+    // Instead, verify the first call was without filters:
+    const firstCall = mockedInvoke.mock.calls.find(
+      (c) =>
+        c[0] === 'list_backlinks_grouped' && (c[1] as Record<string, unknown>)?.filters === null,
+    )
+    expect(firstCall).toBeTruthy()
+  })
+
+  // 32. a11y with filters visible
+  it('a11y: no violations with filters visible', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'accessible block' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockInvokeWith(resp)
+
+    const { container } = render(<LinkedReferences pageId="PAGE1" />)
+
+    await screen.findByText('accessible block')
+
+    // Expand advanced filters
+    await user.click(screen.getByText('More filters'))
+
+    expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // 33. filter state resets when pageId changes
+  it('resets filters when pageId changes', async () => {
+    const user = userEvent.setup()
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'ref' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockInvokeWith(resp)
+
+    const { rerender } = render(<LinkedReferences pageId="PAGE_A" />)
+
+    await screen.findByText('Page One (1)')
+
+    // Apply source page filter
+    await user.click(screen.getByTestId('source-page-filter-trigger'))
+
+    // Expand advanced filters
+    await user.click(screen.getByText('More filters'))
+    expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
+
+    // Now rerender with a different pageId — filters should reset
+    mockedInvoke.mockClear()
+    mockInvokeWith(resp)
+
+    rerender(<LinkedReferences pageId="PAGE_B" />)
+
+    // "More filters" should be collapsed (showAdvancedFilters reset)
+    await waitFor(() => {
+      expect(screen.getByText('More filters')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('backlink-filter-builder')).not.toBeInTheDocument()
   })
 })

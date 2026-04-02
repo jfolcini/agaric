@@ -11,7 +11,7 @@
  *  - Reloads blocks when pageId prop changes
  *  - Detail panel: hidden when no block focused
  *  - Detail panel: renders when a block is focused
- *  - Detail panel: tab switching between backlinks/history/tags
+ *  - Detail panel: tab switching between history/tags/properties
  *  - Detail panel: persists when focusedBlockId becomes null
  *  - Detail panel: collapsible
  */
@@ -38,16 +38,8 @@ vi.mock('../BlockTree', () => ({
 // ── Mock panel components ───────────────────────────────────────────
 // Panels are tested independently; here we just verify they receive
 // the correct blockId prop.
-let capturedBacklinksBlockId: string | null = null
 let capturedHistoryBlockId: string | null = null
 let capturedTagBlockId: string | null = null
-
-vi.mock('../BacklinksPanel', () => ({
-  BacklinksPanel: (props: { blockId: string | null }) => {
-    capturedBacklinksBlockId = props.blockId
-    return <div data-testid="backlinks-panel" data-block-id={props.blockId ?? ''} />
-  },
-}))
 
 let capturedLinkedRefsPageId: string | undefined
 vi.mock('../LinkedReferences', () => ({
@@ -64,6 +56,12 @@ vi.mock('../HistoryPanel', () => ({
   },
 }))
 
+vi.mock('../PropertiesPanel', () => ({
+  PropertiesPanel: (props: { blockId: string | null }) => {
+    return <div data-testid="properties-panel" data-block-id={props.blockId ?? ''} />
+  },
+}))
+
 vi.mock('../TagPanel', () => ({
   TagPanel: (props: { blockId: string | null }) => {
     capturedTagBlockId = props.blockId
@@ -77,7 +75,6 @@ vi.mock('lucide-react', () => ({
   ChevronDown: () => <svg data-testid="chevron-down-icon" />,
   ChevronUp: () => <svg data-testid="chevron-up-icon" />,
   History: () => <svg data-testid="history-icon" />,
-  Link: () => <svg data-testid="link-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
   Tag: () => <svg data-testid="tag-icon" />,
 }))
@@ -113,7 +110,6 @@ function makeBlock(id: string, content: string, parentId: string | null = null, 
 beforeEach(() => {
   vi.clearAllMocks()
   capturedParentId = undefined
-  capturedBacklinksBlockId = null
   capturedHistoryBlockId = null
   capturedTagBlockId = null
   capturedLinkedRefsPageId = undefined
@@ -431,31 +427,12 @@ describe('PageEditor detail panel', () => {
     expect(panel).toBeInTheDocument()
 
     // Tab buttons should be visible
-    expect(screen.getByRole('tab', { name: /backlinks/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /history/i })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /tags/i })).toBeInTheDocument()
 
     // Panel content should NOT be auto-opened
-    expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
-  })
-
-  it('opens backlinks panel when user explicitly clicks Backlinks tab', async () => {
-    const user = userEvent.setup()
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
-
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    // Panel content NOT shown yet
-    expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
-
-    // Click Backlinks tab explicitly
-    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
-
-    // Now panel content should be shown
-    expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
-    expect(capturedBacklinksBlockId).toBe('BLOCK_1')
   })
 
   it('passes correct blockId to panel components after tab click', async () => {
@@ -465,28 +442,21 @@ describe('PageEditor detail panel', () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Click a tab to open panel
-    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /history/i }))
 
-    expect(capturedBacklinksBlockId).toBe('BLOCK_42')
+    expect(capturedHistoryBlockId).toBe('BLOCK_42')
   })
 
-  it('switches between backlinks, history, and tags tabs', async () => {
+  it('switches between history, tags, and properties tabs', async () => {
     const user = userEvent.setup()
     useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
-    // Open Backlinks tab first (panel is collapsed by default)
-    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
-    expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
-    expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
-
-    // Switch to History tab
+    // Open History tab first (panel is collapsed by default)
     await user.click(screen.getByRole('tab', { name: /history/i }))
-    expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
     expect(screen.getByTestId('history-panel')).toBeInTheDocument()
-    expect(capturedHistoryBlockId).toBe('BLOCK_1')
+    expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
 
     // Switch to Tags tab
     await user.click(screen.getByRole('tab', { name: /tags/i }))
@@ -494,10 +464,14 @@ describe('PageEditor detail panel', () => {
     expect(screen.getByTestId('tag-panel')).toBeInTheDocument()
     expect(capturedTagBlockId).toBe('BLOCK_1')
 
-    // Switch back to Backlinks tab
-    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
-    expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
+    // Switch to Properties tab
+    await user.click(screen.getByRole('tab', { name: /properties/i }))
     expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
+
+    // Switch back to History tab
+    await user.click(screen.getByRole('tab', { name: /history/i }))
+    expect(screen.getByTestId('history-panel')).toBeInTheDocument()
+    expect(capturedHistoryBlockId).toBe('BLOCK_1')
   })
 
   it('persists panel when focusedBlockId becomes null', async () => {
@@ -507,11 +481,11 @@ describe('PageEditor detail panel', () => {
     const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Open tab explicitly
-    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /history/i }))
 
     // Panel visible with BLOCK_1
     expect(screen.getByTestId('detail-panel')).toBeInTheDocument()
-    expect(capturedBacklinksBlockId).toBe('BLOCK_1')
+    expect(capturedHistoryBlockId).toBe('BLOCK_1')
 
     // Clear focus — panel should persist with last block
     act(() => {
@@ -520,7 +494,7 @@ describe('PageEditor detail panel', () => {
     rerender(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     expect(screen.getByTestId('detail-panel')).toBeInTheDocument()
-    expect(capturedBacklinksBlockId).toBe('BLOCK_1')
+    expect(capturedHistoryBlockId).toBe('BLOCK_1')
   })
 
   it('updates panel when focusedBlockId changes to a different block', async () => {
@@ -530,15 +504,15 @@ describe('PageEditor detail panel', () => {
     const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Open tab explicitly
-    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
-    expect(capturedBacklinksBlockId).toBe('BLOCK_1')
+    await user.click(screen.getByRole('tab', { name: /history/i }))
+    expect(capturedHistoryBlockId).toBe('BLOCK_1')
 
     act(() => {
       useBlockStore.setState({ focusedBlockId: 'BLOCK_2' })
     })
     rerender(<PageEditor pageId="PAGE_1" title="My Page" />)
 
-    expect(capturedBacklinksBlockId).toBe('BLOCK_2')
+    expect(capturedHistoryBlockId).toBe('BLOCK_2')
   })
 
   it('collapses and expands the detail panel', async () => {
@@ -548,10 +522,10 @@ describe('PageEditor detail panel', () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Open tab explicitly
-    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /history/i }))
 
     // Panel content is visible
-    expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('history-panel')).toBeInTheDocument()
 
     // Collapse the panel
     const collapseBtn = screen.getByRole('button', { name: /collapse detail panel/i })
@@ -559,13 +533,13 @@ describe('PageEditor detail panel', () => {
 
     // Panel header still visible but content hidden
     expect(screen.getByTestId('detail-panel')).toBeInTheDocument()
-    expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
 
     // Expand the panel
     const expandBtn = screen.getByRole('button', { name: /expand detail panel/i })
     await user.click(expandBtn)
 
-    expect(screen.getByTestId('backlinks-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('history-panel')).toBeInTheDocument()
   })
 
   it('detail panel content has bounded height to prevent layout push', async () => {
@@ -575,10 +549,10 @@ describe('PageEditor detail panel', () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Open tab to reveal content area
-    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
+    await user.click(screen.getByRole('tab', { name: /history/i }))
 
     // The content container should have max-height + overflow classes
-    const contentEl = screen.getByTestId('backlinks-panel').parentElement
+    const contentEl = screen.getByTestId('history-panel').parentElement
     expect(contentEl).toHaveClass('max-h-96')
     expect(contentEl).toHaveClass('overflow-y-auto')
   })
@@ -590,13 +564,13 @@ describe('PageEditor detail panel', () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
     // Open and then collapse
-    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
-    await user.click(screen.getByRole('button', { name: /collapse detail panel/i }))
-    expect(screen.queryByTestId('backlinks-panel')).not.toBeInTheDocument()
-
-    // Click History tab — should expand and switch tab
     await user.click(screen.getByRole('tab', { name: /history/i }))
-    expect(screen.getByTestId('history-panel')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /collapse detail panel/i }))
+    expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
+
+    // Click Tags tab — should expand and switch tab
+    await user.click(screen.getByRole('tab', { name: /tags/i }))
+    expect(screen.getByTestId('tag-panel')).toBeInTheDocument()
   })
 
   it('has no a11y violations when detail panel is visible', async () => {
@@ -620,12 +594,10 @@ describe('PageEditor detail panel', () => {
     expect(tablist).toBeInTheDocument()
 
     // Each tab button
-    const backlinksTab = screen.getByRole('tab', { name: /backlinks/i })
     const historyTab = screen.getByRole('tab', { name: /history/i })
     const tagsTab = screen.getByRole('tab', { name: /tags/i })
     const propertiesTab = screen.getByRole('tab', { name: /properties/i })
 
-    expect(backlinksTab).toHaveAttribute('aria-selected', 'false')
     expect(historyTab).toHaveAttribute('aria-selected', 'false')
     expect(tagsTab).toHaveAttribute('aria-selected', 'false')
     expect(propertiesTab).toHaveAttribute('aria-selected', 'false')
@@ -637,29 +609,26 @@ describe('PageEditor detail panel', () => {
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
-    // Click Backlinks tab
-    await user.click(screen.getByRole('tab', { name: /backlinks/i }))
+    // Click History tab
+    await user.click(screen.getByRole('tab', { name: /history/i }))
 
     // aria-selected should be true for the clicked tab
-    expect(screen.getByRole('tab', { name: /backlinks/i })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: /history/i })).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('tab', { name: /history/i })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /tags/i })).toHaveAttribute('aria-selected', 'false')
 
     // tabpanel should appear with correct aria-labelledby
     const tabpanel = screen.getByRole('tabpanel')
     expect(tabpanel).toHaveAttribute('id', 'detail-tabpanel')
-    expect(tabpanel).toHaveAttribute('aria-labelledby', 'detail-tab-backlinks')
+    expect(tabpanel).toHaveAttribute('aria-labelledby', 'detail-tab-history')
 
-    // Switch to history
-    await user.click(screen.getByRole('tab', { name: /history/i }))
+    // Switch to tags
+    await user.click(screen.getByRole('tab', { name: /tags/i }))
 
-    expect(screen.getByRole('tab', { name: /backlinks/i })).toHaveAttribute(
-      'aria-selected',
-      'false',
-    )
-    expect(screen.getByRole('tab', { name: /history/i })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /history/i })).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('tab', { name: /tags/i })).toHaveAttribute('aria-selected', 'true')
 
     const updatedTabpanel = screen.getByRole('tabpanel')
-    expect(updatedTabpanel).toHaveAttribute('aria-labelledby', 'detail-tab-history')
+    expect(updatedTabpanel).toHaveAttribute('aria-labelledby', 'detail-tab-tags')
   })
 })
 

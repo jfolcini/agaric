@@ -5,7 +5,7 @@
  * Loads children of the given pageId via BlockTree's parentId prop.
  */
 
-import { ArrowLeft, ChevronDown, ChevronUp, History, Link, Plus, Tag } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, History, Plus, Tag } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -15,7 +15,6 @@ import { useBlockStore } from '../stores/blocks'
 import { useNavigationStore } from '../stores/navigation'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
-import { BacklinksPanel } from './BacklinksPanel'
 import { BlockTree } from './BlockTree'
 import { HistoryPanel } from './HistoryPanel'
 import { LinkedReferences } from './LinkedReferences'
@@ -54,7 +53,7 @@ export interface PageEditorProps {
   onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
 }
 
-type DetailTab = 'backlinks' | 'history' | 'tags' | 'properties'
+type DetailTab = 'history' | 'tags' | 'properties'
 
 export function PageEditor({
   pageId,
@@ -234,22 +233,6 @@ export function PageEditor({
             <div role="tablist" aria-label="Block details" className="flex items-center gap-1">
               <Button
                 role="tab"
-                id="detail-tab-backlinks"
-                aria-selected={activeTab === 'backlinks'}
-                aria-controls="detail-tabpanel"
-                variant={activeTab === 'backlinks' ? 'default' : 'ghost'}
-                size="sm"
-                className="detail-tab-backlinks gap-1"
-                onClick={() => {
-                  setActiveTab('backlinks')
-                  setPanelCollapsed(false)
-                }}
-              >
-                <Link className="h-3.5 w-3.5" />
-                Backlinks
-              </Button>
-              <Button
-                role="tab"
                 id="detail-tab-history"
                 aria-selected={activeTab === 'history'}
                 aria-controls="detail-tabpanel"
@@ -324,7 +307,6 @@ export function PageEditor({
               aria-labelledby={`detail-tab-${activeTab}`}
               className="detail-panel-content max-h-96 overflow-y-auto p-3"
             >
-              {activeTab === 'backlinks' && <BacklinksPanel blockId={effectiveBlockId} />}
               {activeTab === 'history' && <HistoryPanel blockId={effectiveBlockId} />}
               {activeTab === 'tags' && <TagPanel blockId={effectiveBlockId} />}
               {activeTab === 'properties' && <PropertiesPanel blockId={effectiveBlockId} />}

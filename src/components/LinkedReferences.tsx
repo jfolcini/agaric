@@ -13,8 +13,15 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { BacklinkGroup, BlockRow } from '../lib/tauri'
-import { batchResolve, listBacklinksGrouped } from '../lib/tauri'
+import type { BacklinkFilter, BacklinkGroup, BacklinkSort, BlockRow } from '../lib/tauri'
+import {
+  batchResolve,
+  listBacklinksGrouped,
+  listPropertyKeys,
+  listTagsByPrefix,
+} from '../lib/tauri'
+import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
+import { SourcePageFilter } from './SourcePageFilter'
 import { renderRichContent } from './StaticBlock'
 
 export interface LinkedReferencesProps {
@@ -33,6 +40,13 @@ export function LinkedReferences({
   const [totalCount, setTotalCount] = useState(0)
   const [expanded, setExpanded] = useState(true)
   const [groupExpanded, setGroupExpanded] = useState<Record<string, boolean>>({})
+  const [filters, setFilters] = useState<BacklinkFilter[]>([])
+  const [sort, setSort] = useState<BacklinkSort | null>(null)
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
+  const [sourcePageIncluded, setSourcePageIncluded] = useState<string[]>([])
+  const [sourcePageExcluded, setSourcePageExcluded] = useState<string[]>([])
+  const [propertyKeys, setPropertyKeys] = useState<string[]>([])
+  const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
   // Resolve cache for [[ULID]] and #[ULID] tokens
   const [resolveVersion, setResolveVersion] = useState(0)
@@ -45,8 +59,20 @@ export function LinkedReferences({
     async (cursor?: string) => {
       setLoading(true)
       try {
+        // Build combined filters: advanced filters + source page filter
+        const allFilters = [...filters]
+        if (sourcePageIncluded.length > 0 || sourcePageExcluded.length > 0) {
+          allFilters.push({
+            type: 'SourcePage',
+            included: sourcePageIncluded,
+            excluded: sourcePageExcluded,
+          })
+        }
+
         const resp = await listBacklinksGrouped({
           pageId,
+          filters: allFilters.length > 0 ? allFilters : undefined,
+          sort: sort ?? undefined,
           limit: 50,
           cursor,
         })
@@ -92,10 +118,22 @@ export function LinkedReferences({
         setLoading(false)
       }
     },
-    [pageId],
+    [pageId, filters, sort, sourcePageIncluded, sourcePageExcluded],
   )
 
-  // Fetch on mount and when pageId changes
+  // Load property keys on mount
+  useEffect(() => {
+    listPropertyKeys().then(setPropertyKeys).catch(console.error)
+  }, [])
+
+  // Load tags on mount
+  useEffect(() => {
+    listTagsByPrefix({ prefix: '' })
+      .then((result) => setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name }))))
+      .catch(console.error)
+  }, [])
+
+  // Fetch on mount and when pageId/filters change
   useEffect(() => {
     setGroups([])
     setNextCursor(null)
@@ -104,6 +142,18 @@ export function LinkedReferences({
     resolveCache.current.clear()
     fetchGroups()
   }, [fetchGroups])
+
+  // Reset filter state when navigating to a different page
+  // Uses functional updaters to avoid no-op state updates on initial mount
+  // (which would re-create fetchGroups and trigger a duplicate fetch).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pageId is the intentional trigger for resetting filter state on navigation
+  useEffect(() => {
+    setFilters((prev) => (prev.length > 0 ? [] : prev))
+    setSort((prev) => (prev !== null ? null : prev))
+    setSourcePageIncluded((prev) => (prev.length > 0 ? [] : prev))
+    setSourcePageExcluded((prev) => (prev.length > 0 ? [] : prev))
+    setShowAdvancedFilters(false)
+  }, [pageId])
 
   // Resolve [[ULID]] and #[ULID] tokens in block content
   useEffect(() => {
@@ -252,6 +302,13 @@ export function LinkedReferences({
     return null
   }
 
+  // Derive sourcePages from groups for SourcePageFilter
+  const sourcePages = groups.map((g) => ({
+    pageId: g.page_id,
+    pageTitle: g.page_title,
+    blockCount: g.blocks.length,
+  }))
+
   const headerLabel = totalCount === 1 ? '1 Linked Reference' : `${totalCount} Linked References`
 
   return (
@@ -279,6 +336,44 @@ export function LinkedReferences({
               <Skeleton className="h-8 w-48 rounded-md" />
               <Skeleton className="h-12 w-full rounded-lg" />
               <Skeleton className="h-12 w-full rounded-lg" />
+            </div>
+          )}
+
+          {/* Filter controls */}
+          <div className="linked-references-filters flex items-center gap-2 px-2">
+            <SourcePageFilter
+              sourcePages={sourcePages}
+              included={sourcePageIncluded}
+              excluded={sourcePageExcluded}
+              onChange={(inc, exc) => {
+                setSourcePageIncluded(inc)
+                setSourcePageExcluded(exc)
+              }}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-muted-foreground"
+              onClick={() => setShowAdvancedFilters((prev) => !prev)}
+              aria-expanded={showAdvancedFilters}
+            >
+              {showAdvancedFilters ? 'Hide filters' : 'More filters'}
+            </Button>
+          </div>
+
+          {showAdvancedFilters && (
+            <div className="linked-references-advanced-filters px-2">
+              <BacklinkFilterBuilder
+                filters={filters}
+                sort={sort}
+                onFiltersChange={setFilters}
+                onSortChange={setSort}
+                totalCount={totalCount}
+                filteredCount={totalCount}
+                propertyKeys={propertyKeys}
+                tags={tags}
+                tagResolver={resolveTagName}
+              />
             </div>
           )}
 
