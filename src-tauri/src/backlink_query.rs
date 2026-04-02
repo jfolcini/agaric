@@ -186,6 +186,11 @@ pub enum BacklinkFilter {
     BlockType {
         block_type: String,
     },
+    /// Filter by source page — include/exclude blocks based on their root page ancestor.
+    SourcePage {
+        included: Vec<String>,
+        excluded: Vec<String>,
+    },
     And {
         filters: Vec<BacklinkFilter>,
     },
@@ -214,6 +219,25 @@ pub struct BacklinkQueryResponse {
     pub next_cursor: Option<String>,
     pub has_more: bool,
     pub total_count: usize,
+    pub filtered_count: usize,
+}
+
+/// A group of backlinks from the same source page.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct BacklinkGroup {
+    pub page_id: String,
+    pub page_title: Option<String>,
+    pub blocks: Vec<BlockRow>,
+}
+
+/// Response for grouped backlink queries — backlinks organized by source page.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct GroupedBacklinkResponse {
+    pub groups: Vec<BacklinkGroup>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    pub total_count: usize,
+    pub filtered_count: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -469,6 +493,56 @@ fn resolve_filter<'a>(
                 Ok(rows.into_iter().collect())
             }
 
+            BacklinkFilter::SourcePage { included, excluded } => {
+                let mut result: FxHashSet<String>;
+
+                if !included.is_empty() {
+                    // Get all descendants of included pages
+                    let placeholders = included.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                    let sql = format!(
+                        "WITH RECURSIVE desc(id) AS ( \
+                            SELECT id FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
+                            UNION ALL \
+                            SELECT b.id FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                        ) SELECT id FROM desc"
+                    );
+                    let mut q = sqlx::query_scalar::<_, String>(&sql);
+                    for id in included {
+                        q = q.bind(id);
+                    }
+                    result = q.fetch_all(pool).await?.into_iter().collect();
+                } else {
+                    // No inclusion filter — start with all non-deleted blocks
+                    result = sqlx::query_scalar::<_, String>(
+                        "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
+                    )
+                    .fetch_all(pool)
+                    .await?
+                    .into_iter()
+                    .collect();
+                }
+
+                if !excluded.is_empty() {
+                    let placeholders = excluded.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                    let sql = format!(
+                        "WITH RECURSIVE desc(id) AS ( \
+                            SELECT id FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
+                            UNION ALL \
+                            SELECT b.id FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                        ) SELECT id FROM desc"
+                    );
+                    let mut q = sqlx::query_scalar::<_, String>(&sql);
+                    for id in excluded {
+                        q = q.bind(id);
+                    }
+                    let excluded_set: FxHashSet<String> =
+                        q.fetch_all(pool).await?.into_iter().collect();
+                    result.retain(|id| !excluded_set.contains(id));
+                }
+
+                Ok(result)
+            }
+
             BacklinkFilter::And { filters } => {
                 if filters.is_empty() {
                     return Ok(FxHashSet::default());
@@ -596,12 +670,15 @@ pub async fn eval_backlink_query(
     .into_iter()
     .collect();
 
+    let total_count = base_ids.len();
+
     if base_ids.is_empty() {
         return Ok(BacklinkQueryResponse {
             items: vec![],
             next_cursor: None,
             has_more: false,
             total_count: 0,
+            filtered_count: 0,
         });
     }
 
@@ -623,15 +700,16 @@ pub async fn eval_backlink_query(
         base_ids.clone()
     };
 
-    // 3. Compute total_count before pagination
-    let total_count = filtered_ids.len();
+    // 3. Compute filtered_count before pagination
+    let filtered_count = filtered_ids.len();
 
-    if total_count == 0 {
+    if filtered_count == 0 {
         return Ok(BacklinkQueryResponse {
             items: vec![],
             next_cursor: None,
             has_more: false,
-            total_count: 0,
+            total_count,
+            filtered_count: 0,
         });
     }
 
@@ -667,6 +745,7 @@ pub async fn eval_backlink_query(
             next_cursor: None,
             has_more: false,
             total_count,
+            filtered_count,
         });
     }
 
@@ -715,6 +794,288 @@ pub async fn eval_backlink_query(
         next_cursor,
         has_more,
         total_count,
+        filtered_count,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Public: resolve_root_pages (helper for grouped queries)
+// ---------------------------------------------------------------------------
+
+/// Resolve each block's root page (topmost ancestor with block_type = 'page').
+///
+/// Returns HashMap<block_id, (root_page_id, root_page_title)>.
+/// Blocks whose ancestor chain doesn't terminate at a page are omitted.
+async fn resolve_root_pages(
+    pool: &SqlitePool,
+    block_ids: &FxHashSet<String>,
+) -> Result<std::collections::HashMap<String, (String, Option<String>)>, AppError> {
+    if block_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let placeholders = block_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "WITH RECURSIVE walk(block_id, current_id) AS ( \
+            SELECT id, id FROM blocks WHERE id IN ({placeholders}) \
+            UNION ALL \
+            SELECT w.block_id, b.parent_id \
+            FROM walk w \
+            JOIN blocks b ON b.id = w.current_id \
+            WHERE b.parent_id IS NOT NULL \
+        ) \
+        SELECT w.block_id, w.current_id as root_id, b.content as root_title \
+        FROM walk w \
+        JOIN blocks b ON b.id = w.current_id \
+        WHERE b.parent_id IS NULL AND b.block_type = 'page'"
+    );
+
+    #[derive(sqlx::FromRow)]
+    struct RootPageRow {
+        block_id: String,
+        root_id: String,
+        root_title: Option<String>,
+    }
+
+    let mut query = sqlx::query_as::<_, RootPageRow>(&sql);
+    for id in block_ids {
+        query = query.bind(id.as_str());
+    }
+    let rows = query.fetch_all(pool).await?;
+
+    let mut map = std::collections::HashMap::new();
+    for row in rows {
+        map.insert(row.block_id, (row.root_id, row.root_title));
+    }
+    Ok(map)
+}
+
+// ---------------------------------------------------------------------------
+// Public: eval_backlink_query_grouped
+// ---------------------------------------------------------------------------
+
+/// Evaluate a grouped backlink query — backlinks organized by source page.
+///
+/// ## Algorithm
+///
+/// 1. Get base backlink set.
+/// 2. Apply filters.
+/// 3. Resolve root pages for all filtered IDs.
+/// 4. Group blocks by root page.
+/// 5. Sort groups alphabetically by page title.
+/// 6. Apply cursor pagination on groups.
+/// 7. Sort blocks within each group, fetch full BlockRow data.
+/// 8. Return `GroupedBacklinkResponse`.
+pub async fn eval_backlink_query_grouped(
+    pool: &SqlitePool,
+    block_id: &str,
+    filters: Option<Vec<BacklinkFilter>>,
+    sort: Option<BacklinkSort>,
+    page: &PageRequest,
+) -> Result<GroupedBacklinkResponse, AppError> {
+    // 1. Get base backlink set
+    let base_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT bl.source_id FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0",
+    )
+    .bind(block_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .collect();
+
+    let total_count = base_ids.len();
+
+    if base_ids.is_empty() {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count: 0,
+            filtered_count: 0,
+        });
+    }
+
+    // 2. Apply filters (AND semantics at top level)
+    let filtered_ids = if let Some(ref filter_list) = filters {
+        if filter_list.is_empty() {
+            base_ids.clone()
+        } else {
+            let futures = filter_list.iter().map(|f| resolve_filter(pool, f, 0));
+            let results = try_join_all(futures).await?;
+            let mut result = base_ids.clone();
+            for set in results {
+                result.retain(|id| set.contains(id));
+            }
+            result
+        }
+    } else {
+        base_ids.clone()
+    };
+
+    let filtered_count = filtered_ids.len();
+
+    if filtered_count == 0 {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count,
+            filtered_count: 0,
+        });
+    }
+
+    // 3. Resolve root pages for all filtered IDs
+    let root_map = resolve_root_pages(pool, &filtered_ids).await?;
+
+    // 4. Group blocks by root page (skip orphans with no page ancestor)
+    let mut page_groups: std::collections::HashMap<String, (Option<String>, Vec<String>)> =
+        std::collections::HashMap::new();
+    for block_id_item in &filtered_ids {
+        if let Some((page_id, page_title)) = root_map.get(block_id_item) {
+            page_groups
+                .entry(page_id.clone())
+                .or_insert_with(|| (page_title.clone(), Vec::new()))
+                .1
+                .push(block_id_item.clone());
+        }
+    }
+
+    // 5. Sort groups alphabetically by page_title (None sorts last)
+    let mut group_list: Vec<(String, Option<String>, Vec<String>)> = page_groups
+        .into_iter()
+        .map(|(pid, (title, blocks))| (pid, title, blocks))
+        .collect();
+    group_list.sort_by(|a, b| {
+        let ta = a.1.as_deref();
+        let tb = b.1.as_deref();
+        match (ta, tb) {
+            (Some(a_title), Some(b_title)) => a_title.cmp(b_title).then_with(|| a.0.cmp(&b.0)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.0.cmp(&b.0),
+        }
+    });
+
+    // 6. Apply cursor pagination on groups
+    let start_after = page.after.as_ref().map(|c| c.id.as_str());
+    let groups_after_cursor: Vec<&(String, Option<String>, Vec<String>)> =
+        if let Some(after_id) = start_after {
+            group_list
+                .iter()
+                .skip_while(|(pid, _, _)| pid.as_str() != after_id)
+                .skip(1)
+                .collect()
+        } else {
+            group_list.iter().collect()
+        };
+
+    let fetch_limit = (page.limit + 1) as usize;
+    let page_groups_slice: Vec<&(String, Option<String>, Vec<String>)> =
+        groups_after_cursor.into_iter().take(fetch_limit).collect();
+    let has_more = page_groups_slice.len() > page.limit as usize;
+    let actual_groups: Vec<&(String, Option<String>, Vec<String>)> = if has_more {
+        page_groups_slice[..page.limit as usize].to_vec()
+    } else {
+        page_groups_slice
+    };
+
+    if actual_groups.is_empty() {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count,
+            filtered_count,
+        });
+    }
+
+    // 7. Sort all block IDs across groups by the user-specified sort, then distribute
+    let sort = sort.unwrap_or(BacklinkSort::Created { dir: SortDir::Asc });
+    let all_block_ids: FxHashSet<String> = actual_groups
+        .iter()
+        .flat_map(|(_, _, block_ids_in_group)| block_ids_in_group.iter().cloned())
+        .collect();
+    let sorted_all = sort_ids(pool, &all_block_ids, &sort).await?;
+
+    // 8. Fetch full BlockRow data for all blocks in one batch
+    let all_ids_vec: Vec<&str> = sorted_all.iter().map(|s| s.as_str()).collect();
+    let fetched_rows = if all_ids_vec.is_empty() {
+        vec![]
+    } else {
+        let placeholders = all_ids_vec
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let query_str = format!(
+            "SELECT id, block_type, content, parent_id, position, \
+             deleted_at, archived_at, is_conflict, conflict_type \
+             FROM blocks WHERE id IN ({placeholders})"
+        );
+        let mut query = sqlx::query_as::<_, BlockRow>(&query_str);
+        for id in &all_ids_vec {
+            query = query.bind(*id);
+        }
+        query.fetch_all(pool).await?
+    };
+
+    // Build a lookup map from id -> BlockRow
+    let row_map: std::collections::HashMap<&str, &BlockRow> =
+        fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
+
+    // Build a position map from sorted order
+    let sort_order: std::collections::HashMap<&str, usize> = sorted_all
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
+
+    // 9. Distribute fetched rows back into groups, maintaining sort order
+    let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(actual_groups.len());
+    for (page_id, page_title, block_ids_in_group) in &actual_groups {
+        let mut blocks: Vec<(&str, usize)> = block_ids_in_group
+            .iter()
+            .filter_map(|bid| sort_order.get(bid.as_str()).map(|&pos| (bid.as_str(), pos)))
+            .collect();
+        blocks.sort_by_key(|&(_, pos)| pos);
+
+        let block_rows: Vec<BlockRow> = blocks
+            .iter()
+            .filter_map(|&(bid, _)| row_map.get(bid).map(|r| (*r).clone()))
+            .collect();
+
+        groups.push(BacklinkGroup {
+            page_id: page_id.clone(),
+            page_title: page_title.clone(),
+            blocks: block_rows,
+        });
+    }
+
+    // 10. Build cursor from last group's page_id if has_more
+    let next_cursor = if has_more {
+        let last = actual_groups.last().expect("has_more implies non-empty");
+        Some(
+            Cursor {
+                id: last.0.clone(),
+                position: None,
+                deleted_at: None,
+                seq: None,
+                rank: None,
+            }
+            .encode()?,
+        )
+    } else {
+        None
+    };
+
+    Ok(GroupedBacklinkResponse {
+        groups,
+        next_cursor,
+        has_more,
+        total_count,
+        filtered_count,
     })
 }
 
@@ -1835,6 +2196,7 @@ mod tests {
 
         assert_eq!(resp.items.len(), 3);
         assert_eq!(resp.total_count, 3);
+        assert_eq!(resp.filtered_count, 3);
         // SRC_A < SRC_B < SRC_C lexicographically
         assert_eq!(resp.items[0].id, "SRC_A");
         assert_eq!(resp.items[1].id, "SRC_B");
@@ -1962,6 +2324,7 @@ mod tests {
         assert!(resp.has_more);
         assert!(resp.next_cursor.is_some());
         assert_eq!(resp.total_count, 3);
+        assert_eq!(resp.filtered_count, 3);
     }
 
     #[tokio::test]
@@ -1986,6 +2349,7 @@ mod tests {
         assert!(!resp2.has_more);
         assert!(resp2.next_cursor.is_none());
         assert_eq!(resp2.total_count, 3);
+        assert_eq!(resp2.filtered_count, 3);
     }
 
     #[tokio::test]
@@ -2004,7 +2368,8 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 2);
+        assert_eq!(resp.total_count, 3);
+        assert_eq!(resp.filtered_count, 2);
         assert_eq!(resp.items.len(), 1);
         assert!(resp.has_more);
     }
@@ -2023,6 +2388,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.total_count, 3);
+        assert_eq!(resp.filtered_count, 3);
         assert_eq!(resp.items.len(), 3);
     }
 
@@ -2036,6 +2402,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.total_count, 3);
+        assert_eq!(resp.filtered_count, 3);
         assert_eq!(resp.items.len(), 3);
     }
 
@@ -2053,6 +2420,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.total_count, 0);
+        assert_eq!(resp.filtered_count, 0);
         assert!(resp.items.is_empty());
         assert!(!resp.has_more);
         assert!(resp.next_cursor.is_none());
@@ -2077,6 +2445,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.total_count, 2);
+        assert_eq!(resp.filtered_count, 2);
         assert!(resp.items.iter().all(|item| item.id != "SRC_A"));
     }
 
@@ -2095,6 +2464,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.total_count, 2);
+        assert_eq!(resp.filtered_count, 2);
         assert!(resp.items.iter().all(|item| item.id != "SRC_B"));
     }
 
@@ -2144,7 +2514,8 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 1);
+        assert_eq!(resp.total_count, 3);
+        assert_eq!(resp.filtered_count, 1);
         assert_eq!(resp.items[0].id, "SRC_A");
     }
 
@@ -2165,7 +2536,8 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 1);
+        assert_eq!(resp.total_count, 2);
+        assert_eq!(resp.filtered_count, 1);
         assert_eq!(resp.items[0].id, "SRC_CONTENT");
     }
 
@@ -2196,7 +2568,8 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
             .await
             .unwrap();
-        assert_eq!(resp.total_count, 1);
+        assert_eq!(resp.total_count, 3);
+        assert_eq!(resp.filtered_count, 1);
         assert_eq!(resp.items[0].id, "SRC_A");
     }
 
@@ -2521,8 +2894,9 @@ mod tests {
         let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
             .await
             .unwrap();
+        assert_eq!(resp.total_count, 3, "base set has 3 backlinks");
         assert_eq!(
-            resp.total_count, 0,
+            resp.filtered_count, 0,
             "inverted range should return no results"
         );
     }
@@ -2925,7 +3299,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            resp.total_count, 0,
+            resp.filtered_count, 0,
             "Eq with +Infinity should match no finite values"
         );
 
@@ -2939,7 +3313,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            resp.total_count, 2,
+            resp.filtered_count, 2,
             "Gt with -Infinity should match all finite values"
         );
         let ids: Vec<&str> = resp.items.iter().map(|i| i.id.as_str()).collect();
@@ -2956,7 +3330,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            resp.total_count, 0,
+            resp.filtered_count, 0,
             "Eq with NaN should match nothing (NaN - x is NaN, NaN.abs() is NaN, NaN < EPSILON is false)"
         );
     }
@@ -3001,7 +3375,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            resp.total_count, 1,
+            resp.filtered_count, 1,
             "HasTagPrefix 'a%' should match only the literal 'a%b' tag, not 'axb'"
         );
         assert_eq!(
@@ -3018,7 +3392,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            resp.total_count, 1,
+            resp.filtered_count, 1,
             "HasTagPrefix 'a_' should match only the literal 'a_c' tag, not 'axb'"
         );
         assert_eq!(
@@ -3056,7 +3430,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            resp.total_count, 1,
+            resp.filtered_count, 1,
             "'AND hello' should match only SRC_A which contains both literal words"
         );
         assert_eq!(
@@ -3072,7 +3446,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            resp.total_count, 1,
+            resp.filtered_count, 1,
             "'NOT goodbye' should match only SRC_B which contains both literal words"
         );
         assert_eq!(
@@ -3088,12 +3462,481 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            resp.total_count, 3,
+            resp.filtered_count, 3,
             "'hello' should match all three blocks that contain it"
         );
         let ids: Vec<&str> = resp.items.iter().map(|i| i.id.as_str()).collect();
         assert!(ids.contains(&"SRC_A"), "SRC_A contains 'hello'");
         assert!(ids.contains(&"SRC_B"), "SRC_B contains 'hello'");
         assert!(ids.contains(&"SRC_C"), "SRC_C contains 'hello'");
+    }
+
+    // ======================================================================
+    // Helper: insert a block with optional parent_id and position
+    // ======================================================================
+
+    /// Insert a block with parent_id and position for hierarchy tests.
+    async fn insert_block_with_parent(
+        pool: &SqlitePool,
+        id: &str,
+        block_type: &str,
+        content: &str,
+        parent_id: Option<&str>,
+        position: Option<i64>,
+    ) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(block_type)
+        .bind(content)
+        .bind(parent_id)
+        .bind(position)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // ======================================================================
+    // #539 — total_count + filtered_count tests
+    // ======================================================================
+
+    #[tokio::test]
+    async fn total_and_filtered_count_no_filters() {
+        let (pool, _dir) = test_pool().await;
+        setup_backlinks(&pool).await;
+        let page = default_page();
+
+        let resp = eval_backlink_query(&pool, "TARGET", None, None, &page)
+            .await
+            .unwrap();
+        assert_eq!(resp.total_count, 3);
+        assert_eq!(resp.filtered_count, 3);
+        assert_eq!(
+            resp.total_count, resp.filtered_count,
+            "with no filters, total_count == filtered_count"
+        );
+    }
+
+    #[tokio::test]
+    async fn total_and_filtered_count_with_filter() {
+        let (pool, _dir) = test_pool().await;
+        setup_backlinks(&pool).await;
+        insert_property(&pool, "SRC_A", "status", Some("active"), None, None).await;
+        insert_property(&pool, "SRC_B", "status", Some("active"), None, None).await;
+        // SRC_C has no status property
+        let page = default_page();
+
+        let filters = vec![BacklinkFilter::PropertyIsSet {
+            key: "status".into(),
+        }];
+
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(resp.total_count, 3, "base set has 3 backlinks");
+        assert_eq!(resp.filtered_count, 2, "only 2 match the filter");
+    }
+
+    // ======================================================================
+    // #538 — resolve_root_pages tests
+    // ======================================================================
+
+    #[tokio::test]
+    async fn resolve_root_pages_empty() {
+        let (pool, _dir) = test_pool().await;
+        let result = resolve_root_pages(&pool, &FxHashSet::default())
+            .await
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn resolve_root_pages_happy_path() {
+        let (pool, _dir) = test_pool().await;
+        insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_A1",
+            "content",
+            "block a1",
+            Some("PAGE_A"),
+            Some(1),
+        )
+        .await;
+
+        let mut ids = FxHashSet::default();
+        ids.insert("BLK_A1".into());
+        let result = resolve_root_pages(&pool, &ids).await.unwrap();
+        assert_eq!(result.len(), 1);
+        let (root_id, root_title) = result.get("BLK_A1").unwrap();
+        assert_eq!(root_id, "PAGE_A");
+        assert_eq!(root_title.as_deref(), Some("Page A"));
+    }
+
+    #[tokio::test]
+    async fn resolve_root_pages_nested() {
+        let (pool, _dir) = test_pool().await;
+        insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "MID",
+            "content",
+            "mid level",
+            Some("PAGE_A"),
+            Some(1),
+        )
+        .await;
+        insert_block_with_parent(&pool, "DEEP", "content", "deep level", Some("MID"), Some(1))
+            .await;
+
+        let mut ids = FxHashSet::default();
+        ids.insert("DEEP".into());
+        let result = resolve_root_pages(&pool, &ids).await.unwrap();
+        assert_eq!(result.len(), 1);
+        let (root_id, _) = result.get("DEEP").unwrap();
+        assert_eq!(root_id, "PAGE_A");
+    }
+
+    #[tokio::test]
+    async fn resolve_root_pages_orphan() {
+        let (pool, _dir) = test_pool().await;
+        // A block with no parent, but block_type = 'content' (not a page)
+        insert_block_with_parent(&pool, "ORPHAN", "content", "orphan block", None, None).await;
+
+        let mut ids = FxHashSet::default();
+        ids.insert("ORPHAN".into());
+        let result = resolve_root_pages(&pool, &ids).await.unwrap();
+        assert!(
+            result.is_empty(),
+            "orphan block (no page ancestor) should be omitted"
+        );
+    }
+
+    // ======================================================================
+    // #538 — eval_backlink_query_grouped tests
+    // ======================================================================
+
+    #[tokio::test]
+    async fn eval_grouped_empty() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "LONELY", "page", "No one links to me").await;
+        let page = default_page();
+
+        let resp = eval_backlink_query_grouped(&pool, "LONELY", None, None, &page)
+            .await
+            .unwrap();
+        assert!(resp.groups.is_empty());
+        assert_eq!(resp.total_count, 0);
+        assert_eq!(resp.filtered_count, 0);
+        assert!(!resp.has_more);
+    }
+
+    #[tokio::test]
+    async fn eval_grouped_happy_path() {
+        let (pool, _dir) = test_pool().await;
+        // Page A with child content blocks
+        insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_A1",
+            "content",
+            "block a1",
+            Some("PAGE_A"),
+            Some(1),
+        )
+        .await;
+        // Page B with child content blocks
+        insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_B1",
+            "content",
+            "block b1",
+            Some("PAGE_B"),
+            Some(1),
+        )
+        .await;
+        // Target page
+        insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+        // Backlinks: BLK_A1 and BLK_B1 link to TARGET
+        insert_block_link(&pool, "BLK_A1", "TARGET").await;
+        insert_block_link(&pool, "BLK_B1", "TARGET").await;
+        let page = default_page();
+
+        let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page)
+            .await
+            .unwrap();
+        assert_eq!(resp.groups.len(), 2, "2 source pages");
+        assert_eq!(resp.total_count, 2);
+        assert_eq!(resp.filtered_count, 2);
+        assert!(!resp.has_more);
+
+        // Groups sorted alphabetically by page_title: "Page A" < "Page B"
+        assert_eq!(resp.groups[0].page_id, "PAGE_A");
+        assert_eq!(resp.groups[0].page_title.as_deref(), Some("Page A"));
+        assert_eq!(resp.groups[0].blocks.len(), 1);
+        assert_eq!(resp.groups[0].blocks[0].id, "BLK_A1");
+
+        assert_eq!(resp.groups[1].page_id, "PAGE_B");
+        assert_eq!(resp.groups[1].page_title.as_deref(), Some("Page B"));
+        assert_eq!(resp.groups[1].blocks.len(), 1);
+        assert_eq!(resp.groups[1].blocks[0].id, "BLK_B1");
+    }
+
+    #[tokio::test]
+    async fn eval_grouped_pagination() {
+        let (pool, _dir) = test_pool().await;
+        // Create 3 pages with child blocks linking to target
+        insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+        for ch in ['A', 'B', 'C'] {
+            let page_id = format!("PAGE_{ch}");
+            let blk_id = format!("BLK_{ch}1");
+            insert_block_with_parent(&pool, &page_id, "page", &format!("Page {ch}"), None, None)
+                .await;
+            insert_block_with_parent(
+                &pool,
+                &blk_id,
+                "content",
+                &format!("block {ch}1"),
+                Some(&page_id),
+                Some(1),
+            )
+            .await;
+            insert_block_link(&pool, &blk_id, "TARGET").await;
+        }
+
+        // First page: limit=2
+        let page1 = PageRequest::new(None, Some(2)).unwrap();
+        let resp1 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page1)
+            .await
+            .unwrap();
+        assert_eq!(resp1.groups.len(), 2);
+        assert!(resp1.has_more);
+        assert!(resp1.next_cursor.is_some());
+        assert_eq!(resp1.total_count, 3);
+        assert_eq!(resp1.filtered_count, 3);
+
+        // Second page via cursor
+        let page2 = PageRequest::new(resp1.next_cursor, Some(2)).unwrap();
+        let resp2 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page2)
+            .await
+            .unwrap();
+        assert_eq!(resp2.groups.len(), 1);
+        assert!(!resp2.has_more);
+        assert!(resp2.next_cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn eval_grouped_respects_filters() {
+        let (pool, _dir) = test_pool().await;
+        // Page A with child content blocks
+        insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_A1",
+            "content",
+            "block a1",
+            Some("PAGE_A"),
+            Some(1),
+        )
+        .await;
+        // Page B with child content blocks
+        insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_B1",
+            "content",
+            "block b1",
+            Some("PAGE_B"),
+            Some(1),
+        )
+        .await;
+        // Target page
+        insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+        // Backlinks
+        insert_block_link(&pool, "BLK_A1", "TARGET").await;
+        insert_block_link(&pool, "BLK_B1", "TARGET").await;
+        // Only BLK_A1 has a property
+        insert_property(&pool, "BLK_A1", "status", Some("active"), None, None).await;
+        let page = default_page();
+
+        let filters = vec![BacklinkFilter::PropertyIsSet {
+            key: "status".into(),
+        }];
+
+        let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
+        assert_eq!(resp.filtered_count, 1, "only 1 matches the filter");
+        assert_eq!(resp.groups.len(), 1);
+        assert_eq!(resp.groups[0].page_id, "PAGE_A");
+    }
+
+    // ======================================================================
+    // #540 — SourcePage filter tests
+    // ======================================================================
+
+    #[tokio::test]
+    async fn filter_source_page_included() {
+        let (pool, _dir) = test_pool().await;
+        // Page A with child content blocks
+        insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_A1",
+            "content",
+            "block a1",
+            Some("PAGE_A"),
+            Some(1),
+        )
+        .await;
+        // Page B with child content blocks
+        insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_B1",
+            "content",
+            "block b1",
+            Some("PAGE_B"),
+            Some(1),
+        )
+        .await;
+        // Target page
+        insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+        insert_block_link(&pool, "BLK_A1", "TARGET").await;
+        insert_block_link(&pool, "BLK_B1", "TARGET").await;
+        let page = default_page();
+
+        let filters = vec![BacklinkFilter::SourcePage {
+            included: vec!["PAGE_A".into()],
+            excluded: vec![],
+        }];
+
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
+        assert_eq!(resp.filtered_count, 1, "only backlinks from PAGE_A");
+        assert_eq!(resp.items[0].id, "BLK_A1");
+    }
+
+    #[tokio::test]
+    async fn filter_source_page_excluded() {
+        let (pool, _dir) = test_pool().await;
+        // Page A with child content blocks
+        insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_A1",
+            "content",
+            "block a1",
+            Some("PAGE_A"),
+            Some(1),
+        )
+        .await;
+        // Page B with child content blocks
+        insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_B1",
+            "content",
+            "block b1",
+            Some("PAGE_B"),
+            Some(1),
+        )
+        .await;
+        // Target page
+        insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+        insert_block_link(&pool, "BLK_A1", "TARGET").await;
+        insert_block_link(&pool, "BLK_B1", "TARGET").await;
+        let page = default_page();
+
+        let filters = vec![BacklinkFilter::SourcePage {
+            included: vec![],
+            excluded: vec!["PAGE_A".into()],
+        }];
+
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(resp.total_count, 2, "base set has 2 backlinks");
+        assert_eq!(resp.filtered_count, 1, "backlinks from PAGE_A excluded");
+        assert_eq!(resp.items[0].id, "BLK_B1");
+    }
+
+    #[tokio::test]
+    async fn filter_source_page_included_and_excluded() {
+        let (pool, _dir) = test_pool().await;
+        // Page A with two child content blocks
+        insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_A1",
+            "content",
+            "block a1",
+            Some("PAGE_A"),
+            Some(1),
+        )
+        .await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_A2",
+            "content",
+            "block a2",
+            Some("PAGE_A"),
+            Some(2),
+        )
+        .await;
+        // Page B with child content block
+        insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_B1",
+            "content",
+            "block b1",
+            Some("PAGE_B"),
+            Some(1),
+        )
+        .await;
+        // Page C with child content block
+        insert_block_with_parent(&pool, "PAGE_C", "page", "Page C", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_C1",
+            "content",
+            "block c1",
+            Some("PAGE_C"),
+            Some(1),
+        )
+        .await;
+        // Target page
+        insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+        insert_block_link(&pool, "BLK_A1", "TARGET").await;
+        insert_block_link(&pool, "BLK_A2", "TARGET").await;
+        insert_block_link(&pool, "BLK_B1", "TARGET").await;
+        insert_block_link(&pool, "BLK_C1", "TARGET").await;
+        let page = default_page();
+
+        // Include PAGE_A and PAGE_B, exclude PAGE_B → only PAGE_A blocks
+        let filters = vec![BacklinkFilter::SourcePage {
+            included: vec!["PAGE_A".into(), "PAGE_B".into()],
+            excluded: vec!["PAGE_B".into()],
+        }];
+
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(resp.total_count, 4, "base set has 4 backlinks");
+        assert_eq!(
+            resp.filtered_count, 2,
+            "only PAGE_A blocks after include+exclude"
+        );
+        let ids: Vec<&str> = resp.items.iter().map(|i| i.id.as_str()).collect();
+        assert!(ids.contains(&"BLK_A1"), "BLK_A1 from PAGE_A");
+        assert!(ids.contains(&"BLK_A2"), "BLK_A2 from PAGE_A");
+        assert!(!ids.contains(&"BLK_B1"), "BLK_B1 from PAGE_B excluded");
+        assert!(!ids.contains(&"BLK_C1"), "BLK_C1 from PAGE_C not included");
     }
 }

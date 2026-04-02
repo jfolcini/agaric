@@ -3500,6 +3500,7 @@ async fn backlinks_filtered_returns_linking_blocks() {
     assert!(ids.contains(&b2.id), "b2 must be in backlinks");
     assert_eq!(resp.items.len(), 2, "exactly two backlinks expected");
     assert_eq!(resp.total_count, 2, "total_count must be 2");
+    assert_eq!(resp.filtered_count, 2, "filtered_count must be 2");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3526,6 +3527,7 @@ async fn backlinks_filtered_empty_for_no_links() {
 
     assert!(resp.items.is_empty(), "no backlinks expected");
     assert_eq!(resp.total_count, 0, "total_count must be 0");
+    assert_eq!(resp.filtered_count, 0, "filtered_count must be 0");
     assert!(!resp.has_more, "has_more must be false");
     assert!(resp.next_cursor.is_none(), "no cursor for empty results");
 }
@@ -3590,6 +3592,10 @@ async fn backlinks_filtered_excludes_deleted() {
 
     assert!(resp.items.is_empty(), "deleted backlink must be excluded");
     assert_eq!(resp.total_count, 0, "total_count must be 0 after deletion");
+    assert_eq!(
+        resp.filtered_count, 0,
+        "filtered_count must be 0 after deletion"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4147,6 +4153,10 @@ async fn backlinks_filtered_pagination() {
     assert!(resp1.has_more, "more pages expected");
     assert!(resp1.next_cursor.is_some(), "cursor must be present");
     assert_eq!(resp1.total_count, 7, "total_count reflects all backlinks");
+    assert_eq!(
+        resp1.filtered_count, 7,
+        "filtered_count equals total_count with no filters"
+    );
 
     // Second page
     let resp2 = query_backlinks_filtered_inner(
@@ -4236,6 +4246,10 @@ async fn backlinks_filtered_total_count_matches() {
         resp.total_count, 5,
         "total_count reflects all 5 matches, not just page"
     );
+    assert_eq!(
+        resp.filtered_count, 5,
+        "filtered_count equals total_count with no filters"
+    );
     assert!(resp.has_more, "more pages available");
 }
 
@@ -4275,6 +4289,7 @@ async fn backlinks_filtered_nonexistent_block_id_returns_empty() {
         "nonexistent block_id returns empty, not error"
     );
     assert_eq!(resp.total_count, 0);
+    assert_eq!(resp.filtered_count, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

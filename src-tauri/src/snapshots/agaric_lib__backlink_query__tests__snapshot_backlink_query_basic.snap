@@ -1,6 +1,5 @@
 ---
 source: src/backlink_query.rs
-assertion_line: 2699
 expression: resp
 ---
 items:
@@ -34,3 +33,4 @@ items:
 next_cursor: "[CURSOR]"
 has_more: false
 total_count: 3
+filtered_count: 3

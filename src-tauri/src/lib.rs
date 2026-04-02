@@ -86,6 +86,7 @@ mod specta_tests {
             crate::commands::redo_page_op,
             crate::commands::compute_edit_diff,
             crate::commands::query_backlinks_filtered,
+            crate::commands::list_backlinks_grouped,
             crate::commands::list_property_keys,
             // Sync
             crate::commands::list_peer_refs,
@@ -229,6 +230,7 @@ pub fn run() {
         commands::redo_page_op,
         commands::compute_edit_diff,
         commands::query_backlinks_filtered,
+        commands::list_backlinks_grouped,
         commands::list_property_keys,
         // Sync
         commands::list_peer_refs,

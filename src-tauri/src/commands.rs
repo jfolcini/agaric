@@ -17,7 +17,9 @@ use specta::Type;
 use sqlx::SqlitePool;
 use tauri::State;
 
-use crate::backlink_query::{self, BacklinkFilter, BacklinkQueryResponse, BacklinkSort};
+use crate::backlink_query::{
+    self, BacklinkFilter, BacklinkQueryResponse, BacklinkSort, GroupedBacklinkResponse,
+};
 use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
@@ -1611,6 +1613,25 @@ pub async fn query_backlinks_filtered_inner(
     backlink_query::eval_backlink_query(pool, &block_id, filters, sort, &page).await
 }
 
+/// Query backlinks grouped by source page.
+///
+/// # Errors
+/// - [`AppError::Validation`] — `block_id` is empty
+pub async fn list_backlinks_grouped_inner(
+    pool: &SqlitePool,
+    block_id: String,
+    filters: Option<Vec<BacklinkFilter>>,
+    sort: Option<BacklinkSort>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<GroupedBacklinkResponse, AppError> {
+    if block_id.trim().is_empty() {
+        return Err(AppError::Validation("block_id must not be empty".into()));
+    }
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    backlink_query::eval_backlink_query_grouped(pool, &block_id, filters, sort, &page).await
+}
+
 /// List all distinct property keys currently in use across all blocks.
 pub async fn list_property_keys_inner(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
     backlink_query::list_property_keys(pool).await
@@ -2763,6 +2784,23 @@ pub async fn query_backlinks_filtered(
     limit: Option<i64>,
 ) -> Result<BacklinkQueryResponse, AppError> {
     query_backlinks_filtered_inner(&read_pool.0, block_id, filters, sort, cursor, limit)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: grouped backlink query. Delegates to [`list_backlinks_grouped_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_backlinks_grouped(
+    read_pool: State<'_, ReadPool>,
+    block_id: String,
+    filters: Option<Vec<BacklinkFilter>>,
+    sort: Option<BacklinkSort>,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<GroupedBacklinkResponse, AppError> {
+    list_backlinks_grouped_inner(&read_pool.0, block_id, filters, sort, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }

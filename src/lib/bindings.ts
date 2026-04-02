@@ -338,6 +338,17 @@ async queryBacklinksFiltered(blockId: string, filters: BacklinkFilter[] | null, 
 }
 },
 /**
+ * Tauri command: grouped backlink query. Delegates to [`list_backlinks_grouped_inner`].
+ */
+async listBacklinksGrouped(blockId: string, filters: BacklinkFilter[] | null, sort: BacklinkSort | null, cursor: string | null, limit: number | null) : Promise<Result<GroupedBacklinkResponse, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_backlinks_grouped", { blockId, filters, sort, cursor, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: list distinct property keys. Delegates to [`list_property_keys_inner`].
  */
 async listPropertyKeys() : Promise<Result<string[], { kind: string; message: string }>> {
@@ -476,11 +487,19 @@ async cancelSync() : Promise<Result<null, { kind: string; message: string }>> {
  * Filters are combined with AND semantics at the top level.
  * Use `And`/`Or`/`Not` variants for compound boolean logic.
  */
-export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } | { type: "And"; filters: BacklinkFilter[] } | { type: "Or"; filters: BacklinkFilter[] } | { type: "Not"; filter: BacklinkFilter }
+export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } |
+/**
+ * Filter by source page — include/exclude blocks based on their root page ancestor.
+ */
+{ type: "SourcePage"; included: string[]; excluded: string[] } | { type: "And"; filters: BacklinkFilter[] } | { type: "Or"; filters: BacklinkFilter[] } | { type: "Not"; filter: BacklinkFilter }
+/**
+ * A group of backlinks from the same source page.
+ */
+export type BacklinkGroup = { page_id: string; page_title: string | null; blocks: BlockRow[] }
 /**
  * Response for a filtered backlink query, including total count.
  */
-export type BacklinkQueryResponse = { items: BlockRow[]; next_cursor: string | null; has_more: boolean; total_count: number }
+export type BacklinkQueryResponse = { items: BlockRow[]; next_cursor: string | null; has_more: boolean; total_count: number; filtered_count: number }
 /**
  * Tagged union of sort modes for backlink queries.
  */
@@ -502,6 +521,10 @@ export type DiffSpan = { tag: DiffTag; value: string }
  * Tag indicating what happened to a span of text.
  */
 export type DiffTag = "Equal" | "Delete" | "Insert"
+/**
+ * Response for grouped backlink queries — backlinks organized by source page.
+ */
+export type GroupedBacklinkResponse = { groups: BacklinkGroup[]; next_cursor: string | null; has_more: boolean; total_count: number; filtered_count: number }
 /**
  * Row returned by block history queries (op_log entries for a block).
  */
