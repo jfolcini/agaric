@@ -8,15 +8,12 @@
 
 import { Plus, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
-import { toast } from 'sonner'
+import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import type { BlockRow } from '../lib/tauri'
-import { addTag, createBlock, listBlocks, listTagsForBlock, removeTag } from '../lib/tauri'
-import { useResolveStore } from '../stores/resolve'
+import { useBlockTags } from '../hooks/useBlockTags'
 import { EmptyState } from './EmptyState'
 
 interface TagPanelProps {
@@ -24,94 +21,26 @@ interface TagPanelProps {
   blockId: string | null
 }
 
-interface TagEntry {
-  id: string
-  name: string
-}
-
 export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null {
-  const [allTags, setAllTags] = useState<TagEntry[]>([])
-  const [appliedTagIds, setAppliedTagIds] = useState<Set<string>>(new Set())
+  const { allTags, appliedTagIds, handleAddTag, handleRemoveTag, handleCreateTag } =
+    useBlockTags(blockId)
   const [query, setQuery] = useState('')
   const [showPicker, setShowPicker] = useState(false)
   const [newTagName, setNewTagName] = useState('')
 
-  // Load all available tags
-  useEffect(() => {
-    listBlocks({ blockType: 'tag' })
-      .then((resp) => {
-        setAllTags(resp.items.map((t: BlockRow) => ({ id: t.id, name: t.content ?? '' })))
-      })
-      .catch(() => {
-        toast.error('Failed to load tags')
-      })
-  }, [])
-
-  useEffect(() => {
-    setAppliedTagIds(new Set())
+  const wrappedAddTag = async (tagId: string) => {
+    await handleAddTag(tagId)
     setQuery('')
     setShowPicker(false)
-    if (blockId) {
-      listTagsForBlock(blockId)
-        .then((tagIds) => setAppliedTagIds(new Set(tagIds)))
-        .catch(() => {
-          toast.error('Failed to load tags')
-        })
-    }
-  }, [blockId])
+  }
 
-  const handleAddTag = useCallback(
-    async (tagId: string) => {
-      if (!blockId) return
-      try {
-        await addTag(blockId, tagId)
-        setAppliedTagIds((prev) => new Set([...prev, tagId]))
-        setQuery('')
-        setShowPicker(false)
-      } catch {
-        toast.error('Failed to load tags')
-      }
-    },
-    [blockId],
-  )
-
-  const handleRemoveTag = useCallback(
-    async (tagId: string) => {
-      if (!blockId) return
-      try {
-        await removeTag(blockId, tagId)
-        setAppliedTagIds((prev) => {
-          const next = new Set(prev)
-          next.delete(tagId)
-          return next
-        })
-      } catch {
-        toast.error('Failed to delete tag')
-      }
-    },
-    [blockId],
-  )
-
-  const handleCreateTag = useCallback(async () => {
+  const wrappedCreateTag = async () => {
     const name = newTagName.trim()
     if (!name) return
-    try {
-      const resp = await createBlock({ blockType: 'tag', content: name })
-      const entry = { id: resp.id, name }
-      setAllTags((prev) => [...prev, entry])
-      setNewTagName('')
-      // Update resolve cache so tag_ref nodes display the name, not ULID
-      useResolveStore.getState().set(resp.id, name, false)
-      // Auto-apply to current block if one is focused
-      if (blockId) {
-        await addTag(blockId, resp.id)
-        setAppliedTagIds((prev) => new Set([...prev, resp.id]))
-      }
-      setShowPicker(false)
-    } catch {
-      toast.error('Failed to create tag')
-    }
-  }, [newTagName, blockId])
+    await handleCreateTag(name)
+    setNewTagName('')
+    setShowPicker(false)
+  }
 
   if (!blockId) {
     return <EmptyState message="Select a block to manage tags" />
@@ -167,7 +96,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
                 className="tag-picker-item flex w-full items-center rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent"
                 role="option"
                 aria-selected={false}
-                onClick={() => handleAddTag(tag.id)}
+                onClick={() => wrappedAddTag(tag.id)}
               >
                 {tag.name}
               </button>
@@ -198,7 +127,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault()
-              handleCreateTag()
+              wrappedCreateTag()
             }
             if (e.key === 'Escape') {
               e.preventDefault()
@@ -213,7 +142,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
             placeholder="Tag name"
             aria-label="New tag name"
           />
-          <Button size="sm" className="tag-create-btn" onClick={handleCreateTag}>
+          <Button size="sm" className="tag-create-btn" onClick={wrappedCreateTag}>
             Create tag
           </Button>
           <Button

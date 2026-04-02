@@ -2,16 +2,14 @@
  * Tests for PageEditor component.
  *
  * Validates:
- *  - Renders page title
- *  - Renders back button, calls onBack when clicked
+ *  - Renders PageHeader with correct props
  *  - Renders BlockTree with correct parentId
- *  - Title edit: change title, blur -> calls editBlock with new title
  *  - Add block button creates a new block
  *  - a11y compliance
  *  - Reloads blocks when pageId prop changes
  *  - Detail panel: hidden when no block focused
  *  - Detail panel: renders when a block is focused
- *  - Detail panel: tab switching between history/tags/properties
+ *  - Detail panel: tab switching between history/properties
  *  - Detail panel: persists when focusedBlockId becomes null
  *  - Detail panel: collapsible
  */
@@ -35,11 +33,19 @@ vi.mock('../BlockTree', () => ({
   },
 }))
 
+// ── Mock PageHeader ─────────────────────────────────────────────────
+let capturedPageHeaderProps: { pageId: string; title: string; onBack?: () => void } | null = null
+vi.mock('../PageHeader', () => ({
+  PageHeader: (props: { pageId: string; title: string; onBack?: () => void }) => {
+    capturedPageHeaderProps = props
+    return <div data-testid="page-header" data-page-id={props.pageId} data-title={props.title} />
+  },
+}))
+
 // ── Mock panel components ───────────────────────────────────────────
 // Panels are tested independently; here we just verify they receive
 // the correct blockId prop.
 let capturedHistoryBlockId: string | null = null
-let capturedTagBlockId: string | null = null
 
 let capturedLinkedRefsPageId: string | undefined
 vi.mock('../LinkedReferences', () => ({
@@ -62,13 +68,6 @@ vi.mock('../PropertiesPanel', () => ({
   },
 }))
 
-vi.mock('../TagPanel', () => ({
-  TagPanel: (props: { blockId: string | null }) => {
-    capturedTagBlockId = props.blockId
-    return <div data-testid="tag-panel" data-block-id={props.blockId ?? ''} />
-  },
-}))
-
 // ── Mock lucide-react ───────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
@@ -76,7 +75,6 @@ vi.mock('lucide-react', () => ({
   ChevronUp: () => <svg data-testid="chevron-up-icon" />,
   History: () => <svg data-testid="history-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
-  Tag: () => <svg data-testid="tag-icon" />,
 }))
 
 // ── Mock sonner ─────────────────────────────────────────────────────
@@ -111,8 +109,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   capturedParentId = undefined
   capturedHistoryBlockId = null
-  capturedTagBlockId = null
   capturedLinkedRefsPageId = undefined
+  capturedPageHeaderProps = null
   // Reset the Zustand stores to a clean state before each test
   useBlockStore.setState({
     blocks: [],
@@ -129,32 +127,23 @@ beforeEach(() => {
 })
 
 describe('PageEditor', () => {
-  it('renders page title', () => {
+  it('passes correct props to PageHeader', () => {
+    const onBack = vi.fn()
+    render(<PageEditor pageId="PAGE_1" title="My Test Page" onBack={onBack} />)
+
+    expect(capturedPageHeaderProps).not.toBeNull()
+    expect(capturedPageHeaderProps?.pageId).toBe('PAGE_1')
+    expect(capturedPageHeaderProps?.title).toBe('My Test Page')
+    expect(capturedPageHeaderProps?.onBack).toBe(onBack)
+  })
+
+  it('renders PageHeader component', () => {
     render(<PageEditor pageId="PAGE_1" title="My Test Page" />)
 
-    const titleEl = screen.getByRole('textbox', { name: /page title/i })
-    expect(titleEl).toBeInTheDocument()
-    expect(titleEl).toHaveTextContent('My Test Page')
-  })
-
-  it('renders back button and calls onBack when clicked', async () => {
-    const user = userEvent.setup()
-    const onBack = vi.fn()
-
-    render(<PageEditor pageId="PAGE_1" title="My Page" onBack={onBack} />)
-
-    const backBtn = screen.getByRole('button', { name: /go back/i })
-    expect(backBtn).toBeInTheDocument()
-
-    await user.click(backBtn)
-
-    expect(onBack).toHaveBeenCalledOnce()
-  })
-
-  it('does not render back button when onBack is not provided', () => {
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-
-    expect(screen.queryByRole('button', { name: /go back/i })).not.toBeInTheDocument()
+    const header = screen.getByTestId('page-header')
+    expect(header).toBeInTheDocument()
+    expect(header).toHaveAttribute('data-page-id', 'PAGE_1')
+    expect(header).toHaveAttribute('data-title', 'My Test Page')
   })
 
   it('renders BlockTree with correct parentId', () => {
@@ -185,51 +174,6 @@ describe('PageEditor', () => {
     expect(capturedParentId).toBe('PAGE_B')
     const blockTree = screen.getByTestId('block-tree')
     expect(blockTree).toHaveAttribute('data-parent-id', 'PAGE_B')
-  })
-
-  it('calls editBlock when title is changed and blurred', async () => {
-    const user = userEvent.setup()
-
-    // Mock the editBlock invoke
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'PAGE_1',
-      block_type: 'page',
-      content: 'New Title',
-      parent_id: null,
-      position: null,
-    })
-
-    render(<PageEditor pageId="PAGE_1" title="Old Title" />)
-
-    const titleEl = screen.getByRole('textbox', { name: /page title/i })
-
-    // Clear existing text and type new title
-    await user.clear(titleEl)
-    await user.type(titleEl, 'New Title')
-    // Blur to trigger save
-    await user.tab()
-
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
-        blockId: 'PAGE_1',
-        toText: 'New Title',
-      })
-    })
-  })
-
-  it('does not call editBlock when title is unchanged on blur', async () => {
-    const user = userEvent.setup()
-
-    render(<PageEditor pageId="PAGE_1" title="Same Title" />)
-
-    const titleEl = screen.getByRole('textbox', { name: /page title/i })
-
-    // Focus and immediately blur without changing
-    await user.click(titleEl)
-    await user.tab()
-
-    // Should not have called edit_block
-    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
   })
 
   it('renders Add block button', () => {
@@ -428,11 +372,11 @@ describe('PageEditor detail panel', () => {
 
     // Tab buttons should be visible
     expect(screen.getByRole('tab', { name: /history/i })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: /tags/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /properties/i })).toBeInTheDocument()
 
     // Panel content should NOT be auto-opened
     expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('properties-panel')).not.toBeInTheDocument()
   })
 
   it('passes correct blockId to panel components after tab click', async () => {
@@ -447,7 +391,7 @@ describe('PageEditor detail panel', () => {
     expect(capturedHistoryBlockId).toBe('BLOCK_42')
   })
 
-  it('switches between history, tags, and properties tabs', async () => {
+  it('switches between history and properties tabs', async () => {
     const user = userEvent.setup()
     useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
 
@@ -456,17 +400,11 @@ describe('PageEditor detail panel', () => {
     // Open History tab first (panel is collapsed by default)
     await user.click(screen.getByRole('tab', { name: /history/i }))
     expect(screen.getByTestId('history-panel')).toBeInTheDocument()
-    expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
-
-    // Switch to Tags tab
-    await user.click(screen.getByRole('tab', { name: /tags/i }))
-    expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
-    expect(screen.getByTestId('tag-panel')).toBeInTheDocument()
-    expect(capturedTagBlockId).toBe('BLOCK_1')
 
     // Switch to Properties tab
     await user.click(screen.getByRole('tab', { name: /properties/i }))
-    expect(screen.queryByTestId('tag-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('properties-panel')).toBeInTheDocument()
 
     // Switch back to History tab
     await user.click(screen.getByRole('tab', { name: /history/i }))
@@ -568,14 +506,15 @@ describe('PageEditor detail panel', () => {
     await user.click(screen.getByRole('button', { name: /collapse detail panel/i }))
     expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
 
-    // Click Tags tab — should expand and switch tab
-    await user.click(screen.getByRole('tab', { name: /tags/i }))
-    expect(screen.getByTestId('tag-panel')).toBeInTheDocument()
+    // Click Properties tab — should expand and switch tab
+    await user.click(screen.getByRole('tab', { name: /properties/i }))
+    expect(screen.getByTestId('properties-panel')).toBeInTheDocument()
   })
 
   it('has no a11y violations when detail panel is visible', async () => {
     useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
 
+    // biome-ignore format: render call is cleaner on one line
     const { container } = render(<PageEditor pageId="PAGE_1" title="A11y Page" onBack={() => {}} />)
 
     await waitFor(async () => {
@@ -595,11 +534,9 @@ describe('PageEditor detail panel', () => {
 
     // Each tab button
     const historyTab = screen.getByRole('tab', { name: /history/i })
-    const tagsTab = screen.getByRole('tab', { name: /tags/i })
     const propertiesTab = screen.getByRole('tab', { name: /properties/i })
 
     expect(historyTab).toHaveAttribute('aria-selected', 'false')
-    expect(tagsTab).toHaveAttribute('aria-selected', 'false')
     expect(propertiesTab).toHaveAttribute('aria-selected', 'false')
   })
 
@@ -614,120 +551,27 @@ describe('PageEditor detail panel', () => {
 
     // aria-selected should be true for the clicked tab
     expect(screen.getByRole('tab', { name: /history/i })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: /tags/i })).toHaveAttribute('aria-selected', 'false')
 
     // tabpanel should appear with correct aria-labelledby
     const tabpanel = screen.getByRole('tabpanel')
     expect(tabpanel).toHaveAttribute('id', 'detail-tabpanel')
     expect(tabpanel).toHaveAttribute('aria-labelledby', 'detail-tab-history')
 
-    // Switch to tags
-    await user.click(screen.getByRole('tab', { name: /tags/i }))
+    // Switch to properties
+    await user.click(screen.getByRole('tab', { name: /properties/i }))
 
     expect(screen.getByRole('tab', { name: /history/i })).toHaveAttribute('aria-selected', 'false')
-    expect(screen.getByRole('tab', { name: /tags/i })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /properties/i })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
 
     const updatedTabpanel = screen.getByRole('tabpanel')
-    expect(updatedTabpanel).toHaveAttribute('aria-labelledby', 'detail-tab-tags')
-  })
-})
-
-describe('PageEditor empty title revert', () => {
-  it('reverts to original title on blur when title is empty', async () => {
-    const user = userEvent.setup()
-
-    render(<PageEditor pageId="PAGE_1" title="Original Title" />)
-
-    const titleEl = screen.getByRole('textbox', { name: /page title/i })
-
-    // Clear existing text
-    await user.clear(titleEl)
-    // Blur to trigger revert
-    await user.tab()
-
-    // Should revert to original title
-    expect(titleEl).toHaveTextContent('Original Title')
-    // Should NOT have called editBlock
-    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
-  })
-
-  it('reverts to original title on blur when title is whitespace only', async () => {
-    const user = userEvent.setup()
-
-    render(<PageEditor pageId="PAGE_1" title="Original Title" />)
-
-    const titleEl = screen.getByRole('textbox', { name: /page title/i })
-
-    await user.clear(titleEl)
-    await user.type(titleEl, '   ')
-    await user.tab()
-
-    expect(titleEl).toHaveTextContent('Original Title')
-    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+    expect(updatedTabpanel).toHaveAttribute('aria-labelledby', 'detail-tab-properties')
   })
 })
 
 describe('PageEditor undo/redo integration', () => {
-  it('calls onNewAction on undo store after title edit', async () => {
-    const user = userEvent.setup()
-
-    // Pre-populate redo stack to verify it gets cleared
-    const pages = new Map()
-    pages.set('PAGE_1', { redoStack: [{ device_id: 'D1', seq: 1 }], undoDepth: 1 })
-    useUndoStore.setState({ pages })
-
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'PAGE_1',
-      block_type: 'page',
-      content: 'New Title',
-      parent_id: null,
-      position: null,
-    })
-
-    render(<PageEditor pageId="PAGE_1" title="Old Title" />)
-
-    const titleEl = screen.getByRole('textbox', { name: /page title/i })
-    await user.clear(titleEl)
-    await user.type(titleEl, 'New Title')
-    await user.tab()
-
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
-        blockId: 'PAGE_1',
-        toText: 'New Title',
-      })
-    })
-
-    // Redo stack should be cleared by onNewAction
-    const pageState = useUndoStore.getState().pages.get('PAGE_1')
-    expect(pageState?.redoStack).toEqual([])
-    expect(pageState?.undoDepth).toBe(0)
-  })
-
-  it('updates navigation store title after title edit', async () => {
-    const user = userEvent.setup()
-
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'PAGE_1',
-      block_type: 'page',
-      content: 'Updated Title',
-      parent_id: null,
-      position: null,
-    })
-
-    render(<PageEditor pageId="PAGE_1" title="Old Title" />)
-
-    const titleEl = screen.getByRole('textbox', { name: /page title/i })
-    await user.clear(titleEl)
-    await user.type(titleEl, 'Updated Title')
-    await user.tab()
-
-    await waitFor(() => {
-      const { pageStack } = useNavigationStore.getState()
-      expect(pageStack[pageStack.length - 1].title).toBe('Updated Title')
-    })
-  })
-
   it('clears undo state for the page on unmount', () => {
     // Seed undo state for the page
     const pages = new Map()
@@ -763,23 +607,5 @@ describe('PageEditor undo/redo integration', () => {
     // PAGE_A should be cleared, PAGE_B should still exist
     expect(useUndoStore.getState().pages.has('PAGE_A')).toBe(false)
     expect(useUndoStore.getState().pages.has('PAGE_B')).toBe(true)
-  })
-
-  it('does not call onNewAction when title is unchanged', async () => {
-    const user = userEvent.setup()
-
-    const pages = new Map()
-    pages.set('PAGE_1', { redoStack: [{ device_id: 'D1', seq: 1 }], undoDepth: 1 })
-    useUndoStore.setState({ pages })
-
-    render(<PageEditor pageId="PAGE_1" title="Same Title" />)
-
-    const titleEl = screen.getByRole('textbox', { name: /page title/i })
-    await user.click(titleEl)
-    await user.tab()
-
-    // Redo stack should remain untouched
-    const pageState = useUndoStore.getState().pages.get('PAGE_1')
-    expect(pageState?.redoStack).toHaveLength(1)
   })
 })

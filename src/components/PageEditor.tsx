@@ -5,21 +5,19 @@
  * Loads children of the given pageId via BlockTree's parentId prop.
  */
 
-import { ArrowLeft, ChevronDown, ChevronUp, History, Plus, Tag } from 'lucide-react'
+import { ChevronDown, ChevronUp, History, Plus } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { editBlock } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { useNavigationStore } from '../stores/navigation'
-import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
 import { BlockTree } from './BlockTree'
 import { HistoryPanel } from './HistoryPanel'
 import { LinkedReferences } from './LinkedReferences'
+import { PageHeader } from './PageHeader'
 import { PropertiesPanel } from './PropertiesPanel'
-import { TagPanel } from './TagPanel'
 
 /** Inline Settings2 icon — avoids adding to the lucide-react import which breaks existing test mocks. */
 function Settings2Icon({ className }: { className?: string }) {
@@ -53,7 +51,7 @@ export interface PageEditorProps {
   onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
 }
 
-type DetailTab = 'history' | 'tags' | 'properties'
+type DetailTab = 'history' | 'properties'
 
 export function PageEditor({
   pageId,
@@ -61,8 +59,6 @@ export function PageEditor({
   onBack,
   onNavigateToPage,
 }: PageEditorProps): React.ReactElement {
-  const [editableTitle, setEditableTitle] = useState(title)
-  const titleRef = useRef<HTMLDivElement>(null)
   const blocks = useBlockStore((s) => s.blocks)
   const createBelow = useBlockStore((s) => s.createBelow)
   const setFocused = useBlockStore((s) => s.setFocused)
@@ -102,49 +98,12 @@ export function PageEditor({
 
   const effectiveBlockId = focusedBlockId ?? lastBlockIdRef.current
 
-  // Sync editableTitle when the title prop changes (e.g. parent re-renders)
-  useEffect(() => {
-    setEditableTitle(title)
-  }, [title])
-
   // Clear undo state for the previous page when navigating away or unmounting
   useEffect(() => {
     return () => {
       useUndoStore.getState().clearPage(pageId)
     }
   }, [pageId])
-
-  const handleTitleBlur = useCallback(async () => {
-    const newTitle = editableTitle.trim()
-    if (!newTitle) {
-      setEditableTitle(title)
-      if (titleRef.current) titleRef.current.textContent = title
-      return
-    }
-    if (newTitle !== title) {
-      try {
-        await editBlock(pageId, newTitle)
-        useUndoStore.getState().onNewAction(pageId)
-        useNavigationStore.getState().replacePage(pageId, newTitle)
-        useResolveStore.getState().set(pageId, newTitle, false)
-      } catch {
-        toast.error('Failed to rename page')
-        setEditableTitle(title)
-        if (titleRef.current) titleRef.current.textContent = title
-      }
-    }
-  }, [editableTitle, title, pageId])
-
-  const handleTitleInput = useCallback((e: React.FormEvent<HTMLDivElement>) => {
-    setEditableTitle(e.currentTarget.textContent ?? '')
-  }, [])
-
-  const handleTitleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      titleRef.current?.blur()
-    }
-  }, [])
 
   const handleAddBlock = useCallback(async () => {
     // Find the last top-level block (direct child of this page) rather than
@@ -182,29 +141,8 @@ export function PageEditor({
 
   return (
     <div className="page-editor flex flex-col gap-3">
-      {/* Header: back button + editable title */}
-      <div className="flex items-center gap-2">
-        {onBack && (
-          <Button variant="ghost" size="icon-sm" onClick={onBack} aria-label="Go back">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        )}
-        {/* biome-ignore lint/a11y/useSemanticElements: contentEditable div is intentional for inline title editing */}
-        <div
-          ref={titleRef}
-          role="textbox"
-          tabIndex={0}
-          aria-label="Page title"
-          contentEditable
-          suppressContentEditableWarning
-          className="flex-1 text-xl font-semibold outline-none focus:ring-2 focus:ring-ring/50 rounded-md px-1 hover:bg-accent/5 focus-within:bg-accent/5 transition-colors"
-          onInput={handleTitleInput}
-          onBlur={handleTitleBlur}
-          onKeyDown={handleTitleKeyDown}
-        >
-          {title}
-        </div>
-      </div>
+      {/* Header: back button + editable title + tag badges */}
+      <PageHeader pageId={pageId} title={title} onBack={onBack} />
 
       {/* Block tree — loads children of pageId */}
       <BlockTree parentId={pageId} onNavigateToPage={onNavigateToPage} />
@@ -246,22 +184,6 @@ export function PageEditor({
               >
                 <History className="h-3.5 w-3.5" />
                 History
-              </Button>
-              <Button
-                role="tab"
-                id="detail-tab-tags"
-                aria-selected={activeTab === 'tags'}
-                aria-controls="detail-tabpanel"
-                variant={activeTab === 'tags' ? 'default' : 'ghost'}
-                size="sm"
-                className="detail-tab-tags gap-1"
-                onClick={() => {
-                  setActiveTab('tags')
-                  setPanelCollapsed(false)
-                }}
-              >
-                <Tag className="h-3.5 w-3.5" />
-                Tags
               </Button>
               <Button
                 role="tab"
@@ -308,7 +230,6 @@ export function PageEditor({
               className="detail-panel-content max-h-96 overflow-y-auto p-3"
             >
               {activeTab === 'history' && <HistoryPanel blockId={effectiveBlockId} />}
-              {activeTab === 'tags' && <TagPanel blockId={effectiveBlockId} />}
               {activeTab === 'properties' && <PropertiesPanel blockId={effectiveBlockId} />}
             </div>
           )}
