@@ -13,8 +13,7 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React +
 | `src-tauri/tests/AGENTS.md` | Rust test patterns, fixtures, pitfalls |
 | `src/__tests__/AGENTS.md` | Frontend test patterns, mocking, a11y |
 | `.devin/rules/workflow.md` | Subagent workflow, worktrees, compilation costs |
-| `project-plan.md` | Master task list, ADRs (19 decisions), phase tracking |
-| `REVIEW-LATER.md` | Deferred items, tech debt backlog |
+| `REVIEW-LATER.md` | Deferred items, tech debt backlog, future features |
 
 ## Build Commands
 
@@ -132,7 +131,7 @@ During development, run only the relevant check:
 4. REVIEW   — Separate review subagent for each build (mandatory)
 5. MERGE    — Copy changed files back
 6. COMMIT   — git add + commit (prek verifies)
-7. LOG      — Update SESSION-LOG.md and project-plan.md
+7. LOG      — Update SESSION-LOG.md
 ```
 
 Every step is mandatory. No self-reviewed commits. See `.devin/rules/workflow.md` for worktree criteria, compilation costs, and prompt guidelines.
@@ -142,8 +141,7 @@ Every step is mandatory. No self-reviewed commits. See `.devin/rules/workflow.md
 | File | Purpose | When to update |
 |------|---------|---------------|
 | `SESSION-LOG.md` | Subagent activity log | After each subagent completes |
-| `REVIEW-LATER.md` | Deferred items, tech debt | When a fix is deferred |
+| `REVIEW-LATER.md` | Deferred items, tech debt, future features | When a fix is deferred |
 | `AGENTS.md` | This file | Only with explicit user approval |
-| `project-plan.md` | Master task list + ADRs | When task status changes |
 
 When resolving REVIEW-LATER items: remove the item entirely (table row + detail section). Record the removal in the summary log.
