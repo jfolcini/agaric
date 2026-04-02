@@ -564,7 +564,19 @@ async cancelSync() : Promise<Result<null, { kind: string; message: string }>> {
  * Filters are combined with AND semantics at the top level.
  * Use `And`/`Or`/`Not` variants for compound boolean logic.
  */
-export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } |
+export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } |
+/**
+ * Filter blocks by todo_state column (direct, no block_properties join).
+ */
+{ type: "TodoState"; state: string } |
+/**
+ * Filter blocks by priority column (direct, no block_properties join).
+ */
+{ type: "Priority"; level: string } |
+/**
+ * Filter blocks by due_date column with comparison operator.
+ */
+{ type: "DueDate"; op: CompareOp; value: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } |
 /**
  * Filter by source page — include/exclude blocks based on their root page ancestor.
  */
@@ -588,7 +600,7 @@ export type BlockRow = { id: string; block_type: string; content: string | null;
 /**
  * Comparison operators for property filters.
  */
-export type CompareOp = "Eq" | "Neq" | "Lt" | "Gt" | "Lte" | "Gte"
+export type CompareOp = "Eq" | "Neq" | "Lt" | "Gt" | "Lte" | "Gte" | "Contains" | "StartsWith"
 export type DeleteResponse = { block_id: string; deleted_at: string; descendants_affected: number }
 /**
  * A contiguous span of text with a diff tag.

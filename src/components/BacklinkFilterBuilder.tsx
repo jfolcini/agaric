@@ -126,6 +126,10 @@ function opLabel(op: CompareOp): string {
       return '<='
     case 'Gte':
       return '>='
+    case 'Contains':
+      return 'contains'
+    case 'StartsWith':
+      return 'starts with'
   }
 }
 

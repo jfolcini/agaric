@@ -133,6 +133,8 @@ pub enum CompareOp {
     Gt,
     Lte,
     Gte,
+    Contains,
+    StartsWith,
 }
 
 /// Sort direction.
@@ -169,6 +171,19 @@ pub enum BacklinkFilter {
     },
     PropertyIsEmpty {
         key: String,
+    },
+    /// Filter blocks by todo_state column (direct, no block_properties join).
+    TodoState {
+        state: String,
+    },
+    /// Filter blocks by priority column (direct, no block_properties join).
+    Priority {
+        level: String,
+    },
+    /// Filter blocks by due_date column with comparison operator.
+    DueDate {
+        op: CompareOp,
+        value: String,
     },
     HasTag {
         tag_id: String,
@@ -287,6 +302,8 @@ fn resolve_filter<'a>(
                             CompareOp::Gt => v > value.as_str(),
                             CompareOp::Lte => v <= value.as_str(),
                             CompareOp::Gte => v >= value.as_str(),
+                            CompareOp::Contains => v.contains(value.as_str()),
+                            CompareOp::StartsWith => v.starts_with(value.as_str()),
                         }
                     })
                     .map(|(id, _)| id)
@@ -316,6 +333,7 @@ fn resolve_filter<'a>(
                             CompareOp::Gt => v > *value,
                             CompareOp::Lte => v <= *value,
                             CompareOp::Gte => v >= *value,
+                            CompareOp::Contains | CompareOp::StartsWith => false,
                         }
                     })
                     .map(|(id, _)| id)
@@ -345,6 +363,8 @@ fn resolve_filter<'a>(
                             CompareOp::Gt => v > value.as_str(),
                             CompareOp::Lte => v <= value.as_str(),
                             CompareOp::Gte => v >= value.as_str(),
+                            CompareOp::Contains => v.contains(value.as_str()),
+                            CompareOp::StartsWith => v.starts_with(value.as_str()),
                         }
                     })
                     .map(|(id, _)| id)
@@ -380,6 +400,44 @@ fn resolve_filter<'a>(
                 .fetch_all(pool)
                 .await?;
                 Ok(rows.into_iter().collect())
+            }
+
+            BacklinkFilter::TodoState { state } => {
+                let rows: Vec<(String,)> = sqlx::query_as(
+                    "SELECT id FROM blocks WHERE todo_state = ? AND deleted_at IS NULL AND is_conflict = 0",
+                )
+                .bind(state)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows.into_iter().map(|r| r.0).collect())
+            }
+
+            BacklinkFilter::Priority { level } => {
+                let rows: Vec<(String,)> = sqlx::query_as(
+                    "SELECT id FROM blocks WHERE priority = ? AND deleted_at IS NULL AND is_conflict = 0",
+                )
+                .bind(level)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows.into_iter().map(|r| r.0).collect())
+            }
+
+            BacklinkFilter::DueDate { op, value } => {
+                let sql = match op {
+                    CompareOp::Eq => "SELECT id FROM blocks WHERE due_date = ? AND deleted_at IS NULL AND is_conflict = 0",
+                    CompareOp::Neq => "SELECT id FROM blocks WHERE due_date != ? AND due_date IS NOT NULL AND deleted_at IS NULL AND is_conflict = 0",
+                    CompareOp::Lt => "SELECT id FROM blocks WHERE due_date < ? AND due_date IS NOT NULL AND deleted_at IS NULL AND is_conflict = 0",
+                    CompareOp::Lte => "SELECT id FROM blocks WHERE due_date <= ? AND due_date IS NOT NULL AND deleted_at IS NULL AND is_conflict = 0",
+                    CompareOp::Gt => "SELECT id FROM blocks WHERE due_date > ? AND due_date IS NOT NULL AND deleted_at IS NULL AND is_conflict = 0",
+                    CompareOp::Gte => "SELECT id FROM blocks WHERE due_date >= ? AND due_date IS NOT NULL AND deleted_at IS NULL AND is_conflict = 0",
+                    CompareOp::Contains | CompareOp::StartsWith => {
+                        return Err(AppError::Validation(format!(
+                            "DueDate filter does not support {op:?} operator"
+                        )));
+                    }
+                };
+                let rows: Vec<(String,)> = sqlx::query_as(sql).bind(value).fetch_all(pool).await?;
+                Ok(rows.into_iter().map(|r| r.0).collect())
             }
 
             BacklinkFilter::HasTag { tag_id } => {
@@ -3940,5 +3998,132 @@ mod tests {
         assert!(ids.contains(&"BLK_A2"), "BLK_A2 from PAGE_A");
         assert!(!ids.contains(&"BLK_B1"), "BLK_B1 from PAGE_B excluded");
         assert!(!ids.contains(&"BLK_C1"), "BLK_C1 from PAGE_C not included");
+    }
+
+    // ======================================================================
+    // Direct-column filter variants (TodoState, Priority, DueDate)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn filter_todo_state_returns_matching_blocks() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BLK_1", "content", "block 1").await;
+        insert_block(&pool, "BLK_2", "content", "block 2").await;
+        insert_block(&pool, "BLK_3", "content", "block 3").await;
+
+        sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+            .bind("BLK_1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+            .bind("BLK_2")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let filter = BacklinkFilter::TodoState {
+            state: "TODO".into(),
+        };
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+        assert_eq!(set.len(), 2);
+        assert!(set.contains("BLK_1"));
+        assert!(set.contains("BLK_2"));
+        assert!(!set.contains("BLK_3"));
+    }
+
+    #[tokio::test]
+    async fn filter_priority_returns_matching_blocks() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BLK_1", "content", "block 1").await;
+        insert_block(&pool, "BLK_2", "content", "block 2").await;
+        insert_block(&pool, "BLK_3", "content", "block 3").await;
+
+        sqlx::query("UPDATE blocks SET priority = '2' WHERE id = ?")
+            .bind("BLK_1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET priority = '2' WHERE id = ?")
+            .bind("BLK_3")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let filter = BacklinkFilter::Priority { level: "2".into() };
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+        assert_eq!(set.len(), 2);
+        assert!(set.contains("BLK_1"));
+        assert!(set.contains("BLK_3"));
+        assert!(!set.contains("BLK_2"));
+    }
+
+    #[tokio::test]
+    async fn filter_due_date_eq_returns_exact_match() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BLK_1", "content", "block 1").await;
+        insert_block(&pool, "BLK_2", "content", "block 2").await;
+        insert_block(&pool, "BLK_3", "content", "block 3").await;
+
+        sqlx::query("UPDATE blocks SET due_date = '2026-04-15' WHERE id = ?")
+            .bind("BLK_1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET due_date = '2026-04-15' WHERE id = ?")
+            .bind("BLK_2")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let filter = BacklinkFilter::DueDate {
+            op: CompareOp::Eq,
+            value: "2026-04-15".into(),
+        };
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+        assert_eq!(set.len(), 2);
+        assert!(set.contains("BLK_1"));
+        assert!(set.contains("BLK_2"));
+        assert!(!set.contains("BLK_3"));
+    }
+
+    #[tokio::test]
+    async fn filter_due_date_lt_returns_earlier_dates() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "BLK_1", "content", "block 1").await;
+        insert_block(&pool, "BLK_2", "content", "block 2").await;
+
+        sqlx::query("UPDATE blocks SET due_date = '2026-04-10' WHERE id = ?")
+            .bind("BLK_1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET due_date = '2026-04-20' WHERE id = ?")
+            .bind("BLK_2")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let filter = BacklinkFilter::DueDate {
+            op: CompareOp::Lt,
+            value: "2026-04-15".into(),
+        };
+        let set = resolve_filter(&pool, &filter, 0).await.unwrap();
+        assert_eq!(set.len(), 1);
+        assert!(set.contains("BLK_1"));
+        assert!(!set.contains("BLK_2"));
+    }
+
+    #[tokio::test]
+    async fn filter_due_date_contains_returns_validation_error() {
+        let (pool, _dir) = test_pool().await;
+
+        let filter = BacklinkFilter::DueDate {
+            op: CompareOp::Contains,
+            value: "2026".into(),
+        };
+        let result = resolve_filter(&pool, &filter, 0).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::Validation(_)));
     }
 }
