@@ -249,6 +249,29 @@ Cross-validated 5 P1 claims with a separate subagent.
 - Frontend: 71/71 test files, 2063 tests pass
 - REVIEW-LATER.md: 4 open items (unchanged — dark mode fixes were new findings, fixed immediately)
 
+### Phase 14: PageBrowser/TrashView/TagList + Sidebar Reviews + Fixes
+
+2 parallel reviews covering list views (PageBrowser, TrashView, TagList) and app shell (Sidebar, App, Shortcuts, ContextMenu). Cross-validated 3 P1 claims.
+
+**Cross-validation:**
+- CONFIRMED P1: Ctrl+B sidebar/bold conflict — both handlers execute
+- EXAGGERATED P3: TagList double-click (backend is idempotent)
+- REJECTED: TrashView purge button has visible "Purge" text, no aria-label needed
+
+**3 fixes applied (#516-#518):**
+
+| File | Change |
+|------|--------|
+| `sidebar.tsx` | #516: Ctrl+B handler skips when target is contentEditable/input/textarea. Prevents sidebar toggle during text editing. |
+| `TagList.tsx` | #517: Added `isCreating` state guard — button disabled during async create. |
+| `PageBrowser.tsx` | #518: Added `role="list"` on container, `role="listitem"` on each page item. |
+| `TrashView.tsx` | #518: Added `role="list"` on container, `role="listitem"` on each trash item. |
+| `TagList.tsx` | #518: Added `role="list"` on container, `role="listitem"` on each tag item. |
+
+### Phase 14 Stats
+- Frontend: 71/71 test files, 2063 tests pass
+- REVIEW-LATER.md: 4 open items (unchanged — fixes were new findings, fixed immediately)
+
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 
 Resolved all 18 Tier 7.5 items. 7 BacklinkFilterBuilder UX/a11y fixes, 6 BacklinksPanel fixes, 1 button.tsx touch target, 3 backend perf optimizations, 2 already resolved by Tier 7.

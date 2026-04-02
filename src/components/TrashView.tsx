@@ -99,10 +99,11 @@ export function TrashView(): React.ReactElement {
         <EmptyState icon={Trash2} message="Nothing in trash. Deleted items will appear here." />
       )}
 
-      <div className="trash-view-list space-y-2">
+      <div className="trash-view-list space-y-2" role="list">
         {blocks.map((block) => (
           <div
             key={block.id}
+            role="listitem"
             className="trash-item flex items-center justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
           >
             <div className="trash-item-content flex min-w-0 items-center gap-3">

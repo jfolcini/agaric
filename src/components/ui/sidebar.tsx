@@ -125,6 +125,13 @@ function SidebarProvider({
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
+        // Skip when user is editing — Ctrl+B is Bold in TipTap
+        const target = event.target as HTMLElement | null
+        if (target) {
+          const tag = target.tagName?.toLowerCase()
+          if (tag === 'input' || tag === 'textarea') return
+          if (target.isContentEditable || target.getAttribute?.('contenteditable') === 'true') return
+        }
         event.preventDefault()
         toggleSidebar()
       }

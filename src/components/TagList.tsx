@@ -36,6 +36,7 @@ interface TagListProps {
 export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const [tags, setTags] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(false)
+  const [isCreating, setIsCreating] = useState(false)
   const [newTagName, setNewTagName] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
 
@@ -57,6 +58,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const handleCreateTag = useCallback(async () => {
     const name = newTagName.trim()
     if (!name) return
+    setIsCreating(true)
     try {
       const resp = await createBlock({ blockType: 'tag', content: name })
       const newTag: BlockRow = {
@@ -77,6 +79,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     } catch (error) {
       toast.error(`Failed to create tag: ${String(error)}`)
     }
+    setIsCreating(false)
   }, [newTagName])
 
   const handleDeleteTag = useCallback(async (tagId: string) => {
@@ -112,7 +115,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           placeholder="New tag name..."
           className="flex-1"
         />
-        <Button type="submit" variant="outline" disabled={!newTagName.trim()}>
+        <Button type="submit" variant="outline" disabled={!newTagName.trim() || isCreating}>
           <Plus className="h-4 w-4" /> Add Tag
         </Button>
       </form>
@@ -133,10 +136,11 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       )}
 
       {tags.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-2" role="list">
           {tags.map((tag) => (
             <div
               key={tag.id}
+              role="listitem"
               className="group flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-accent/50"
             >
               <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />

@@ -165,10 +165,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         </div>
       )}
 
-      <div className="page-browser-list space-y-1">
+      <div className="page-browser-list space-y-1" role="list">
         {pages.map((page) => (
           <div
             key={page.id}
+            role="listitem"
             className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50"
           >
             <button
