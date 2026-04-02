@@ -1923,4 +1923,173 @@ mod tests {
 
         materializer.shutdown();
     }
+
+    // ======================================================================
+    // #454 — apply_remote_ops mixed batch (valid + invalid + duplicate)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn apply_remote_ops_mixed_batch_counts_correctly() {
+        // Create ops on a "remote" database so they get valid hashes
+        let (remote_pool, _remote_dir) = test_pool().await;
+        let op1 = append_local_op_at(
+            &remote_pool,
+            "remote-dev",
+            test_create_payload("BLK1"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+        let op2 = append_local_op_at(
+            &remote_pool,
+            "remote-dev",
+            test_create_payload("BLK2"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        let t1: OpTransfer = op1.into();
+        let t2: OpTransfer = op2.into();
+
+        // Set up a fresh "local" database
+        let (local_pool, _local_dir) = test_pool().await;
+        let materializer = Materializer::new(local_pool.clone());
+
+        // Pre-insert op1 so it becomes a duplicate when we apply the batch
+        apply_remote_ops(&local_pool, &materializer, vec![t1.clone()])
+            .await
+            .unwrap();
+
+        // Build a bad-hash op: clone a valid transfer and corrupt its hash
+        let mut bad_op = t2.clone();
+        bad_op.hash = "BADHASH0000000000000000000000000000000000000000000000000000000000"
+            .to_string();
+        bad_op.seq = 99; // different seq so it's not just a duplicate of t2
+
+        // Batch: duplicate (t1 again) + valid new (t2) + bad hash
+        let result = apply_remote_ops(&local_pool, &materializer, vec![t1, t2, bad_op])
+            .await
+            .unwrap();
+
+        assert_eq!(result.duplicates, 1, "op1 already in DB should be duplicate");
+        assert_eq!(result.inserted, 1, "op2 should be newly inserted");
+        assert_eq!(
+            result.hash_mismatches, 1,
+            "corrupted hash op should be counted as mismatch"
+        );
+
+        materializer.shutdown();
+    }
+
+    // ======================================================================
+    // #453 — merge property conflict with equal timestamps (device_id tiebreaker)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn merge_property_conflict_equal_timestamps_uses_device_id_tiebreaker() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        // Both devices use the exact same timestamp — forces the device_id
+        // tiebreaker path in resolve_property_conflict.
+        let same_ts = "2025-01-15T12:00:00Z";
+
+        // Create the block (needed for materializer)
+        append_local_op_at(&pool, "AAAA", test_create_payload("BLK1"), same_ts.into())
+            .await
+            .unwrap();
+
+        // Device "AAAA" sets property "priority" = "high"
+        append_local_op_at(
+            &pool,
+            "AAAA",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("high".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            same_ts.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device "ZZZZ" sets property "priority" = "low" at the SAME timestamp.
+        // "ZZZZ" > "AAAA" lexicographically, so ZZZZ's value should win.
+        append_local_op_at(
+            &pool,
+            "ZZZZ",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("low".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            same_ts.into(),
+        )
+        .await
+        .unwrap();
+
+        let results = merge_diverged_blocks(&pool, "AAAA", &materializer, "ZZZZ")
+            .await
+            .unwrap();
+
+        assert!(
+            results.property_lww > 0,
+            "should resolve property conflict via device_id tiebreaker when timestamps are equal"
+        );
+
+        // A second merge should be idempotent — the resolution already applied
+        let r2 = merge_diverged_blocks(&pool, "AAAA", &materializer, "ZZZZ")
+            .await
+            .unwrap();
+        assert_eq!(
+            r2.property_lww, 0,
+            "second merge should not re-resolve the already-resolved conflict"
+        );
+
+        materializer.shutdown();
+    }
+
+    // ======================================================================
+    // #452 — SyncOrchestrator rejects HeadExchange after already exchanged
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orchestrator_rejects_head_exchange_in_streaming_state() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+        // start() → ExchangingHeads
+        let _start = orch.start().await.unwrap();
+        assert_eq!(orch.session().state, SyncState::ExchangingHeads);
+
+        // Receive remote HeadExchange → StreamingOps
+        orch.handle_message(SyncMessage::HeadExchange { heads: vec![] })
+            .await
+            .unwrap();
+        assert_eq!(orch.session().state, SyncState::StreamingOps);
+
+        // Send a SECOND HeadExchange in StreamingOps → should fail
+        let result = orch
+            .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+            .await;
+        assert!(
+            result.is_err(),
+            "HeadExchange should be rejected in StreamingOps state"
+        );
+        assert_eq!(
+            orch.session().state,
+            SyncState::Failed("HeadExchange received in wrong state".into()),
+            "state should transition to Failed with descriptive message"
+        );
+
+        materializer.shutdown();
+    }
 }
