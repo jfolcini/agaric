@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 46 — 2026-04-02 — Frontend Bug Fixes (#529, #530, #534, #537)
+
+4 S-cost frontend items resolved: 1 architecture (ErrorBoundary), 2 bugs (undo rootParentId, resolve pagesList race), 1 data-loss prevention (optimistic edit). Built by 2 parallel subagents, reviewed by 2 separate subagents.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `ErrorBoundary.tsx` | #529: New React ErrorBoundary class component — `getDerivedStateFromError` + `componentDidCatch`, fallback UI matching BootGate error styling, Reload button. |
+| `ErrorBoundary.test.tsx` | #529: 5 tests — children render, fallback UI, reload click, console.error logging with exact args, axe a11y audit. |
+| `main.tsx` | #529: Wrapped `<App />` with `<ErrorBoundary>` inside `<StrictMode>`. |
+| `blocks.ts` | #530: Captured `rootParentId` from `get()` before await in 6 functions (createBelow, edit, remove, reorder, indent, dedent). #537: Made `edit()` optimistic — store updated before IPC, preserved on failure. |
+| `resolve.ts` | #534: `preload()` merges `state.pagesList` entries not in fetched set, preserving pages created via `set()` during async preload window. |
+| `blocks.test.ts` | Updated edit error test (optimistic content preserved). Added #530 test: rootParentId captured before await even when changed during IPC. |
+| `resolve.test.ts` | Added #534 test: pages created via `set()` during preload survive in pagesList. |
+
+### Reviews
+- #529 ErrorBoundary: CONDITIONAL PASS — reviewer improved console.error assertion to verify `componentDidCatch(error, errorInfo)` signature with exact args.
+- #530+#534+#537: PASS — reviewer confirmed all 6 capture sites, optimistic pattern, merge logic. Noted `moveToParent` has same anti-pattern (low-risk follow-up).
+
+### Stats
+- Frontend: 74/74 test files, 2097 tests pass (+5 ErrorBoundary, +1 blocks #530, +1 resolve #534)
+- 7 files changed, 210 insertions, 24 deletions
+- Commit: `73e3e89`
+- REVIEW-LATER.md: 65 → 61 open items (resolved #529, #530, #534, #537)
+
+---
+
 ## Session 45 — 2026-04-02 — Testing Review, UX/A11y Fixes, Data Integrity Fixes
 
 Three phases: (1) testing review + BlockTree fix, (2) UX/A11y batch #486-#490, (3) data integrity batch #482, #484, #485.
