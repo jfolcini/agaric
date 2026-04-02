@@ -1,5 +1,32 @@
 # Session Log
 
+## Session 53 — 2026-04-02 — Phase 5 Wave 1: SourcePageFilter + Advanced Filters + Remove Backlinks Tab (#543, #544, #545)
+
+3 Phase 5 Wave 1 items resolved: SourcePageFilter popup component (#543), advanced filters toggle in LinkedReferences (#544), remove Backlinks tab from PageEditor detail panel (#545). Built by 1 subagent (frontend) + direct orchestrator edits, reviewed by 1 review subagent (PASS with fixes applied).
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `SourcePageFilter.tsx` (new) | #543: Filter popup with Popover, search, click/shift-click include/exclude, color-coded button (green=includes, red=excludes, yellow=mixed). |
+| `LinkedReferences.tsx` | #544: Added filter state (BacklinkFilter[], BacklinkSort, source page include/exclude, propertyKeys, tags). Combined filter building in fetchGroups. SourcePageFilter + "More filters" toggle rendering. Filter state resets on pageId change. |
+| `PageEditor.tsx` | #545: Removed BacklinksPanel import, Link icon, Backlinks tab button, backlinks panel render. DetailTab type narrowed to history/tags/properties. |
+| `SourcePageFilter.test.tsx` (new) | 13 tests: render, button color states (4 variants), search, click include, shift-click exclude, click remove, clear all, sort order, a11y. |
+| `LinkedReferences.test.tsx` | +9 tests: source page filter rendering, "More filters" toggle, aria-expanded, sourcePages prop, SourcePage filter re-fetch, clearing filters, filter reset on pageId change, a11y with filters. |
+| `PageEditor.test.tsx` | Updated all backlinks-referencing tests to use history tab. Added PropertiesPanel mock. Added Properties tab to tab-switching test. |
+
+### Review Findings & Fixes
+- **BLOCKER fixed**: Filter state not reset on pageId change — added reset effect with functional updaters to avoid duplicate fetches on mount.
+- **MAJOR fixed**: PropertiesPanel not mocked in PageEditor tests — added mock.
+- **MAJOR fixed**: Properties tab missing from tab-switching test — added.
+- **Biome fixes**: Replaced ul/li with div/button for proper semantics, removed invalid aria-selected on buttons, fixed line length violations, added biome-ignore for intentional pageId dependency.
+
+### Stats
+- Frontend: 76/76 test files, 2153 tests pass (2132 existing + 21 new)
+- 6 files changed, 898 insertions, 101 deletions
+- Commit: `54df5f2`
+- REVIEW-LATER.md: 44 → 41 open items (resolved #543, #544, #545)
+
 ## Session 52 — 2026-04-02 — Phase 5 Wave 1: LinkedReferences + Backend Tests (#541, #542, #547)
 
 3 Phase 5 Wave 1 items resolved: LinkedReferences component with source page grouping (#541, #542) and backend integration tests for grouped backlinks (#547). Built by 2 parallel subagents (frontend + backend), reviewed by 2 parallel subagents (both PASS).
