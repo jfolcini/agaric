@@ -78,6 +78,7 @@ function makeFlatBlock(
     todo_state: null,
     priority: null,
     due_date: null,
+    scheduled_date: null,
     depth,
   }
 }

@@ -1,5 +1,34 @@
 # Session Log
 
+## Session 63 — 2026-04-03 — Scheduled Date + Auto-Timestamps (#592, #593)
+
+### Full-stack scheduled_date column + auto-populated timestamps on todo transitions
+2 items resolved: scheduled_date column (mirrors due_date pattern end-to-end), auto-populated created_at/completed_at timestamps on todo_state transitions.
+
+Built by 2 parallel subagents (Rust: migration + BlockRow + materializer + commands + agenda_cache + 8 tests; Frontend: /schedule slash command + purple chip + 12 tests) + orchestrator (TS type fixes across 13 files, review fixes: icon size 10→14, role="img", op.rs test). Reviewed by 1 subagent (PASS with minor icon/test fixes).
+
+| File | Change |
+|------|--------|
+| `0013_block_scheduled_date.sql` (new) | #592: ALTER TABLE + index + backfill from block_properties. |
+| `pagination.rs` | #592: BlockRow +scheduled_date, 8 SELECT queries updated. |
+| `commands.rs` | #592: set_scheduled_date_inner + command wrapper + 4 tests. #593: set_todo_state_inner transition logic (null→TODO, DONE→TODO, TODO→DONE, →null) + 4 tests. |
+| `materializer.rs` | #592: SetProperty/DeleteProperty routing for scheduled_date. |
+| `cache.rs` | #592: 4th UNION ALL in rebuild_agenda_cache. |
+| `op.rs` | #592: is_reserved_property_key includes scheduled_date. Test updated. |
+| `fts.rs, backlink_query.rs, tag_query.rs, snapshot.rs` | #592: SELECT queries + struct fields updated. |
+| `lib.rs` | #592: Command registration. |
+| `tauri.ts` | #592: setScheduledDate wrapper. |
+| `BlockTree.tsx` | #592: /schedule slash command + date picker 'schedule' mode + handler. |
+| `SortableBlock.tsx` | #592: Purple scheduled-chip with Calendar icon, aria-label, role="img". |
+| 13 frontend files | #592: Added scheduled_date: null to BlockRow literals for TS type safety. |
+| `bindings.ts, .sqlx/, snapshots` | Auto-regenerated. |
+
+### Stats
+- Rust: 1429 tests pass (1422 + 8 new, minus 1 updated)
+- Frontend: 78/78 test files, 2207 tests pass (2194 + 13 new)
+- 46 files changed, 1114 insertions, 60 deletions
+- Commit: `b049679`
+
 ## Session 62 — 2026-04-03 — Phase 6 Wave 3: Batch Counts + Badges + Scroll-to-Panel (#604, #605, #610)
 
 ### Backend batch counts + weekly/monthly badges + scroll-to-panel wiring

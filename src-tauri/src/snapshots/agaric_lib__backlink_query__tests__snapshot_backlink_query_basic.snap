@@ -15,6 +15,7 @@ items:
     todo_state: ~
     priority: ~
     due_date: ~
+    scheduled_date: ~
   - id: "[ULID]"
     block_type: content
     content: Source B
@@ -27,6 +28,7 @@ items:
     todo_state: ~
     priority: ~
     due_date: ~
+    scheduled_date: ~
   - id: "[ULID]"
     block_type: content
     content: Source C
@@ -39,6 +41,7 @@ items:
     todo_state: ~
     priority: ~
     due_date: ~
+    scheduled_date: ~
 next_cursor: "[CURSOR]"
 has_more: false
 total_count: 3

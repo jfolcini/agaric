@@ -160,6 +160,12 @@ pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
          FROM blocks b
          WHERE b.due_date IS NOT NULL
            AND b.deleted_at IS NULL
+           AND b.is_conflict = 0
+         UNION ALL
+         SELECT b.scheduled_date, b.id, 'column:scheduled_date'
+         FROM blocks b
+         WHERE b.scheduled_date IS NOT NULL
+           AND b.deleted_at IS NULL
            AND b.is_conflict = 0",
     )
     .execute(&mut *tx)

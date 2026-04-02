@@ -36,6 +36,7 @@ import {
   listBlocks,
   setDueDate as setDueDateCmd,
   setPriority as setPriorityCmd,
+  setScheduledDate as setScheduledDateCmd,
   setTodoState as setTodoStateCmd,
 } from '../lib/tauri'
 import { getDragDescendants } from '../lib/tree-utils'
@@ -161,7 +162,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   // ── Date picker for /DATE and /DUE commands ────────────────────────
   const [datePickerOpen, setDatePickerOpen] = useState(false)
-  const [datePickerMode, setDatePickerMode] = useState<'date' | 'due'>('date')
+  const [datePickerMode, setDatePickerMode] = useState<'date' | 'due' | 'schedule'>('date')
   const datePickerCursorPos = useRef<number | undefined>(undefined)
 
   // ── History sheet state ────────────────────────────────────────────
@@ -220,6 +221,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       { id: 'done', label: 'DONE — Mark as complete' },
       { id: 'date', label: 'DATE — Link to a date page' },
       { id: 'due', label: 'DUE — Set due date on block' },
+      { id: 'schedule', label: 'SCHEDULED — Set scheduled date on block' },
     ],
     [],
   )
@@ -472,6 +474,13 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         setDatePickerOpen(true)
       }
 
+      if (item.id === 'schedule') {
+        datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
+        setDatePickerMode('schedule')
+        setDatePickerOpen(true)
+        return
+      }
+
       if (
         item.id === 'priority-high' ||
         item.id === 'priority-medium' ||
@@ -545,6 +554,22 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           }))
         } catch {
           toast.error('Failed to set due date')
+        }
+        return
+      }
+
+      if (datePickerMode === 'schedule') {
+        // /SCHEDULE mode — set scheduled_date on the focused block
+        if (!focusedBlockId) return
+        try {
+          await setScheduledDateCmd(focusedBlockId, dateStr)
+          useBlockStore.setState((s) => ({
+            blocks: s.blocks.map((b) =>
+              b.id === focusedBlockId ? { ...b, scheduled_date: dateStr } : b,
+            ),
+          }))
+        } catch {
+          toast.error('Failed to set scheduled date')
         }
         return
       }
@@ -898,6 +923,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                     priority={block.priority ?? null}
                     onTogglePriority={handleTogglePriority}
                     dueDate={block.due_date ?? null}
+                    scheduledDate={block.scheduled_date ?? null}
                     onIndent={(id) => indent(id)}
                     onDedent={(id) => dedent(id)}
                     onMoveUp={(id) => {

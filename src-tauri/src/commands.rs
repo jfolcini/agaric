@@ -336,6 +336,7 @@ pub async fn create_block_inner(
         todo_state: None,
         priority: None,
         due_date: None,
+        scheduled_date: None,
     })
 }
 
@@ -365,7 +366,7 @@ pub async fn edit_block_inner(
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut *tx)
@@ -439,6 +440,7 @@ pub async fn edit_block_inner(
         todo_state: None,
         priority: None,
         due_date: None,
+        scheduled_date: None,
     })
 }
 
@@ -1220,7 +1222,7 @@ pub async fn list_blocks_inner(
 pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date FROM blocks WHERE id = ?"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ?"#,
         block_id
     )
     .fetch_optional(pool)
@@ -1710,7 +1712,7 @@ pub async fn set_property_inner(
     // 3. Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut *tx)
@@ -1730,10 +1732,11 @@ pub async fn set_property_inner(
             "todo_state" => "todo_state",
             "priority" => "priority",
             "due_date" => "due_date",
+            "scheduled_date" => "scheduled_date",
             _ => unreachable!(),
         };
         let value = match col {
-            "due_date" => &value_date,
+            "due_date" | "scheduled_date" => &value_date,
             _ => &value_text,
         };
         sqlx::query(&format!("UPDATE blocks SET {col} = ? WHERE id = ?"))
@@ -1787,13 +1790,20 @@ pub async fn set_property_inner(
         } else {
             existing.due_date
         },
+        scheduled_date: if key == "scheduled_date" {
+            value_date.clone()
+        } else {
+            existing.scheduled_date
+        },
     })
 }
 
 /// Set the todo state on a block (TODO / DOING / DONE or clear).
 ///
 /// Validates the value and delegates to [`set_property_inner`] with the
-/// reserved `"todo_state"` key.
+/// reserved `"todo_state"` key.  Also auto-populates `created_at` and
+/// `completed_at` timestamps as regular `block_properties` rows based on
+/// state transitions.
 pub async fn set_todo_state_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1808,18 +1818,115 @@ pub async fn set_todo_state_inner(
             )));
         }
     }
-    set_property_inner(
+
+    // Fetch current block to check existing todo_state for transition logic
+    let existing: Option<BlockRow> = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        block_id
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let existing = existing
+        .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
+
+    let prev_state = existing.todo_state.as_deref().map(String::from);
+    let new_state = state.as_deref().map(String::from);
+
+    let result = set_property_inner(
         pool,
         device_id,
         materializer,
-        block_id,
+        block_id.clone(),
         "todo_state".to_string(),
         state,
         None,
         None,
         None,
     )
-    .await
+    .await?;
+
+    // Auto-populate timestamps based on state transitions
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+    match (prev_state.as_deref(), new_state.as_deref()) {
+        // null → TODO/DOING: set created_at
+        (None, Some("TODO" | "DOING")) => {
+            set_property_inner(
+                pool,
+                device_id,
+                materializer,
+                block_id.clone(),
+                "created_at".to_string(),
+                None,
+                None,
+                Some(today),
+                None,
+            )
+            .await?;
+        }
+        // DONE → TODO/DOING: set created_at, clear completed_at
+        (Some("DONE"), Some("TODO" | "DOING")) => {
+            set_property_inner(
+                pool,
+                device_id,
+                materializer,
+                block_id.clone(),
+                "created_at".to_string(),
+                None,
+                None,
+                Some(today),
+                None,
+            )
+            .await?;
+            delete_property_inner(
+                pool,
+                device_id,
+                materializer,
+                block_id.clone(),
+                "completed_at".to_string(),
+            )
+            .await?;
+        }
+        // TODO/DOING → DONE: set completed_at
+        (Some("TODO" | "DOING"), Some("DONE")) => {
+            set_property_inner(
+                pool,
+                device_id,
+                materializer,
+                block_id.clone(),
+                "completed_at".to_string(),
+                None,
+                None,
+                Some(today),
+                None,
+            )
+            .await?;
+        }
+        // Any → null (un-tasking): clear both
+        (Some(_), None) => {
+            delete_property_inner(
+                pool,
+                device_id,
+                materializer,
+                block_id.clone(),
+                "created_at".to_string(),
+            )
+            .await?;
+            delete_property_inner(
+                pool,
+                device_id,
+                materializer,
+                block_id.clone(),
+                "completed_at".to_string(),
+            )
+            .await?;
+        }
+        _ => {} // Same state or other transitions — no timestamp changes
+    }
+
+    Ok(result)
 }
 
 /// Set the priority on a block (1 / 2 / 3 or clear).
@@ -1878,6 +1985,38 @@ pub async fn set_due_date_inner(
         materializer,
         block_id,
         "due_date".to_string(),
+        None,
+        None,
+        date,
+        None,
+    )
+    .await
+}
+
+/// Set the scheduled date on a block (ISO date YYYY-MM-DD or clear).
+///
+/// Validates the date format and delegates to [`set_property_inner`] with the
+/// reserved `"scheduled_date"` key.
+pub async fn set_scheduled_date_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    date: Option<String>,
+) -> Result<BlockRow, AppError> {
+    if let Some(ref d) = date {
+        if !is_valid_iso_date(d) {
+            return Err(AppError::Validation(format!(
+                "scheduled_date must be YYYY-MM-DD format, got '{d}'"
+            )));
+        }
+    }
+    set_property_inner(
+        pool,
+        device_id,
+        materializer,
+        block_id,
+        "scheduled_date".to_string(),
         None,
         None,
         date,
@@ -1950,6 +2089,7 @@ pub async fn delete_property_inner(
             "todo_state" => "todo_state",
             "priority" => "priority",
             "due_date" => "due_date",
+            "scheduled_date" => "scheduled_date",
             _ => unreachable!(),
         };
         sqlx::query(&format!("UPDATE blocks SET {col} = NULL WHERE id = ?"))
@@ -3344,6 +3484,22 @@ pub async fn set_due_date(
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
     set_due_date_inner(&pool.0, device_id.as_str(), &materializer, block_id, date)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: set scheduled date on a block. Delegates to [`set_scheduled_date_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn set_scheduled_date(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_id: String,
+    date: Option<String>,
+) -> Result<BlockRow, AppError> {
+    set_scheduled_date_inner(&pool.0, device_id.as_str(), &materializer, block_id, date)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -10711,14 +10867,19 @@ mod tests {
 
         let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
         let set_prop_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_property").collect();
+        // null→TODO now also sets created_at, so we expect 2 set_property ops
         assert_eq!(
             set_prop_ops.len(),
-            1,
-            "exactly one set_property op should be logged"
+            2,
+            "two set_property ops should be logged (todo_state + created_at)"
         );
         assert!(
             set_prop_ops[0].payload.contains("\"todo_state\""),
-            "op payload must contain key 'todo_state'"
+            "first op payload must contain key 'todo_state'"
+        );
+        assert!(
+            set_prop_ops[1].payload.contains("\"created_at\""),
+            "second op payload must contain key 'created_at'"
         );
 
         mat.shutdown();
@@ -11053,5 +11214,363 @@ mod tests {
             Some(&1),
             "only the non-conflict source block should be counted"
         );
+    }
+
+    // ====================================================================
+    // set_scheduled_date tests (#592)
+    // ====================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_scheduled_date_sets_and_clears() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "sched test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // Set scheduled date
+        let result = set_scheduled_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2026-06-01".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.scheduled_date, Some("2026-06-01".into()));
+
+        mat.flush_background().await.unwrap();
+
+        // Clear scheduled date
+        let result = set_scheduled_date_inner(&pool, DEV, &mat, block.id.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!(result.scheduled_date, None);
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_scheduled_date_invalid_format_returns_validation() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "bad sched".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_scheduled_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("not-a-date".into()),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "invalid date should return Validation error, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_scheduled_date_nonexistent_block_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = set_scheduled_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            "nonexistent-id".into(),
+            Some("2026-05-15".into()),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "set_scheduled_date on nonexistent block should return NotFound, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rebuild_agenda_cache_includes_scheduled_date_entries() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "agenda sched".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // Set scheduled_date
+        set_scheduled_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2026-07-20".into()),
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // Rebuild agenda cache
+        crate::cache::rebuild_agenda_cache(&pool).await.unwrap();
+
+        // Check that the agenda cache contains the entry
+        let row = sqlx::query!(
+            "SELECT source FROM agenda_cache WHERE block_id = ? AND date = '2026-07-20'",
+            block.id
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            row.is_some(),
+            "agenda_cache should have the scheduled_date entry"
+        );
+        assert_eq!(row.unwrap().source, "column:scheduled_date");
+
+        mat.shutdown();
+    }
+
+    // ====================================================================
+    // todo_state_auto_timestamp tests (#593)
+    // ====================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn todo_state_auto_null_to_todo_sets_created_at() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "auto ts test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // null → TODO
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // Check created_at property was set
+        let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+        let created_at = props.iter().find(|p| p.key == "created_at");
+        assert!(
+            created_at.is_some(),
+            "created_at should be set on null→TODO transition"
+        );
+        assert!(
+            created_at.unwrap().value_date.is_some(),
+            "created_at should have a value_date"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn todo_state_auto_todo_to_done_sets_completed_at() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "done test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // null → TODO
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // TODO → DONE
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // Check completed_at property was set
+        let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+        let completed_at = props.iter().find(|p| p.key == "completed_at");
+        assert!(
+            completed_at.is_some(),
+            "completed_at should be set on TODO→DONE transition"
+        );
+        assert!(
+            completed_at.unwrap().value_date.is_some(),
+            "completed_at should have a value_date"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn todo_state_auto_done_to_todo_sets_created_at_clears_completed_at() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "reopen test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // null → TODO → DONE
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // DONE → TODO
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+
+        // created_at should be set (refreshed)
+        let created_at = props.iter().find(|p| p.key == "created_at");
+        assert!(
+            created_at.is_some(),
+            "created_at should be set on DONE→TODO transition"
+        );
+
+        // completed_at should be cleared
+        let completed_at = props.iter().find(|p| p.key == "completed_at");
+        assert!(
+            completed_at.is_none(),
+            "completed_at should be cleared on DONE→TODO transition"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn todo_state_auto_todo_to_null_clears_both_timestamps() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "untask test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // null → TODO
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Verify created_at exists
+        let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+        assert!(
+            props.iter().any(|p| p.key == "created_at"),
+            "created_at should exist after null→TODO"
+        );
+
+        // TODO → null (un-tasking)
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), None)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Both should be cleared
+        let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+        let created_at = props.iter().find(|p| p.key == "created_at");
+        let completed_at = props.iter().find(|p| p.key == "completed_at");
+        assert!(
+            created_at.is_none(),
+            "created_at should be cleared on TODO→null transition"
+        );
+        assert!(
+            completed_at.is_none(),
+            "completed_at should be cleared on TODO→null transition"
+        );
+
+        mat.shutdown();
     }
 }

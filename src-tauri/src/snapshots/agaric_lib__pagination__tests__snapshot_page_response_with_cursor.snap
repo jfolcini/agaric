@@ -15,6 +15,7 @@ items:
     todo_state: ~
     priority: ~
     due_date: ~
+    scheduled_date: ~
   - id: SNAP_C02
     block_type: content
     content: child 2
@@ -27,5 +28,6 @@ items:
     todo_state: ~
     priority: ~
     due_date: ~
+    scheduled_date: ~
 next_cursor: "[CURSOR]"
 has_more: true

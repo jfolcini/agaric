@@ -241,7 +241,7 @@ pub async fn eval_tag_query(
     let query_str = format!(
         "SELECT id, block_type, content, parent_id, position, \
          deleted_at, archived_at, is_conflict, conflict_type, \
-         todo_state, priority, due_date \
+         todo_state, priority, due_date, scheduled_date \
          FROM blocks WHERE id IN ({placeholders}) ORDER BY id"
     );
 

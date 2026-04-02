@@ -15,6 +15,7 @@ items:
     todo_state: ~
     priority: ~
     due_date: ~
+    scheduled_date: ~
   - id: SNAP_BLK2
     block_type: page
     content: second
@@ -27,5 +28,6 @@ items:
     todo_state: ~
     priority: ~
     due_date: ~
+    scheduled_date: ~
 next_cursor: ~
 has_more: false

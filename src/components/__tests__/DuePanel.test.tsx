@@ -64,6 +64,7 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
     todo_state: null,
     priority: null,
     due_date: '2025-06-15',
+    scheduled_date: null,
     ...overrides,
   }
 }

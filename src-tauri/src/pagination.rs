@@ -58,6 +58,7 @@ pub struct BlockRow {
     pub todo_state: Option<String>,
     pub priority: Option<String>,
     pub due_date: Option<String>,
+    pub scheduled_date: Option<String>,
 }
 
 /// Row returned by block history queries (op_log entries for a block).
@@ -219,7 +220,7 @@ pub async fn list_children(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at, archived_at, is_conflict as "is_conflict: bool",
-                conflict_type, todo_state, priority, due_date
+                conflict_type, todo_state, priority, due_date, scheduled_date
          FROM blocks
          WHERE parent_id IS ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR (
@@ -266,7 +267,7 @@ pub async fn list_by_type(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at, archived_at, is_conflict as "is_conflict: bool",
-                conflict_type, todo_state, priority, due_date
+                conflict_type, todo_state, priority, due_date, scheduled_date
          FROM blocks
          WHERE block_type = ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR id > ?3)
@@ -314,7 +315,7 @@ pub async fn list_trash(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at, archived_at, is_conflict as "is_conflict: bool",
-                conflict_type, todo_state, priority, due_date
+                conflict_type, todo_state, priority, due_date, scheduled_date
          FROM blocks
          WHERE deleted_at IS NOT NULL AND is_conflict = 0
            AND (?1 IS NULL OR (
@@ -359,7 +360,7 @@ pub async fn list_by_tag(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
-                b.conflict_type, b.todo_state, b.priority, b.due_date
+                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
          FROM block_tags bt
          JOIN blocks b ON b.id = bt.block_id
          WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL AND b.is_conflict = 0
@@ -410,12 +411,13 @@ pub async fn query_by_property(
             "todo_state" => "todo_state",
             "priority" => "priority",
             "due_date" => "due_date",
+            "scheduled_date" => "scheduled_date",
             _ => unreachable!(),
         };
         let sql = format!(
             "SELECT id, block_type, content, parent_id, position, \
                     deleted_at, archived_at, is_conflict, conflict_type, \
-                    todo_state, priority, due_date \
+                    todo_state, priority, due_date, scheduled_date \
              FROM blocks \
              WHERE {col} IS NOT NULL \
                AND deleted_at IS NULL \
@@ -437,7 +439,7 @@ pub async fn query_by_property(
             BlockRow,
             r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                     b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
-                    b.conflict_type, b.todo_state, b.priority, b.due_date
+                    b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
              FROM block_properties bp
              JOIN blocks b ON b.id = bp.block_id
              WHERE bp.key = ?1
@@ -488,7 +490,7 @@ pub async fn list_agenda(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
-                b.conflict_type, b.todo_state, b.priority, b.due_date
+                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
          WHERE ac.date = ?1 AND b.deleted_at IS NULL
@@ -532,7 +534,7 @@ pub async fn list_backlinks(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
-                b.conflict_type, b.todo_state, b.priority, b.due_date
+                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
          FROM block_links bl
          JOIN blocks b ON b.id = bl.source_id
          WHERE bl.target_id = ?1 AND b.deleted_at IS NULL
@@ -701,7 +703,7 @@ pub async fn list_conflicts(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
                 deleted_at, archived_at, is_conflict as "is_conflict: bool",
-                conflict_type, todo_state, priority, due_date
+                conflict_type, todo_state, priority, due_date, scheduled_date
          FROM blocks
          WHERE is_conflict = 1 AND deleted_at IS NULL
            AND (?1 IS NULL OR id > ?2)

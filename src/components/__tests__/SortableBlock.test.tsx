@@ -30,6 +30,14 @@ vi.mock('../EditableBlock', () => ({
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
+  Calendar: (props: { size: number; className?: string }) => (
+    <svg
+      data-testid="calendar-icon"
+      width={props.size}
+      height={props.size}
+      className={props.className}
+    />
+  ),
   CalendarDays: (props: { size: number; className?: string }) => (
     <svg
       data-testid="calendar-days-icon"
@@ -2216,5 +2224,154 @@ describe('SortableBlock due date chip', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+})
+
+// =========================================================================
+// Scheduled date chip tests (#592)
+// =========================================================================
+
+describe('SortableBlock scheduled date chip', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('does not render scheduled chip when scheduledDate is null', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        scheduledDate={null}
+      />,
+    )
+
+    expect(container.querySelector('.scheduled-chip')).not.toBeInTheDocument()
+  })
+
+  it('does not render scheduled chip when scheduledDate is undefined', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    expect(container.querySelector('.scheduled-chip')).not.toBeInTheDocument()
+  })
+
+  it('renders scheduled chip with Calendar icon when scheduledDate is set', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        scheduledDate="2025-06-15"
+      />,
+    )
+
+    expect(container.querySelector('.scheduled-chip')).toBeInTheDocument()
+    expect(screen.getByTestId('calendar-icon')).toBeInTheDocument()
+  })
+
+  it('shows formatted date text for current year', () => {
+    const now = new Date()
+    const year = now.getFullYear()
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        scheduledDate={`${year}-03-15`}
+      />,
+    )
+
+    // Should show "Mar 15" without year
+    expect(screen.getByText('Mar 15')).toBeInTheDocument()
+  })
+
+  it('shows formatted date text with year for past year', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        scheduledDate="2023-12-25"
+      />,
+    )
+
+    expect(screen.getByText('Dec 25, 2023')).toBeInTheDocument()
+  })
+
+  it('has correct aria-label with formatted date', () => {
+    const now = new Date()
+    const year = now.getFullYear()
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        scheduledDate={`${year}-07-04`}
+      />,
+    )
+
+    const chip = screen.getByLabelText('Scheduled Jul 4')
+    expect(chip).toBeInTheDocument()
+  })
+
+  it('scheduled chip is inside inline-controls', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        scheduledDate="2025-06-15"
+      />,
+    )
+
+    const inlineControls = container.querySelector('.inline-controls')
+    const chip = inlineControls?.querySelector('.scheduled-chip')
+    expect(chip).toBeInTheDocument()
+  })
+
+  it('applies purple styling for scheduled date', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        scheduledDate="2025-06-15"
+      />,
+    )
+
+    const chip = container.querySelector('.scheduled-chip')
+    expect(chip?.className).toContain('bg-purple-100')
+    expect(chip?.className).toContain('text-purple-700')
+  })
+
+  it('renders both due date and scheduled date chips when both are set', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate="2025-06-15"
+        scheduledDate="2025-06-10"
+      />,
+    )
+
+    expect(container.querySelector('.due-date-chip')).toBeInTheDocument()
+    expect(container.querySelector('.scheduled-chip')).toBeInTheDocument()
   })
 })

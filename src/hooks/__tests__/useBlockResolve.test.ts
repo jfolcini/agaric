@@ -382,6 +382,7 @@ describe('onCreateTag', () => {
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -412,6 +413,7 @@ describe('onCreateTag', () => {
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -438,6 +440,7 @@ describe('onCreateTag', () => {
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -507,6 +510,7 @@ describe('searchPages — short query (<=2 chars)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
         {
           id: 'P11',
@@ -521,6 +525,7 @@ describe('searchPages — short query (<=2 chars)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -558,6 +563,7 @@ describe('searchPages — short query (<=2 chars)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -589,6 +595,7 @@ describe('searchPages — short query (<=2 chars)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -668,6 +675,7 @@ describe('searchPages — long query (>2 chars)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
         {
           id: 'F2',
@@ -682,6 +690,7 @@ describe('searchPages — long query (>2 chars)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
         {
           id: 'F3',
@@ -696,6 +705,7 @@ describe('searchPages — long query (>2 chars)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -734,6 +744,7 @@ describe('searchPages — long query (>2 chars)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -781,6 +792,7 @@ describe('searchPages — long query (>2 chars)', () => {
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     }))
 
     mockedSearchBlocks.mockResolvedValue({
@@ -824,6 +836,7 @@ describe('searchPages — long query (>2 chars)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -859,6 +872,7 @@ describe('searchPages — long query (>2 chars)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -983,6 +997,7 @@ describe('searchPages — "Create new" option', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -1017,6 +1032,7 @@ describe('searchPages — "Create new" option', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -1055,6 +1071,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -1090,6 +1107,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -1162,6 +1180,7 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -1199,6 +1218,7 @@ describe('onCreatePage', () => {
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1229,6 +1249,7 @@ describe('onCreatePage', () => {
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1255,6 +1276,7 @@ describe('onCreatePage', () => {
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -1288,6 +1310,7 @@ describe('onCreatePage', () => {
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())

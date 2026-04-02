@@ -14,7 +14,15 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { CalendarDays, Check, ChevronRight, Clock, GripVertical, Trash2 } from 'lucide-react'
+import {
+  Calendar,
+  CalendarDays,
+  Check,
+  ChevronRight,
+  Clock,
+  GripVertical,
+  Trash2,
+} from 'lucide-react'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { cn } from '../lib/utils'
@@ -109,6 +117,8 @@ interface SortableBlockProps {
   onTogglePriority?: (blockId: string) => void
   /** Due date in YYYY-MM-DD format, or null/undefined if not set. */
   dueDate?: string | null
+  /** Scheduled date in YYYY-MM-DD format, or null/undefined if not set. */
+  scheduledDate?: string | null
   /** Move block up among siblings. */
   onMoveUp?: (blockId: string) => void
   /** Move block down among siblings. */
@@ -139,6 +149,7 @@ function SortableBlockInner({
   priority,
   onTogglePriority,
   dueDate,
+  scheduledDate,
   onMoveUp,
   onMoveDown,
   onShowHistory,
@@ -412,6 +423,21 @@ function SortableBlockInner({
             >
               <CalendarDays size={14} className="flex-shrink-0" />
               {formatCompactDate(dueDate)}
+            </span>
+          )}
+
+          {/* Scheduled date chip — read-only display when set */}
+          {scheduledDate && (
+            <span
+              role="img"
+              className={cn(
+                'scheduled-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 mt-1 text-[10px] font-medium leading-none select-none',
+                'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
+              )}
+              aria-label={`Scheduled ${formatCompactDate(scheduledDate)}`}
+            >
+              <Calendar size={14} className="flex-shrink-0" />
+              {formatCompactDate(scheduledDate)}
             </span>
           )}
         </div>

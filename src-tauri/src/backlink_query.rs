@@ -812,7 +812,7 @@ pub async fn eval_backlink_query(
     let query_str = format!(
         "SELECT id, block_type, content, parent_id, position, \
          deleted_at, archived_at, is_conflict, conflict_type, \
-         todo_state, priority, due_date \
+         todo_state, priority, due_date, scheduled_date \
          FROM blocks WHERE id IN ({placeholders})"
     );
 
@@ -1071,7 +1071,7 @@ pub async fn eval_backlink_query_grouped(
         let query_str = format!(
             "SELECT id, block_type, content, parent_id, position, \
              deleted_at, archived_at, is_conflict, conflict_type, \
-             todo_state, priority, due_date \
+             todo_state, priority, due_date, scheduled_date \
              FROM blocks WHERE id IN ({placeholders})"
         );
         let mut query = sqlx::query_as::<_, BlockRow>(&query_str);
@@ -1315,7 +1315,7 @@ pub async fn eval_unlinked_references(
         let query_str = format!(
             "SELECT id, block_type, content, parent_id, position, \
              deleted_at, archived_at, is_conflict, conflict_type, \
-             todo_state, priority, due_date \
+             todo_state, priority, due_date, scheduled_date \
              FROM blocks WHERE id IN ({placeholders})"
         );
         let mut query = sqlx::query_as::<_, BlockRow>(&query_str);

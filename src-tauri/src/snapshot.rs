@@ -53,6 +53,8 @@ pub struct BlockSnapshot {
     pub priority: Option<String>,
     #[serde(default)]
     pub due_date: Option<String>,
+    #[serde(default)]
+    pub scheduled_date: Option<String>,
 }
 
 /// A block–tag association captured in a snapshot.
@@ -159,7 +161,7 @@ pub fn decode_snapshot(data: &[u8]) -> Result<SnapshotData, AppError> {
 async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTables, AppError> {
     let blocks: Vec<BlockSnapshot> = sqlx::query_as!(
         BlockSnapshot,
-        "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source, todo_state, priority, due_date FROM blocks"
+        "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source, todo_state, priority, due_date, scheduled_date FROM blocks"
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -352,8 +354,8 @@ pub async fn apply_snapshot(
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, \
              deleted_at, archived_at, is_conflict, conflict_source, \
-             todo_state, priority, due_date) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             todo_state, priority, due_date, scheduled_date) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&b.id)
         .bind(&b.block_type)
@@ -367,6 +369,7 @@ pub async fn apply_snapshot(
         .bind(&b.todo_state)
         .bind(&b.priority)
         .bind(&b.due_date)
+        .bind(&b.scheduled_date)
         .execute(&mut *tx)
         .await?;
     }
@@ -549,6 +552,7 @@ mod tests {
                     todo_state: None,
                     priority: None,
                     due_date: None,
+                    scheduled_date: None,
                 }],
                 block_tags: vec![BlockTagSnapshot {
                     block_id: "block-1".to_string(),
@@ -885,6 +889,7 @@ mod tests {
                     todo_state: None,
                     priority: None,
                     due_date: None,
+                    scheduled_date: None,
                 }],
                 block_tags: vec![],
                 block_properties: vec![],
@@ -1096,6 +1101,7 @@ mod tests {
                     todo_state: None,
                     priority: None,
                     due_date: None,
+                    scheduled_date: None,
                 }],
                 block_tags: vec![],
                 block_properties: vec![
@@ -1332,6 +1338,7 @@ mod tests {
                         todo_state: None,
                         priority: None,
                         due_date: None,
+                        scheduled_date: None,
                     },
                     BlockSnapshot {
                         id: "blk-child".to_string(),
@@ -1346,6 +1353,7 @@ mod tests {
                         todo_state: None,
                         priority: None,
                         due_date: None,
+                        scheduled_date: None,
                     },
                     // Tag block — needed for FK on block_tags.tag_id
                     BlockSnapshot {
@@ -1361,6 +1369,7 @@ mod tests {
                         todo_state: None,
                         priority: None,
                         due_date: None,
+                        scheduled_date: None,
                     },
                 ],
                 block_tags: vec![BlockTagSnapshot {
@@ -1631,6 +1640,7 @@ mod tests {
                     todo_state: None,
                     priority: None,
                     due_date: None,
+                    scheduled_date: None,
                 }],
                 block_tags: vec![],
                 block_properties: vec![BlockPropertySnapshot {
@@ -1695,6 +1705,7 @@ mod tests {
                     todo_state: None,
                     priority: None,
                     due_date: None,
+                    scheduled_date: None,
                 }],
                 block_tags: vec![],
                 block_properties: vec![BlockPropertySnapshot {
@@ -2292,6 +2303,7 @@ mod tests {
                     todo_state: Some("TODO".to_string()),
                     priority: Some("2".to_string()),
                     due_date: Some("2026-04-15".to_string()),
+                    scheduled_date: None,
                 }],
                 block_tags: vec![],
                 block_properties: vec![],

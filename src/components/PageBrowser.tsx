@@ -80,6 +80,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         todo_state: null,
         priority: null,
         due_date: null,
+        scheduled_date: null,
       }
       setPages((prev) => [newPage, ...prev])
       setNewPageName('')

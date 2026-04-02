@@ -1143,10 +1143,11 @@ async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> 
                     "todo_state" => "todo_state",
                     "priority" => "priority",
                     "due_date" => "due_date",
+                    "scheduled_date" => "scheduled_date",
                     _ => unreachable!(),
                 };
                 let value = match col {
-                    "due_date" => &p.value_date,
+                    "due_date" | "scheduled_date" => &p.value_date,
                     _ => &p.value_text,
                 };
                 sqlx::query(&format!("UPDATE blocks SET {col} = ? WHERE id = ?"))
@@ -1176,6 +1177,7 @@ async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> 
                     "todo_state" => "todo_state",
                     "priority" => "priority",
                     "due_date" => "due_date",
+                    "scheduled_date" => "scheduled_date",
                     _ => unreachable!(),
                 };
                 sqlx::query(&format!("UPDATE blocks SET {col} = NULL WHERE id = ?"))

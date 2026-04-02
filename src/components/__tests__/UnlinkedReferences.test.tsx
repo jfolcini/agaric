@@ -67,6 +67,7 @@ function makeGroup(
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     })),
   }
 }
@@ -95,6 +96,7 @@ beforeEach(() => {
     todo_state: null,
     priority: null,
     due_date: null,
+    scheduled_date: null,
   })
 })
 
@@ -571,6 +573,7 @@ describe('UnlinkedReferences', () => {
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     })
 
     render(<UnlinkedReferences pageId="PAGE1" pageTitle="C++" />)
@@ -607,6 +610,7 @@ describe('UnlinkedReferences', () => {
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     })
 
     render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" />)

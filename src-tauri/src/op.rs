@@ -319,7 +319,10 @@ impl OpPayload {
 ///
 /// Reserved property keys that map to fixed columns on the `blocks` table.
 pub fn is_reserved_property_key(key: &str) -> bool {
-    matches!(key, "todo_state" | "priority" | "due_date")
+    matches!(
+        key,
+        "todo_state" | "priority" | "due_date" | "scheduled_date"
+    )
 }
 
 /// The schema allows multiple value columns (text, num, date, ref) but the
@@ -1241,7 +1244,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn is_reserved_property_key_recognizes_all_three() {
+    fn is_reserved_property_key_recognizes_all_four() {
         assert!(
             is_reserved_property_key("todo_state"),
             "todo_state must be recognized as reserved"
@@ -1253,6 +1256,10 @@ mod tests {
         assert!(
             is_reserved_property_key("due_date"),
             "due_date must be recognized as reserved"
+        );
+        assert!(
+            is_reserved_property_key("scheduled_date"),
+            "scheduled_date must be recognized as reserved"
         );
     }
 

@@ -286,6 +286,7 @@ describe('BlockTree picker wiring', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
         {
           id: 'C1',
@@ -300,6 +301,7 @@ describe('BlockTree picker wiring', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -345,6 +347,7 @@ describe('BlockTree picker wiring', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
         {
           id: 'P2',
@@ -359,6 +362,7 @@ describe('BlockTree picker wiring', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -399,6 +403,7 @@ describe('BlockTree picker wiring', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -453,6 +458,7 @@ describe('BlockTree picker wiring', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -492,6 +498,7 @@ describe('BlockTree picker wiring', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -528,6 +535,7 @@ describe('BlockTree picker wiring', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -659,6 +667,7 @@ describe('BlockTree rendering edge cases', () => {
         todo_state: null,
         priority: null,
         due_date: null,
+        scheduled_date: null,
         depth: 0,
       },
       {
@@ -674,6 +683,7 @@ describe('BlockTree rendering edge cases', () => {
         todo_state: null,
         priority: null,
         due_date: null,
+        scheduled_date: null,
         depth: 1,
       },
       {
@@ -689,6 +699,7 @@ describe('BlockTree rendering edge cases', () => {
         todo_state: null,
         priority: null,
         due_date: null,
+        scheduled_date: null,
         depth: 2,
       },
       {
@@ -704,6 +715,7 @@ describe('BlockTree rendering edge cases', () => {
         todo_state: null,
         priority: null,
         due_date: null,
+        scheduled_date: null,
         depth: 3,
       },
     ]
@@ -765,6 +777,7 @@ describe('BlockTree rendering edge cases', () => {
         todo_state: null,
         priority: null,
         due_date: null,
+        scheduled_date: null,
         depth: 0,
       },
     ]
@@ -810,6 +823,7 @@ const makeBlock = (
   todo_state: null,
   priority: null,
   due_date: null,
+  scheduled_date: null,
   depth,
 })
 
@@ -1244,8 +1258,8 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(5)
-    expect(results?.map((r) => r.id)).toEqual(['todo', 'doing', 'done', 'date', 'due'])
+    expect(results).toHaveLength(6)
+    expect(results?.map((r) => r.id)).toEqual(['todo', 'doing', 'done', 'date', 'due', 'schedule'])
   })
 
   it('searchSlashCommands filters commands by query', async () => {
@@ -1355,6 +1369,7 @@ describe('BlockTree resolve cache preload', () => {
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     }
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
@@ -1433,6 +1448,7 @@ describe('BlockTree handleNavigate', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         }
       }
       if (cmd === 'get_batch_properties') {
@@ -1479,6 +1495,7 @@ describe('BlockTree handleNavigate', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         }
       }
       if (cmd === 'get_block' && args?.blockId === PARENT_ID) {
@@ -1495,6 +1512,7 @@ describe('BlockTree handleNavigate', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         }
       }
       if (cmd === 'get_batch_properties') {
@@ -1584,6 +1602,7 @@ describe('BlockTree searchPages caching', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,
@@ -1633,6 +1652,7 @@ describe('BlockTree searchPages caching', () => {
       todo_state: null,
       priority: null,
       due_date: null,
+      scheduled_date: null,
     })
 
     await capturedOnCreatePage?.('Freshly Created')
@@ -1886,6 +1906,129 @@ describe('BlockTree due slash command', () => {
     const results = await capturedSearchSlashCommands?.('zzz_nothing')
     const ids = results?.map((r) => r.id) ?? []
     expect(ids).not.toContain('due')
+  })
+})
+
+// =========================================================================
+// Scheduled date slash command tests (#592)
+// =========================================================================
+
+describe('BlockTree schedule slash command', () => {
+  it('searchSlashCommands returns schedule command when query matches "schedule"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('schedule')
+
+    expect(results).toBeDefined()
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).toContain('schedule')
+  })
+
+  it('schedule command has correct label', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('schedule')
+
+    const scheduleItem = results?.find((r) => r.id === 'schedule')
+    expect(scheduleItem).toBeDefined()
+    expect(scheduleItem?.label).toContain('SCHEDULED')
+  })
+
+  it('schedule command is not returned for non-matching query', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('zzz_nothing')
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).not.toContain('schedule')
+  })
+
+  it('sets scheduled date on block when /schedule command is executed', async () => {
+    const tree = [makeBlock('A', null, 0, 'Some block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    // Return block A for list_blocks so load() doesn't wipe the store
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') {
+        return { items: [tree[0]], next_cursor: null, has_more: false }
+      }
+      return emptyPage
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    // Trigger the /schedule command to open the date picker in schedule mode
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'schedule', label: 'SCHEDULED — Set scheduled date on block' })
+    })
+
+    // The date picker should now be open
+    await waitFor(() => {
+      expect(mockCalendarOnSelect).toBeDefined()
+    })
+
+    // Mock set_scheduled_date response
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'A',
+      block_type: 'content',
+      content: 'Some block',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+      archived_at: null,
+      is_conflict: false,
+      conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: '2025-03-15',
+    })
+
+    // Simulate selecting March 15, 2025 from the calendar
+    await act(async () => {
+      mockCalendarOnSelect?.(new Date(2025, 2, 15))
+    })
+
+    // Verify set_scheduled_date was called
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_scheduled_date', {
+        blockId: 'A',
+        date: '2025-03-15',
+      })
+    })
+
+    // Verify block store was updated optimistically
+    await waitFor(() => {
+      const block = useBlockStore.getState().blocks.find((b) => b.id === 'A')
+      expect((block as unknown as Record<string, unknown>)?.scheduled_date).toBe('2025-03-15')
+    })
+
+    // Verify it did NOT call create_block (no date page created)
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({ content: '2025-03-15' }),
+    )
   })
 })
 
@@ -2211,6 +2354,7 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         }
       }
       if (cmd === 'get_batch_properties') {
@@ -2260,6 +2404,7 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         }
       }
       // Parent fetch fails
@@ -2791,6 +2936,7 @@ describe('BlockTree handleDatePick date format', () => {
           todo_state: null,
           priority: null,
           due_date: null,
+          scheduled_date: null,
         },
       ],
       next_cursor: null,

@@ -314,6 +314,11 @@ export async function setDueDate(blockId: string, date: string | null): Promise<
   return invoke('set_due_date', { blockId, date })
 }
 
+/** Set or clear the scheduled date on a block. Pass null to clear. */
+export async function setScheduledDate(blockId: string, date: string | null): Promise<BlockRow> {
+  return invoke('set_scheduled_date', { blockId, date })
+}
+
 /** List global operation history (page-scoped), paginated (newest first). */
 export async function listPageHistory(params: {
   pageId: string
