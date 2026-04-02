@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 54 — 2026-04-02 — Phase 5 Wave 2: Property Definitions Backend (#548, #549, #550, #557)
+
+4 Phase 5 Wave 2 items resolved: property definitions migration, CRUD commands, seed defaults, and integration tests. Also cleaned up 4 stale Wave 1 items (#541, #542, #546, #547) that were already implemented. Built by 1 subagent (backend), reviewed by 1 review subagent (PASS, no blockers).
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `0011_property_definitions.sql` (new) | #548+#550: CREATE TABLE with CHECK on value_type (text/number/date/select). Seeds 3 defaults: status (select), due (date), url (text). |
+| `commands.rs` | #549: `PropertyDefinition` struct + 4 inner functions (create, list, update_options, delete) + 4 Tauri command wrappers. Full input validation: key format (1-64 chars, alphanumeric/underscore/hyphen), value_type enum, options JSON for select-type. |
+| `lib.rs` | Registered 4 new commands in both `collect_commands!` lists. |
+| `command_integration_tests.rs` | #557: 18 tests — 7 happy-path, 9 error-path, 2 edge-case. Covers CRUD, validation, idempotent create, seeded defaults. |
+| `bindings.ts` | Regenerated specta bindings with `PropertyDefinition` type and 4 command signatures. |
+| `.sqlx/` | 2 new prepared statement caches, 2 removed stale ones. |
+
+### Reviews
+- Backend: PASS — migration correct, all validation sound, SQL parameterized, conventions followed, 18 tests comprehensive. 3 minor missing tests flagged (not blockers).
+
+### Stats
+- Rust: 1363 tests pass (1345 existing + 18 new)
+- 9 files changed, 615 insertions
+- Commit: `b077f00`
+- REVIEW-LATER.md: 41 → 33 open items (resolved #541, #542, #546, #547, #548, #549, #550, #557)
+
 ## Session 53 — 2026-04-02 — Phase 5 Wave 1: SourcePageFilter + Advanced Filters + Remove Backlinks Tab (#543, #544, #545)
 
 3 Phase 5 Wave 1 items resolved: SourcePageFilter popup component (#543), advanced filters toggle in LinkedReferences (#544), remove Backlinks tab from PageEditor detail panel (#545). Built by 1 subagent (frontend) + direct orchestrator edits, reviewed by 1 review subagent (PASS with fixes applied).
