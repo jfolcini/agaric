@@ -145,7 +145,7 @@ describe('SortableBlock', () => {
     )
 
     // Drag handle button exists
-    const handle = screen.getByRole('button', { name: /drag to reorder/i })
+    const handle = screen.getByRole('button', { name: /reorder block/i })
     expect(handle).toBeInTheDocument()
 
     // GripVertical icon rendered inside
@@ -263,7 +263,7 @@ describe('SortableBlock', () => {
       />,
     )
 
-    const handle = screen.getByLabelText('Drag to reorder')
+    const handle = screen.getByLabelText('Reorder block (drag or use keyboard)')
     expect(handle).toBeInTheDocument()
     expect(handle.tagName.toLowerCase()).toBe('button')
   })
@@ -1074,7 +1074,7 @@ describe('SortableBlock visibility controls', () => {
       />,
     )
 
-    const handle = screen.getByRole('button', { name: /drag to reorder/i })
+    const handle = screen.getByRole('button', { name: /reorder block/i })
     expect(handle.className).toContain('opacity-0')
   })
 
@@ -1088,7 +1088,7 @@ describe('SortableBlock visibility controls', () => {
       />,
     )
 
-    const handle = screen.getByRole('button', { name: /drag to reorder/i })
+    const handle = screen.getByRole('button', { name: /reorder block/i })
     expect(handle.className).toContain('group-hover:opacity-100')
   })
 
@@ -1102,7 +1102,7 @@ describe('SortableBlock visibility controls', () => {
       />,
     )
 
-    const handle = screen.getByRole('button', { name: /drag to reorder/i })
+    const handle = screen.getByRole('button', { name: /reorder block/i })
     expect(handle.className).toContain('[.block-active_&]:opacity-100')
   })
 
@@ -1407,7 +1407,7 @@ describe('SortableBlock a11y enhancements', () => {
       />,
     )
 
-    const handle = screen.getByRole('button', { name: /drag to reorder/i })
+    const handle = screen.getByRole('button', { name: /reorder block/i })
     expect(handle.className).toContain('focus-visible:ring-2')
   })
 
@@ -1468,7 +1468,7 @@ describe('SortableBlock a11y enhancements', () => {
       />,
     )
 
-    const handle = screen.getByRole('button', { name: /drag to reorder/i })
+    const handle = screen.getByRole('button', { name: /reorder block/i })
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
     const collapseBtn = screen.getByRole('button', { name: /collapse children/i })
     const marker = screen.getByRole('button', { name: /set as todo/i })
@@ -1489,7 +1489,7 @@ describe('SortableBlock a11y enhancements', () => {
       />,
     )
 
-    const handle = screen.getByRole('button', { name: /drag to reorder/i })
+    const handle = screen.getByRole('button', { name: /reorder block/i })
     expect(handle.className).toContain('focus-visible:opacity-100')
   })
 

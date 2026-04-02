@@ -248,10 +248,21 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
 
     // Calculate new position based on where the block will end up after
     // arrayMove semantics (splice-remove at oldIndex, splice-insert at newIndex).
+    // Use sibling-aware bounds to avoid basing position on non-sibling blocks.
+    const siblings = blocks.filter(
+      (b) => b.id !== blockId && (b.parent_id ?? null) === (parentId ?? null),
+    )
+    const lastSiblingPos = siblings.length > 0
+      ? (siblings[siblings.length - 1].position ?? 0)
+      : 0
+    const firstSiblingPos = siblings.length > 0
+      ? (siblings[0].position ?? 0)
+      : 0
+
     let newPosition: number
     if (newIndex > oldIndex) {
       if (newIndex >= blocks.length - 1) {
-        newPosition = (blocks[blocks.length - 1].position ?? 0) + 1
+        newPosition = lastSiblingPos + 1
       } else {
         const beforePos = blocks[newIndex].position ?? 0
         const afterPos = blocks[newIndex + 1].position ?? 0
@@ -262,7 +273,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       }
     } else {
       if (newIndex === 0) {
-        newPosition = (blocks[0].position ?? 0) - 1
+        newPosition = firstSiblingPos - 1
       } else {
         const beforePos = blocks[newIndex - 1].position ?? 0
         const afterPos = blocks[newIndex].position ?? 0

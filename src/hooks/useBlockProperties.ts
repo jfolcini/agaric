@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useState } from 'react'
+import { toast } from 'sonner'
 import { announce } from '../lib/announcer'
 import type { PropertyRow } from '../lib/tauri'
 import { deleteProperty, setProperty } from '../lib/tauri'
@@ -54,16 +55,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
       const nextIdx = (currentIdx + 1) % TASK_CYCLE.length
       const nextState = TASK_CYCLE[nextIdx]
 
-      if (nextState === null) {
-        await deleteProperty(blockId, 'todo')
-      } else {
-        await setProperty({ blockId, key: 'todo', valueText: nextState })
-      }
-
-      // Announce to screen readers
-      announce(`Task state: ${nextState ? (STATE_LABELS[nextState] ?? nextState) : 'none'}`)
-
-      // Update local cache
+      // Optimistic cache update (before IPC) to prevent race on rapid toggles
       setBlockProperties((prev) => {
         const next = new Map(prev)
         if (nextState === null) {
@@ -83,6 +75,39 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
         }
         return next
       })
+
+      try {
+        if (nextState === null) {
+          await deleteProperty(blockId, 'todo')
+        } else {
+          await setProperty({ blockId, key: 'todo', valueText: nextState })
+        }
+      } catch {
+        // Revert optimistic update on failure
+        setBlockProperties((prev) => {
+          const next = new Map(prev)
+          if (current === null) {
+            const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'todo')
+            if (props.length === 0) next.delete(blockId)
+            else next.set(blockId, props)
+          } else {
+            const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'todo')
+            props.push({
+              key: 'todo',
+              value_text: current,
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+            })
+            next.set(blockId, props)
+          }
+          return next
+        })
+        toast.error('Failed to update task state')
+        return
+      }
+
+      announce(`Task state: ${nextState ? (STATE_LABELS[nextState] ?? nextState) : 'none'}`)
     },
     [getTodoState],
   )
@@ -96,13 +121,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
       const nextIdx = (currentIdx + 1) % PRIORITY_CYCLE.length
       const nextState = PRIORITY_CYCLE[nextIdx]
 
-      if (nextState === null) {
-        await deleteProperty(blockId, 'priority')
-      } else {
-        await setProperty({ blockId, key: 'priority', valueText: nextState })
-      }
-
-      // Update local cache
+      // Optimistic cache update (before IPC) to prevent race on rapid toggles
       setBlockProperties((prev) => {
         const next = new Map(prev)
         if (nextState === null) {
@@ -122,6 +141,36 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
         }
         return next
       })
+
+      try {
+        if (nextState === null) {
+          await deleteProperty(blockId, 'priority')
+        } else {
+          await setProperty({ blockId, key: 'priority', valueText: nextState })
+        }
+      } catch {
+        // Revert optimistic update on failure
+        setBlockProperties((prev) => {
+          const next = new Map(prev)
+          if (current === null) {
+            const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'priority')
+            if (props.length === 0) next.delete(blockId)
+            else next.set(blockId, props)
+          } else {
+            const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'priority')
+            props.push({
+              key: 'priority',
+              value_text: current,
+              value_num: null,
+              value_date: null,
+              value_ref: null,
+            })
+            next.set(blockId, props)
+          }
+          return next
+        })
+        toast.error('Failed to update priority')
+      }
     },
     [blockProperties],
   )

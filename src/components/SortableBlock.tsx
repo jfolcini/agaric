@@ -217,7 +217,7 @@ function SortableBlockInner({
               <button
                 type="button"
                 className="drag-handle flex-shrink-0 cursor-grab p-0.5 mt-1.5 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
-                aria-label="Drag to reorder"
+                aria-label="Reorder block (drag or use keyboard)"
                 {...attributes}
                 {...listeners}
               >
@@ -225,7 +225,7 @@ function SortableBlockInner({
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom" sideOffset={4}>
-              Drag to reorder
+              Reorder (drag or keyboard)
             </TooltipContent>
           </Tooltip>
 

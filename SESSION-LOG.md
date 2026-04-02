@@ -132,6 +132,23 @@ Cross-validated P1 claims with a separate subagent.
 ### Phase 7 Stats
 - REVIEW-LATER.md: 5 → 10 open items (+5 from reviews)
 
+### Phase 8: Fix Review Findings (#501, #502, #504, #505)
+
+4 S-cost items from DnD + hooks reviews, fixed directly.
+
+| File | Change |
+|------|--------|
+| `blocks.ts` | #501: reorder() position uses sibling-filtered bounds (lastSiblingPos, firstSiblingPos) instead of flat-tree last block. |
+| `SortableBlock.tsx` | #502: Drag handle aria-label + tooltip mention keyboard accessibility. |
+| `SortableBlock.test.tsx` | Updated 8 tests querying by old aria-label (`/drag to reorder/i` → `/reorder block/i`). |
+| `useBlockProperties.ts` | #504: Optimistic cache update before IPC. On failure: revert cache + toast. Both todo and priority toggles. |
+| `useBlockProperties.test.ts` | Updated 4 error tests for new optimistic-revert behavior (no longer throws). |
+| `useBlockResolve.ts` | #505: searchPages now calls `batchSet()` to populate resolve cache after FTS results. |
+
+### Phase 8 Stats
+- Frontend: 71/71 test files, 2063 tests pass
+- REVIEW-LATER.md: 10 → 6 open items (resolved #501, #502, #504, #505)
+
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 
 Resolved all 18 Tier 7.5 items. 7 BacklinkFilterBuilder UX/a11y fixes, 6 BacklinksPanel fixes, 1 button.tsx touch target, 3 backend perf optimizations, 2 already resolved by Tier 7.

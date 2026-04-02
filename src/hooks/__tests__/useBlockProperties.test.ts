@@ -333,16 +333,17 @@ describe('useBlockProperties handleToggleTodo (regression)', () => {
 })
 
 describe('useBlockProperties error handling', () => {
-  it('handleToggleTodo propagates IPC error (no silent swallow)', async () => {
+  it('handleToggleTodo reverts cache and shows toast on IPC failure', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
     const { result } = renderHook(() => useBlockProperties())
 
-    await expect(
-      act(async () => {
-        await result.current.handleToggleTodo('BLOCK_1')
-      }),
-    ).rejects.toThrow('IPC failed')
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+    })
+
+    // Cache should be reverted to empty (original state: no todo property)
+    expect(result.current.blockProperties.size).toBe(0)
   })
 
   it('handleToggleTodo does not update cache on IPC failure', async () => {
@@ -350,28 +351,25 @@ describe('useBlockProperties error handling', () => {
 
     const { result } = renderHook(() => useBlockProperties())
 
-    try {
-      await act(async () => {
-        await result.current.handleToggleTodo('BLOCK_1')
-      })
-    } catch {
-      // Expected
-    }
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+    })
 
-    // Cache should remain empty since the IPC failed before setState
+    // Cache should remain empty since the optimistic update was reverted
     expect(result.current.blockProperties.size).toBe(0)
   })
 
-  it('handleTogglePriority propagates IPC error', async () => {
+  it('handleTogglePriority reverts cache on IPC failure', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
 
     const { result } = renderHook(() => useBlockProperties())
 
-    await expect(
-      act(async () => {
-        await result.current.handleTogglePriority('BLOCK_1')
-      }),
-    ).rejects.toThrow('IPC failed')
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
+
+    // Cache should be reverted (no priority property)
+    expect(result.current.blockProperties.size).toBe(0)
   })
 
   it('handleTogglePriority does not update cache on IPC failure', async () => {
@@ -399,15 +397,11 @@ describe('useBlockProperties error handling', () => {
       )
     })
 
-    try {
-      await act(async () => {
-        await result.current.handleTogglePriority('BLOCK_1')
-      })
-    } catch {
-      // Expected
-    }
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
 
-    // Cache should still have 'A' (not updated to 'B')
+    // Cache should still have 'A' (reverted from optimistic 'B')
     const props = result.current.blockProperties.get('BLOCK_1')
     expect(props?.find((p) => p.key === 'priority')?.value_text).toBe('A')
   })
