@@ -46,7 +46,7 @@ fn extract_prev_edit(record: &OpRecord) -> Result<Option<(String, i64)>, AppErro
 /// Uses `INSERT OR IGNORE` on the composite PK `(device_id, seq)` so that
 /// duplicate delivery is idempotent (ADR-09). Rejects ops whose hash does
 /// not match the recomputed hash of the record fields.
-pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> {
+pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bool, AppError> {
     // Verify the hash matches the record contents
     if !verify_op_hash(
         &record.hash,
@@ -61,8 +61,9 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<()
         ));
     }
 
-    // INSERT OR IGNORE — duplicate delivery is a no-op
-    sqlx::query!(
+    // INSERT OR IGNORE — duplicate delivery is a no-op.
+    // Returns true if a row was inserted, false if it was a duplicate.
+    let result = sqlx::query!(
         "INSERT OR IGNORE INTO op_log \
          (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -77,7 +78,7 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<()
     .execute(pool)
     .await?;
 
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 /// Create a merge op whose `parent_seqs` contains entries from multiple

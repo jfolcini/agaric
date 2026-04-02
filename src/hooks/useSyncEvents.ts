@@ -15,6 +15,7 @@
 import { listen } from '@tauri-apps/api/event'
 import { useEffect } from 'react'
 import { toast } from 'sonner'
+import { getConflicts } from '@/lib/tauri'
 import { useBlockStore } from '@/stores/blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSyncStore } from '@/stores/sync'
@@ -109,6 +110,15 @@ export function useSyncEvents(): void {
         const { rootParentId } = useBlockStore.getState()
         useBlockStore.getState().load(rootParentId ?? undefined)
         useResolveStore.getState().preload()
+      }
+
+      // Check for conflicts after sync (#438)
+      if (ops_received > 0) {
+        getConflicts({ limit: 1 }).then((resp) => {
+          if (resp.items.length > 0) {
+            toast.warning('Sync completed with conflicts — review in Conflicts view')
+          }
+        }).catch(() => {})
       }
     })
       .then((unlisten) => {

@@ -193,9 +193,9 @@ pub async fn check_reset_required(
 
 /// Insert remote ops into the local op log and enqueue materialisation.
 ///
-/// For each op: verify it doesn't already exist (duplicate detection), then
-/// call [`dag::insert_remote_op`].  Successfully inserted ops are enqueued
-/// as [`MaterializeTask::ApplyOp`].
+/// Each op is inserted via [`dag::insert_remote_op`] which uses
+/// `INSERT OR IGNORE` — duplicates are detected by the zero `rows_affected`
+/// return, avoiding a redundant pre-check SELECT per op.
 pub async fn apply_remote_ops(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -210,22 +210,15 @@ pub async fn apply_remote_ops(
     for op in ops {
         let record: OpRecord = op.into();
 
-        // Duplicate check — if the op already exists, skip it.
-        match op_log::get_op_by_seq(pool, &record.device_id, record.seq).await {
-            Ok(_) => {
-                result.duplicates += 1;
-                continue;
-            }
-            Err(AppError::NotFound(_)) => { /* new op — proceed */ }
-            Err(e) => return Err(e),
-        }
-
         match dag::insert_remote_op(pool, &record).await {
-            Ok(()) => {
+            Ok(true) => {
                 materializer
                     .enqueue_foreground(MaterializeTask::ApplyOp(record))
                     .await?;
                 result.inserted += 1;
+            }
+            Ok(false) => {
+                result.duplicates += 1;
             }
             Err(AppError::InvalidOperation(ref msg)) if msg.contains("hash mismatch") => {
                 result.hash_mismatches += 1;
@@ -766,8 +759,17 @@ impl SyncOrchestrator {
                 });
                 let to_apply = std::mem::take(&mut self.received_ops);
                 let count = to_apply.len();
-                let _apply_result =
+                let apply_result =
                     apply_remote_ops(&self.pool, &self.materializer, to_apply).await?;
+                if apply_result.hash_mismatches > 0 {
+                    tracing::warn!(
+                        mismatches = apply_result.hash_mismatches,
+                        inserted = apply_result.inserted,
+                        duplicates = apply_result.duplicates,
+                        peer = ?self.remote_device_id,
+                        "hash chain verification failures detected during sync"
+                    );
+                }
                 self.session.ops_received = count;
 
                 // Merge diverged blocks
@@ -780,13 +782,22 @@ impl SyncOrchestrator {
                     ops_sent: self.session.ops_sent,
                 });
                 let remote_id = self.remote_device_id.clone().unwrap_or_default();
-                let _merge_results = merge_diverged_blocks(
+                let merge_results = merge_diverged_blocks(
                     &self.pool,
                     &self.device_id,
                     &self.materializer,
                     &remote_id,
                 )
                 .await?;
+                if merge_results.conflicts > 0 {
+                    tracing::warn!(
+                        conflicts = merge_results.conflicts,
+                        clean_merges = merge_results.clean_merges,
+                        already_up_to_date = merge_results.already_up_to_date,
+                        peer = ?self.remote_device_id,
+                        "merge conflicts detected during sync"
+                    );
+                }
 
                 // Determine our latest head hash for the SyncComplete message
                 let last_hash = get_local_heads(&self.pool)
