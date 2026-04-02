@@ -627,13 +627,13 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     rovingEditor.unmount()
     remove(focusedBlockId)
     announce('Block deleted')
-    // Focus previous block, or next, or nothing
+    // Focus previous block, or next visible at same level, or nothing
     if (idx > 0) {
       const prevBlock = collapsedVisible[idx - 1]
       setFocused(prevBlock.id)
       rovingEditor.mount(prevBlock.id, prevBlock.content ?? '')
-    } else if (collapsedVisible.length > 1) {
-      const nextBlock = collapsedVisible[1]
+    } else if (idx + 1 < collapsedVisible.length) {
+      const nextBlock = collapsedVisible[idx + 1]
       setFocused(nextBlock.id)
       rovingEditor.mount(nextBlock.id, nextBlock.content ?? '')
     } else {
