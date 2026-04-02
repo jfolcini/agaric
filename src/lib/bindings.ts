@@ -360,6 +360,50 @@ async listPropertyKeys() : Promise<Result<string[], { kind: string; message: str
 }
 },
 /**
+ * Tauri command: create a property definition. Delegates to [`create_property_def_inner`].
+ */
+async createPropertyDef(key: string, valueType: string, options: string | null) : Promise<Result<PropertyDefinition, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_property_def", { key, valueType, options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: list all property definitions. Delegates to [`list_property_defs_inner`].
+ */
+async listPropertyDefs() : Promise<Result<PropertyDefinition[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_property_defs") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: update options for a select-type definition. Delegates to [`update_property_def_options_inner`].
+ */
+async updatePropertyDefOptions(key: string, options: string) : Promise<Result<PropertyDefinition, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_property_def_options", { key, options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: delete a property definition. Delegates to [`delete_property_def_inner`].
+ */
+async deletePropertyDef(key: string) : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_property_def", { key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: list all sync peers. Delegates to [`list_peer_refs_inner`].
  */
 async listPeerRefs() : Promise<Result<PeerRef[], { kind: string; message: string }>> {
@@ -557,6 +601,10 @@ cert_hash: string | null;
  * Human-readable name/label for this peer (e.g. "Javier's Phone").
  */
 device_name: string | null }
+/**
+ * A property definition from the schema registry.
+ */
+export type PropertyDefinition = { key: string; value_type: string; options: string | null; created_at: string }
 export type PropertyRow = { key: string; value_text: string | null; value_num: number | null; value_date: string | null; value_ref: string | null }
 export type PurgeResponse = { block_id: string; purged_count: number }
 /**

@@ -6519,3 +6519,264 @@ async fn grouped_backlinks_with_contains_filter() {
         "filtered_count reflects only the alpha block"
     );
 }
+
+// ======================================================================
+// Property definitions — happy paths (#548, #549, #550, #557)
+// ======================================================================
+
+#[tokio::test]
+async fn create_property_def_returns_correct_fields() {
+    let (pool, _dir) = test_pool().await;
+    let def = create_property_def_inner(&pool, "priority".into(), "text".into(), None)
+        .await
+        .unwrap();
+    assert_eq!(def.key, "priority");
+    assert_eq!(def.value_type, "text");
+    assert!(def.options.is_none(), "text-type must have no options");
+    assert!(!def.created_at.is_empty(), "created_at must be set");
+}
+
+#[tokio::test]
+async fn create_property_def_select_with_options() {
+    let (pool, _dir) = test_pool().await;
+    let opts = r#"["low","medium","high"]"#;
+    let def =
+        create_property_def_inner(&pool, "severity".into(), "select".into(), Some(opts.into()))
+            .await
+            .unwrap();
+    assert_eq!(def.key, "severity");
+    assert_eq!(def.value_type, "select");
+    assert_eq!(def.options.as_deref(), Some(opts));
+}
+
+#[tokio::test]
+async fn create_property_def_idempotent() {
+    let (pool, _dir) = test_pool().await;
+    let opts = r#"["a","b"]"#;
+    let first =
+        create_property_def_inner(&pool, "color".into(), "select".into(), Some(opts.into()))
+            .await
+            .unwrap();
+
+    // Call again with different options — should return original unchanged
+    let second = create_property_def_inner(
+        &pool,
+        "color".into(),
+        "select".into(),
+        Some(r#"["x","y"]"#.into()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        first.created_at, second.created_at,
+        "original must be preserved"
+    );
+    assert_eq!(
+        first.options, second.options,
+        "options must remain unchanged on duplicate insert"
+    );
+}
+
+#[tokio::test]
+async fn list_property_defs_returns_all_ordered() {
+    let (pool, _dir) = test_pool().await;
+    // Delete seeded defaults to isolate this test
+    sqlx::query("DELETE FROM property_definitions")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    create_property_def_inner(&pool, "zeta".into(), "text".into(), None)
+        .await
+        .unwrap();
+    create_property_def_inner(&pool, "alpha".into(), "number".into(), None)
+        .await
+        .unwrap();
+    create_property_def_inner(&pool, "mid".into(), "date".into(), None)
+        .await
+        .unwrap();
+
+    let defs = list_property_defs_inner(&pool).await.unwrap();
+    assert_eq!(defs.len(), 3);
+    assert_eq!(defs[0].key, "alpha", "results must be sorted by key");
+    assert_eq!(defs[1].key, "mid");
+    assert_eq!(defs[2].key, "zeta");
+}
+
+#[tokio::test]
+async fn list_property_defs_includes_seeded_defaults() {
+    let (pool, _dir) = test_pool().await;
+    let defs = list_property_defs_inner(&pool).await.unwrap();
+    let keys: Vec<&str> = defs.iter().map(|d| d.key.as_str()).collect();
+    assert!(keys.contains(&"status"), "seeded 'status' must exist");
+    assert!(keys.contains(&"due"), "seeded 'due' must exist");
+    assert!(keys.contains(&"url"), "seeded 'url' must exist");
+
+    // Verify status is select-type with correct options
+    let status = defs.iter().find(|d| d.key == "status").unwrap();
+    assert_eq!(status.value_type, "select");
+    assert!(status.options.is_some());
+}
+
+#[tokio::test]
+async fn update_property_def_options_changes_options() {
+    let (pool, _dir) = test_pool().await;
+    let opts1 = r#"["a","b"]"#;
+    create_property_def_inner(&pool, "mood".into(), "select".into(), Some(opts1.into()))
+        .await
+        .unwrap();
+
+    let opts2 = r#"["x","y","z"]"#;
+    let updated = update_property_def_options_inner(&pool, "mood".into(), opts2.into())
+        .await
+        .unwrap();
+
+    assert_eq!(updated.options.as_deref(), Some(opts2));
+    assert_eq!(updated.key, "mood");
+    assert_eq!(updated.value_type, "select");
+}
+
+#[tokio::test]
+async fn delete_property_def_removes_row() {
+    let (pool, _dir) = test_pool().await;
+    create_property_def_inner(&pool, "temp".into(), "text".into(), None)
+        .await
+        .unwrap();
+
+    delete_property_def_inner(&pool, "temp".into())
+        .await
+        .unwrap();
+
+    let defs = list_property_defs_inner(&pool).await.unwrap();
+    assert!(
+        !defs.iter().any(|d| d.key == "temp"),
+        "deleted def must not appear in list"
+    );
+}
+
+// ======================================================================
+// Property definitions — error paths
+// ======================================================================
+
+#[tokio::test]
+async fn create_property_def_empty_key_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+    let result = create_property_def_inner(&pool, "".into(), "text".into(), None).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "empty key must return Validation error"
+    );
+}
+
+#[tokio::test]
+async fn create_property_def_key_too_long_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+    let long_key = "a".repeat(65);
+    let result = create_property_def_inner(&pool, long_key, "text".into(), None).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "65-char key must return Validation error"
+    );
+}
+
+#[tokio::test]
+async fn create_property_def_invalid_chars_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+    let result = create_property_def_inner(&pool, "has spaces".into(), "text".into(), None).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "key with spaces must return Validation error"
+    );
+}
+
+#[tokio::test]
+async fn create_property_def_invalid_value_type_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+    let result = create_property_def_inner(&pool, "flag".into(), "boolean".into(), None).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "invalid value_type must return Validation error"
+    );
+}
+
+#[tokio::test]
+async fn create_property_def_select_without_options_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+    let result = create_property_def_inner(&pool, "pick".into(), "select".into(), None).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "select without options must return Validation error"
+    );
+}
+
+#[tokio::test]
+async fn create_property_def_text_with_options_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+    let result =
+        create_property_def_inner(&pool, "note".into(), "text".into(), Some(r#"["a"]"#.into()))
+            .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "text type with options must return Validation error"
+    );
+}
+
+#[tokio::test]
+async fn update_property_def_options_nonexistent_key_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let result =
+        update_property_def_options_inner(&pool, "nonexistent".into(), r#"["a"]"#.into()).await;
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "update on nonexistent key must return NotFound"
+    );
+}
+
+#[tokio::test]
+async fn update_property_def_options_non_select_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+    create_property_def_inner(&pool, "mytext".into(), "text".into(), None)
+        .await
+        .unwrap();
+
+    let result = update_property_def_options_inner(&pool, "mytext".into(), r#"["a"]"#.into()).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "update options on text-type must return Validation error"
+    );
+}
+
+#[tokio::test]
+async fn delete_property_def_nonexistent_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let result = delete_property_def_inner(&pool, "ghost".into()).await;
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "delete nonexistent key must return NotFound"
+    );
+}
+
+// ======================================================================
+// Property definitions — edge cases
+// ======================================================================
+
+#[tokio::test]
+async fn create_property_def_select_empty_options_returns_validation() {
+    let (pool, _dir) = test_pool().await;
+    let result =
+        create_property_def_inner(&pool, "empty".into(), "select".into(), Some("[]".into())).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "select with empty options array must return Validation error"
+    );
+}
+
+#[tokio::test]
+async fn create_property_def_with_hyphen_underscore_key() {
+    let (pool, _dir) = test_pool().await;
+    let def = create_property_def_inner(&pool, "my-custom_prop".into(), "text".into(), None)
+        .await
+        .unwrap();
+    assert_eq!(def.key, "my-custom_prop", "hyphen/underscore key must work");
+}

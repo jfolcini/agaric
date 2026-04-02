@@ -88,6 +88,10 @@ mod specta_tests {
             crate::commands::query_backlinks_filtered,
             crate::commands::list_backlinks_grouped,
             crate::commands::list_property_keys,
+            crate::commands::create_property_def,
+            crate::commands::list_property_defs,
+            crate::commands::update_property_def_options,
+            crate::commands::delete_property_def,
             // Sync
             crate::commands::list_peer_refs,
             crate::commands::get_peer_ref,
@@ -232,6 +236,10 @@ pub fn run() {
         commands::query_backlinks_filtered,
         commands::list_backlinks_grouped,
         commands::list_property_keys,
+        commands::create_property_def,
+        commands::list_property_defs,
+        commands::update_property_def_options,
+        commands::delete_property_def,
         // Sync
         commands::list_peer_refs,
         commands::get_peer_ref,

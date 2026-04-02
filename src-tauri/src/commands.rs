@@ -157,6 +157,15 @@ pub struct PropertyRow {
     pub value_ref: Option<String>,
 }
 
+/// A property definition from the schema registry.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PropertyDefinition {
+    pub key: String,
+    pub value_type: String,
+    pub options: Option<String>, // JSON array string for select types
+    pub created_at: String,
+}
+
 // ---------------------------------------------------------------------------
 // Sync pairing & session types
 // ---------------------------------------------------------------------------
@@ -1793,6 +1802,159 @@ pub async fn get_properties_inner(
     Ok(rows)
 }
 
+// ---------------------------------------------------------------------------
+// Property-definition CRUD (ADR-22, #548-#550, #557)
+// ---------------------------------------------------------------------------
+
+/// Create a property definition. Uses INSERT OR IGNORE for idempotency —
+/// if the key already exists, this is a no-op.
+pub async fn create_property_def_inner(
+    pool: &SqlitePool,
+    key: String,
+    value_type: String,
+    options: Option<String>,
+) -> Result<PropertyDefinition, AppError> {
+    // Validate key: non-empty, max 64 chars, alphanumeric + underscore + hyphen
+    if key.is_empty() || key.len() > 64 {
+        return Err(AppError::Validation(
+            "property definition key must be 1-64 characters".into(),
+        ));
+    }
+    if !key
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(AppError::Validation(
+            "property definition key must contain only alphanumeric, underscore, or hyphen characters".into(),
+        ));
+    }
+    // Validate value_type
+    if !matches!(value_type.as_str(), "text" | "number" | "date" | "select") {
+        return Err(AppError::Validation(format!(
+            "invalid value_type '{value_type}': must be text, number, date, or select"
+        )));
+    }
+    // Validate options: required for select, forbidden for others
+    if value_type == "select" {
+        match &options {
+            None => {
+                return Err(AppError::Validation(
+                    "select-type definitions require an options array".into(),
+                ))
+            }
+            Some(opts) => {
+                let parsed: Vec<String> = serde_json::from_str(opts).map_err(|_| {
+                    AppError::Validation("options must be a JSON array of strings".into())
+                })?;
+                if parsed.is_empty() {
+                    return Err(AppError::Validation(
+                        "select-type options must not be empty".into(),
+                    ));
+                }
+            }
+        }
+    } else if options.is_some() {
+        return Err(AppError::Validation(format!(
+            "options are only allowed for select-type definitions, not '{value_type}'"
+        )));
+    }
+
+    let now = crate::now_rfc3339();
+    sqlx::query(
+        "INSERT OR IGNORE INTO property_definitions (key, value_type, options, created_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&key)
+    .bind(&value_type)
+    .bind(&options)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
+    // Fetch back (may differ from input if key already existed)
+    let row = sqlx::query_as!(
+        PropertyDefinition,
+        "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
+        key
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row)
+}
+
+/// List all property definitions, ordered by key.
+pub async fn list_property_defs_inner(
+    pool: &SqlitePool,
+) -> Result<Vec<PropertyDefinition>, AppError> {
+    let rows = sqlx::query_as!(
+        PropertyDefinition,
+        "SELECT key, value_type, options, created_at FROM property_definitions ORDER BY key"
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Update the options array for a select-type definition.
+/// Returns error if the key doesn't exist or isn't select-type.
+pub async fn update_property_def_options_inner(
+    pool: &SqlitePool,
+    key: String,
+    options: String,
+) -> Result<PropertyDefinition, AppError> {
+    // Validate options is a non-empty JSON array of strings
+    let parsed: Vec<String> = serde_json::from_str(&options)
+        .map_err(|_| AppError::Validation("options must be a JSON array of strings".into()))?;
+    if parsed.is_empty() {
+        return Err(AppError::Validation("options must not be empty".into()));
+    }
+
+    // Fetch existing to verify it's select-type
+    let existing = sqlx::query_as!(
+        PropertyDefinition,
+        "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
+        key
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("property definition '{key}'")))?;
+
+    if existing.value_type != "select" {
+        return Err(AppError::Validation(format!(
+            "cannot update options on '{}'-type definition '{key}'",
+            existing.value_type
+        )));
+    }
+
+    sqlx::query("UPDATE property_definitions SET options = ? WHERE key = ?")
+        .bind(&options)
+        .bind(&key)
+        .execute(pool)
+        .await?;
+
+    Ok(PropertyDefinition {
+        key: existing.key,
+        value_type: existing.value_type,
+        options: Some(options),
+        created_at: existing.created_at,
+    })
+}
+
+/// Delete a property definition by key.
+/// Returns error if the key doesn't exist.
+pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result<(), AppError> {
+    let result = sqlx::query("DELETE FROM property_definitions WHERE key = ?")
+        .bind(&key)
+        .execute(pool)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("property definition '{key}'")));
+    }
+
+    Ok(())
+}
+
 /// Internal row type for the batch properties query (sqlx-compatible).
 #[derive(Debug, sqlx::FromRow)]
 struct BatchPropertyRow {
@@ -2886,6 +3048,52 @@ pub async fn get_batch_properties(
     get_batch_properties_inner(&pool.0, block_ids)
         .await
         .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: create a property definition. Delegates to [`create_property_def_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn create_property_def(
+    write_pool: State<'_, WritePool>,
+    key: String,
+    value_type: String,
+    options: Option<String>,
+) -> Result<PropertyDefinition, AppError> {
+    create_property_def_inner(&write_pool.0, key, value_type, options).await
+}
+
+/// Tauri command: list all property definitions. Delegates to [`list_property_defs_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_property_defs(
+    read_pool: State<'_, ReadPool>,
+) -> Result<Vec<PropertyDefinition>, AppError> {
+    list_property_defs_inner(&read_pool.0).await
+}
+
+/// Tauri command: update options for a select-type definition. Delegates to [`update_property_def_options_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn update_property_def_options(
+    write_pool: State<'_, WritePool>,
+    key: String,
+    options: String,
+) -> Result<PropertyDefinition, AppError> {
+    update_property_def_options_inner(&write_pool.0, key, options).await
+}
+
+/// Tauri command: delete a property definition. Delegates to [`delete_property_def_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_property_def(
+    write_pool: State<'_, WritePool>,
+    key: String,
+) -> Result<(), AppError> {
+    delete_property_def_inner(&write_pool.0, key).await
 }
 
 /// Tauri command: list page history. Delegates to [`list_page_history_inner`].
