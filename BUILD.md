@@ -346,6 +346,49 @@ adb logcat -s RustStdoutStderr:V
 
 ---
 
+## iOS Builds (not yet supported)
+
+Tauri 2 supports iOS and the codebase is structurally ready (`#[cfg_attr(mobile, tauri::mobile_entry_point)]` is in place, all Rust code is platform-agnostic). However, iOS builds are **not functional yet** due to a sync blocker.
+
+### Known Blocker
+
+- **#522 — mDNS peer discovery blocked on iOS.** The `mdns-sd` crate uses raw UDP multicast sockets (`socket2` + `mio`), which iOS prohibits. Sync peer discovery, announcements, and initiation all depend on mDNS — sync is completely non-functional on iOS without a workaround. See `REVIEW-LATER.md` #522 for details and fix path.
+
+### Prerequisites (when iOS support is added)
+
+- **macOS host** with Xcode installed (iOS apps cannot be cross-compiled)
+- **Xcode Command Line Tools**: `xcode-select --install`
+- **Rust iOS targets**:
+  ```bash
+  rustup target add aarch64-apple-ios x86_64-apple-ios aarch64-apple-ios-sim
+  ```
+
+### First-Time Setup
+
+```bash
+# Initialize Tauri iOS project (generates Xcode project under src-tauri/gen/apple/)
+cargo tauri ios init
+
+# Build for iOS simulator
+cargo tauri ios dev
+
+# Build for physical device
+cargo tauri ios build
+```
+
+### What Works Today
+
+- Core note-taking (database, editor, UI) — fully compatible
+- SQLite WAL mode — supported on iOS
+- File system paths — `app.path().app_data_dir()` resolves correctly
+- `tauri-plugin-shell` — `openUrl()` falls back to `window.open()` on iOS (no crash)
+
+### What Does Not Work
+
+- Sync peer discovery via mDNS (#522) — requires manual IP entry fallback or Apple Bonjour integration
+
+---
+
 ## CI Pipeline
 
 GitHub Actions (`.github/workflows/ci.yml`) runs three jobs:
