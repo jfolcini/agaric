@@ -1648,6 +1648,24 @@ pub async fn list_backlinks_grouped_inner(
     backlink_query::eval_backlink_query_grouped(pool, &block_id, filters, sort, &page).await
 }
 
+/// Query unlinked references for a page — blocks that mention the page's
+/// title without having an explicit `[[link]]`.
+///
+/// # Errors
+/// - [`AppError::Validation`] — `page_id` is empty
+pub(crate) async fn list_unlinked_references_inner(
+    pool: &SqlitePool,
+    page_id: &str,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<GroupedBacklinkResponse, AppError> {
+    if page_id.trim().is_empty() {
+        return Err(AppError::Validation("page_id must not be empty".into()));
+    }
+    let page = pagination::PageRequest::new(cursor, limit)?;
+    backlink_query::eval_unlinked_references(pool, page_id, &page).await
+}
+
 /// List all distinct property keys currently in use across all blocks.
 pub async fn list_property_keys_inner(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
     backlink_query::list_property_keys(pool).await
@@ -3132,6 +3150,21 @@ pub async fn list_backlinks_grouped(
     limit: Option<i64>,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     list_backlinks_grouped_inner(&read_pool.0, block_id, filters, sort, cursor, limit)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_unlinked_references(
+    read_pool: State<'_, ReadPool>,
+    page_id: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<GroupedBacklinkResponse, AppError> {
+    list_unlinked_references_inner(&read_pool.0, &page_id, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }

@@ -382,6 +382,17 @@ async listBacklinksGrouped(blockId: string, filters: BacklinkFilter[] | null, so
 }
 },
 /**
+ * Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`].
+ */
+async listUnlinkedReferences(pageId: string, cursor: string | null, limit: number | null) : Promise<Result<GroupedBacklinkResponse, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_unlinked_references", { pageId, cursor, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: list distinct property keys. Delegates to [`list_property_keys_inner`].
  */
 async listPropertyKeys() : Promise<Result<string[], { kind: string; message: string }>> {

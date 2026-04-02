@@ -424,6 +424,19 @@ export async function listBacklinksGrouped(params: {
   })
 }
 
+/** Query unlinked references grouped by source page, with pagination. */
+export async function listUnlinkedReferences(params: {
+  pageId: string
+  cursor?: string | null
+  limit?: number | null
+}): Promise<GroupedBacklinkResponse> {
+  return invoke('list_unlinked_references', {
+    pageId: params.pageId,
+    cursor: params.cursor ?? null,
+    limit: params.limit ?? null,
+  })
+}
+
 /** List all distinct property keys currently in use. */
 export async function listPropertyKeys(): Promise<string[]> {
   return invoke('list_property_keys')

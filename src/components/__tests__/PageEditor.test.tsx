@@ -46,6 +46,24 @@ vi.mock('../LinkedReferences', () => ({
   },
 }))
 
+let capturedUnlinkedRefsProps: { pageId: string; pageTitle: string } | undefined
+vi.mock('../UnlinkedReferences', () => ({
+  UnlinkedReferences: (props: {
+    pageId: string
+    pageTitle: string
+    onNavigateToPage?: unknown
+  }) => {
+    capturedUnlinkedRefsProps = { pageId: props.pageId, pageTitle: props.pageTitle }
+    return (
+      <div
+        data-testid="unlinked-references"
+        data-page-id={props.pageId}
+        data-page-title={props.pageTitle}
+      />
+    )
+  },
+}))
+
 // ── Mock lucide-react ───────────────────────────────────────────────
 vi.mock('lucide-react', () => ({
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
@@ -87,6 +105,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   capturedParentId = undefined
   capturedLinkedRefsPageId = undefined
+  capturedUnlinkedRefsProps = undefined
   capturedPageHeaderProps = null
   // Reset the Zustand stores to a clean state before each test
   useBlockStore.setState({
@@ -139,6 +158,19 @@ describe('PageEditor', () => {
     expect(linkedRefs).toBeInTheDocument()
     expect(linkedRefs).toHaveAttribute('data-page-id', 'PAGE_123')
     expect(capturedLinkedRefsPageId).toBe('PAGE_123')
+  })
+
+  it('renders UnlinkedReferences with correct pageId and pageTitle', () => {
+    render(<PageEditor pageId="PAGE_123" title="Test Title" />)
+
+    const unlinkedRefs = screen.getByTestId('unlinked-references')
+    expect(unlinkedRefs).toBeInTheDocument()
+    expect(unlinkedRefs).toHaveAttribute('data-page-id', 'PAGE_123')
+    expect(unlinkedRefs).toHaveAttribute('data-page-title', 'Test Title')
+    expect(capturedUnlinkedRefsProps).toEqual({
+      pageId: 'PAGE_123',
+      pageTitle: 'Test Title',
+    })
   })
 
   it('updates BlockTree parentId when pageId prop changes', () => {

@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 60 — 2026-04-03 — Phase 5 Wave 5: Unlinked References (#576-#579)
+
+### Full-stack unlinked references feature
+4 items resolved: backend FTS5 query, UnlinkedReferences component, "Link it" action, comprehensive tests.
+
+Built by 2 parallel subagents (Rust: eval_unlinked_references + command + 7 tests; Frontend: component + tauri wrapper + 14 tests), reviewed by 2 parallel subagents (Rust: PASS; Frontend: CONDITIONAL PASS — missing error handling in handleLinkIt, fixed by orchestrator with try-catch + toast.error + 3 additional tests).
+
+| File | Change |
+|------|--------|
+| `backlink_query.rs` | #576: New `eval_unlinked_references` — FTS5 MATCH for page title, NOT IN subquery excludes linked blocks, resolve_root_pages excludes self-page, cursor pagination on groups. 7 tests. |
+| `commands.rs` | #576: `list_unlinked_references_inner` + `list_unlinked_references` Tauri command. |
+| `lib.rs` | #576: Registered command in both `collect_commands!` sites. |
+| `.sqlx/` | 1 cache file replaced (query hash changed). |
+| `bindings.ts` | Auto-regenerated — `listUnlinkedReferences` binding. |
+| `tauri.ts` | #577: `listUnlinkedReferences` wrapper. |
+| `UnlinkedReferences.tsx` (new) | #577+#578: Collapsed by default, lazy load on expand, collapsible groups, "Link it" button with case-insensitive regex replace + escapeRegExp + error toast. |
+| `PageEditor.tsx` | #577: Wired UnlinkedReferences below LinkedReferences. |
+| `UnlinkedReferences.test.tsx` (new) | #579: 17 tests (expand, groups, Link it edit+removal, case-insensitive, special regex chars, first-occurrence-only, error handling, pagination, reset, a11y). |
+| `PageEditor.test.tsx` | #579: +1 UnlinkedReferences wiring test. |
+
+### Stats
+- Rust: 1415 tests pass (1408 + 7 new)
+- Frontend: 77/77 test files, 2164 tests pass (2146 + 18 new)
+- Commit: `ba21822`
+
 ## Session 59 — 2026-04-03 — Phase 5 Wave 4: History Sheet + dead code cleanup (#570-#575)
 
 ### History UI rearchitecture + orphaned panel deletion

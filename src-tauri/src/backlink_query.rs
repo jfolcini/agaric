@@ -1139,6 +1139,237 @@ pub async fn eval_backlink_query_grouped(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Public: eval_unlinked_references
+// ---------------------------------------------------------------------------
+
+/// Find blocks that mention a page's title text without having a `[[link]]`
+/// to it. Powers the "Unlinked References" UI feature.
+///
+/// ## Algorithm
+///
+/// 1. Fetch the page title.
+/// 2. Sanitize title for FTS5.
+/// 3. FTS5 query to find blocks mentioning the title, excluding blocks
+///    that have a `block_links` row with `target_id = page_id`.
+/// 4. Resolve root pages for all matching blocks.
+/// 5. Exclude blocks whose root page is the target page itself.
+/// 6. Group by source page, sort groups alphabetically by `page_title`.
+/// 7. Apply cursor pagination on groups.
+/// 8. Fetch full `BlockRow` data for the paginated groups.
+/// 9. Return `GroupedBacklinkResponse`.
+pub async fn eval_unlinked_references(
+    pool: &SqlitePool,
+    page_id: &str,
+    page: &PageRequest,
+) -> Result<GroupedBacklinkResponse, AppError> {
+    // 1. Fetch the page title
+    let title: Option<String> = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL",
+    )
+    .bind(page_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let title = match title {
+        Some(ref t) if !t.is_empty() => t.clone(),
+        _ => {
+            return Ok(GroupedBacklinkResponse {
+                groups: vec![],
+                next_cursor: None,
+                has_more: false,
+                total_count: 0,
+                filtered_count: 0,
+            });
+        }
+    };
+
+    // 2. Sanitize title for FTS5
+    let fts_query = sanitize_fts_query(&title);
+    if fts_query.is_empty() {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count: 0,
+            filtered_count: 0,
+        });
+    }
+
+    // 3. FTS5 query to find blocks mentioning the title, excluding linked blocks
+    let matching_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT fb.block_id \
+         FROM fts_blocks fb \
+         JOIN blocks b ON b.id = fb.block_id \
+         WHERE fts_blocks MATCH ?1 \
+           AND b.deleted_at IS NULL \
+           AND b.is_conflict = 0 \
+           AND fb.block_id NOT IN ( \
+             SELECT source_id FROM block_links WHERE target_id = ?2 \
+           )",
+    )
+    .bind(&fts_query)
+    .bind(page_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .collect();
+
+    let total_count = matching_ids.len();
+
+    if matching_ids.is_empty() {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count: 0,
+            filtered_count: 0,
+        });
+    }
+
+    // 4. Resolve root pages for all matching IDs
+    let root_map = resolve_root_pages(pool, &matching_ids).await?;
+
+    // 5. Group blocks by root page, excluding blocks whose root page is the target page
+    let mut page_groups: std::collections::HashMap<String, (Option<String>, Vec<String>)> =
+        std::collections::HashMap::new();
+    for block_id_item in &matching_ids {
+        if let Some((root_page_id, page_title)) = root_map.get(block_id_item) {
+            // Exclude self-references
+            if root_page_id == page_id {
+                continue;
+            }
+            page_groups
+                .entry(root_page_id.clone())
+                .or_insert_with(|| (page_title.clone(), Vec::new()))
+                .1
+                .push(block_id_item.clone());
+        }
+    }
+
+    let filtered_count = page_groups.values().map(|(_, blocks)| blocks.len()).sum();
+
+    // 6. Sort groups alphabetically by page_title (None sorts last)
+    let mut group_list: Vec<(String, Option<String>, Vec<String>)> = page_groups
+        .into_iter()
+        .map(|(pid, (title, blocks))| (pid, title, blocks))
+        .collect();
+    group_list.sort_by(|a, b| {
+        let ta = a.1.as_deref();
+        let tb = b.1.as_deref();
+        match (ta, tb) {
+            (Some(a_title), Some(b_title)) => a_title.cmp(b_title).then_with(|| a.0.cmp(&b.0)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.0.cmp(&b.0),
+        }
+    });
+
+    // 7. Apply cursor pagination on groups
+    let start_after = page.after.as_ref().map(|c| c.id.as_str());
+    let groups_after_cursor: Vec<&(String, Option<String>, Vec<String>)> =
+        if let Some(after_id) = start_after {
+            group_list
+                .iter()
+                .skip_while(|(pid, _, _)| pid.as_str() != after_id)
+                .skip(1)
+                .collect()
+        } else {
+            group_list.iter().collect()
+        };
+
+    let fetch_limit = (page.limit + 1) as usize;
+    let page_groups_slice: Vec<&(String, Option<String>, Vec<String>)> =
+        groups_after_cursor.into_iter().take(fetch_limit).collect();
+    let has_more = page_groups_slice.len() > page.limit as usize;
+    let actual_groups: Vec<&(String, Option<String>, Vec<String>)> = if has_more {
+        page_groups_slice[..page.limit as usize].to_vec()
+    } else {
+        page_groups_slice
+    };
+
+    if actual_groups.is_empty() {
+        return Ok(GroupedBacklinkResponse {
+            groups: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count,
+            filtered_count,
+        });
+    }
+
+    // 8. Fetch full BlockRow data for all blocks in one batch
+    let all_block_ids: Vec<String> = actual_groups
+        .iter()
+        .flat_map(|(_, _, block_ids_in_group)| block_ids_in_group.iter().cloned())
+        .collect();
+    let all_ids_vec: Vec<&str> = all_block_ids.iter().map(|s| s.as_str()).collect();
+    let fetched_rows = if all_ids_vec.is_empty() {
+        vec![]
+    } else {
+        let placeholders = all_ids_vec
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let query_str = format!(
+            "SELECT id, block_type, content, parent_id, position, \
+             deleted_at, archived_at, is_conflict, conflict_type, \
+             todo_state, priority, due_date \
+             FROM blocks WHERE id IN ({placeholders})"
+        );
+        let mut query = sqlx::query_as::<_, BlockRow>(&query_str);
+        for id in &all_ids_vec {
+            query = query.bind(*id);
+        }
+        query.fetch_all(pool).await?
+    };
+
+    // Build a lookup map from id -> BlockRow
+    let row_map: std::collections::HashMap<&str, &BlockRow> =
+        fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
+
+    // 9. Distribute fetched rows back into groups
+    let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(actual_groups.len());
+    for (group_page_id, page_title, block_ids_in_group) in &actual_groups {
+        let block_rows: Vec<BlockRow> = block_ids_in_group
+            .iter()
+            .filter_map(|bid| row_map.get(bid.as_str()).map(|r| (*r).clone()))
+            .collect();
+
+        groups.push(BacklinkGroup {
+            page_id: group_page_id.clone(),
+            page_title: page_title.clone(),
+            blocks: block_rows,
+        });
+    }
+
+    // 10. Build cursor from last group's page_id if has_more
+    let next_cursor = if has_more {
+        let last = actual_groups.last().expect("has_more implies non-empty");
+        Some(
+            Cursor {
+                id: last.0.clone(),
+                position: None,
+                deleted_at: None,
+                seq: None,
+                rank: None,
+            }
+            .encode()?,
+        )
+    } else {
+        None
+    };
+
+    Ok(GroupedBacklinkResponse {
+        groups,
+        next_cursor,
+        has_more,
+        total_count,
+        filtered_count,
+    })
+}
+
 /// Sort a set of block IDs according to the given sort mode.
 ///
 /// Returns a Vec in sorted order.
@@ -4258,5 +4489,244 @@ mod tests {
             set.contains("BLK_2"),
             "BLK_2 (04-20) should match Neq 04-10"
         );
+    }
+
+    // ======================================================================
+    // #576 — eval_unlinked_references tests
+    // ======================================================================
+
+    #[tokio::test]
+    async fn eval_unlinked_refs_empty_when_page_has_no_title() {
+        let (pool, _dir) = test_pool().await;
+        // Page with NULL content
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('PAGE1', 'page', NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let page = default_page();
+        let resp = eval_unlinked_references(&pool, "PAGE1", &page)
+            .await
+            .unwrap();
+        assert!(resp.groups.is_empty());
+        assert_eq!(resp.total_count, 0);
+        assert_eq!(resp.filtered_count, 0);
+        assert!(!resp.has_more);
+    }
+
+    #[tokio::test]
+    async fn eval_unlinked_refs_finds_mentioning_blocks() {
+        let (pool, _dir) = test_pool().await;
+        // Target page
+        insert_block_with_parent(&pool, "TARGET", "page", "Project Alpha", None, None).await;
+        // Another page with a child block mentioning "Project Alpha" (no link)
+        insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_B1",
+            "content",
+            "We should check Project Alpha for updates",
+            Some("PAGE_B"),
+            Some(1),
+        )
+        .await;
+        // Index the block in FTS
+        insert_fts(&pool, "BLK_B1", "We should check Project Alpha for updates").await;
+
+        let page = default_page();
+        let resp = eval_unlinked_references(&pool, "TARGET", &page)
+            .await
+            .unwrap();
+        assert_eq!(resp.groups.len(), 1, "one source page group");
+        assert_eq!(resp.groups[0].page_id, "PAGE_B");
+        assert_eq!(resp.groups[0].page_title.as_deref(), Some("Page B"));
+        assert_eq!(resp.groups[0].blocks.len(), 1);
+        assert_eq!(resp.groups[0].blocks[0].id, "BLK_B1");
+    }
+
+    #[tokio::test]
+    async fn eval_unlinked_refs_excludes_linked_blocks() {
+        let (pool, _dir) = test_pool().await;
+        // Target page
+        insert_block_with_parent(&pool, "TARGET", "page", "Project Alpha", None, None).await;
+        // Another page with a child block that mentions AND links to target
+        insert_block_with_parent(&pool, "PAGE_C", "page", "Page C", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_C1",
+            "content",
+            "See [[Project Alpha]] for details",
+            Some("PAGE_C"),
+            Some(1),
+        )
+        .await;
+        insert_fts(&pool, "BLK_C1", "See Project Alpha for details").await;
+        // This block has an explicit link
+        insert_block_link(&pool, "BLK_C1", "TARGET").await;
+
+        let page = default_page();
+        let resp = eval_unlinked_references(&pool, "TARGET", &page)
+            .await
+            .unwrap();
+        assert!(
+            resp.groups.is_empty(),
+            "linked block should be excluded from unlinked references"
+        );
+    }
+
+    #[tokio::test]
+    async fn eval_unlinked_refs_excludes_own_page_blocks() {
+        let (pool, _dir) = test_pool().await;
+        // Target page whose own child mentions the title
+        insert_block_with_parent(&pool, "TARGET", "page", "Project Alpha", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_SELF",
+            "content",
+            "This page is about Project Alpha",
+            Some("TARGET"),
+            Some(1),
+        )
+        .await;
+        insert_fts(&pool, "BLK_SELF", "This page is about Project Alpha").await;
+
+        let page = default_page();
+        let resp = eval_unlinked_references(&pool, "TARGET", &page)
+            .await
+            .unwrap();
+        assert!(
+            resp.groups.is_empty(),
+            "blocks from the target page itself should be excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn eval_unlinked_refs_handles_special_chars_in_title() {
+        let (pool, _dir) = test_pool().await;
+        // Page with special characters in title
+        insert_block_with_parent(&pool, "TARGET", "page", "C++ \"Tips\" & Tricks", None, None)
+            .await;
+        // Another page mentioning it
+        insert_block_with_parent(&pool, "PAGE_D", "page", "Page D", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_D1",
+            "content",
+            "Read C++ \"Tips\" & Tricks for help",
+            Some("PAGE_D"),
+            Some(1),
+        )
+        .await;
+        insert_fts(&pool, "BLK_D1", "Read C++ \"Tips\" & Tricks for help").await;
+
+        let page = default_page();
+        let resp = eval_unlinked_references(&pool, "TARGET", &page)
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.groups.len(),
+            1,
+            "should find the mention despite special chars"
+        );
+        assert_eq!(resp.groups[0].page_id, "PAGE_D");
+        assert_eq!(resp.groups[0].blocks.len(), 1);
+        assert_eq!(resp.groups[0].blocks[0].id, "BLK_D1");
+    }
+
+    #[tokio::test]
+    async fn eval_unlinked_refs_cursor_pagination() {
+        let (pool, _dir) = test_pool().await;
+        // Target page
+        insert_block_with_parent(&pool, "TARGET", "page", "Project Alpha", None, None).await;
+
+        // Create 3 pages with child blocks mentioning "Project Alpha"
+        for ch in ['A', 'B', 'C'] {
+            let page_id = format!("PAGE_{ch}");
+            let blk_id = format!("BLK_{ch}1");
+            let page_title = format!("Page {ch}");
+            let blk_content = format!("Mentions Project Alpha in page {ch}");
+            insert_block_with_parent(&pool, &page_id, "page", &page_title, None, None).await;
+            insert_block_with_parent(
+                &pool,
+                &blk_id,
+                "content",
+                &blk_content,
+                Some(&page_id),
+                Some(1),
+            )
+            .await;
+            insert_fts(&pool, &blk_id, &blk_content).await;
+        }
+
+        // First page: limit=1
+        let page1 = PageRequest::new(None, Some(1)).unwrap();
+        let resp1 = eval_unlinked_references(&pool, "TARGET", &page1)
+            .await
+            .unwrap();
+        assert_eq!(resp1.groups.len(), 1);
+        assert!(resp1.has_more);
+        assert!(resp1.next_cursor.is_some());
+        assert_eq!(resp1.groups[0].page_id, "PAGE_A"); // alphabetically first
+
+        // Second page via cursor
+        let page2 = PageRequest::new(resp1.next_cursor, Some(1)).unwrap();
+        let resp2 = eval_unlinked_references(&pool, "TARGET", &page2)
+            .await
+            .unwrap();
+        assert_eq!(resp2.groups.len(), 1);
+        assert!(resp2.has_more);
+        assert!(resp2.next_cursor.is_some());
+        assert_eq!(resp2.groups[0].page_id, "PAGE_B");
+
+        // Third page via cursor
+        let page3 = PageRequest::new(resp2.next_cursor, Some(1)).unwrap();
+        let resp3 = eval_unlinked_references(&pool, "TARGET", &page3)
+            .await
+            .unwrap();
+        assert_eq!(resp3.groups.len(), 1);
+        assert!(!resp3.has_more);
+        assert!(resp3.next_cursor.is_none());
+        assert_eq!(resp3.groups[0].page_id, "PAGE_C");
+    }
+
+    #[tokio::test]
+    async fn eval_unlinked_refs_mixed_linked_and_unlinked() {
+        let (pool, _dir) = test_pool().await;
+        // Target page
+        insert_block_with_parent(&pool, "TARGET", "page", "Project Alpha", None, None).await;
+        // Page E: one block mentions (unlinked), another mentions AND links
+        insert_block_with_parent(&pool, "PAGE_E", "page", "Page E", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_E1",
+            "content",
+            "Project Alpha is great",
+            Some("PAGE_E"),
+            Some(1),
+        )
+        .await;
+        insert_fts(&pool, "BLK_E1", "Project Alpha is great").await;
+
+        insert_block_with_parent(
+            &pool,
+            "BLK_E2",
+            "content",
+            "See [[Project Alpha]]",
+            Some("PAGE_E"),
+            Some(2),
+        )
+        .await;
+        insert_fts(&pool, "BLK_E2", "See Project Alpha").await;
+        insert_block_link(&pool, "BLK_E2", "TARGET").await;
+
+        let page = default_page();
+        let resp = eval_unlinked_references(&pool, "TARGET", &page)
+            .await
+            .unwrap();
+        // Only BLK_E1 should appear (BLK_E2 is linked)
+        assert_eq!(resp.groups.len(), 1);
+        assert_eq!(resp.groups[0].page_id, "PAGE_E");
+        assert_eq!(resp.groups[0].blocks.len(), 1);
+        assert_eq!(resp.groups[0].blocks[0].id, "BLK_E1");
     }
 }

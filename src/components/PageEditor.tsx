@@ -16,6 +16,7 @@ import { useUndoStore } from '../stores/undo'
 import { BlockTree } from './BlockTree'
 import { LinkedReferences } from './LinkedReferences'
 import { PageHeader } from './PageHeader'
+import { UnlinkedReferences } from './UnlinkedReferences'
 
 export interface PageEditorProps {
   pageId: string
@@ -105,6 +106,9 @@ export function PageEditor({
 
       {/* Linked references — always visible at page bottom */}
       <LinkedReferences pageId={pageId} onNavigateToPage={onNavigateToPage} />
+
+      {/* Unlinked references — collapsed by default, below linked references */}
+      <UnlinkedReferences pageId={pageId} pageTitle={title} onNavigateToPage={onNavigateToPage} />
 
       {/* Add block button — always directly beneath the last block */}
       <div>
