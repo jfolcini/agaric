@@ -1,3 +1,7 @@
+# Context Management
+
+Before starting work, compact your conversation context (`/compact`) to free up space. This keeps the context window lean and avoids slowdowns during long sessions.
+
 # Goal
 
 Work through REVIEW-LATER.md in manageable batches. If it's empty, generate new items via code review first.
