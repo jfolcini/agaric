@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 47 — 2026-04-02 — Sync Code Quality (#525, #526, #527)
+
+3 S-cost sync hardening items resolved: observability logging, mutex poison recovery, message size cap. Built by 1 subagent, reviewed by 1 separate subagent (reviewer fixed 3 missed locations + removed duplicate trailing lines).
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `sync_daemon.rs` | #525: Replaced 3 `.unwrap_or_default()` with `tracing::warn!` + `vec![]` fallback on `list_peer_refs` DB errors (lines 172, 193, 215). |
+| `sync_scheduler.rs` | #526: Replaced 5 `.expect("…poisoned")` with `.unwrap_or_else(\|e\| e.into_inner())` to match materializer pattern (lines 84, 104, 113, 126, 132). |
+| `sync_net.rs` | #527: Added `MAX_MSG_SIZE = 10_000_000` constant. Size check in `recv_json()` and `recv_binary()` before deserialization. |
+
+### Reviews
+- Build subagent missed 2/3 `unwrap_or_default()` in sync_daemon.rs and 1/5 `expect()` in sync_scheduler.rs, plus introduced 8 duplicate trailing lines. Review subagent caught and fixed all issues.
+
+### Stats
+- Rust: 1312 tests pass, 0 failures
+- 3 files changed, 39 insertions, 9 deletions
+- Commit: `9ef0ee8`
+- REVIEW-LATER.md: 61 → 58 open items (resolved #525, #526, #527)
+
+---
+
 ## Session 46 — 2026-04-02 — Frontend Bug Fixes (#529, #530, #534, #537)
 
 4 S-cost frontend items resolved: 1 architecture (ErrorBoundary), 2 bugs (undo rootParentId, resolve pagesList race), 1 data-loss prevention (optimistic edit). Built by 2 parallel subagents, reviewed by 2 separate subagents.
