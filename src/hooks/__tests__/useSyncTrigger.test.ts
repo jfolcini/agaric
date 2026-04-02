@@ -381,4 +381,31 @@ describe('useSyncTrigger', () => {
     })
     expect(mockStartSync).toHaveBeenCalledTimes(3)
   })
+
+  it('skips sync when navigator is offline (#429)', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true })
+
+    mockListPeerRefs.mockResolvedValue([
+      {
+        peer_id: 'PEER1',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+      },
+    ])
+
+    const { result } = renderHook(() => useSyncTrigger())
+
+    await act(async () => {
+      await result.current.syncAll()
+    })
+
+    expect(mockListPeerRefs).not.toHaveBeenCalled()
+    expect(mockStartSync).not.toHaveBeenCalled()
+
+    // Restore
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
+  })
 })

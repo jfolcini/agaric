@@ -11,6 +11,7 @@ import {
   Search,
   Tag,
   Trash2,
+  WifiOff,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -44,6 +45,7 @@ import {
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
 import { useSyncEvents } from './hooks/useSyncEvents'
+import { useOnlineStatus } from './hooks/useOnlineStatus'
 import { useSyncTrigger } from './hooks/useSyncTrigger'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { announce } from './lib/announcer'
@@ -148,6 +150,7 @@ function App() {
   const syncState = useSyncStore((s) => s.state)
   const syncPeers = useSyncStore((s) => s.peers)
   const { syncing, syncAll } = useSyncTrigger()
+  const isOnline = useOnlineStatus()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const mainContentRef = useRef<HTMLDivElement>(null)
 
@@ -296,9 +299,17 @@ function App() {
           <SidebarFooter>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton tooltip={syncing ? 'Syncing...' : 'Sync all devices'} onClick={syncAll} disabled={syncing}>
-                  <RefreshCw className={syncing ? 'animate-spin' : ''} />
-                  <span>Sync</span>
+                <SidebarMenuButton
+                  tooltip={!isOnline ? 'Offline' : syncing ? 'Syncing...' : 'Sync all devices'}
+                  onClick={syncAll}
+                  disabled={syncing || !isOnline}
+                >
+                  {!isOnline ? (
+                    <WifiOff className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <RefreshCw className={syncing ? 'animate-spin' : ''} />
+                  )}
+                  <span>{isOnline ? 'Sync' : 'Offline'}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>

@@ -23,6 +23,10 @@ export function useSyncTrigger() {
   const setState = useSyncStore((s) => s.setState)
 
   const syncAll = useCallback(async () => {
+    // Skip sync when offline — no error, no toast (#429)
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return
+    }
     if (syncInProgressRef.current) return
     syncInProgressRef.current = true
     setSyncing(true)
