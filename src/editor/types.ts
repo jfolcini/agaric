@@ -139,3 +139,28 @@ export function doc(...blocks: BlockLevelNode[]): DocNode {
   if (blocks.length === 0) return { type: 'doc' }
   return { type: 'doc', content: blocks }
 }
+
+// -- PM position helpers ------------------------------------------------------
+
+/**
+ * Compute the ProseMirror cursor position at the end of the first
+ * paragraph/heading in a DocNode.  Used to position the cursor at the
+ * join point after merging two blocks.
+ *
+ * PM positions: 0=before doc, 1=paragraph open, 1+n=after n inline
+ * positions (text.length for text nodes, 1 for atom nodes like
+ * tag_ref / block_link / hardBreak).
+ */
+export function pmEndOfFirstBlock(doc: DocNode): number {
+  const block = doc.content?.[0]
+  if (!block) return 1
+  if (block.type === 'codeBlock') {
+    return 1 + (block.content?.[0]?.text.length ?? 0)
+  }
+  if (!block.content) return 1
+  let pos = 1 // paragraph/heading open tag
+  for (const node of block.content) {
+    pos += node.type === 'text' ? node.text.length : 1
+  }
+  return pos
+}

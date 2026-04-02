@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { parse, serialize } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
+import { pmEndOfFirstBlock } from '../editor/types'
 import type { DocNode } from '../editor/types'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
@@ -682,7 +683,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
     // Merge: concatenate previous content + current content
     const mergedContent = prevContent + currentContent
-    const joinPoint = prevContent.length
+    const prevDoc = parse(prevContent)
+    const joinPoint = pmEndOfFirstBlock(prevDoc)
 
     // Update previous block with merged content, then remove current block.
     // Await edit before remove to prevent data loss if edit fails.
@@ -697,9 +699,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     // Use setTimeout to let the editor mount complete
     setTimeout(() => {
       if (rovingEditor.editor) {
-        // In ProseMirror, position 0 is before the first paragraph,
-        // position 1 is at the start of text. So join point in PM = joinPoint + 1.
-        const pmPos = Math.min(joinPoint + 1, rovingEditor.editor.state.doc.content.size - 1)
+        // pmEndOfFirstBlock returns the PM position at the end of the
+        // first block's inline content (already includes the paragraph
+        // open-tag offset), so no extra +1 is needed.
+        const pmPos = Math.min(joinPoint, rovingEditor.editor.state.doc.content.size - 1)
         rovingEditor.editor.commands.setTextSelection(pmPos)
       }
     }, 0)
