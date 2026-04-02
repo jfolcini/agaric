@@ -1,5 +1,32 @@
 # Session Log
 
+## Session 50 — 2026-04-02 — Sync: cancel_sync + daemon tests (#528, #491)
+
+2 sync-domain items resolved: functional cancel_sync command (was no-op placeholder) and sync_daemon.rs unit tests (was zero). Built by 1 combined subagent, reviewed by 1 subagent (PASS, no fixes needed). Clippy caught too-many-arguments on 2 functions — fixed with `#[allow]` attributes, cargo fmt applied.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `sync_daemon.rs` | #528: Added `cancel: Arc<AtomicBool>` field to `SyncDaemon`, `cancel_active_sync()` method, threaded cancel flag through `daemon_loop` → `try_sync_with_peer` → `run_sync_session`. Flag checked each loop iteration before `recv_json`, cleared after session ends. Added `#[allow(clippy::too_many_arguments)]` on both private fns. |
+| `sync_daemon.rs` (tests) | #491: Added 7 unit tests — SharedEventSink delegation, shutdown flag, cancel flag, flag independence, cancel toggle, concurrent emission, cancel idempotency. |
+| `lib.rs` | #528: Added `SyncCancelFlag(pub Arc<AtomicBool>)` newtype, registered in managed state before daemon spawn, passed to `SyncDaemon::start()`. |
+| `commands.rs` | #528: Updated `cancel_sync_inner` to accept `&AtomicBool` and set it. Updated Tauri wrapper to use `State<'_, SyncCancelFlag>`. |
+| `command_integration_tests.rs` | #528: Updated `cancel_sync_succeeds` test to match new signature. |
+| `bindings.ts` | Regenerated (doc comment update only, no IPC signature change). |
+
+### Reviews
+- #528 + #491: PASS — all review items verified: flag threading, memory ordering, managed state registration, test quality. No fixes needed.
+
+### Stats
+- Rust: 1321 tests pass (1314 existing + 7 new sync_daemon tests)
+- Frontend: 74/74 test files, 2106 tests pass (unchanged)
+- 5 files changed, 212 insertions, 15 deletions
+- Commit: `a05c4d9`
+- REVIEW-LATER.md: 52 → 50 open items (resolved #491, #528; removed empty "Sync Code Quality" section)
+
+---
+
 ## Session 49 — 2026-04-02 — Performance Fixes (#524, #533)
 
 2 performance items resolved: FTS N+1 query pattern (backend) and entire-store Zustand subscriptions (frontend). Built by 2 parallel subagents, reviewed by 2 separate subagents (reviewer fixed `serde_json` error handling in #524 to use `?` instead of `unwrap_or_default()`).
