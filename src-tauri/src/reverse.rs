@@ -261,9 +261,13 @@ async fn reverse_delete_attachment(
     let original = sqlx::query!(
         r#"SELECT payload FROM op_log
          WHERE op_type = 'add_attachment'
-         AND json_extract(payload, '$.attachment_id') = ?
-         ORDER BY created_at DESC LIMIT 1"#,
-        payload.attachment_id
+         AND json_extract(payload, '$.attachment_id') = ?1
+         AND (created_at < ?2 OR (created_at = ?2 AND seq < ?3))
+         ORDER BY created_at DESC, seq DESC
+         LIMIT 1"#,
+        payload.attachment_id,
+        record.created_at,
+        record.seq
     )
     .fetch_optional(pool)
     .await?;

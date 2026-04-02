@@ -20,15 +20,15 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
         switch (span.tag) {
           case 'Delete':
             return (
-              <span key={key} className="bg-red-500/15 text-red-700 line-through">
+              <del key={key} className="bg-red-500/15 text-red-700 no-underline line-through">
                 {span.value}
-              </span>
+              </del>
             )
           case 'Insert':
             return (
-              <span key={key} className="bg-green-500/15 text-green-700">
+              <ins key={key} className="bg-green-500/15 text-green-700 no-underline">
                 {span.value}
-              </span>
+              </ins>
             )
           default:
             return <span key={key}>{span.value}</span>

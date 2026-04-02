@@ -116,6 +116,11 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         }
       } catch {
         toast.error('Failed to load diff')
+        setExpandedSeqs((prev) => {
+          const next = new Set(prev)
+          next.delete(seq)
+          return next
+        })
       }
       setLoadingDiffs((prev) => {
         const next = new Set(prev)
