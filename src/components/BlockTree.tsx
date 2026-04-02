@@ -19,8 +19,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { parse, serialize } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
-import { pmEndOfFirstBlock } from '../editor/types'
 import type { DocNode } from '../editor/types'
+import { pmEndOfFirstBlock } from '../editor/types'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
 import { useBlockDnD } from '../hooks/useBlockDnD'
@@ -670,7 +670,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   }, [focusedBlockId, handleFlush, moveDown])
 
   // ── Merge with previous block (p2-t11) ────────────────────────────
-  const handleMergeWithPrev = useCallback(() => {
+  const handleMergeWithPrev = useCallback(async () => {
     if (!focusedBlockId) return
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx <= 0) return // First block — nothing to merge with

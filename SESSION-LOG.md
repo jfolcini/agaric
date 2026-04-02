@@ -1,5 +1,34 @@
 # Session Log
 
+## Session 45 — 2026-04-02 — Testing Review & BlockTree Fix
+
+Cross-validated testing review findings from 3 subagents (backend test quality, frontend test quality, full testing methodology). Fixed pre-existing BlockTree.tsx parse error.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | Fix: added missing `async` keyword to `handleMergeWithPrev` callback (had `await` in non-async function, breaking 2 test suites) |
+| `REVIEW-LATER.md` | Added #491-#494 (test coverage gaps: sync_daemon 0 tests, sync command integration tests, vitest coverage thresholds, RenameDialog test) |
+
+### Review Findings
+
+**3 subagent reviews ran:**
+1. Backend test quality (test ratios, integration completeness, benchmarks, snapshots)
+2. Frontend test quality (a11y coverage, mock patterns, store isolation, missing tests)
+3. Full testing methodology (test counts, E2E coverage, property-based testing, flaky risks)
+
+**Cross-validation results:**
+- Confirmed: sync_daemon.rs 0 tests (#491), sync commands 0 integration tests (#492), no vitest coverage thresholds (#493), RenameDialog no test (#494)
+- Rejected: "fake timer cleanup missing in 3 files" — all 3 have `vi.useRealTimers()` in afterEach
+- Rejected: "15 test files broken by waitFor(async)" — false diagnosis; actual issue was BlockTree.tsx missing `async` keyword
+- Rejected: "boot.ts has no dedicated test" — `boot-store.test.ts` exists with 6 tests
+- Not added: benchmark gaps (nice-to-have, not actionable review items), materializer test ratio (covered by integration tests)
+
+### Stats
+- 70/70 frontend test files pass, 2054 tests (was 68/70 before BlockTree fix)
+- REVIEW-LATER.md: 12 → 16 open items
+
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 
 Resolved all 18 Tier 7.5 items. 7 BacklinkFilterBuilder UX/a11y fixes, 6 BacklinksPanel fixes, 1 button.tsx touch target, 3 backend perf optimizations, 2 already resolved by Tier 7.
