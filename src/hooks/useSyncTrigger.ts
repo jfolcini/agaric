@@ -3,28 +3,32 @@ import { toast } from 'sonner'
 import { listPeerRefs, startSync } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
 
-const RESYNC_INTERVAL_MS = 60_000
+const BASE_INTERVAL_MS = 60_000
+const MAX_INTERVAL_MS = 600_000 // 10 minutes
 const SYNC_TIMEOUT_MS = 60_000
 
 /**
  * Manages automatic and manual sync triggering.
  *
  * - Syncs all peers once on mount (sync-on-open, #377).
- * - Re-syncs every 60 s while mounted (#375).
+ * - Re-syncs with exponential backoff on failure (#418).
  * - Exposes `syncAll` for manual trigger (#376).
  */
 export function useSyncTrigger() {
   const [syncing, setSyncing] = useState(false)
   const mountedRef = useRef(true)
   const syncInProgressRef = useRef(false)
+  const intervalRef = useRef(BASE_INTERVAL_MS)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const setState = useSyncStore((s) => s.setState)
 
   const syncAll = useCallback(async () => {
-    // Prevent concurrent sync runs
     if (syncInProgressRef.current) return
     syncInProgressRef.current = true
     setSyncing(true)
     setState('syncing')
+
+    let hadFailure = false
 
     try {
       const peers = await listPeerRefs()
@@ -41,18 +45,27 @@ export function useSyncTrigger() {
             ),
           ])
         } catch {
-          // Individual peer failure shouldn't stop syncing others.
+          hadFailure = true
           toast.error(`Sync failed for device ${peer.peer_id.slice(0, 12)}...`)
         }
       }
       if (mountedRef.current) {
-        setState('idle')
-        toast.success('Sync complete')
+        if (hadFailure) {
+          // Some peers failed — increase backoff
+          intervalRef.current = Math.min(intervalRef.current * 2, MAX_INTERVAL_MS)
+        } else {
+          // All peers succeeded — reset to base
+          intervalRef.current = BASE_INTERVAL_MS
+          setState('idle')
+          toast.success('Sync complete')
+        }
       }
     } catch {
+      hadFailure = true
       if (mountedRef.current) {
         setState('error', 'Sync failed')
         toast.error('Sync failed')
+        intervalRef.current = Math.min(intervalRef.current * 2, MAX_INTERVAL_MS)
       }
     } finally {
       syncInProgressRef.current = false
@@ -62,26 +75,32 @@ export function useSyncTrigger() {
     }
   }, [setState])
 
-  // Sync on mount + periodic resync
+  const scheduleNext = useCallback(() => {
+    if (!mountedRef.current) return
+    timerRef.current = setTimeout(() => {
+      syncAll().then(() => {
+        if (mountedRef.current) scheduleNext()
+      })
+    }, intervalRef.current)
+  }, [syncAll])
+
+  // Sync on mount + recursive scheduled resync
   useEffect(() => {
     mountedRef.current = true
 
     // Sync on open (#377) — small delay to let the app finish booting
     const initialTimer = setTimeout(() => {
-      syncAll()
+      syncAll().then(() => {
+        if (mountedRef.current) scheduleNext()
+      })
     }, 2_000)
-
-    // Periodic resync (#375)
-    const intervalId = setInterval(() => {
-      syncAll()
-    }, RESYNC_INTERVAL_MS)
 
     return () => {
       mountedRef.current = false
       clearTimeout(initialTimer)
-      clearInterval(intervalId)
+      if (timerRef.current) clearTimeout(timerRef.current)
     }
-  }, [syncAll])
+  }, [syncAll, scheduleNext])
 
   return { syncing, syncAll }
 }

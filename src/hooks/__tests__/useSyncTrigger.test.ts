@@ -305,4 +305,80 @@ describe('useSyncTrigger', () => {
     expect(state.state).toBe('error')
     expect(state.error).toBe('Sync failed')
   })
+
+  it('doubles resync interval on sync failure (#418)', async () => {
+    mockListPeerRefs.mockResolvedValue([
+      {
+        peer_id: 'PEER1',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+      },
+    ])
+    mockStartSync.mockRejectedValue(new Error('fail'))
+
+    renderHook(() => useSyncTrigger())
+
+    // Initial sync at 2s
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100)
+    })
+    expect(mockStartSync).toHaveBeenCalledTimes(1)
+
+    // Next sync should be at 120s (doubled from 60s)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000)
+    })
+    expect(mockStartSync).toHaveBeenCalledTimes(1) // still 1 — hasn't fired yet
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_100)
+    })
+    expect(mockStartSync).toHaveBeenCalledTimes(2) // now at ~122s total
+  })
+
+  it('resets resync interval on success after failure (#418)', async () => {
+    mockListPeerRefs.mockResolvedValue([
+      {
+        peer_id: 'PEER1',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+      },
+    ])
+    // First sync fails
+    mockStartSync.mockRejectedValueOnce(new Error('fail'))
+    // Second sync succeeds
+    mockStartSync.mockResolvedValue({
+      state: 'complete',
+      local_device_id: 'L',
+      remote_device_id: 'R',
+      ops_received: 0,
+      ops_sent: 0,
+    })
+
+    renderHook(() => useSyncTrigger())
+
+    // Initial sync at 2s (fails, interval doubles to 120s)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100)
+    })
+    expect(mockStartSync).toHaveBeenCalledTimes(1)
+
+    // Second sync at 120s (succeeds, interval resets to 60s)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_100)
+    })
+    expect(mockStartSync).toHaveBeenCalledTimes(2)
+
+    // Third sync should be at 60s (reset interval)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_100)
+    })
+    expect(mockStartSync).toHaveBeenCalledTimes(3)
+  })
 })
