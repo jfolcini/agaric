@@ -277,7 +277,7 @@ These tasks block everything downstream. Ship them before moving on.
 **Estimate:** 12–16 weeks
 **ADRs:** ADR-09, ADR-10, ADR-07, ADR-02
 
-> The most complex phase. DAG log, diffy merge, mDNS pairing, snapshot protocol, full Android. XState + TanStack Query enter.
+> The most complex phase. DAG log, diffy merge, mDNS pairing, snapshot protocol, full Android. TanStack Query enters.
 >
 > **Prerequisite resolved:** 18 Tier 1 sync blockers from REVIEW-LATER.md fixed in commit `a3a38a5` (2026-04-01). Canonical JSON, BlockId newtypes, DeviceId encapsulation, expression indexes, WAL checkpoint, compaction guards, merge conflict semantics, and ADR-09 design decisions for delete+edit / move conflicts / tag dedup.
 
@@ -286,8 +286,7 @@ These tasks block everything downstream. Ship them before moving on.
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
 | p4-t1 | TanStack Query — server state layer | frontend, dx | | [ADR-02] Replace manual Tauri invoke + useState patterns. Invalidated by Tauri events. Enables stale-while-revalidate in frontend. |
-| p4-t2 | XState — sync state machine only | frontend, backend | | Scope: sync lifecycle states only. Not the whole app. States: idle → discovering → pairing → streaming → merging → done \| error \| [ADR-02] reset_required. |
-| p4-t2a | Sync event emission infrastructure | backend, frontend | | Done (`b988164`) — SyncOrchestrator emits Progress/Complete/Error via SyncEventSink trait. Frontend useSyncEvents hook listens + updates Zustand store. Prerequisite for p4-t2. |
+| p4-t2a | Sync event emission infrastructure | backend, frontend | | Done (`b988164`) — SyncOrchestrator emits Progress/Complete/Error via SyncEventSink trait. Frontend useSyncEvents hook listens + updates Zustand store. |
 
 ### DAG Op Log
 
@@ -436,7 +435,6 @@ These tasks block everything downstream. Ship them before moving on.
 | ciborium | backend | CBOR for snapshot encoding. |
 | tokio-tungstenite + rustls | backend | Sync transport. |
 | TanStack Query | frontend | Server state, invalidated by Tauri events. |
-| XState (sync machine only) | frontend | Scope: sync state machine. Not the whole app. |
 
 ### Phase 5
 | Dep | Side | Notes |

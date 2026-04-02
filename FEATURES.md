@@ -468,7 +468,6 @@
 | 204 | Zustand journal store (mode, date, navigation) | Done | 1.5 | none | No dedicated store unit tests (covered indirectly by JournalPage component tests) |
 | 205 | Zustand navigation store (view, page stack, selection) | Done | 1.5 | U | Unit: navigation.test.ts (25) |
 | 206 | TanStack Query for server state (cache invalidation) | Planned | 4 | — | |
-| 207 | XState for sync state machine only | Planned | 4 | — | |
 
 ---
 
@@ -592,5 +591,5 @@ before the noted phase.
 | **3 — Search** | **Complete** | FTS5, tag queries, search UI, nextest, benchmarks |
 | **4W1 — DAG + Merge** | **Complete** | Multi-parent ops, LCA, diffy merge, conflict copies, property LWW |
 | **4W2 — Snapshots** | **Complete** | zstd+CBOR encoding, crash-safe write, RESET apply, 90-day compaction |
-| **4 — Sync + Android** | **Planned** | mDNS, pairing, op streaming, RESET protocol, full Android, TanStack/XState |
+| **4 — Sync + Android** | **Planned** | mDNS, pairing, op streaming, RESET protocol, full Android, TanStack Query |
 | **5 — Polish** | **Planned** | i18n, CJK search, export, auto-updates, graph view |

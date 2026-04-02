@@ -7,8 +7,8 @@
 
 | ADR | Title | Status | Remaining work |
 |-----|-------|--------|----------------|
-| 01 | Shell & Frontend | **Partial** | Export (P5). TanStack Query, XState not started. |
-| 02 | State Management | **Partial** | TanStack Query (P3+), XState (P4+) pending. |
+| 01 | Shell & Frontend | **Partial** | Export (P5). TanStack Query not started. |
+| 02 | State Management | **Partial** | TanStack Query (P3+) pending. |
 | 03 | UI Components | **Partial** | Noto Sans bundling deferred to P5 (i18n). |
 | 06 | Data Model | **Partial** | Export (P5) pending. |
 | 12 | Search | **Partial** | Tantivy + lindera CJK search (P5). |
@@ -32,7 +32,6 @@ auto-split, keyboard handling, viewport observer. See ARCHITECTURE.md §1, §7.
 - **Export (Phase 5):** Markdown export with ULID → human name substitution. Not started.
 - **TanStack Query:** Planned for Phase 3+ to manage server state with Tauri event invalidation.
   Not started — Zustand is sufficient for current complexity.
-- **XState:** Planned for Phase 4+ for the sync state machine only. Not started.
 
 ---
 
@@ -47,9 +46,8 @@ and editor lifecycle. Two-tier undo: TipTap history within session, page-level o
 | Phase | Addition |
 |-------|----------|
 | 3+ | TanStack Query for server state, invalidated by Tauri events |
-| 4+ | XState for sync state machine only |
 
-These are additive — they layer on top of existing Zustand stores, not replace them.
+TanStack Query is additive — it layers on top of existing Zustand stores, not replaces them.
 
 ---
 
@@ -111,7 +109,7 @@ UI. See ARCHITECTURE.md §9.
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| 4 — Sync + Android | mDNS, pairing, op streaming, merge, Android spike. | **Complete.** Remaining: XState sync UI, TanStack Query, Tauri command wiring for end-to-end sync. |
+| 4 — Sync + Android | mDNS, pairing, op streaming, merge, Android spike. | **Complete.** Remaining: TanStack Query, Tauri command wiring for end-to-end sync. |
 | 5 — Polish | i18n (Noto Sans bundling), CJK search (Tantivy + lindera), export (ULID → name substitution, Markdown output), auto-updates, graph view. | Pending. |
 
 **Total at ~10 h/week:** 12–18 months. Daily driver by month 3–4.
