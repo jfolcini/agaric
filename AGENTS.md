@@ -107,7 +107,7 @@ During development, run only the relevant check:
 - **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`
 - **DB path:** `/data/data/com.agaric.app/notes.db` (via `app.path().app_data_dir()`)
 - **Known issues:** 4 open items in REVIEW-LATER.md (all deferred by design).
-- **Headless testing:** See `.devin/rules/android-testing.md` for ADB recipes and debugging workflow.
+- **Headless testing:** See [BUILD.md](BUILD.md#installing-on-emulator) for ADB recipes and emulator setup.
 
 ## Subagent Workflow
 
@@ -121,7 +121,7 @@ During development, run only the relevant check:
 7. LOG      — Update SESSION-LOG.md
 ```
 
-Every step is mandatory. No self-reviewed commits. See `.devin/rules/workflow.md` for worktree criteria, compilation costs, and prompt guidelines.
+Every step is mandatory. No self-reviewed commits.
 
 ## State Files
 
