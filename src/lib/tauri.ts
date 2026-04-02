@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 export type {
   BacklinkFilter,
+  BacklinkGroup,
   BacklinkQueryResponse,
   BacklinkSort,
   BlockRow,
@@ -9,6 +10,7 @@ export type {
   DeleteResponse,
   DiffSpan,
   DiffTag,
+  GroupedBacklinkResponse,
   HistoryEntry,
   MoveResponse,
   PageResponse,
@@ -27,6 +29,7 @@ import type {
   BlockRow,
   DeleteResponse,
   DiffSpan,
+  GroupedBacklinkResponse,
   HistoryEntry,
   MoveResponse,
   PageResponse,
@@ -376,6 +379,23 @@ export async function queryBacklinksFiltered(params: {
 }): Promise<BacklinkQueryResponse> {
   return invoke('query_backlinks_filtered', {
     blockId: params.blockId,
+    filters: params.filters ?? null,
+    sort: params.sort ?? null,
+    cursor: params.cursor ?? null,
+    limit: params.limit ?? null,
+  })
+}
+
+/** Query backlinks grouped by source page, with filters and pagination. */
+export async function listBacklinksGrouped(params: {
+  pageId: string
+  filters?: BacklinkFilter[]
+  sort?: BacklinkSort
+  cursor?: string
+  limit?: number
+}): Promise<GroupedBacklinkResponse> {
+  return invoke('list_backlinks_grouped', {
+    blockId: params.pageId,
     filters: params.filters ?? null,
     sort: params.sort ?? null,
     cursor: params.cursor ?? null,

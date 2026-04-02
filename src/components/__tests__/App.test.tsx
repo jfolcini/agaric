@@ -29,6 +29,11 @@ vi.mock('../DeviceManagement', () => ({
   DeviceManagement: () => <div data-testid="device-management">Device ID: mock-device</div>,
 }))
 
+// Mock LinkedReferences to prevent list_backlinks_grouped IPC calls
+vi.mock('../LinkedReferences', () => ({
+  LinkedReferences: () => <div data-testid="linked-references" />,
+}))
+
 // Mock useSyncTrigger to prevent automatic sync in tests
 vi.mock('../../hooks/useSyncTrigger', () => ({
   useSyncTrigger: () => ({ syncing: false, syncAll: vi.fn() }),

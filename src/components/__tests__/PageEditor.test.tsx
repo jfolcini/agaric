@@ -49,6 +49,14 @@ vi.mock('../BacklinksPanel', () => ({
   },
 }))
 
+let capturedLinkedRefsPageId: string | undefined
+vi.mock('../LinkedReferences', () => ({
+  LinkedReferences: (props: { pageId: string; onNavigateToPage?: unknown }) => {
+    capturedLinkedRefsPageId = props.pageId
+    return <div data-testid="linked-references" data-page-id={props.pageId} />
+  },
+}))
+
 vi.mock('../HistoryPanel', () => ({
   HistoryPanel: (props: { blockId: string | null }) => {
     capturedHistoryBlockId = props.blockId
@@ -108,6 +116,7 @@ beforeEach(() => {
   capturedBacklinksBlockId = null
   capturedHistoryBlockId = null
   capturedTagBlockId = null
+  capturedLinkedRefsPageId = undefined
   // Reset the Zustand stores to a clean state before each test
   useBlockStore.setState({
     blocks: [],
@@ -159,6 +168,15 @@ describe('PageEditor', () => {
     expect(blockTree).toBeInTheDocument()
     expect(blockTree).toHaveAttribute('data-parent-id', 'PAGE_123')
     expect(capturedParentId).toBe('PAGE_123')
+  })
+
+  it('renders LinkedReferences with correct pageId', () => {
+    render(<PageEditor pageId="PAGE_123" title="Test" />)
+
+    const linkedRefs = screen.getByTestId('linked-references')
+    expect(linkedRefs).toBeInTheDocument()
+    expect(linkedRefs).toHaveAttribute('data-page-id', 'PAGE_123')
+    expect(capturedLinkedRefsPageId).toBe('PAGE_123')
   })
 
   it('updates BlockTree parentId when pageId prop changes', () => {

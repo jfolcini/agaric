@@ -5466,3 +5466,1056 @@ async fn re_pairing_same_device_upserts_peer_ref() {
         "re-pairing same device should upsert, not create duplicate"
     );
 }
+
+// ======================================================================
+// list_backlinks_grouped — happy paths, edge cases, filters
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grouped_backlinks_returns_groups_by_source_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Create target page
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Source page 1 with two linking children
+    let page1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Source1".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let c1a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        Some(page1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        c1a.id.clone(),
+        format!("link to [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let c1b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        Some(page1.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        c1b.id.clone(),
+        format!("another link [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Source page 2 with one linking child
+    let page2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Source2".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let c2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        Some(page2.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        c2.id.clone(),
+        format!("see [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let resp = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.groups.len(),
+        2,
+        "expected 2 groups (one per source page)"
+    );
+
+    let ids: HashSet<String> = resp.groups.iter().map(|g| g.page_id.clone()).collect();
+    assert!(ids.contains(&page1.id), "page1 must be in groups");
+    assert!(ids.contains(&page2.id), "page2 must be in groups");
+
+    let g1 = resp.groups.iter().find(|g| g.page_id == page1.id).unwrap();
+    assert_eq!(g1.page_title.as_deref(), Some("Source1"), "page1 title");
+    assert_eq!(g1.blocks.len(), 2, "page1 group must have 2 blocks");
+
+    let g2 = resp.groups.iter().find(|g| g.page_id == page2.id).unwrap();
+    assert_eq!(g2.page_title.as_deref(), Some("Source2"), "page2 title");
+    assert_eq!(g2.blocks.len(), 1, "page2 group must have 1 block");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grouped_backlinks_empty_for_no_links() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Lonely".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let resp = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+
+    assert!(
+        resp.groups.is_empty(),
+        "no groups for a page with no backlinks"
+    );
+    assert_eq!(resp.total_count, 0, "total_count must be 0");
+    assert_eq!(resp.filtered_count, 0, "filtered_count must be 0");
+    assert!(!resp.has_more, "has_more must be false");
+    assert!(resp.next_cursor.is_none(), "no cursor expected");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grouped_backlinks_empty_block_id_returns_error() {
+    let (pool, _dir) = test_pool().await;
+
+    let result = list_backlinks_grouped_inner(&pool, "".into(), None, None, None, None).await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "empty block_id must return Validation error, got {:?}",
+        result
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grouped_backlinks_single_block_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let page1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Single".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        Some(page1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone(),
+        format!("ref [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let resp = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.groups.len(), 1, "exactly 1 group");
+    assert_eq!(resp.groups[0].page_id, page1.id, "group page_id must match");
+    assert_eq!(
+        resp.groups[0].blocks.len(),
+        1,
+        "exactly 1 block in the group"
+    );
+    assert_eq!(
+        resp.groups[0].blocks[0].id, child.id,
+        "block id must match child"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grouped_backlinks_orphan_blocks_excluded_from_groups() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Create an orphan content block (no page parent) that links to target
+    let orphan = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        orphan.id.clone(),
+        format!("orphan link [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let resp = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+
+    // Orphan content blocks (no page ancestor) are omitted from grouped results
+    assert!(
+        resp.groups.is_empty(),
+        "orphan content block with no page ancestor should be omitted from grouped results"
+    );
+    // But total_count still counts them in the base set
+    assert_eq!(
+        resp.total_count, 1,
+        "orphan block is still in the base backlink set"
+    );
+    assert_eq!(
+        resp.filtered_count, 1,
+        "orphan block passes filters (no filters applied)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grouped_backlinks_excludes_deleted() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let page1 = create_block_inner(&pool, DEV, &mat, "page".into(), "Src".into(), None, Some(2))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        Some(page1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone(),
+        format!("link [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Verify it appears before deletion
+    let before = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(before.groups.len(), 1, "link present before delete");
+
+    // Soft-delete the linking block
+    delete_block_inner(&pool, DEV, &mat, child.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let after = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+
+    assert!(
+        after.groups.is_empty(),
+        "deleted block must be excluded from grouped results"
+    );
+    assert_eq!(after.total_count, 0, "deleted block not in base set");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grouped_backlinks_pagination() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Create 3 source pages, each with one linking child
+    let mut page_ids = Vec::new();
+    for i in 0..3 {
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            format!("Page{}", i),
+            None,
+            Some((i + 2) as i64),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "placeholder".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        edit_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            child.id.clone(),
+            format!("link [[{}]]", target.id),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        page_ids.push(page.id.clone());
+    }
+
+    // Request limit=1
+    let resp1 = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, Some(1))
+        .await
+        .unwrap();
+
+    assert_eq!(resp1.groups.len(), 1, "first page must have 1 group");
+    assert!(resp1.has_more, "must have more pages");
+    assert!(resp1.next_cursor.is_some(), "next_cursor must be Some");
+
+    // Fetch page 2 with cursor
+    let resp2 = list_backlinks_grouped_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        resp1.next_cursor.clone(),
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp2.groups.len(), 1, "second page must have 1 group");
+    assert!(resp2.has_more, "must have a third page");
+    assert_ne!(
+        resp1.groups[0].page_id, resp2.groups[0].page_id,
+        "page 2 must return a different group than page 1"
+    );
+
+    // Fetch page 3
+    let resp3 = list_backlinks_grouped_inner(
+        &pool,
+        target.id.clone(),
+        None,
+        None,
+        resp2.next_cursor.clone(),
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resp3.groups.len(), 1, "third page must have 1 group");
+    assert!(!resp3.has_more, "no more pages after third");
+
+    // All three groups should be distinct
+    let all_ids: HashSet<String> = vec![
+        resp1.groups[0].page_id.clone(),
+        resp2.groups[0].page_id.clone(),
+        resp3.groups[0].page_id.clone(),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(all_ids.len(), 3, "all three groups must be distinct pages");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grouped_backlinks_total_and_filtered_count() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Page 1 with 2 linking children
+    let page1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Src1".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    for pos in 1..=2 {
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "placeholder".into(),
+            Some(page1.id.clone()),
+            Some(pos),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        edit_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            child.id.clone(),
+            format!("link [[{}]]", target.id),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+    }
+
+    // Page 2 with 1 linking child
+    let page2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Src2".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let child2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        Some(page2.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child2.id.clone(),
+        format!("link [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Without filter
+    let resp = list_backlinks_grouped_inner(&pool, target.id.clone(), None, None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.total_count, 3, "total_count must be 3");
+    assert_eq!(
+        resp.filtered_count, 3,
+        "filtered_count must equal total when no filter"
+    );
+
+    // With SourcePage filter — include only page1
+    let filters = vec![BacklinkFilter::SourcePage {
+        included: vec![page1.id.clone()],
+        excluded: vec![],
+    }];
+    let resp_filtered =
+        list_backlinks_grouped_inner(&pool, target.id.clone(), Some(filters), None, None, None)
+            .await
+            .unwrap();
+    assert_eq!(
+        resp_filtered.total_count, 3,
+        "total_count unchanged with filter"
+    );
+    assert_eq!(
+        resp_filtered.filtered_count, 2,
+        "filtered_count must reflect only page1 blocks"
+    );
+    assert!(
+        resp_filtered.filtered_count < resp_filtered.total_count,
+        "filtered_count < total_count when filter is applied"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grouped_backlinks_with_source_page_include_filter() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Create 3 source pages, each with one linking child
+    let mut pages = Vec::new();
+    for i in 0..3 {
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            format!("Src{}", i),
+            None,
+            Some((i + 2) as i64),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "placeholder".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        edit_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            child.id.clone(),
+            format!("link [[{}]]", target.id),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        pages.push(page);
+    }
+
+    // Include only page 0
+    let filters = vec![BacklinkFilter::SourcePage {
+        included: vec![pages[0].id.clone()],
+        excluded: vec![],
+    }];
+
+    let resp =
+        list_backlinks_grouped_inner(&pool, target.id.clone(), Some(filters), None, None, None)
+            .await
+            .unwrap();
+
+    assert_eq!(resp.groups.len(), 1, "only 1 group should be returned");
+    assert_eq!(
+        resp.groups[0].page_id, pages[0].id,
+        "group must be from included page"
+    );
+    assert_eq!(resp.total_count, 3, "total_count is all backlinks");
+    assert!(
+        resp.filtered_count < resp.total_count,
+        "filtered_count must be less than total_count"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grouped_backlinks_with_source_page_exclude_filter() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Create 3 source pages, each with one linking child
+    let mut pages = Vec::new();
+    for i in 0..3 {
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            format!("Src{}", i),
+            None,
+            Some((i + 2) as i64),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "placeholder".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        edit_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            child.id.clone(),
+            format!("link [[{}]]", target.id),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        pages.push(page);
+    }
+
+    // Exclude page 1
+    let filters = vec![BacklinkFilter::SourcePage {
+        included: vec![],
+        excluded: vec![pages[1].id.clone()],
+    }];
+
+    let resp =
+        list_backlinks_grouped_inner(&pool, target.id.clone(), Some(filters), None, None, None)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        resp.groups.len(),
+        2,
+        "2 groups should remain after excluding one page"
+    );
+    let group_ids: HashSet<String> = resp.groups.iter().map(|g| g.page_id.clone()).collect();
+    assert!(
+        !group_ids.contains(&pages[1].id),
+        "excluded page must not appear in groups"
+    );
+    assert!(
+        group_ids.contains(&pages[0].id),
+        "page0 must still be present"
+    );
+    assert!(
+        group_ids.contains(&pages[2].id),
+        "page2 must still be present"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grouped_backlinks_with_source_page_include_and_exclude() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Create 3 source pages, each with one linking child
+    let mut pages = Vec::new();
+    for i in 0..3 {
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            format!("Src{}", i),
+            None,
+            Some((i + 2) as i64),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "placeholder".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        edit_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            child.id.clone(),
+            format!("link [[{}]]", target.id),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+
+        pages.push(page);
+    }
+
+    // Include page0 and page1, but exclude page1 → only page0 should remain
+    let filters = vec![BacklinkFilter::SourcePage {
+        included: vec![pages[0].id.clone(), pages[1].id.clone()],
+        excluded: vec![pages[1].id.clone()],
+    }];
+
+    let resp =
+        list_backlinks_grouped_inner(&pool, target.id.clone(), Some(filters), None, None, None)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        resp.groups.len(),
+        1,
+        "only page0 should remain after include+exclude"
+    );
+    assert_eq!(
+        resp.groups[0].page_id, pages[0].id,
+        "the sole group must be page0"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grouped_backlinks_with_contains_filter() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let page1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Src1".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Child with "alpha" keyword
+    let alpha = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        Some(page1.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        alpha.id.clone(),
+        format!("alpha link [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Child with "beta" keyword on same page
+    let beta = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        Some(page1.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        beta.id.clone(),
+        format!("beta link [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Page2 with "beta" keyword
+    let page2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Src2".into(),
+        None,
+        Some(3),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let beta2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "placeholder".into(),
+        Some(page2.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        beta2.id.clone(),
+        format!("beta link [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Filter: only blocks containing "alpha"
+    let filters = vec![BacklinkFilter::Contains {
+        query: "alpha".into(),
+    }];
+
+    let resp =
+        list_backlinks_grouped_inner(&pool, target.id.clone(), Some(filters), None, None, None)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        resp.groups.len(),
+        1,
+        "only page1 group should match 'alpha' filter"
+    );
+    assert_eq!(
+        resp.groups[0].page_id, page1.id,
+        "matching group must be page1"
+    );
+    assert_eq!(
+        resp.groups[0].blocks.len(),
+        1,
+        "only the alpha block should be in the group"
+    );
+    assert_eq!(
+        resp.groups[0].blocks[0].id, alpha.id,
+        "block must be the alpha block"
+    );
+    assert_eq!(resp.total_count, 3, "total_count reflects all 3 backlinks");
+    assert_eq!(
+        resp.filtered_count, 1,
+        "filtered_count reflects only the alpha block"
+    );
+}

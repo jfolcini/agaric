@@ -18,6 +18,7 @@ import { useUndoStore } from '../stores/undo'
 import { BacklinksPanel } from './BacklinksPanel'
 import { BlockTree } from './BlockTree'
 import { HistoryPanel } from './HistoryPanel'
+import { LinkedReferences } from './LinkedReferences'
 import { PropertiesPanel } from './PropertiesPanel'
 import { TagPanel } from './TagPanel'
 
@@ -208,6 +209,9 @@ export function PageEditor({
 
       {/* Block tree — loads children of pageId */}
       <BlockTree parentId={pageId} onNavigateToPage={onNavigateToPage} />
+
+      {/* Linked references — always visible at page bottom */}
+      <LinkedReferences pageId={pageId} onNavigateToPage={onNavigateToPage} />
 
       {/* Add block button — always directly beneath the last block */}
       <div>
