@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT CASE\n            WHEN b.parent_id IS NULL THEN 1\n            WHEN EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND p.deleted_at IS NULL) THEN 1\n            ELSE 0\n        END AS \"valid: bool\"\n        FROM blocks b WHERE b.id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "valid: bool",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "600a03f30a26576cead57badea8f8a6586434d2976c9e9b736a88adb298dec4b"
+}

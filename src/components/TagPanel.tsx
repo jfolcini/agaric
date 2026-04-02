@@ -211,6 +211,7 @@ export function TagPanel({ blockId }: TagPanelProps): React.ReactElement | null 
             value={newTagName}
             onChange={(e) => setNewTagName(e.target.value)}
             placeholder="Tag name"
+            aria-label="New tag name"
           />
           <Button size="sm" className="tag-create-btn" onClick={handleCreateTag}>
             Create tag

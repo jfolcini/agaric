@@ -19,7 +19,7 @@
  * be supported when the backend exposes them via a conflict_type field.
  */
 
-import { Check, ExternalLink, GitMerge, X } from 'lucide-react'
+import { Check, ChevronDown, ExternalLink, GitMerge, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
@@ -37,6 +37,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatTimestamp, truncateId, ulidToDate } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import type { BlockRow } from '../lib/tauri'
 import { deleteBlock, editBlock, getBlock, getConflicts } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
@@ -213,6 +214,7 @@ export function ConflictList(): React.ReactElement {
                 aria-expanded={isExpanded}
               >
                 <div className="flex items-center gap-2 flex-wrap">
+                  <ChevronDown className={cn('h-4 w-4 shrink-0 transition-transform', isExpanded && 'rotate-180')} />
                   <Badge variant="secondary" className="conflict-item-type shrink-0">
                     {block.block_type}
                   </Badge>

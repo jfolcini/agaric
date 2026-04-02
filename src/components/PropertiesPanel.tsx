@@ -132,12 +132,14 @@ export function PropertiesPanel({ blockId }: PropertiesPanelProps): React.ReactE
           <Input
             className="h-7 flex-1 text-xs"
             placeholder="Key"
+            aria-label="Property key"
             value={newKey}
             onChange={(e) => setNewKey(e.target.value)}
           />
           <Input
             className="h-7 flex-1 text-xs"
             placeholder="Value"
+            aria-label="Property value"
             value={newValue}
             onChange={(e) => setNewValue(e.target.value)}
           />

@@ -208,8 +208,28 @@ async fn recover_single_draft(
         return Ok(false);
     }
 
+    // F08: If the block's parent has been soft-deleted, skip recovery to avoid
+    // creating an orphan block.
+    let parent_valid: bool = sqlx::query_scalar!(
+        r#"SELECT CASE
+            WHEN b.parent_id IS NULL THEN 1
+            WHEN EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND p.deleted_at IS NULL) THEN 1
+            ELSE 0
+        END AS "valid: bool"
+        FROM blocks b WHERE b.id = ?"#,
+        draft.block_id
+    )
+    .fetch_one(pool)
+    .await?
+    .unwrap_or(false);
+
+    if !parent_valid {
+        tracing::info!(block_id = %draft.block_id, "skipping draft: parent block is deleted or missing");
+        return Ok(false);
+    }
+
     // Check if an edit_block or create_block op exists for this block_id
-    // with created_at >= the draft's updated_at.
+    // with created_at strictly after the draft's updated_at.
     //
     // TODO: add index or extracted column for production scale — the
     // json_extract() call forces a full table scan with JSON parsing per row.
@@ -235,7 +255,7 @@ async fn recover_single_draft(
          WHERE payload LIKE '%\"block_id\":\"' || ? || '\"%' \
          AND json_extract(payload, '$.block_id') = ? \
          AND op_type IN ('edit_block', 'create_block') \
-         AND created_at >= ?",
+         AND created_at > ?",
         bid_upper,
         bid_upper,
         draft.updated_at
@@ -381,16 +401,16 @@ mod tests {
     // -- Test fixture constants --
     //
     // All timestamps use `Z` (not `+00:00`) to match `now_rfc3339()` output.
-    // Mixing suffixes would break the lexicographic `>=` comparison in
+    // Mixing suffixes would break the lexicographic `>` comparison in
     // `recover_single_draft`'s SQL query (see REVIEW-LATER #48).
 
     /// Far-past timestamp: any op created by `append_local_op` (which calls
-    /// `now_rfc3339()`) will have `created_at >= FAR_PAST`, so the draft is
+    /// `now_rfc3339()`) will have `created_at > FAR_PAST`, so the draft is
     /// classified as "already flushed".
     const FAR_PAST: &str = "2000-01-01T00:00:00Z";
 
     /// Far-future timestamp: no op created by `append_local_op` will have
-    /// `created_at >= FAR_FUTURE`, so the draft is classified as "unflushed"
+    /// `created_at > FAR_FUTURE`, so the draft is classified as "unflushed"
     /// and gets recovered.
     const FAR_FUTURE: &str = "2099-01-01T00:00:00Z";
 
@@ -548,7 +568,7 @@ mod tests {
         insert_test_block(&pool, block_id, "some content").await;
 
         // Insert a draft with a known-old timestamp so that the edit_block op's
-        // created_at (Utc::now()) is *guaranteed* to be >=.  This avoids a
+        // created_at (Utc::now()) is *guaranteed* to be >.  This avoids a
         // flaky-test window where both calls land on the same clock tick.
         sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
             .bind(block_id)
@@ -661,7 +681,7 @@ mod tests {
         // Now save a draft (simulating that the user edited but the app crashed
         // before flushing). We need the draft's updated_at to be strictly AFTER
         // the create op's created_at, otherwise the recovery check
-        // `created_at >= updated_at` would match the create_block and
+        // `created_at > updated_at` would match the create_block and
         // mis-classify the draft as "already flushed".
         //
         // Use a far-future timestamp to eliminate any clock-resolution flakiness.
@@ -1212,7 +1232,126 @@ mod tests {
         assert_eq!(op_count, 0, "no synthetic op for nonexistent block");
     }
 
-    // === 10. #29: debug_assert on ULID format ===
+    // === 10b. Edge cases: parent chain validation (F08) ===
+
+    #[tokio::test]
+    async fn draft_with_deleted_parent_is_skipped() {
+        let (pool, _dir) = test_pool().await;
+        let device_id = "dev-1";
+
+        // Create parent block, then a child block parented to it
+        insert_test_block(&pool, "PARENT01", "parent content").await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', ?, ?, 0)",
+        )
+        .bind("CHILD01")
+        .bind("child content")
+        .bind("PARENT01")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Soft-delete the parent
+        sqlx::query("UPDATE blocks SET deleted_at = '2024-01-01T00:00:00Z' WHERE id = ?")
+            .bind("PARENT01")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Create an unflushed draft for the child
+        sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+            .bind("CHILD01")
+            .bind("orphaned child draft")
+            .bind(FAR_FUTURE)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let report = recover_at_boot(&pool, device_id).await.unwrap();
+
+        assert!(
+            report.drafts_recovered.is_empty(),
+            "draft for block with deleted parent must not be recovered"
+        );
+        let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
+        assert!(
+            drafts.is_empty(),
+            "draft row must be deleted even when parent is deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn draft_with_null_parent_is_recovered() {
+        let (pool, _dir) = test_pool().await;
+        let device_id = "dev-1";
+
+        // insert_test_block creates a block with NULL parent_id
+        insert_test_block(&pool, "ROOT01", "root content").await;
+
+        // Create an unflushed draft (FAR_FUTURE ensures no matching op)
+        sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+            .bind("ROOT01")
+            .bind("updated root content")
+            .bind(FAR_FUTURE)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let report = recover_at_boot(&pool, device_id).await.unwrap();
+
+        assert_eq!(
+            report.drafts_recovered.len(),
+            1,
+            "draft with NULL parent must be recovered"
+        );
+        assert!(
+            report.drafts_recovered.contains(&"ROOT01".to_string()),
+            "recovered draft must be for ROOT01"
+        );
+    }
+
+    #[tokio::test]
+    async fn draft_with_valid_parent_is_recovered() {
+        let (pool, _dir) = test_pool().await;
+        let device_id = "dev-1";
+
+        // Create parent and child, parent is NOT deleted
+        insert_test_block(&pool, "PARENT02", "parent content").await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', ?, ?, 0)",
+        )
+        .bind("CHILD02")
+        .bind("child content")
+        .bind("PARENT02")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Create an unflushed draft for the child
+        sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+            .bind("CHILD02")
+            .bind("updated child content")
+            .bind(FAR_FUTURE)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let report = recover_at_boot(&pool, device_id).await.unwrap();
+
+        assert_eq!(
+            report.drafts_recovered.len(),
+            1,
+            "draft with valid (non-deleted) parent must be recovered"
+        );
+        assert!(
+            report.drafts_recovered.contains(&"CHILD02".to_string()),
+            "recovered draft must be for CHILD02"
+        );
+    }
+
+    // === 10c. #29: debug_assert on ULID format ===
 
     #[tokio::test]
     #[should_panic(expected = "block_id must be alphanumeric")]

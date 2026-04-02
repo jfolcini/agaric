@@ -154,29 +154,43 @@ fn strip_for_fts_with_maps(
 /// the FTS entry. If the block is deleted, a conflict, or has no content,
 /// removes it from the index instead.
 pub async fn update_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
+    let mut tx = pool.begin().await?;
+
     let row = sqlx::query!(
         r#"SELECT id, content, deleted_at, is_conflict as "is_conflict: bool" FROM blocks WHERE id = ?"#,
         block_id
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?;
 
     match row {
         None => {
             // Block doesn't exist — remove from FTS if present
-            return remove_fts_for_block(pool, block_id).await;
+            sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
+                .bind(block_id)
+                .execute(&mut *tx)
+                .await?;
         }
         Some(ref r) if r.deleted_at.is_some() => {
             // deleted_at IS NOT NULL — remove from FTS
-            return remove_fts_for_block(pool, block_id).await;
+            sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
+                .bind(block_id)
+                .execute(&mut *tx)
+                .await?;
         }
         Some(ref r) if r.is_conflict => {
             // is_conflict = 1 — remove from FTS
-            return remove_fts_for_block(pool, block_id).await;
+            sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
+                .bind(block_id)
+                .execute(&mut *tx)
+                .await?;
         }
         Some(ref r) if r.content.is_none() => {
             // content IS NULL — remove from FTS
-            return remove_fts_for_block(pool, block_id).await;
+            sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
+                .bind(block_id)
+                .execute(&mut *tx)
+                .await?;
         }
         Some(r) => {
             // Active block with content — strip and index
@@ -186,18 +200,19 @@ pub async fn update_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
             // Delete existing entry
             sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
                 .bind(block_id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
 
             // Insert new entry
             sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
                 .bind(block_id)
                 .bind(&stripped)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
         }
     }
 
+    tx.commit().await?;
     Ok(())
 }
 

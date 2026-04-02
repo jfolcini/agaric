@@ -1,33 +1,51 @@
 # Session Log
 
-## Session 45 — 2026-04-02 — Testing Review & BlockTree Fix
+## Session 45 — 2026-04-02 — Testing Review, UX/A11y Fixes, Data Integrity Fixes
 
-Cross-validated testing review findings from 3 subagents (backend test quality, frontend test quality, full testing methodology). Fixed pre-existing BlockTree.tsx parse error.
+Three phases: (1) testing review + BlockTree fix, (2) UX/A11y batch #486-#490, (3) data integrity batch #482, #484, #485.
 
-### Changes
+### Phase 1: Testing Review & BlockTree Fix
+
+Cross-validated testing review findings from 3 subagents. Fixed pre-existing BlockTree.tsx parse error.
 
 | File | Change |
 |------|--------|
-| `BlockTree.tsx` | Fix: added missing `async` keyword to `handleMergeWithPrev` callback (had `await` in non-async function, breaking 2 test suites) |
-| `REVIEW-LATER.md` | Added #491-#494 (test coverage gaps: sync_daemon 0 tests, sync command integration tests, vitest coverage thresholds, RenameDialog test) |
+| `BlockTree.tsx` | Fix: added missing `async` keyword to `handleMergeWithPrev` callback |
+| `REVIEW-LATER.md` | Added #491-#494 (test coverage gaps) |
 
-### Review Findings
+Commit: `90477f5`
 
-**3 subagent reviews ran:**
-1. Backend test quality (test ratios, integration completeness, benchmarks, snapshots)
-2. Frontend test quality (a11y coverage, mock patterns, store isolation, missing tests)
-3. Full testing methodology (test counts, E2E coverage, property-based testing, flaky risks)
+### Phase 2: UX/A11y Fixes (#486-#490)
 
-**Cross-validation results:**
-- Confirmed: sync_daemon.rs 0 tests (#491), sync commands 0 integration tests (#492), no vitest coverage thresholds (#493), RenameDialog no test (#494)
-- Rejected: "fake timer cleanup missing in 3 files" — all 3 have `vi.useRealTimers()` in afterEach
-- Rejected: "15 test files broken by waitFor(async)" — false diagnosis; actual issue was BlockTree.tsx missing `async` keyword
-- Rejected: "boot.ts has no dedicated test" — `boot-store.test.ts` exists with 6 tests
-- Not added: benchmark gaps (nice-to-have, not actionable review items), materializer test ratio (covered by integration tests)
+5 a11y/UX improvements across 5 components. Built in worktree, reviewed by separate subagent.
+
+| File | Change |
+|------|--------|
+| `SearchPanel.tsx` | #486: focus-visible ring on result buttons. #488: aria-live wrapper + sr-only result count. |
+| `PropertiesPanel.tsx` | #487: aria-label on Property key/value inputs. |
+| `TagPanel.tsx` | #487: aria-label on tag create input. |
+| `ConflictList.tsx` | #489: ChevronDown icon with rotate-180 transition on expand/collapse button. |
+| `FormattingToolbar.tsx` | #490: Number labels (1/2/3) next to Signal icons for color-blind differentiation. |
+
+Review: PASS — all patterns consistent with codebase conventions.
+
+### Phase 3: Data Integrity Fixes (#482, #484, #485)
+
+3 backend fixes across fts.rs and recovery.rs. Built in worktree, reviewed by separate subagent.
+
+| File | Change |
+|------|--------|
+| `fts.rs` | #482: Wrapped `update_fts_for_block()` in transaction (pool.begin/commit). All queries use `&mut *tx`. |
+| `recovery.rs` | #484: Changed `created_at >=` to `created_at >` (strict after). #485: Added F08 parent chain validation query — skips recovery if parent is soft-deleted. |
+| `recovery.rs` (tests) | Added 3 F08 tests: deleted parent skipped, NULL parent recovered, valid parent recovered. |
+| `.sqlx/` | Added 2 new cache entries, removed 1 stale entry. |
+
+Review: CONDITIONAL PASS → added missing F08 tests → PASS.
 
 ### Stats
-- 70/70 frontend test files pass, 2054 tests (was 68/70 before BlockTree fix)
-- REVIEW-LATER.md: 12 → 16 open items
+- Frontend: 70/70 test files, 2054 tests pass
+- Backend: 86 fts+recovery tests pass (including 3 new F08 tests)
+- REVIEW-LATER.md: 16 → 8 open items (resolved #482, #484, #485, #486, #487, #488, #489, #490)
 
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 

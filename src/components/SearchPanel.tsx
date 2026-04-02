@@ -162,38 +162,43 @@ export function SearchPanel(): React.ReactElement {
         </div>
       )}
 
-      {searched && !loading && results.length === 0 && (
-        <EmptyState
-          icon={Search}
-          message="No results found. Try different keywords or check your spelling."
-        />
-      )}
+      <div aria-live="polite">
+        {searched && !loading && results.length === 0 && (
+          <EmptyState
+            icon={Search}
+            message="No results found. Try different keywords or check your spelling."
+          />
+        )}
 
-      {results.length > 0 && (
-        <div className="search-results space-y-3">
-          {results.map((block) => (
-            <button
-              key={block.id}
-              type="button"
-              className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50"
-              onClick={() => handleResultClick(block)}
-              disabled={loadingResultId === block.id}
-            >
-              <div className="flex items-center gap-2">
-                <span className="flex-1 text-sm whitespace-pre-wrap">
-                  {block.content || '(empty)'}
-                </span>
-                {loadingResultId === block.id && (
-                  <Loader2 className="h-4 w-4 animate-spin shrink-0 text-muted-foreground" />
-                )}
-                {(block.block_type === 'tag' || block.block_type === 'page') && (
-                  <Badge variant="secondary">{block.block_type}</Badge>
-                )}
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
+        {results.length > 0 && (
+          <div className="search-results space-y-3">
+            {results.map((block) => (
+              <button
+                key={block.id}
+                type="button"
+                className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                onClick={() => handleResultClick(block)}
+                disabled={loadingResultId === block.id}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 text-sm whitespace-pre-wrap">
+                    {block.content || '(empty)'}
+                  </span>
+                  {loadingResultId === block.id && (
+                    <Loader2 className="h-4 w-4 animate-spin shrink-0 text-muted-foreground" />
+                  )}
+                  {(block.block_type === 'tag' || block.block_type === 'page') && (
+                    <Badge variant="secondary">{block.block_type}</Badge>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+        {searched && !loading && (
+          <span className="sr-only">{results.length} results found</span>
+        )}
+      </div>
 
       {hasMore && (
         <Button

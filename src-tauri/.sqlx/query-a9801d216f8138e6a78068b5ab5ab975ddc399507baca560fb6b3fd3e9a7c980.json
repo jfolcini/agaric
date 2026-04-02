@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM op_log WHERE payload LIKE '%\"block_id\":\"' || ? || '\"%' AND json_extract(payload, '$.block_id') = ? AND op_type IN ('edit_block', 'create_block') AND created_at > ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a9801d216f8138e6a78068b5ab5ab975ddc399507baca560fb6b3fd3e9a7c980"
+}
