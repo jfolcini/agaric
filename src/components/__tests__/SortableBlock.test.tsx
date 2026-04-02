@@ -744,7 +744,7 @@ describe('SortableBlock task marker', () => {
 })
 
 describe('gutter alignment', () => {
-  it('collapse toggle has mt-1.5 for first-line alignment', () => {
+  it('collapse toggle has mt-1 for first-line alignment', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     render(
       <SortableBlock
@@ -756,10 +756,10 @@ describe('gutter alignment', () => {
       />,
     )
     const collapseBtn = screen.getByRole('button', { name: /collapse/i })
-    expect(collapseBtn.className).toContain('mt-1.5')
+    expect(collapseBtn.className).toContain('mt-1')
   })
 
-  it('task marker has mt-1.5 for first-line alignment', () => {
+  it('task marker has mt-1 for first-line alignment', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     render(
       <SortableBlock
@@ -770,10 +770,10 @@ describe('gutter alignment', () => {
       />,
     )
     const marker = screen.getByRole('button', { name: /set as todo/i })
-    expect(marker.className).toContain('mt-1.5')
+    expect(marker.className).toContain('mt-1')
   })
 
-  it('drag handle has mt-1.5 and p-0.5 for alignment', () => {
+  it('drag handle has mt-1 and p-0.5 for alignment', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     render(
       <SortableBlock
@@ -784,11 +784,11 @@ describe('gutter alignment', () => {
       />,
     )
     const handle = screen.getByRole('button', { name: /drag/i })
-    expect(handle.className).toContain('mt-1.5')
+    expect(handle.className).toContain('mt-1')
     expect(handle.className).toContain('p-0.5')
   })
 
-  it('delete button has mt-1.5 and p-0.5 for alignment', () => {
+  it('delete button has mt-1 and p-0.5 for alignment', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     render(
       <SortableBlock
@@ -800,11 +800,11 @@ describe('gutter alignment', () => {
       />,
     )
     const deleteBtn = screen.getByRole('button', { name: /delete/i })
-    expect(deleteBtn.className).toContain('mt-1.5')
+    expect(deleteBtn.className).toContain('mt-1')
     expect(deleteBtn.className).toContain('p-0.5')
   })
 
-  it('due date chip has mt-1.5 for vertical alignment with gutter elements', () => {
+  it('due date chip has mt-1 for vertical alignment with gutter elements', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     const { container } = render(
       <SortableBlock
@@ -816,7 +816,7 @@ describe('gutter alignment', () => {
       />,
     )
     const chip = container.querySelector('.due-date-chip')
-    expect(chip?.className).toContain('mt-1.5')
+    expect(chip?.className).toContain('mt-1')
   })
 })
 
@@ -1052,7 +1052,7 @@ describe('SortableBlock priority badge', () => {
     expect(screen.getByRole('button', { name: /Priority 3.*Click to cycle/i })).toBeInTheDocument()
   })
 
-  it('priority badge has mt-1.5 for first-line alignment', () => {
+  it('priority badge has mt-1 for first-line alignment', () => {
     const { container } = render(
       <SortableBlock
         blockId="B1"
@@ -1064,7 +1064,7 @@ describe('SortableBlock priority badge', () => {
     )
 
     const badge = container.querySelector('.priority-badge')
-    expect(badge?.className).toContain('mt-1.5')
+    expect(badge?.className).toContain('mt-1')
   })
 })
 
@@ -1303,7 +1303,7 @@ describe('SortableBlock inline controls', () => {
     expect(gutter).toBeInTheDocument()
   })
 
-  it('outer wrapper uses gap-1 for uniform spacing between gutter and inline controls', () => {
+  it('outer wrapper uses no gap so gutter and inline controls sit flush', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1314,7 +1314,7 @@ describe('SortableBlock inline controls', () => {
     )
 
     const wrapper = container.querySelector('.sortable-block')
-    expect(wrapper?.className).toContain('gap-1')
+    expect(wrapper?.className).not.toContain('gap-1')
     expect(wrapper?.className).not.toContain('gap-0')
   })
 
@@ -1369,7 +1369,7 @@ describe('SortableBlock inline controls', () => {
     expect(inlineControls?.className).toContain('gap-1')
   })
 
-  it('all control buttons share mt-1.5 for vertical alignment', () => {
+  it('all control buttons share mt-1 for vertical alignment', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1388,10 +1388,10 @@ describe('SortableBlock inline controls', () => {
     const checkbox = container.querySelector('.task-marker')
     const badge = container.querySelector('.priority-badge')
 
-    expect(grip?.className).toContain('mt-1.5')
-    expect(del?.className).toContain('mt-1.5')
-    expect(checkbox?.className).toContain('mt-1.5')
-    expect(badge?.className).toContain('mt-1.5')
+    expect(grip?.className).toContain('mt-1')
+    expect(del?.className).toContain('mt-1')
+    expect(checkbox?.className).toContain('mt-1')
+    expect(badge?.className).toContain('mt-1')
   })
 })
 

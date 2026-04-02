@@ -223,7 +223,7 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
         <Tip label="Priority 1 — high (Ctrl+Shift+1)">
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="xs"
             aria-label="Priority 1 (high)"
             onPointerDown={(e) => {
               e.preventDefault()
@@ -231,13 +231,13 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             }}
           >
             <Signal size={14} className="text-red-500" />
-            <span className="ml-0.5 text-[10px] font-bold">1</span>
+            <span className="text-[10px] font-bold">1</span>
           </Button>
         </Tip>
         <Tip label="Priority 2 — medium (Ctrl+Shift+2)">
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="xs"
             aria-label="Priority 2 (medium)"
             onPointerDown={(e) => {
               e.preventDefault()
@@ -245,13 +245,13 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             }}
           >
             <Signal size={14} className="text-yellow-500" />
-            <span className="ml-0.5 text-[10px] font-bold">2</span>
+            <span className="text-[10px] font-bold">2</span>
           </Button>
         </Tip>
         <Tip label="Priority 3 — low (Ctrl+Shift+3)">
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="xs"
             aria-label="Priority 3 (low)"
             onPointerDown={(e) => {
               e.preventDefault()
@@ -259,7 +259,7 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             }}
           >
             <Signal size={14} className="text-blue-500" />
-            <span className="ml-0.5 text-[10px] font-bold">3</span>
+            <span className="text-[10px] font-bold">3</span>
           </Button>
         </Tip>
         <Tip label="Insert date">

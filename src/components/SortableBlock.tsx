@@ -235,7 +235,7 @@ function SortableBlockInner({
         style={style}
         data-block-id={blockId}
         className={cn(
-          'sortable-block group relative flex items-start gap-1',
+          'sortable-block group relative flex items-start',
           isFocused && 'block-active',
         )}
         onTouchStart={handleTouchStart}
@@ -258,7 +258,7 @@ function SortableBlockInner({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                className="drag-handle flex-shrink-0 cursor-grab p-0.5 mt-1.5 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                className="drag-handle flex-shrink-0 cursor-grab p-0.5 mt-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
                 aria-label="Reorder block (drag or use keyboard)"
                 {...attributes}
                 {...listeners}
@@ -277,7 +277,7 @@ function SortableBlockInner({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="delete-handle flex-shrink-0 p-0.5 mt-1.5 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                  className="delete-handle flex-shrink-0 p-0.5 mt-1 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
                   aria-label="Delete block"
                   onClick={() => onDelete(blockId)}
                 >
@@ -299,7 +299,7 @@ function SortableBlockInner({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="collapse-toggle flex-shrink-0 p-0.5 mt-1.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                  className="collapse-toggle flex-shrink-0 p-0.5 mt-1 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
                   onClick={() => onToggleCollapse?.(blockId)}
                   aria-label={isCollapsed ? 'Expand children' : 'Collapse children'}
                   aria-expanded={!isCollapsed}
@@ -324,7 +324,7 @@ function SortableBlockInner({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                className="task-marker flex-shrink-0 p-0.5 mt-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                className="task-marker flex-shrink-0 p-0.5 mt-1 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
                 onClick={(e) => {
                   e.stopPropagation()
                   onToggleTodo?.(blockId)
@@ -357,7 +357,7 @@ function SortableBlockInner({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="priority-badge flex-shrink-0 p-0.5 mt-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                  className="priority-badge flex-shrink-0 p-0.5 mt-1 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
                   aria-label={`Priority ${PRIORITY_DISPLAY[priority]}. Click to cycle.`}
                   onClick={(e) => {
                     e.stopPropagation()
@@ -390,7 +390,7 @@ function SortableBlockInner({
             <span
               role="img"
               className={cn(
-                'due-date-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 mt-1.5 text-[10px] font-medium leading-none select-none',
+                'due-date-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 mt-1 text-[10px] font-medium leading-none select-none',
                 dueDateColor(dueDate),
               )}
               aria-label={`Due ${formatCompactDate(dueDate)}`}
