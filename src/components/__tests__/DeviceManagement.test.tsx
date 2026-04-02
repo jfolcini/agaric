@@ -415,7 +415,7 @@ describe('DeviceManagement', () => {
         await vi.advanceTimersByTimeAsync(60000)
       })
 
-      expect(screen.getByText('Sync timed out')).toBeInTheDocument()
+      expect(screen.getByText('Sync took too long — check your connection and try again')).toBeInTheDocument()
       expect(mockedInvoke).toHaveBeenCalledWith('cancel_sync')
     })
   })
@@ -679,5 +679,97 @@ describe('DeviceManagement', () => {
     await waitFor(() => {
       expect(screen.queryByText('sync failed')).not.toBeInTheDocument()
     })
+  })
+
+  it('shows friendly timeout message instead of raw text (#426)', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_device_id') return mockDeviceId
+      if (cmd === 'list_peer_refs') return mockPeers
+      if (cmd === 'start_sync') throw new Error('Sync timed out')
+      if (cmd === 'cancel_sync') return undefined
+      return undefined
+    })
+
+    render(<DeviceManagement />)
+
+    await screen.findByText('peer-abc-123...')
+
+    const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+    await user.click(syncBtns[0])
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Sync took too long — check your connection and try again'),
+      ).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Sync timed out')).not.toBeInTheDocument()
+  })
+
+  it('renders copy button for device ID with correct aria-label (#432)', async () => {
+    mockInvokeByCommand({
+      get_device_id: mockDeviceId,
+      list_peer_refs: [],
+    })
+
+    render(<DeviceManagement />)
+
+    await screen.findByText(mockDeviceId)
+
+    const copyBtn = screen.getByRole('button', { name: 'Copy device ID to clipboard' })
+    expect(copyBtn).toBeInTheDocument()
+  })
+
+  it('unpair dialog shows device name when clicking unpair on a named device (#440)', async () => {
+    const user = userEvent.setup()
+    mockInvokeByCommand({
+      get_device_id: mockDeviceId,
+      list_peer_refs: [
+        {
+          peer_id: 'peer-named-1',
+          last_hash: null,
+          last_sent_hash: null,
+          synced_at: null,
+          reset_count: 0,
+          last_reset_at: null,
+          cert_hash: null,
+          device_name: 'Work Laptop',
+        },
+      ],
+      delete_peer_ref: undefined,
+    })
+
+    render(<DeviceManagement />)
+
+    await screen.findByText('Work Laptop')
+
+    const unpairBtn = screen.getByRole('button', { name: /Unpair/i })
+    await user.click(unpairBtn)
+
+    expect(screen.getByText(/This will remove "Work Laptop"/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Yes, unpair Work Laptop/i })).toBeInTheDocument()
+  })
+
+  it('sorts peers: named alphabetically first, then unnamed (#434)', async () => {
+    mockInvokeByCommand({
+      get_device_id: mockDeviceId,
+      list_peer_refs: [
+        { peer_id: 'peer-3', last_hash: null, last_sent_hash: null, synced_at: '2025-01-03T00:00:00Z', reset_count: 0, last_reset_at: null, cert_hash: null, device_name: null },
+        { peer_id: 'peer-1', last_hash: null, last_sent_hash: null, synced_at: '2025-01-01T00:00:00Z', reset_count: 0, last_reset_at: null, cert_hash: null, device_name: 'Zebra' },
+        { peer_id: 'peer-2', last_hash: null, last_sent_hash: null, synced_at: '2025-01-02T00:00:00Z', reset_count: 0, last_reset_at: null, cert_hash: null, device_name: 'Apple' },
+      ],
+    })
+
+    const { container } = render(<DeviceManagement />)
+    await waitFor(() => {
+      expect(container.querySelectorAll('.device-peer-name')).toHaveLength(3)
+    })
+
+    const names = [...container.querySelectorAll('.device-peer-name')].map(
+      (el) => el.textContent,
+    )
+    expect(names[0]).toBe('Apple')
+    expect(names[1]).toBe('Zebra')
+    expect(names[2]).toBe('peer-3')
   })
 })

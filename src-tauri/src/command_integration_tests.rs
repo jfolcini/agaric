@@ -14,6 +14,7 @@ use crate::db::init_pool;
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::op_log;
+use crate::peer_refs;
 use crate::soft_delete;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
@@ -795,6 +796,41 @@ async fn deleted_blocks_visible_in_list_blocks_show_deleted() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_block_writes_op_log_entry() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "log-delete".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    // seq 1 = create_block
+    delete_block_inner(&pool, DEV, &mat, created.id.clone())
+        .await
+        .unwrap();
+
+    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    assert_eq!(ops.len(), 2, "create + delete = 2 ops");
+    assert_eq!(
+        ops[1].op_type, "delete_block",
+        "op_type must be delete_block"
+    );
+    assert_eq!(ops[1].device_id, DEV, "device_id must match");
+    assert!(
+        ops[1].payload.contains(&created.id),
+        "payload must contain the block ID"
+    );
+}
+
 // ======================================================================
 // delete_block — error paths
 // ======================================================================
@@ -904,6 +940,33 @@ async fn restore_block_cascades_to_descendants() {
             "block {id} must have deleted_at cleared after restore"
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_block_writes_op_log_entry() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "REST_LOG", "content", "restore-log", None, Some(1)).await;
+    let (ts, _) = soft_delete::cascade_soft_delete(&pool, "REST_LOG")
+        .await
+        .unwrap();
+
+    restore_block_inner(&pool, DEV, &mat, "REST_LOG".into(), ts)
+        .await
+        .unwrap();
+
+    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    assert_eq!(ops.len(), 1, "exactly one op must be logged");
+    assert_eq!(
+        ops[0].op_type, "restore_block",
+        "op_type must be restore_block"
+    );
+    assert_eq!(ops[0].device_id, DEV, "device_id must match");
+    assert!(
+        ops[0].payload.contains("REST_LOG"),
+        "payload must contain block_id"
+    );
 }
 
 // ======================================================================
@@ -1104,6 +1167,30 @@ async fn purge_block_removes_tags_properties_attachments_links() {
     .await
     .unwrap();
     assert_eq!(links, 0, "block_links must be purged");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_block_writes_op_log_entry() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "PURGE_LOG", "content", "purge-log", None, Some(1)).await;
+    soft_delete::cascade_soft_delete(&pool, "PURGE_LOG")
+        .await
+        .unwrap();
+
+    purge_block_inner(&pool, DEV, &mat, "PURGE_LOG".into())
+        .await
+        .unwrap();
+
+    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    assert_eq!(ops.len(), 1, "exactly one op must be logged");
+    assert_eq!(ops[0].op_type, "purge_block", "op_type must be purge_block");
+    assert_eq!(ops[0].device_id, DEV, "device_id must match");
+    assert!(
+        ops[0].payload.contains("PURGE_LOG"),
+        "payload must contain block_id"
+    );
 }
 
 // ======================================================================
@@ -2781,6 +2868,113 @@ async fn list_tags_for_nonexistent_block_returns_empty() {
     assert!(
         tags.is_empty(),
         "nonexistent block must return empty vec (no error)"
+    );
+}
+
+// ======================================================================
+// set_property / delete_property — op_log verification
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_writes_op_log_entry() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "prop-log".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    // seq 1 = create_block
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "status".into(),
+        Some("active".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    assert_eq!(ops.len(), 2, "create + set_property = 2 ops");
+    assert_eq!(
+        ops[1].op_type, "set_property",
+        "op_type must be set_property"
+    );
+    assert_eq!(ops[1].device_id, DEV, "device_id must match");
+    assert!(
+        ops[1].payload.contains(&block.id),
+        "payload must contain block_id"
+    );
+    assert!(
+        ops[1].payload.contains("status"),
+        "payload must contain property key"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_writes_op_log_entry() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "prop-del-log".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    // seq 1 = create_block, seq 2 = set_property
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone(),
+        "priority".into(),
+        Some("high".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "priority".into())
+        .await
+        .unwrap();
+
+    let ops = op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
+    assert_eq!(ops.len(), 3, "create + set + delete = 3 ops");
+    assert_eq!(
+        ops[2].op_type, "delete_property",
+        "op_type must be delete_property"
+    );
+    assert_eq!(ops[2].device_id, DEV, "device_id must match");
+    assert!(
+        ops[2].payload.contains(&block.id),
+        "payload must contain block_id"
+    );
+    assert!(
+        ops[2].payload.contains("priority"),
+        "payload must contain property key"
     );
 }
 
@@ -4635,4 +4829,393 @@ async fn backlinks_list_property_keys_includes_all_types() {
     assert!(keys.contains(&"note".to_string()), "text key included");
     assert!(keys.contains(&"count".to_string()), "num key included");
     assert!(keys.contains(&"due".to_string()), "date key included");
+}
+
+// ======================================================================
+// batch_resolve — wiring tests
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_resolve_returns_matching_blocks() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "resolve-page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "tag".into(),
+        "resolve-tag".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let resolved = batch_resolve_inner(
+        &pool,
+        vec![b1.id.clone(), b2.id.clone(), "NONEXISTENT".into()],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resolved.len(), 2, "only existing blocks should be returned");
+    let ids: HashSet<&str> = resolved.iter().map(|r| r.id.as_str()).collect();
+    assert!(ids.contains(b1.id.as_str()), "page block must be resolved");
+    assert!(ids.contains(b2.id.as_str()), "tag block must be resolved");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_resolve_marks_deleted_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "soon-deleted".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    delete_block_inner(&pool, DEV, &mat, block.id.clone())
+        .await
+        .unwrap();
+
+    let resolved = batch_resolve_inner(&pool, vec![block.id.clone()])
+        .await
+        .unwrap();
+
+    assert_eq!(resolved.len(), 1, "deleted block should still be resolved");
+    assert!(resolved[0].deleted, "deleted flag must be true");
+}
+
+// ======================================================================
+// get_backlinks — wiring tests
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_backlinks_returns_linking_blocks() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "target-page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let source = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("links to [[{}]]", target.id),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Insert a block_link row (normally done by materializer)
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind(&source.id)
+        .bind(&target.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let resp = get_backlinks_inner(&pool, target.id.clone(), None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.items.len(), 1, "one backlink expected");
+    assert_eq!(
+        resp.items[0].id, source.id,
+        "source block must be the backlink"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_backlinks_empty_when_no_links() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(
+        &pool,
+        "BL_ORPHAN",
+        "content",
+        "no links here",
+        None,
+        Some(1),
+    )
+    .await;
+
+    let resp = get_backlinks_inner(&pool, "BL_ORPHAN".into(), None, None)
+        .await
+        .unwrap();
+
+    assert!(
+        resp.items.is_empty(),
+        "no backlinks expected for isolated block"
+    );
+}
+
+// ======================================================================
+// get_block_history — wiring tests
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_block_history_returns_ops_for_block() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "history-test".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    edit_block_inner(&pool, DEV, &mat, block.id.clone(), "v2".into())
+        .await
+        .unwrap();
+
+    let resp = get_block_history_inner(&pool, block.id.clone(), None, None)
+        .await
+        .unwrap();
+
+    assert!(
+        resp.items.len() >= 2,
+        "at least create + edit ops expected, got {}",
+        resp.items.len()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_block_history_empty_for_nonexistent_block() {
+    let (pool, _dir) = test_pool().await;
+
+    let resp = get_block_history_inner(&pool, "GHOST_HIST".into(), None, None)
+        .await
+        .unwrap();
+
+    assert!(resp.items.is_empty(), "no history for nonexistent block");
+}
+
+// ======================================================================
+// get_conflicts — wiring tests
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_conflicts_empty_when_none_exist() {
+    let (pool, _dir) = test_pool().await;
+
+    let resp = get_conflicts_inner(&pool, None, None).await.unwrap();
+
+    assert!(
+        resp.items.is_empty(),
+        "no conflicts should exist in a fresh DB"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_conflicts_returns_conflict_blocks() {
+    let (pool, _dir) = test_pool().await;
+
+    // Insert a conflict block directly
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, is_conflict, position) \
+         VALUES (?, ?, ?, 1, ?)",
+    )
+    .bind("CONFLICT01")
+    .bind("content")
+    .bind("conflict copy")
+    .bind(1_i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = get_conflicts_inner(&pool, None, None).await.unwrap();
+
+    assert_eq!(resp.items.len(), 1, "one conflict block expected");
+    assert_eq!(
+        resp.items[0].id, "CONFLICT01",
+        "conflict block ID must match"
+    );
+}
+
+// ======================================================================
+// list_peer_refs / update_peer_name / delete_peer_ref — wiring tests (#455)
+// ======================================================================
+
+#[tokio::test]
+async fn list_peer_refs_returns_empty_when_no_peers() {
+    let (pool, _dir) = test_pool().await;
+    let result = list_peer_refs_inner(&pool).await.unwrap();
+    assert!(result.is_empty(), "no peers should exist in fresh DB");
+}
+
+#[tokio::test]
+async fn list_peer_refs_returns_peers_ordered_by_synced_at() {
+    let (pool, _dir) = test_pool().await;
+
+    peer_refs::upsert_peer_ref(&pool, "PEER_A").await.unwrap();
+    peer_refs::upsert_peer_ref(&pool, "PEER_B").await.unwrap();
+
+    // PEER_A synced earlier, PEER_B synced later → PEER_B should appear first.
+    sqlx::query!(
+        "UPDATE peer_refs SET synced_at = ? WHERE peer_id = ?",
+        "2025-01-01T00:00:00Z",
+        "PEER_A"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query!(
+        "UPDATE peer_refs SET synced_at = ? WHERE peer_id = ?",
+        "2025-01-02T00:00:00Z",
+        "PEER_B"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let peers = list_peer_refs_inner(&pool).await.unwrap();
+
+    assert_eq!(peers.len(), 2, "both peers should be returned");
+    assert_eq!(
+        peers[0].peer_id, "PEER_B",
+        "most recently synced peer should be first"
+    );
+    assert_eq!(
+        peers[1].peer_id, "PEER_A",
+        "earlier synced peer should be second"
+    );
+}
+
+#[tokio::test]
+async fn update_peer_name_sets_and_clears_name() {
+    let (pool, _dir) = test_pool().await;
+    peer_refs::upsert_peer_ref(&pool, "PEER_X").await.unwrap();
+
+    // Set a device name.
+    update_peer_name_inner(&pool, "PEER_X".into(), Some("My Phone".into()))
+        .await
+        .unwrap();
+
+    let peers = list_peer_refs_inner(&pool).await.unwrap();
+    assert_eq!(peers.len(), 1, "one peer should exist");
+    assert_eq!(
+        peers[0].device_name.as_deref(),
+        Some("My Phone"),
+        "device_name should be set to 'My Phone'"
+    );
+
+    // Clear the device name.
+    update_peer_name_inner(&pool, "PEER_X".into(), None)
+        .await
+        .unwrap();
+
+    let peers = list_peer_refs_inner(&pool).await.unwrap();
+    assert_eq!(
+        peers[0].device_name, None,
+        "device_name should be cleared to None"
+    );
+}
+
+#[tokio::test]
+async fn update_peer_name_nonexistent_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+
+    let err = update_peer_name_inner(&pool, "NO_SUCH_PEER".into(), Some("Name".into()))
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, AppError::NotFound(_)),
+        "expected NotFound for nonexistent peer, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn delete_peer_ref_removes_peer() {
+    let (pool, _dir) = test_pool().await;
+
+    peer_refs::upsert_peer_ref(&pool, "PEER_KEEP").await.unwrap();
+    peer_refs::upsert_peer_ref(&pool, "PEER_DEL").await.unwrap();
+
+    delete_peer_ref_inner(&pool, "PEER_DEL".into())
+        .await
+        .unwrap();
+
+    let peers = list_peer_refs_inner(&pool).await.unwrap();
+    assert_eq!(peers.len(), 1, "only one peer should remain after delete");
+    assert_eq!(
+        peers[0].peer_id, "PEER_KEEP",
+        "the surviving peer should be PEER_KEEP"
+    );
+}
+
+#[tokio::test]
+async fn delete_peer_ref_nonexistent_returns_not_found() {
+    let (pool, _dir) = test_pool().await;
+
+    let err = delete_peer_ref_inner(&pool, "GHOST_PEER".into())
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, AppError::NotFound(_)),
+        "expected NotFound for nonexistent peer, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn update_peer_name_special_characters() {
+    let (pool, _dir) = test_pool().await;
+    peer_refs::upsert_peer_ref(&pool, "PEER_UNI").await.unwrap();
+
+    let fancy_name = "Javier's 📱 Phone";
+    update_peer_name_inner(&pool, "PEER_UNI".into(), Some(fancy_name.into()))
+        .await
+        .unwrap();
+
+    let peers = list_peer_refs_inner(&pool).await.unwrap();
+    assert_eq!(peers.len(), 1, "one peer should exist");
+    assert_eq!(
+        peers[0].device_name.as_deref(),
+        Some(fancy_name),
+        "unicode/special-char device name should roundtrip correctly"
+    );
 }

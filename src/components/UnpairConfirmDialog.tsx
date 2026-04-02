@@ -20,6 +20,7 @@ interface UnpairConfirmDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
+  deviceName?: string | null
   className?: string
 }
 
@@ -27,6 +28,7 @@ export function UnpairConfirmDialog({
   open,
   onOpenChange,
   onConfirm,
+  deviceName,
   className,
 }: UnpairConfirmDialogProps): React.ReactElement {
   return (
@@ -35,12 +37,14 @@ export function UnpairConfirmDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Unpair device?</AlertDialogTitle>
           <AlertDialogDescription>
-            This will remove the paired device. You will need to pair again to sync.
+            This will remove {deviceName ? `"${deviceName}"` : 'the paired device'}. You will need to pair again to sync.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>Yes, unpair</AlertDialogAction>
+          <AlertDialogAction onClick={onConfirm}>
+            Yes, unpair{deviceName ? ` ${deviceName}` : ''}
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

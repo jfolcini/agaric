@@ -11,9 +11,10 @@
  * Follows StatusPanel.tsx layout patterns.
  */
 
-import { Loader2, Pencil, RefreshCw, Smartphone, Unplug, X } from 'lucide-react'
+import { Copy, Loader2, Pencil, RefreshCw, Smartphone, Unplug, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -47,6 +48,13 @@ export function DeviceManagement(): React.ReactElement {
     try {
       const [id, peerList] = await Promise.all([getDeviceId(), listPeerRefs()])
       setDeviceId(id)
+      // Sort: named devices first (alphabetical), then unnamed by synced_at
+      peerList.sort((a, b) => {
+        if (a.device_name && !b.device_name) return -1
+        if (!a.device_name && b.device_name) return 1
+        if (a.device_name && b.device_name) return a.device_name.localeCompare(b.device_name)
+        return 0 // preserve backend synced_at ordering for unnamed peers
+      })
       setPeers(peerList)
     } catch (err) {
       console.error('Failed to load device info:', err)
@@ -82,8 +90,11 @@ export function DeviceManagement(): React.ReactElement {
         await loadData()
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Sync failed'
+        const displayMessage = message === 'Sync timed out'
+          ? 'Sync took too long — check your connection and try again'
+          : message
         console.error('Sync failed:', err)
-        setError(message)
+        setError(displayMessage)
         if (message === 'Sync timed out') {
           await cancelSync()
         }
@@ -179,7 +190,25 @@ export function DeviceManagement(): React.ReactElement {
               {/* Local device ID */}
               <dl className="device-id-section rounded-lg border bg-muted/30 p-4 mb-4">
                 <dt className="text-sm text-muted-foreground">Local Device ID</dt>
-                <dd className="device-id-value text-sm font-mono mt-1 break-all">{deviceId}</dd>
+                <dd className="device-id-value flex items-center gap-2 text-sm font-mono mt-1">
+                  <span className="break-all">{deviceId}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0 h-7 w-7 p-0"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(deviceId)
+                        toast.success('Device ID copied')
+                      } catch {
+                        toast.error('Failed to copy to clipboard')
+                      }
+                    }}
+                    aria-label="Copy device ID to clipboard"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </dd>
               </dl>
 
               {/* Pair New Device button */}
@@ -319,6 +348,7 @@ export function DeviceManagement(): React.ReactElement {
         onConfirm={() => {
           if (unpairPeerId) handleUnpair(unpairPeerId)
         }}
+        deviceName={peers.find(p => p.peer_id === unpairPeerId)?.device_name ?? truncateId(unpairPeerId ?? '')}
         className="device-unpair-confirm"
       />
     </div>
