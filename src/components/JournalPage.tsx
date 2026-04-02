@@ -153,7 +153,7 @@ function TaskSection({ title, status, icon: Icon, iconColor, onNavigateToPage }:
         setHasMore(resp.has_more)
         setLoaded(true)
       } catch {
-        /* query failed — leave empty */
+        toast.error('Failed to load tasks')
       }
       setLoading(false)
     },
@@ -185,7 +185,7 @@ function TaskSection({ title, status, icon: Icon, iconColor, onNavigateToPage }:
     <div className="task-section rounded-lg border">
       <button
         type="button"
-        className="task-section-header flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-accent/50 transition-colors"
+        className="task-section-header flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-accent/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={handleExpand}
         aria-expanded={expanded}
         aria-label={`${title} tasks`}
@@ -305,6 +305,8 @@ function JournalCalendarDropdown({
       <div className="fixed inset-0 z-40" onClick={onClose} />
       <div
         ref={calRef}
+        role="dialog"
+        aria-label="Date picker"
         className={`absolute right-0 z-50 rounded-md border bg-popover p-2 shadow-md ${
           flipAbove ? 'bottom-full mb-1' : 'top-full mt-1'
         }`}

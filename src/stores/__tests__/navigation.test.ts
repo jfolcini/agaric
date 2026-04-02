@@ -109,6 +109,19 @@ describe('useNavigationStore', () => {
       ])
       expect(state.currentView).toBe('page-editor')
     })
+
+    it('navigating to the same page updates selectedBlockId without pushing', () => {
+      const { navigateToPage } = useNavigationStore.getState()
+
+      navigateToPage('P1', 'Page 1')
+      expect(useNavigationStore.getState().pageStack).toHaveLength(1)
+
+      navigateToPage('P1', 'Page 1', 'BLOCK_X')
+
+      const state = useNavigationStore.getState()
+      expect(state.pageStack).toHaveLength(1)
+      expect(state.selectedBlockId).toBe('BLOCK_X')
+    })
   })
 
   // ---------------------------------------------------------------------------

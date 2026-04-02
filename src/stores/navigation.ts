@@ -59,11 +59,17 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   },
 
   navigateToPage: (pageId: string, title: string, blockId?: string) => {
-    set((state) => ({
+    const { pageStack } = get()
+    const top = pageStack[pageStack.length - 1]
+    if (top?.pageId === pageId) {
+      set({ selectedBlockId: blockId ?? null })
+      return
+    }
+    set({
       currentView: 'page-editor',
-      pageStack: [...state.pageStack, { pageId, title }],
+      pageStack: [...pageStack, { pageId, title }],
       selectedBlockId: blockId ?? null,
-    }))
+    })
   },
 
   goBack: () => {

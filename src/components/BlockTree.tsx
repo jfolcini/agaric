@@ -620,7 +620,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   const handleDeleteBlock = useCallback(() => {
     if (!focusedBlockId) return
-    if (blocks.length <= 1) {
+    if (collapsedVisible.length <= 1) {
       toast.error('Cannot delete the last block on a page')
       return
     }
@@ -640,13 +640,14 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     } else {
       setFocused(null)
     }
-  }, [focusedBlockId, blocks, collapsedVisible, rovingEditor, remove, setFocused])
+  }, [focusedBlockId, collapsedVisible, rovingEditor, remove, setFocused])
 
   const handleIndent = useCallback(() => {
     if (!focusedBlockId) return
     // Flush editor content before structural move
     handleFlush()
     indent(focusedBlockId)
+    announce('Block indented')
   }, [focusedBlockId, handleFlush, indent])
 
   const handleDedent = useCallback(() => {
@@ -654,6 +655,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     // Flush editor content before structural move
     handleFlush()
     dedent(focusedBlockId)
+    announce('Block outdented')
   }, [focusedBlockId, handleFlush, dedent])
 
   // ── Move block up/down (Ctrl+Shift+Arrow) ─────────────────────────
@@ -661,12 +663,14 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     if (!focusedBlockId) return
     handleFlush()
     moveUp(focusedBlockId)
+    announce('Block moved up')
   }, [focusedBlockId, handleFlush, moveUp])
 
   const handleMoveDown = useCallback(() => {
     if (!focusedBlockId) return
     handleFlush()
     moveDown(focusedBlockId)
+    announce('Block moved down')
   }, [focusedBlockId, handleFlush, moveDown])
 
   // ── Merge with previous block (p2-t11) ────────────────────────────

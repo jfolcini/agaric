@@ -91,6 +91,23 @@ Cross-validated P1 claims with a separate subagent.
 ### Phase 5 Stats
 - REVIEW-LATER.md: 5 → 11 open items (+6 from feature reviews)
 
+### Phase 6: Fix Feature Review Items (#495-#500)
+
+6 S-cost items from feature reviews, fixed in 2 parallel worktrees.
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | #495: Delete guard uses `collapsedVisible.length` instead of `blocks.length`. #496: Added `announce()` to indent/dedent/moveUp/moveDown (4 handlers). |
+| `navigation.ts` | #497: Duplicate page guard — same pageId at top of stack updates selectedBlockId without pushing. |
+| `navigation.test.ts` | Added test for duplicate page navigation dedup. |
+| `JournalPage.tsx` | #498: TaskSection error toast. #499: Calendar dropdown `role="dialog" aria-label="Date picker"`. #500: TaskSection header `focus-visible:ring-2`. |
+
+Review: BlockTree reviewer caught build subagent missed #495 + 3 of 4 announce() calls. Fixed directly before merge.
+
+### Phase 6 Stats
+- Frontend: 71/71 test files, 2063 tests pass (+1 nav test)
+- REVIEW-LATER.md: 11 → 5 open items (resolved #495-#500)
+
 ## Session 44 — 2026-04-01 — Tier 7.5 Backlinks Filter Major (#311-#328)
 
 Resolved all 18 Tier 7.5 items. 7 BacklinkFilterBuilder UX/a11y fixes, 6 BacklinksPanel fixes, 1 button.tsx touch target, 3 backend perf optimizations, 2 already resolved by Tier 7.
