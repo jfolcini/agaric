@@ -75,6 +75,9 @@ function makeFlatBlock(
     archived_at: null,
     is_conflict: false,
     conflict_type: null,
+    todo_state: null,
+    priority: null,
+    due_date: null,
     depth,
   }
 }

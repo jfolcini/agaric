@@ -753,7 +753,8 @@ pub async fn eval_backlink_query(
     let placeholders = actual_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let query_str = format!(
         "SELECT id, block_type, content, parent_id, position, \
-         deleted_at, archived_at, is_conflict, conflict_type \
+         deleted_at, archived_at, is_conflict, conflict_type, \
+         todo_state, priority, due_date \
          FROM blocks WHERE id IN ({placeholders})"
     );
 
@@ -1011,7 +1012,8 @@ pub async fn eval_backlink_query_grouped(
             .join(",");
         let query_str = format!(
             "SELECT id, block_type, content, parent_id, position, \
-             deleted_at, archived_at, is_conflict, conflict_type \
+             deleted_at, archived_at, is_conflict, conflict_type, \
+             todo_state, priority, due_date \
              FROM blocks WHERE id IN ({placeholders})"
         );
         let mut query = sqlx::query_as::<_, BlockRow>(&query_str);

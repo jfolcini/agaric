@@ -332,6 +332,9 @@ pub async fn create_block_inner(
         archived_at: None,
         is_conflict: false,
         conflict_type: None,
+        todo_state: None,
+        priority: None,
+        due_date: None,
     })
 }
 
@@ -361,7 +364,7 @@ pub async fn edit_block_inner(
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut *tx)
@@ -432,6 +435,9 @@ pub async fn edit_block_inner(
         archived_at: None,
         is_conflict: false,
         conflict_type: None,
+        todo_state: None,
+        priority: None,
+        due_date: None,
     })
 }
 
@@ -1213,7 +1219,7 @@ pub async fn list_blocks_inner(
 pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type FROM blocks WHERE id = ?"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date FROM blocks WHERE id = ?"#,
         block_id
     )
     .fetch_optional(pool)
@@ -1685,7 +1691,7 @@ pub async fn set_property_inner(
     // 3. Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut *tx)
@@ -1729,6 +1735,9 @@ pub async fn set_property_inner(
         archived_at: existing.archived_at,
         is_conflict: existing.is_conflict,
         conflict_type: existing.conflict_type,
+        todo_state: existing.todo_state,
+        priority: existing.priority,
+        due_date: existing.due_date,
     })
 }
 

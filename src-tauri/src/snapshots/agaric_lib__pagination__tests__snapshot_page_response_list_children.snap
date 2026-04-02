@@ -1,6 +1,5 @@
 ---
 source: src/pagination.rs
-assertion_line: 1865
 expression: resp
 ---
 items:
@@ -13,6 +12,9 @@ items:
     archived_at: ~
     is_conflict: false
     conflict_type: ~
+    todo_state: ~
+    priority: ~
+    due_date: ~
   - id: SNAP_CH2
     block_type: content
     content: second child
@@ -22,5 +24,8 @@ items:
     archived_at: ~
     is_conflict: false
     conflict_type: ~
+    todo_state: ~
+    priority: ~
+    due_date: ~
 next_cursor: ~
 has_more: false

@@ -12,6 +12,9 @@ items:
     archived_at: ~
     is_conflict: false
     conflict_type: ~
+    todo_state: ~
+    priority: ~
+    due_date: ~
 next_cursor: "[CURSOR]"
 has_more: false
 total_count: 3

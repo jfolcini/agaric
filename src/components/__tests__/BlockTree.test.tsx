@@ -282,6 +282,9 @@ describe('BlockTree picker wiring', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
         {
           id: 'C1',
@@ -293,6 +296,9 @@ describe('BlockTree picker wiring', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -335,6 +341,9 @@ describe('BlockTree picker wiring', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
         {
           id: 'P2',
@@ -346,6 +355,9 @@ describe('BlockTree picker wiring', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -383,6 +395,9 @@ describe('BlockTree picker wiring', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -434,6 +449,9 @@ describe('BlockTree picker wiring', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -470,6 +488,9 @@ describe('BlockTree picker wiring', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -503,6 +524,9 @@ describe('BlockTree picker wiring', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -631,6 +655,9 @@ describe('BlockTree rendering edge cases', () => {
         archived_at: null,
         is_conflict: false,
         conflict_type: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
         depth: 0,
       },
       {
@@ -643,6 +670,9 @@ describe('BlockTree rendering edge cases', () => {
         archived_at: null,
         is_conflict: false,
         conflict_type: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
         depth: 1,
       },
       {
@@ -655,6 +685,9 @@ describe('BlockTree rendering edge cases', () => {
         archived_at: null,
         is_conflict: false,
         conflict_type: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
         depth: 2,
       },
       {
@@ -667,6 +700,9 @@ describe('BlockTree rendering edge cases', () => {
         archived_at: null,
         is_conflict: false,
         conflict_type: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
         depth: 3,
       },
     ]
@@ -725,6 +761,9 @@ describe('BlockTree rendering edge cases', () => {
         archived_at: null,
         is_conflict: false,
         conflict_type: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
         depth: 0,
       },
     ]
@@ -767,6 +806,9 @@ const makeBlock = (
   archived_at: null,
   is_conflict: false,
   conflict_type: null,
+  todo_state: null,
+  priority: null,
+  due_date: null,
   depth,
 })
 
@@ -1415,6 +1457,9 @@ describe('BlockTree resolve cache preload', () => {
       archived_at: null,
       is_conflict: false,
       conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
     }
     // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
@@ -1490,6 +1535,9 @@ describe('BlockTree handleNavigate', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         }
       }
       if (cmd === 'get_batch_properties') {
@@ -1533,6 +1581,9 @@ describe('BlockTree handleNavigate', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         }
       }
       if (cmd === 'get_block' && args?.blockId === PARENT_ID) {
@@ -1546,6 +1597,9 @@ describe('BlockTree handleNavigate', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         }
       }
       if (cmd === 'get_batch_properties') {
@@ -1632,6 +1686,9 @@ describe('BlockTree searchPages caching', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -1678,6 +1735,9 @@ describe('BlockTree searchPages caching', () => {
       archived_at: null,
       is_conflict: false,
       conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
     })
 
     await capturedOnCreatePage?.('Freshly Created')
@@ -2296,6 +2356,9 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         }
       }
       if (cmd === 'get_batch_properties') {
@@ -2342,6 +2405,9 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         }
       }
       // Parent fetch fails
@@ -2882,6 +2948,9 @@ describe('BlockTree handleDatePick date format', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,

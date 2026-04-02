@@ -341,6 +341,9 @@ describe('searchPages — short query (<=2 chars)', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
         {
           id: 'P11',
@@ -352,6 +355,9 @@ describe('searchPages — short query (<=2 chars)', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -386,6 +392,9 @@ describe('searchPages — short query (<=2 chars)', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -414,6 +423,9 @@ describe('searchPages — short query (<=2 chars)', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -490,6 +502,9 @@ describe('searchPages — long query (>2 chars)', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
         {
           id: 'F2',
@@ -501,6 +516,9 @@ describe('searchPages — long query (>2 chars)', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
         {
           id: 'F3',
@@ -512,6 +530,9 @@ describe('searchPages — long query (>2 chars)', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -547,6 +568,9 @@ describe('searchPages — long query (>2 chars)', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -591,6 +615,9 @@ describe('searchPages — long query (>2 chars)', () => {
       archived_at: null,
       is_conflict: false,
       conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
     }))
 
     mockedSearchBlocks.mockResolvedValue({
@@ -631,6 +658,9 @@ describe('searchPages — long query (>2 chars)', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -663,6 +693,9 @@ describe('searchPages — long query (>2 chars)', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -784,6 +817,9 @@ describe('searchPages — "Create new" option', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -815,6 +851,9 @@ describe('searchPages — "Create new" option', () => {
           archived_at: null,
           is_conflict: false,
           conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
         },
       ],
       next_cursor: null,
@@ -850,6 +889,9 @@ describe('onCreatePage', () => {
       archived_at: null,
       is_conflict: false,
       conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -877,6 +919,9 @@ describe('onCreatePage', () => {
       archived_at: null,
       is_conflict: false,
       conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -900,6 +945,9 @@ describe('onCreatePage', () => {
       archived_at: null,
       is_conflict: false,
       conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())
@@ -930,6 +978,9 @@ describe('onCreatePage', () => {
       archived_at: null,
       is_conflict: false,
       conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
     })
 
     const { result } = renderHook(() => useBlockResolve())

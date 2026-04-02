@@ -44,6 +44,9 @@ function makeBlock(
     archived_at: overrides.archived_at ?? null,
     is_conflict: overrides.is_conflict ?? false,
     conflict_type: null,
+    todo_state: null,
+    priority: null,
+    due_date: null,
     depth: overrides.depth ?? 0,
   }
 }

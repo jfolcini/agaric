@@ -166,6 +166,9 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
         archived_at: null,
         is_conflict: false,
         conflict_type: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
         depth: afterBlock.depth,
       }
       const newBlocks = [...blocks]

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_type, content, parent_id, position,\n                deleted_at, archived_at, is_conflict as \"is_conflict: bool\",\n                conflict_type\n         FROM blocks\n         WHERE is_conflict = 1 AND deleted_at IS NULL\n           AND (?1 IS NULL OR id > ?2)\n         ORDER BY id ASC\n         LIMIT ?3",
+  "query": "SELECT id, block_type, content, parent_id, position,\n                deleted_at, archived_at, is_conflict as \"is_conflict: bool\",\n                conflict_type, todo_state, priority, due_date\n         FROM blocks\n         WHERE parent_id IS ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR (\n                IFNULL(position, ?6) > ?3\n                OR (IFNULL(position, ?6) = ?3 AND id > ?4)))\n         ORDER BY IFNULL(position, ?6) ASC, id ASC\n         LIMIT ?5",
   "describe": {
     "columns": [
       {
@@ -47,10 +47,25 @@
         "name": "conflict_type",
         "ordinal": 8,
         "type_info": "Text"
+      },
+      {
+        "name": "todo_state",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "priority",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "due_date",
+        "ordinal": 11,
+        "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 6
     },
     "nullable": [
       false,
@@ -61,8 +76,11 @@
       true,
       true,
       false,
+      true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "f7166d0e977ade217b7612fdb44e0cd3437e84efd6d5f0dff9f51e32812dca7a"
+  "hash": "e0d751d0246f2579d77ab5cf72ea26a6dd3418afdc52b264f9af904aa9886181"
 }

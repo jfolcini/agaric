@@ -1,6 +1,5 @@
 ---
 source: src/commands.rs
-assertion_line: 5028
 expression: resp
 ---
 id: "[ULID]"
@@ -12,3 +11,6 @@ deleted_at: ~
 archived_at: ~
 is_conflict: false
 conflict_type: ~
+todo_state: ~
+priority: ~
+due_date: ~
