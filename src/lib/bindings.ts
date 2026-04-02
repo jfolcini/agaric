@@ -238,6 +238,39 @@ async setProperty(blockId: string, key: string, valueText: string | null, valueN
 }
 },
 /**
+ * Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
+ */
+async setTodoState(blockId: string, state: string | null) : Promise<Result<BlockRow, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_todo_state", { blockId, state }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
+ */
+async setPriority(blockId: string, level: string | null) : Promise<Result<BlockRow, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_priority", { blockId, level }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: set due date on a block. Delegates to [`set_due_date_inner`].
+ */
+async setDueDate(blockId: string, date: string | null) : Promise<Result<BlockRow, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_due_date", { blockId, date }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: delete a property from a block. Delegates to [`delete_property_inner`].
  */
 async deleteProperty(blockId: string, key: string) : Promise<Result<null, { kind: string; message: string }>> {

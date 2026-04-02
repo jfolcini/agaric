@@ -1184,7 +1184,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
         DEV,
         &mat,
         block_a.id.clone(),
-        "priority".into(),
+        "importance".into(),
         Some("high".into()),
         None,
         None,
@@ -1199,7 +1199,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
         DEV,
         &mat,
         block_b.id.clone(),
-        "due_date".into(),
+        "deadline".into(),
         None,
         None,
         Some("2025-06-15".into()),
@@ -1319,7 +1319,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
         1,
         "block_a must have 1 property after snapshot"
     );
-    assert_eq!(a_props[0].key, "priority", "property key must survive");
+    assert_eq!(a_props[0].key, "importance", "property key must survive");
     assert_eq!(
         a_props[0].value_text,
         Some("high".into()),
@@ -1334,7 +1334,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
         1,
         "block_b must have 1 property after snapshot"
     );
-    assert_eq!(b_props[0].key, "due_date", "property key must survive");
+    assert_eq!(b_props[0].key, "deadline", "property key must survive");
     assert_eq!(
         b_props[0].value_date,
         Some("2025-06-15".into()),
@@ -1616,7 +1616,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
         DEV,
         &mat,
         block.id.clone(),
-        "priority".into(),
+        "importance".into(),
         None,
         Some(1.0),
         None,
@@ -1633,7 +1633,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
         "block must have 1 property after re-set"
     );
     assert_eq!(
-        props_re_set[0].key, "priority",
+        props_re_set[0].key, "importance",
         "new property key must match"
     );
     assert_eq!(

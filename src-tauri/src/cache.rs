@@ -154,6 +154,12 @@ pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
            AND SUBSTR(t.content, 14, 2) GLOB '[0-9][0-9]'
            AND b.deleted_at IS NULL
            AND t.deleted_at IS NULL
+           AND b.is_conflict = 0
+         UNION ALL
+         SELECT b.due_date, b.id, 'column:due_date'
+         FROM blocks b
+         WHERE b.due_date IS NOT NULL
+           AND b.deleted_at IS NULL
            AND b.is_conflict = 0",
     )
     .execute(&mut *tx)

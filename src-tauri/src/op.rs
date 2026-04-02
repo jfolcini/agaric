@@ -317,6 +317,11 @@ impl OpPayload {
 /// Validate that a [`SetPropertyPayload`] has exactly one non-null value field
 /// and that the `key` matches the allowed format.
 ///
+/// Reserved property keys that map to fixed columns on the `blocks` table.
+pub fn is_reserved_property_key(key: &str) -> bool {
+    matches!(key, "todo_state" | "priority" | "due_date")
+}
+
 /// The schema allows multiple value columns (text, num, date, ref) but the
 /// domain invariant is that exactly one must be set per operation. This
 /// function enforces that invariant at the command layer, before the payload
@@ -368,6 +373,9 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error:
     .count();
 
     if count == 1 {
+        Ok(())
+    } else if count == 0 && is_reserved_property_key(&p.key) {
+        // Reserved keys allow all-null values (= clear the column)
         Ok(())
     } else {
         Err(crate::error::AppError::Validation(format!(
@@ -1209,6 +1217,22 @@ mod tests {
         assert!(
             matches!(err_neg, crate::error::AppError::Validation(_)),
             "NEG_INFINITY value_num must return Validation error, got: {err_neg:?}"
+        );
+    }
+
+    #[test]
+    fn validate_set_property_allows_clear_for_reserved_key() {
+        let p = SetPropertyPayload {
+            block_id: BlockId::test_id("B1"),
+            key: "todo_state".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        };
+        assert!(
+            validate_set_property(&p).is_ok(),
+            "reserved key with all-null values should be allowed (clear)"
         );
     }
 }

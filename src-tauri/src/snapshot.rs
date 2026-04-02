@@ -29,7 +29,7 @@ use crate::error::AppError;
 // Schema version
 // ---------------------------------------------------------------------------
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // Row types (CBOR + DB round-trip)
@@ -47,6 +47,12 @@ pub struct BlockSnapshot {
     pub archived_at: Option<String>,
     pub is_conflict: i64,
     pub conflict_source: Option<String>,
+    #[serde(default)]
+    pub todo_state: Option<String>,
+    #[serde(default)]
+    pub priority: Option<String>,
+    #[serde(default)]
+    pub due_date: Option<String>,
 }
 
 /// A block–tag association captured in a snapshot.
@@ -133,9 +139,9 @@ pub fn decode_snapshot(data: &[u8]) -> Result<SnapshotData, AppError> {
         zstd::decode_all(data).map_err(|e| AppError::Snapshot(format!("zstd decompress: {e}")))?;
     let snapshot: SnapshotData = ciborium::from_reader(decompressed.as_slice())
         .map_err(|e| AppError::Snapshot(format!("CBOR decode: {e}")))?;
-    if snapshot.schema_version != SCHEMA_VERSION {
+    if snapshot.schema_version < 1 || snapshot.schema_version > SCHEMA_VERSION {
         return Err(AppError::Snapshot(format!(
-            "unsupported schema version {} (expected {SCHEMA_VERSION})",
+            "unsupported schema version {} (expected 1..={SCHEMA_VERSION})",
             snapshot.schema_version
         )));
     }
@@ -153,7 +159,7 @@ pub fn decode_snapshot(data: &[u8]) -> Result<SnapshotData, AppError> {
 async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTables, AppError> {
     let blocks: Vec<BlockSnapshot> = sqlx::query_as!(
         BlockSnapshot,
-        "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source FROM blocks"
+        "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source, todo_state, priority, due_date FROM blocks"
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -345,8 +351,9 @@ pub async fn apply_snapshot(
     for b in &data.tables.blocks {
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, \
-             deleted_at, archived_at, is_conflict, conflict_source) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             deleted_at, archived_at, is_conflict, conflict_source, \
+             todo_state, priority, due_date) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&b.id)
         .bind(&b.block_type)
@@ -357,6 +364,9 @@ pub async fn apply_snapshot(
         .bind(&b.archived_at)
         .bind(b.is_conflict)
         .bind(&b.conflict_source)
+        .bind(&b.todo_state)
+        .bind(&b.priority)
+        .bind(&b.due_date)
         .execute(&mut *tx)
         .await?;
     }
@@ -536,6 +546,9 @@ mod tests {
                     archived_at: None,
                     is_conflict: 0,
                     conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
                 }],
                 block_tags: vec![BlockTagSnapshot {
                     block_id: "block-1".to_string(),
@@ -869,6 +882,9 @@ mod tests {
                     archived_at: None,
                     is_conflict: 0,
                     conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
                 }],
                 block_tags: vec![],
                 block_properties: vec![],
@@ -1077,6 +1093,9 @@ mod tests {
                     archived_at: None,
                     is_conflict: 0,
                     conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
                 }],
                 block_tags: vec![],
                 block_properties: vec![
@@ -1310,6 +1329,9 @@ mod tests {
                         archived_at: None,
                         is_conflict: 0,
                         conflict_source: None,
+                        todo_state: None,
+                        priority: None,
+                        due_date: None,
                     },
                     BlockSnapshot {
                         id: "blk-child".to_string(),
@@ -1321,6 +1343,9 @@ mod tests {
                         archived_at: None,
                         is_conflict: 0,
                         conflict_source: None,
+                        todo_state: None,
+                        priority: None,
+                        due_date: None,
                     },
                     // Tag block — needed for FK on block_tags.tag_id
                     BlockSnapshot {
@@ -1333,6 +1358,9 @@ mod tests {
                         archived_at: None,
                         is_conflict: 0,
                         conflict_source: None,
+                        todo_state: None,
+                        priority: None,
+                        due_date: None,
                     },
                 ],
                 block_tags: vec![BlockTagSnapshot {
@@ -1600,6 +1628,9 @@ mod tests {
                     archived_at: None,
                     is_conflict: 0,
                     conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
                 }],
                 block_tags: vec![],
                 block_properties: vec![BlockPropertySnapshot {
@@ -1661,6 +1692,9 @@ mod tests {
                     archived_at: None,
                     is_conflict: 0,
                     conflict_source: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
                 }],
                 block_tags: vec![],
                 block_properties: vec![BlockPropertySnapshot {
@@ -2140,5 +2174,197 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 0, "log_snapshots should still be empty");
+    }
+
+    // ======================================================================
+    // Schema version v1 / v2 compatibility
+    // ======================================================================
+
+    /// A v1-like BlockSnapshot without the 3 new fields, used to create
+    /// v1-format CBOR data that must still deserialize via #[serde(default)].
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct BlockSnapshotV1 {
+        id: String,
+        block_type: String,
+        content: Option<String>,
+        parent_id: Option<String>,
+        position: Option<i64>,
+        deleted_at: Option<String>,
+        archived_at: Option<String>,
+        is_conflict: i64,
+        conflict_source: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct SnapshotTablesV1 {
+        blocks: Vec<BlockSnapshotV1>,
+        block_tags: Vec<BlockTagSnapshot>,
+        block_properties: Vec<BlockPropertySnapshot>,
+        block_links: Vec<BlockLinkSnapshot>,
+        attachments: Vec<AttachmentSnapshot>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct SnapshotDataV1 {
+        schema_version: u32,
+        snapshot_device_id: String,
+        up_to_seqs: BTreeMap<String, i64>,
+        up_to_hash: String,
+        tables: SnapshotTablesV1,
+    }
+
+    #[test]
+    fn snapshot_v1_deserializes_with_default_fields() {
+        // Build a v1 snapshot (no todo_state/priority/due_date)
+        let mut up_to_seqs = BTreeMap::new();
+        up_to_seqs.insert("dev".to_string(), 1);
+
+        let v1 = SnapshotDataV1 {
+            schema_version: 1,
+            snapshot_device_id: "dev".to_string(),
+            up_to_seqs,
+            up_to_hash: "h".to_string(),
+            tables: SnapshotTablesV1 {
+                blocks: vec![BlockSnapshotV1 {
+                    id: "b1".to_string(),
+                    block_type: "content".to_string(),
+                    content: Some("hello".to_string()),
+                    parent_id: None,
+                    position: Some(1),
+                    deleted_at: None,
+                    archived_at: None,
+                    is_conflict: 0,
+                    conflict_source: None,
+                }],
+                block_tags: vec![],
+                block_properties: vec![],
+                block_links: vec![],
+                attachments: vec![],
+            },
+        };
+
+        // Encode as CBOR + zstd (same format as encode_snapshot)
+        let mut cbor_buf = Vec::new();
+        ciborium::into_writer(&v1, &mut cbor_buf).unwrap();
+        let compressed = zstd::encode_all(cbor_buf.as_slice(), 3).unwrap();
+
+        // Decode using the real decode_snapshot (which now accepts v1..=v2)
+        let decoded = decode_snapshot(&compressed).unwrap();
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.tables.blocks.len(), 1);
+        let b = &decoded.tables.blocks[0];
+        assert_eq!(b.id, "b1");
+        assert!(
+            b.todo_state.is_none(),
+            "v1 data should default todo_state to None"
+        );
+        assert!(
+            b.priority.is_none(),
+            "v1 data should default priority to None"
+        );
+        assert!(
+            b.due_date.is_none(),
+            "v1 data should default due_date to None"
+        );
+    }
+
+    #[test]
+    fn snapshot_v2_round_trips_new_fields() {
+        let mut up_to_seqs = BTreeMap::new();
+        up_to_seqs.insert("dev".to_string(), 1);
+
+        let data = SnapshotData {
+            schema_version: SCHEMA_VERSION,
+            snapshot_device_id: "dev".to_string(),
+            up_to_seqs,
+            up_to_hash: "h".to_string(),
+            tables: SnapshotTables {
+                blocks: vec![BlockSnapshot {
+                    id: "b1".to_string(),
+                    block_type: "content".to_string(),
+                    content: Some("hello".to_string()),
+                    parent_id: None,
+                    position: Some(1),
+                    deleted_at: None,
+                    archived_at: None,
+                    is_conflict: 0,
+                    conflict_source: None,
+                    todo_state: Some("TODO".to_string()),
+                    priority: Some("2".to_string()),
+                    due_date: Some("2026-04-15".to_string()),
+                }],
+                block_tags: vec![],
+                block_properties: vec![],
+                block_links: vec![],
+                attachments: vec![],
+            },
+        };
+
+        let encoded = encode_snapshot(&data).unwrap();
+        let decoded = decode_snapshot(&encoded).unwrap();
+
+        assert_eq!(decoded.schema_version, SCHEMA_VERSION);
+        let b = &decoded.tables.blocks[0];
+        assert_eq!(b.todo_state, Some("TODO".to_string()));
+        assert_eq!(b.priority, Some("2".to_string()));
+        assert_eq!(b.due_date, Some("2026-04-15".to_string()));
+    }
+
+    #[test]
+    fn snapshot_version_0_rejected() {
+        let mut up_to_seqs = BTreeMap::new();
+        up_to_seqs.insert("dev".to_string(), 1);
+
+        let data = SnapshotData {
+            schema_version: 0,
+            snapshot_device_id: "dev".to_string(),
+            up_to_seqs,
+            up_to_hash: "h".to_string(),
+            tables: SnapshotTables {
+                blocks: vec![],
+                block_tags: vec![],
+                block_properties: vec![],
+                block_links: vec![],
+                attachments: vec![],
+            },
+        };
+
+        let encoded = encode_snapshot(&data).unwrap();
+        let result = decode_snapshot(&encoded);
+        assert!(result.is_err(), "schema_version 0 should be rejected");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("unsupported schema version"),
+            "error should mention unsupported version, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn snapshot_version_3_rejected() {
+        let mut up_to_seqs = BTreeMap::new();
+        up_to_seqs.insert("dev".to_string(), 1);
+
+        let data = SnapshotData {
+            schema_version: 3,
+            snapshot_device_id: "dev".to_string(),
+            up_to_seqs,
+            up_to_hash: "h".to_string(),
+            tables: SnapshotTables {
+                blocks: vec![],
+                block_tags: vec![],
+                block_properties: vec![],
+                block_links: vec![],
+                attachments: vec![],
+            },
+        };
+
+        let encoded = encode_snapshot(&data).unwrap();
+        let result = decode_snapshot(&encoded);
+        assert!(result.is_err(), "schema_version 3 should be rejected");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("unsupported schema version"),
+            "error should mention unsupported version, got: {err_msg}"
+        );
     }
 }

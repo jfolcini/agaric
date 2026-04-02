@@ -3093,7 +3093,7 @@ async fn get_batch_properties_happy_path() {
         DEV,
         &mat,
         b1.id.clone(),
-        "priority".into(),
+        "importance".into(),
         Some("high".into()),
         None,
         None,
@@ -3124,7 +3124,7 @@ async fn get_batch_properties_happy_path() {
         .unwrap();
 
     assert_eq!(result.len(), 2, "both blocks must be in result");
-    assert_eq!(result[&b1.id][0].key, "priority");
+    assert_eq!(result[&b1.id][0].key, "importance");
     assert_eq!(result[&b1.id][0].value_text, Some("high".into()));
     assert_eq!(result[&b2.id][0].key, "status");
     assert_eq!(result[&b2.id][0].value_text, Some("done".into()));
@@ -4020,7 +4020,7 @@ async fn backlinks_filtered_with_sort_property() {
         DEV,
         &mat,
         b1.id.clone(),
-        "priority".into(),
+        "importance".into(),
         None,
         Some(1.0),
         None,
@@ -4059,7 +4059,7 @@ async fn backlinks_filtered_with_sort_property() {
         DEV,
         &mat,
         b2.id.clone(),
-        "priority".into(),
+        "importance".into(),
         None,
         Some(10.0),
         None,
@@ -4069,13 +4069,13 @@ async fn backlinks_filtered_with_sort_property() {
     .unwrap();
     settle(&mat).await;
 
-    // Sort by priority Desc (highest first)
+    // Sort by importance Desc (highest first)
     let resp = query_backlinks_filtered_inner(
         &pool,
         target.id.clone(),
         None,
         Some(BacklinkSort::PropertyNum {
-            key: "priority".into(),
+            key: "importance".into(),
             dir: SortDir::Desc,
         }),
         None,
@@ -4085,8 +4085,8 @@ async fn backlinks_filtered_with_sort_property() {
     .unwrap();
 
     assert_eq!(resp.items.len(), 2);
-    assert_eq!(resp.items[0].id, b2.id, "priority=10 first in Desc");
-    assert_eq!(resp.items[1].id, b1.id, "priority=1 second in Desc");
+    assert_eq!(resp.items[0].id, b2.id, "importance=10 first in Desc");
+    assert_eq!(resp.items[1].id, b1.id, "importance=1 second in Desc");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -6779,4 +6779,95 @@ async fn create_property_def_with_hyphen_underscore_key() {
         .await
         .unwrap();
     assert_eq!(def.key, "my-custom_prop", "hyphen/underscore key must work");
+}
+
+// ---------------------------------------------------------------------------
+// Reserved key routing: query_by_property + delete_property (#562 review fixes)
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_finds_reserved_key_in_blocks_column() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create a content block and set its todo_state
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task one".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Query by reserved key — should find the block via blocks.todo_state column
+    let result =
+        query_by_property_inner(&pool, "todo_state".into(), Some("TODO".into()), None, None)
+            .await
+            .unwrap();
+    assert_eq!(
+        result.items.len(),
+        1,
+        "query_by_property with reserved key must find blocks with that column value"
+    );
+    assert_eq!(result.items[0].id, block.id);
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_clears_reserved_key_column() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create a content block and set its priority
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "important".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_priority_inner(&pool, DEV, &mat, block.id.clone(), Some("2".into()))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Verify it's set
+    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert_eq!(
+        fetched.priority.as_deref(),
+        Some("2"),
+        "priority should be set before delete"
+    );
+
+    // Delete the reserved key property
+    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "priority".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Verify column is cleared
+    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert!(
+        fetched.priority.is_none(),
+        "delete_property on reserved key must clear the blocks column"
+    );
+
+    mat.shutdown();
 }

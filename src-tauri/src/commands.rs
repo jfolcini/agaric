@@ -27,9 +27,10 @@ use crate::fts;
 use crate::materializer::{Materializer, StatusInfo};
 use crate::now_rfc3339;
 use crate::op::{
-    validate_set_property, AddTagPayload, CreateBlockPayload, DeleteBlockPayload,
-    DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload, OpRef, PurgeBlockPayload,
-    RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload, UndoResult,
+    is_reserved_property_key, validate_set_property, AddTagPayload, CreateBlockPayload,
+    DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
+    OpRef, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload,
+    UndoResult,
 };
 use crate::op_log;
 use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
@@ -1705,19 +1706,37 @@ pub async fn set_property_inner(
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
-    // 5. Materialize: upsert into block_properties
-    sqlx::query(
-        "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
-         VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&block_id)
-    .bind(&key)
-    .bind(&value_text)
-    .bind(value_num)
-    .bind(&value_date)
-    .bind(&value_ref)
-    .execute(&mut *tx)
-    .await?;
+    // 5. Materialize: route reserved keys to blocks columns, others to block_properties
+    if is_reserved_property_key(&key) {
+        let col = match key.as_str() {
+            "todo_state" => "todo_state",
+            "priority" => "priority",
+            "due_date" => "due_date",
+            _ => unreachable!(),
+        };
+        let value = match col {
+            "due_date" => &value_date,
+            _ => &value_text,
+        };
+        sqlx::query(&format!("UPDATE blocks SET {col} = ? WHERE id = ?"))
+            .bind(value)
+            .bind(&block_id)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        sqlx::query(
+            "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&block_id)
+        .bind(&key)
+        .bind(&value_text)
+        .bind(value_num)
+        .bind(&value_date)
+        .bind(&value_ref)
+        .execute(&mut *tx)
+        .await?;
+    }
 
     tx.commit().await?;
 
@@ -1735,10 +1754,138 @@ pub async fn set_property_inner(
         archived_at: existing.archived_at,
         is_conflict: existing.is_conflict,
         conflict_type: existing.conflict_type,
-        todo_state: existing.todo_state,
-        priority: existing.priority,
-        due_date: existing.due_date,
+        todo_state: if key == "todo_state" {
+            value_text.clone()
+        } else {
+            existing.todo_state
+        },
+        priority: if key == "priority" {
+            value_text.clone()
+        } else {
+            existing.priority
+        },
+        due_date: if key == "due_date" {
+            value_date.clone()
+        } else {
+            existing.due_date
+        },
     })
+}
+
+/// Set the todo state on a block (TODO / DOING / DONE or clear).
+///
+/// Validates the value and delegates to [`set_property_inner`] with the
+/// reserved `"todo_state"` key.
+pub async fn set_todo_state_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    state: Option<String>,
+) -> Result<BlockRow, AppError> {
+    if let Some(ref s) = state {
+        if !matches!(s.as_str(), "TODO" | "DOING" | "DONE") {
+            return Err(AppError::Validation(format!(
+                "todo_state must be TODO, DOING, or DONE, got '{s}'"
+            )));
+        }
+    }
+    set_property_inner(
+        pool,
+        device_id,
+        materializer,
+        block_id,
+        "todo_state".to_string(),
+        state,
+        None,
+        None,
+        None,
+    )
+    .await
+}
+
+/// Set the priority on a block (1 / 2 / 3 or clear).
+///
+/// Validates the value and delegates to [`set_property_inner`] with the
+/// reserved `"priority"` key.
+pub async fn set_priority_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    level: Option<String>,
+) -> Result<BlockRow, AppError> {
+    if let Some(ref l) = level {
+        if !matches!(l.as_str(), "1" | "2" | "3") {
+            return Err(AppError::Validation(format!(
+                "priority must be 1, 2, or 3, got '{l}'"
+            )));
+        }
+    }
+    set_property_inner(
+        pool,
+        device_id,
+        materializer,
+        block_id,
+        "priority".to_string(),
+        level,
+        None,
+        None,
+        None,
+    )
+    .await
+}
+
+/// Set the due date on a block (ISO date YYYY-MM-DD or clear).
+///
+/// Validates the date format and delegates to [`set_property_inner`] with the
+/// reserved `"due_date"` key.
+pub async fn set_due_date_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    date: Option<String>,
+) -> Result<BlockRow, AppError> {
+    if let Some(ref d) = date {
+        if !is_valid_iso_date(d) {
+            return Err(AppError::Validation(format!(
+                "due_date must be YYYY-MM-DD format, got '{d}'"
+            )));
+        }
+    }
+    set_property_inner(
+        pool,
+        device_id,
+        materializer,
+        block_id,
+        "due_date".to_string(),
+        None,
+        None,
+        date,
+        None,
+    )
+    .await
+}
+
+/// Simple validation for ISO date format `YYYY-MM-DD`.
+fn is_valid_iso_date(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() != 10 {
+        return false;
+    }
+    if bytes[4] != b'-' || bytes[7] != b'-' {
+        return false;
+    }
+    let all_digits = bytes[0..4].iter().all(|b| b.is_ascii_digit())
+        && bytes[5..7].iter().all(|b| b.is_ascii_digit())
+        && bytes[8..10].iter().all(|b| b.is_ascii_digit());
+    if !all_digits {
+        return false;
+    }
+    let month: u32 = s[5..7].parse().unwrap_or(0);
+    let day: u32 = s[8..10].parse().unwrap_or(0);
+    (1..=12).contains(&month) && (1..=31).contains(&day)
 }
 
 /// Delete a property from a block.
@@ -1779,12 +1926,25 @@ pub async fn delete_property_inner(
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
 
-    // 4. Materialize: delete from block_properties
-    sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-        .bind(&block_id)
-        .bind(&key)
-        .execute(&mut *tx)
-        .await?;
+    // 4. Materialize: delete/clear the property
+    if is_reserved_property_key(&key) {
+        let col = match key.as_str() {
+            "todo_state" => "todo_state",
+            "priority" => "priority",
+            "due_date" => "due_date",
+            _ => unreachable!(),
+        };
+        sqlx::query(&format!("UPDATE blocks SET {col} = NULL WHERE id = ?"))
+            .bind(&block_id)
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+            .bind(&block_id)
+            .bind(&key)
+            .execute(&mut *tx)
+            .await?;
+    }
 
     tx.commit().await?;
 
@@ -3015,6 +3175,54 @@ pub async fn set_property(
     )
     .await
     .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: set todo state on a block. Delegates to [`set_todo_state_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn set_todo_state(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_id: String,
+    state: Option<String>,
+) -> Result<BlockRow, AppError> {
+    set_todo_state_inner(&pool.0, device_id.as_str(), &materializer, block_id, state)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: set priority on a block. Delegates to [`set_priority_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn set_priority(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_id: String,
+    level: Option<String>,
+) -> Result<BlockRow, AppError> {
+    set_priority_inner(&pool.0, device_id.as_str(), &materializer, block_id, level)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: set due date on a block. Delegates to [`set_due_date_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn set_due_date(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_id: String,
+    date: Option<String>,
+) -> Result<BlockRow, AppError> {
+    set_due_date_inner(&pool.0, device_id.as_str(), &materializer, block_id, date)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: delete a property from a block. Delegates to [`delete_property_inner`].
@@ -6340,7 +6548,7 @@ mod tests {
             DEV,
             &mat,
             block.id.clone(),
-            "priority".into(),
+            "importance".into(),
             Some("high".into()),
             None,
             None,
@@ -6354,7 +6562,7 @@ mod tests {
         // Verify via get_properties
         let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
         assert_eq!(props.len(), 1, "should have exactly one property");
-        assert_eq!(props[0].key, "priority");
+        assert_eq!(props[0].key, "importance");
         assert_eq!(props[0].value_text, Some("high".into()));
         assert!(props[0].value_num.is_none());
         assert!(props[0].value_date.is_none());
@@ -6572,7 +6780,7 @@ mod tests {
             DEV,
             &mat,
             b1.id.clone(),
-            "priority".into(),
+            "importance".into(),
             Some("high".into()),
             None,
             None,
@@ -6607,7 +6815,7 @@ mod tests {
         assert!(result.contains_key(&b1.id), "b1 must be in result");
         assert!(result.contains_key(&b2.id), "b2 must be in result");
         assert_eq!(result[&b1.id].len(), 1);
-        assert_eq!(result[&b1.id][0].key, "priority");
+        assert_eq!(result[&b1.id][0].key, "importance");
         assert_eq!(result[&b2.id].len(), 1);
         assert_eq!(result[&b2.id][0].key, "status");
     }
@@ -6676,7 +6884,7 @@ mod tests {
             DEV,
             &mat,
             block.id.clone(),
-            "priority".into(),
+            "importance".into(),
             Some("high".into()),
             None,
             None,
@@ -6725,7 +6933,7 @@ mod tests {
         assert_eq!(props.len(), 3, "must return all 3 properties");
 
         let keys: Vec<&str> = props.iter().map(|p| p.key.as_str()).collect();
-        assert!(keys.contains(&"priority"), "must contain priority");
+        assert!(keys.contains(&"importance"), "must contain importance");
         assert!(keys.contains(&"status"), "must contain status");
         assert!(keys.contains(&"score"), "must contain score");
     }
@@ -7947,7 +8155,7 @@ mod tests {
             DEV,
             &mat,
             block.id.clone(),
-            "priority".into(),
+            "importance".into(),
             Some("high".into()),
             None,
             None,
@@ -7963,7 +8171,7 @@ mod tests {
             DEV,
             &mat,
             block.id.clone(),
-            "priority".into(),
+            "importance".into(),
             Some("low".into()),
             None,
             None,
@@ -7975,7 +8183,7 @@ mod tests {
 
         // Verify it's "low"
         let props_before = get_properties_inner(&pool, block.id.clone()).await.unwrap();
-        let p_before = props_before.iter().find(|p| p.key == "priority").unwrap();
+        let p_before = props_before.iter().find(|p| p.key == "importance").unwrap();
         assert_eq!(p_before.value_text.as_deref(), Some("low"));
 
         // Get the second set_property op (the one that set "low")
@@ -7998,7 +8206,7 @@ mod tests {
 
         // Verify it's back to "high"
         let props_after = get_properties_inner(&pool, block.id.clone()).await.unwrap();
-        let p_after = props_after.iter().find(|p| p.key == "priority").unwrap();
+        let p_after = props_after.iter().find(|p| p.key == "importance").unwrap();
         assert_eq!(
             p_after.value_text.as_deref(),
             Some("high"),
@@ -9167,7 +9375,7 @@ mod tests {
             DEV,
             &mat,
             child.id.clone(),
-            "priority".into(),
+            "importance".into(),
             Some("high".into()),
             None,
             None,
@@ -9181,7 +9389,7 @@ mod tests {
         let props = get_properties_inner(&pool, child.id.clone()).await.unwrap();
         assert!(props
             .iter()
-            .any(|p| p.key == "priority" && p.value_text.as_deref() == Some("high")));
+            .any(|p| p.key == "importance" && p.value_text.as_deref() == Some("high")));
 
         // Undo the set_property (depth=0) — should produce delete_property since it was the first set
         let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
@@ -9194,7 +9402,7 @@ mod tests {
         // Verify property removed
         let props_after = get_properties_inner(&pool, child.id.clone()).await.unwrap();
         assert!(
-            !props_after.iter().any(|p| p.key == "priority"),
+            !props_after.iter().any(|p| p.key == "importance"),
             "property should be removed after undo"
         );
     }
@@ -9823,5 +10031,346 @@ mod tests {
             flag.load(Ordering::Acquire),
             "cancel flag must be set after cancel_sync"
         );
+    }
+
+    // ======================================================================
+    // set_todo_state / set_priority / set_due_date
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_todo_state_sets_value() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "todo test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+
+        assert_eq!(result.todo_state, Some("TODO".into()));
+
+        // Verify DB column
+        let db_val: Option<String> =
+            sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+                .bind(&block.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(db_val, Some("TODO".into()));
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_todo_state_clears_value() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "clear test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // Set then clear
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.todo_state, None);
+
+        // Verify DB column is NULL
+        let db_val: Option<String> =
+            sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+                .bind(&block.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(db_val.is_none());
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_todo_state_invalid_state_returns_validation() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "invalid test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result =
+            set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("INVALID".into())).await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "invalid state should return Validation error, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_todo_state_nonexistent_block_returns_not_found() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = set_todo_state_inner(
+            &pool,
+            DEV,
+            &mat,
+            "nonexistent-id".into(),
+            Some("TODO".into()),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::NotFound(_))),
+            "nonexistent block should return NotFound, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_priority_sets_and_clears() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "prio test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // Set priority
+        let result = set_priority_inner(&pool, DEV, &mat, block.id.clone(), Some("2".into()))
+            .await
+            .unwrap();
+        assert_eq!(result.priority, Some("2".into()));
+
+        mat.flush_background().await.unwrap();
+
+        // Clear priority
+        let result = set_priority_inner(&pool, DEV, &mat, block.id.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!(result.priority, None);
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_priority_invalid_returns_validation() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "inv prio".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_priority_inner(&pool, DEV, &mat, block.id.clone(), Some("5".into())).await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "invalid priority should return Validation error, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_due_date_sets_and_clears() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "date test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // Set due date
+        let result = set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2026-04-15".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.due_date, Some("2026-04-15".into()));
+
+        mat.flush_background().await.unwrap();
+
+        // Clear due date
+        let result = set_due_date_inner(&pool, DEV, &mat, block.id.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!(result.due_date, None);
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_due_date_invalid_format_returns_validation() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "inv date".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("not-a-date".into()),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "invalid date should return Validation error, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_property_routes_reserved_key_to_blocks_column() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "reserved routing".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // Use set_property_inner directly with reserved key
+        let result = set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "todo_state".into(),
+            Some("DONE".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.todo_state, Some("DONE".into()));
+
+        // Verify blocks.todo_state column updated
+        let db_val: Option<String> =
+            sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+                .bind(&block.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(db_val, Some("DONE".into()));
+
+        // Verify block_properties does NOT have a row for it
+        let prop_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'todo_state'",
+        )
+        .bind(&block.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            prop_count, 0,
+            "reserved key should not be in block_properties"
+        );
+
+        mat.shutdown();
     }
 }

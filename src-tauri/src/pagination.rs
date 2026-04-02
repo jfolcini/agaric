@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
+use crate::op::is_reserved_property_key;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -403,28 +404,58 @@ pub async fn query_by_property(
         None => (None, String::new()),
     };
 
-    let rows = sqlx::query_as!(
-        BlockRow,
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
-                b.conflict_type, b.todo_state, b.priority, b.due_date
-         FROM block_properties bp
-         JOIN blocks b ON b.id = bp.block_id
-         WHERE bp.key = ?1
-           AND b.deleted_at IS NULL
-           AND b.is_conflict = 0
-           AND (?2 IS NULL OR bp.value_text = ?2)
-           AND (?3 IS NULL OR b.id > ?4)
-         ORDER BY b.id ASC
-         LIMIT ?5"#,
-        key,         // ?1
-        value_text,  // ?2
-        cursor_flag, // ?3
-        cursor_id,   // ?4
-        fetch_limit, // ?5
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows = if is_reserved_property_key(key) {
+        // Reserved keys live as columns on the blocks table, not in block_properties.
+        let col = match key {
+            "todo_state" => "todo_state",
+            "priority" => "priority",
+            "due_date" => "due_date",
+            _ => unreachable!(),
+        };
+        let sql = format!(
+            "SELECT id, block_type, content, parent_id, position, \
+                    deleted_at, archived_at, is_conflict, conflict_type, \
+                    todo_state, priority, due_date \
+             FROM blocks \
+             WHERE {col} IS NOT NULL \
+               AND deleted_at IS NULL \
+               AND is_conflict = 0 \
+               AND (?1 IS NULL OR {col} = ?1) \
+               AND (?2 IS NULL OR id > ?3) \
+             ORDER BY id ASC \
+             LIMIT ?4"
+        );
+        sqlx::query_as::<_, BlockRow>(&sql)
+            .bind(value_text)
+            .bind(cursor_flag)
+            .bind(&cursor_id)
+            .bind(fetch_limit)
+            .fetch_all(pool)
+            .await?
+    } else {
+        sqlx::query_as!(
+            BlockRow,
+            r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+                    b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
+                    b.conflict_type, b.todo_state, b.priority, b.due_date
+             FROM block_properties bp
+             JOIN blocks b ON b.id = bp.block_id
+             WHERE bp.key = ?1
+               AND b.deleted_at IS NULL
+               AND b.is_conflict = 0
+               AND (?2 IS NULL OR bp.value_text = ?2)
+               AND (?3 IS NULL OR b.id > ?4)
+             ORDER BY b.id ASC
+             LIMIT ?5"#,
+            key,         // ?1
+            value_text,  // ?2
+            cursor_flag, // ?3
+            cursor_id,   // ?4
+            fetch_limit, // ?5
+        )
+        .fetch_all(pool)
+        .await?
+    };
 
     build_page_response(rows, page.limit, |last| Cursor {
         id: last.id.clone(),

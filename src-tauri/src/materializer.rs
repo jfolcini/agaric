@@ -43,9 +43,10 @@ use tokio::sync::mpsc;
 use crate::cache;
 use crate::error::AppError;
 use crate::op::{
-    AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
-    DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpType,
-    PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload,
+    is_reserved_property_key, AddAttachmentPayload, AddTagPayload, CreateBlockPayload,
+    DeleteAttachmentPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
+    MoveBlockPayload, OpType, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
+    SetPropertyPayload,
 };
 use crate::op_log::OpRecord;
 
@@ -1137,26 +1138,57 @@ async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> 
         }
         OpType::SetProperty => {
             let p: SetPropertyPayload = serde_json::from_str(&record.payload)?;
-            sqlx::query(
-                "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
-                 VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(p.block_id.as_str())
-            .bind(&p.key)
-            .bind(&p.value_text)
-            .bind(p.value_num)
-            .bind(&p.value_date)
-            .bind(&p.value_ref)
-            .execute(pool)
-            .await?;
+            if is_reserved_property_key(&p.key) {
+                let col = match p.key.as_str() {
+                    "todo_state" => "todo_state",
+                    "priority" => "priority",
+                    "due_date" => "due_date",
+                    _ => unreachable!(),
+                };
+                let value = match col {
+                    "due_date" => &p.value_date,
+                    _ => &p.value_text,
+                };
+                sqlx::query(&format!("UPDATE blocks SET {col} = ? WHERE id = ?"))
+                    .bind(value)
+                    .bind(p.block_id.as_str())
+                    .execute(pool)
+                    .await?;
+            } else {
+                sqlx::query(
+                    "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                )
+                .bind(p.block_id.as_str())
+                .bind(&p.key)
+                .bind(&p.value_text)
+                .bind(p.value_num)
+                .bind(&p.value_date)
+                .bind(&p.value_ref)
+                .execute(pool)
+                .await?;
+            }
         }
         OpType::DeleteProperty => {
             let p: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
-            sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-                .bind(p.block_id.as_str())
-                .bind(&p.key)
-                .execute(pool)
-                .await?;
+            if is_reserved_property_key(&p.key) {
+                let col = match p.key.as_str() {
+                    "todo_state" => "todo_state",
+                    "priority" => "priority",
+                    "due_date" => "due_date",
+                    _ => unreachable!(),
+                };
+                sqlx::query(&format!("UPDATE blocks SET {col} = NULL WHERE id = ?"))
+                    .bind(p.block_id.as_str())
+                    .execute(pool)
+                    .await?;
+            } else {
+                sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+                    .bind(p.block_id.as_str())
+                    .bind(&p.key)
+                    .execute(pool)
+                    .await?;
+            }
         }
         OpType::AddAttachment => {
             let p: AddAttachmentPayload = serde_json::from_str(&record.payload)?;
@@ -3272,7 +3304,7 @@ mod tests {
 
         let payload = OpPayload::SetProperty(SetPropertyPayload {
             block_id: BlockId::test_id(block_id),
-            key: "priority".into(),
+            key: "importance".into(),
             value_text: Some("high".into()),
             value_num: None,
             value_date: None,
@@ -3286,7 +3318,7 @@ mod tests {
         let row =
             sqlx::query("SELECT value_text FROM block_properties WHERE block_id = ? AND key = ?")
                 .bind(block_id)
-                .bind("priority")
+                .bind("importance")
                 .fetch_optional(&pool)
                 .await
                 .unwrap();
@@ -3312,7 +3344,7 @@ mod tests {
         // Pre-insert a property
         sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
             .bind(block_id)
-            .bind("priority")
+            .bind("importance")
             .bind("low")
             .execute(&pool)
             .await
@@ -3320,7 +3352,7 @@ mod tests {
 
         let payload = OpPayload::SetProperty(SetPropertyPayload {
             block_id: BlockId::test_id(block_id),
-            key: "priority".into(),
+            key: "importance".into(),
             value_text: Some("critical".into()),
             value_num: None,
             value_date: None,
@@ -3334,7 +3366,7 @@ mod tests {
         let row =
             sqlx::query("SELECT value_text FROM block_properties WHERE block_id = ? AND key = ?")
                 .bind(block_id)
-                .bind("priority")
+                .bind("importance")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
@@ -3562,6 +3594,65 @@ mod tests {
         assert!(
             metrics.fg_processed.load(AtomicOrdering::Relaxed) >= 10,
             "at least 10 foreground tasks should have been processed"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dispatch_op_set_property_reserved_key_writes_blocks_column() {
+        use crate::op::is_reserved_property_key;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Insert a block to act on (uppercase to match BlockId::test_id)
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, is_conflict) \
+             VALUES ('BLK-RES', 'content', 'test', 1, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(is_reserved_property_key("todo_state"));
+
+        let record = make_op_record(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK-RES"),
+                key: "todo_state".into(),
+                value_text: Some("DONE".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+        )
+        .await;
+
+        mat.dispatch_op(&record).await.unwrap();
+        mat.flush().await.unwrap();
+
+        // Verify blocks.todo_state column is updated
+        let todo_state: Option<String> =
+            sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = 'BLK-RES'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            todo_state,
+            Some("DONE".into()),
+            "blocks.todo_state column should be DONE"
+        );
+
+        // Verify block_properties does NOT have a row for this key
+        let prop_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'BLK-RES' AND key = 'todo_state'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            prop_count, 0,
+            "reserved key should NOT be stored in block_properties"
         );
     }
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source FROM blocks",
+  "query": "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source, todo_state, priority, due_date FROM blocks",
   "describe": {
     "columns": [
       {
@@ -47,6 +47,21 @@
         "name": "conflict_source",
         "ordinal": 8,
         "type_info": "Text"
+      },
+      {
+        "name": "todo_state",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "priority",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "due_date",
+        "ordinal": 11,
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -61,8 +76,11 @@
       true,
       true,
       false,
+      true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "b9165211ef9fd0929fdce69e2a92f89a3b62088e4452fe2e7bd29065e7744faf"
+  "hash": "3b9bd785ddb567f619e7332dee95392d069f6771875785333e0ebdfd72a7975a"
 }
