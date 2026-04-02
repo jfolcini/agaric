@@ -2109,7 +2109,17 @@ pub async fn undo_page_op_inner(
          ) \
          SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
          FROM op_log ol \
-         WHERE json_extract(ol.payload, '$.block_id') IN (SELECT id FROM page_blocks) \
+         WHERE ( \
+             json_extract(ol.payload, '$.block_id') IN (SELECT id FROM page_blocks) \
+             OR ( \
+                 ol.op_type = 'delete_attachment' \
+                 AND EXISTS ( \
+                     SELECT 1 FROM attachments a \
+                     WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
+                     AND a.block_id IN (SELECT id FROM page_blocks) \
+                 ) \
+             ) \
+         ) \
          ORDER BY ol.created_at DESC, ol.seq DESC \
          LIMIT 1 OFFSET ?2",
         page_id,    // ?1
@@ -6815,6 +6825,130 @@ mod tests {
         // The second most recent op is "edit1" (edit_block)
         assert_eq!(result.new_op_type, "edit_block");
         assert!(!result.is_redo);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_page_op_finds_delete_attachment_op() {
+        use sqlx::Row;
+
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // 1. Create a page with a child block
+        let page = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Attachment Page".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "child block".into(),
+            Some(page.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // 2. Add an attachment to the child block
+        let att_id = "ATT_UNDO_001";
+        let att_ts = now_rfc3339();
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(att_id)
+        .bind(&child.id)
+        .bind("image/png")
+        .bind("photo.png")
+        .bind(1024_i64)
+        .bind("/tmp/photo.png")
+        .bind(&att_ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        op_log::append_local_op_at(
+            &pool,
+            DEV,
+            OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+                attachment_id: att_id.into(),
+                block_id: BlockId::from_trusted(&child.id),
+                mime_type: "image/png".into(),
+                filename: "photo.png".into(),
+                size_bytes: 1024,
+                fs_path: "/tmp/photo.png".into(),
+            }),
+            att_ts.clone(),
+        )
+        .await
+        .unwrap();
+
+        // 3. Delete the attachment (append delete_attachment op + soft-delete)
+        let del_ts = now_rfc3339();
+        op_log::append_local_op_at(
+            &pool,
+            DEV,
+            OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+                attachment_id: att_id.into(),
+            }),
+            del_ts.clone(),
+        )
+        .await
+        .unwrap();
+
+        sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
+            .bind(&del_ts)
+            .bind(att_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Verify attachment is soft-deleted
+        let row = sqlx::query("SELECT deleted_at FROM attachments WHERE id = ?")
+            .bind(att_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let deleted_at: Option<String> = row.get("deleted_at");
+        assert!(
+            deleted_at.is_some(),
+            "attachment should be soft-deleted before undo"
+        );
+
+        // 4. Undo most recent op — should find the delete_attachment op
+        let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+            .await
+            .expect("undo should find delete_attachment op on the page");
+
+        assert_eq!(
+            result.new_op_type, "add_attachment",
+            "reversing delete_attachment should produce add_attachment"
+        );
+        assert!(!result.is_redo);
+
+        // 5. Verify the attachment is restored (deleted_at cleared)
+        let row = sqlx::query("SELECT deleted_at FROM attachments WHERE id = ?")
+            .bind(att_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let deleted_at: Option<String> = row.get("deleted_at");
+        assert!(
+            deleted_at.is_none(),
+            "attachment should be restored after undo (deleted_at should be NULL)"
+        );
     }
 
     // -- redo_page_op tests --
