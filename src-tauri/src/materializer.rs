@@ -58,6 +58,8 @@ use crate::op_log::OpRecord;
 pub enum MaterializeTask {
     /// Foreground: apply an op's effects to core tables (blocks, block_tags, etc.)
     ApplyOp(OpRecord),
+    /// Foreground: apply multiple remote ops in batch (reduces channel overhead for bulk sync)
+    BatchApplyOps(Vec<OpRecord>),
     /// Background: rebuild tags_cache
     RebuildTagsCache,
     /// Background: rebuild pages_cache
@@ -832,6 +834,10 @@ fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
                 // Never drop ApplyOp, even if unexpected on bg queue.
                 result.push(task);
             }
+            MaterializeTask::BatchApplyOps(_) => {
+                // Never drop BatchApplyOps — each batch must be fully applied.
+                result.push(task);
+            }
             MaterializeTask::Barrier(_) => {
                 // Never drop Barrier — each one signals a unique flush waiter.
                 result.push(task);
@@ -866,6 +872,19 @@ async fn handle_foreground_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
                     error = %e,
                     "failed to apply remote op (continuing)"
                 );
+            }
+            Ok(())
+        }
+        MaterializeTask::BatchApplyOps(records) => {
+            for record in records {
+                if let Err(e) = apply_op(pool, record).await {
+                    tracing::warn!(
+                        op_type = %record.op_type,
+                        seq = record.seq,
+                        error = %e,
+                        "failed to apply remote op in batch (continuing)"
+                    );
+                }
             }
             Ok(())
         }
@@ -1194,6 +1213,10 @@ async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
         MaterializeTask::FtsOptimize => crate::fts::fts_optimize(pool).await,
         MaterializeTask::ApplyOp(ref record) => {
             tracing::warn!(seq = record.seq, "unexpected ApplyOp in background queue");
+            Ok(())
+        }
+        MaterializeTask::BatchApplyOps(_) => {
+            tracing::warn!("unexpected BatchApplyOps in background queue");
             Ok(())
         }
         MaterializeTask::Barrier(ref notify) => {
@@ -3433,6 +3456,112 @@ mod tests {
         assert!(
             row.is_none(),
             "attachment should be gone after DeleteAttachment"
+        );
+    }
+
+    // ======================================================================
+    // Concurrent stress — foreground + background on same block_id
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_fg_bg_same_block_does_not_panic() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "STRESS_BLOCK_01";
+        sqlx::query("INSERT INTO blocks (id, block_type, content, position) VALUES (?, ?, ?, ?)")
+            .bind(block_id)
+            .bind("content")
+            .bind("stress test")
+            .bind(1_i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Fire 20 foreground ApplyOp + 20 background tasks concurrently for the same block
+        let mut handles = Vec::new();
+        for i in 0..20 {
+            let mat_fg = mat.clone();
+            let payload_str = format!(
+                r#"{{"op_type":"edit_block","block_id":"{block_id}","to_text":"v{i}","prev_edit":null}}"#,
+            );
+            let record = fake_op_record("edit_block", &payload_str);
+            handles.push(tokio::spawn(async move {
+                let _ = mat_fg
+                    .enqueue_foreground(MaterializeTask::ApplyOp(record))
+                    .await;
+            }));
+
+            let mat_bg = mat.clone();
+            let bid = block_id.to_string();
+            handles.push(tokio::spawn(async move {
+                let _ = mat_bg
+                    .enqueue_background(MaterializeTask::ReindexBlockLinks {
+                        block_id: bid.clone(),
+                    })
+                    .await;
+                let _ = mat_bg
+                    .enqueue_background(MaterializeTask::UpdateFtsBlock { block_id: bid })
+                    .await;
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        // Flush both queues — if there's a deadlock or panic, this will hang/fail
+        mat.flush().await.unwrap();
+
+        // Verify materializer is still functional after the storm
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_dispatch_ops_serialized_correctly() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block_id = "STRESS_SERIAL_01";
+        sqlx::query("INSERT INTO blocks (id, block_type, content, position) VALUES (?, ?, ?, ?)")
+            .bind(block_id)
+            .bind("content")
+            .bind("initial")
+            .bind(1_i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Dispatch 10 edit ops concurrently through dispatch_op
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let mat_c = mat.clone();
+            let pool_c = pool.clone();
+            let payload = OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id(block_id),
+                to_text: format!("concurrent-v{i}"),
+                prev_edit: None,
+            });
+            handles.push(tokio::spawn(async move {
+                let record = make_op_record(&pool_c, payload).await;
+                mat_c.dispatch_op(&record).await.unwrap();
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        mat.flush().await.unwrap();
+
+        // All 10 ops should have been processed — check metrics
+        let metrics = mat.metrics();
+        assert!(
+            metrics.fg_processed.load(AtomicOrdering::Relaxed) >= 10,
+            "at least 10 foreground tasks should have been processed"
         );
     }
 }

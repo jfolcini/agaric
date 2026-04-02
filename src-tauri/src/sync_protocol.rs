@@ -262,9 +262,9 @@ pub async fn apply_remote_ops(
 
     // Enqueue materialization AFTER commit — ensures all ops are durable
     // before any are processed.
-    for record in to_materialize {
+    if !to_materialize.is_empty() {
         materializer
-            .enqueue_foreground(MaterializeTask::ApplyOp(record))
+            .enqueue_foreground(MaterializeTask::BatchApplyOps(to_materialize))
             .await?;
     }
 
