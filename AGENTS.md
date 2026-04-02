@@ -9,7 +9,7 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React +
 | Document | Purpose |
 |----------|---------|
 | **AGENTS.md** (this file) | Build commands, invariants, conventions |
-| **ARCHITECTURE.md** | Deep-dive: data model, op log, materializer, editor, sync, search (1080 lines) |
+| **ARCHITECTURE.md** | Deep-dive: data model, op log, materializer, editor, sync, search (~1160 lines) |
 | `src-tauri/tests/AGENTS.md` | Rust test patterns, fixtures, pitfalls |
 | `src/__tests__/AGENTS.md` | Frontend test patterns, mocking, a11y |
 | `.devin/rules/workflow.md` | Subagent workflow, worktrees, compilation costs |
@@ -62,22 +62,25 @@ prek run                 # Staged files only
 - **File:** `notes.db` in `~/.local/share/com.blocknotes.app/` (Linux) or app data dir (Android)
 - **WAL mode**, foreign keys ON on every connection
 - **Pool:** 1 writer + 4 readers (5 total)
-- **Migrations:** `src-tauri/migrations/` (6 files) — auto-run on pool init
+- **Migrations:** `src-tauri/migrations/` (10 files) — auto-run on pool init
 - **Schema:** 12 tables + 1 FTS5 virtual table (trigram tokenizer), 13 indexes, 2 triggers
 
 ## Frontend Architecture
 
-- **State:** 6 Zustand stores — `useBootStore`, `useBlockStore`, `useNavigationStore`, `useJournalStore`, `useResolveStore`, `useUndoStore`
+- **State:** 7 Zustand stores — `useBootStore`, `useBlockStore`, `useNavigationStore`, `useJournalStore`, `useResolveStore`, `useUndoStore`, `useSyncStore`
 - **Editor:** Single roving TipTap instance with 6 custom extensions (TagRef, BlockLink, ExternalLink, AtTagPicker, BlockLinkPicker, SlashCommand)
 - **Serializer:** Custom Markdown serializer (`src/editor/markdown-serializer.ts`) — zero external deps, handles `#[ULID]` and `[[ULID]]` tokens
+- **Sync hooks:** `useSyncTrigger` (exponential backoff periodic sync), `useSyncEvents` (Tauri event listener), `useOnlineStatus` (navigator.onLine)
 - **Code style:** 2-space indent, single quotes, no semicolons, 100-char line width (Biome)
 
 ## Backend Architecture
 
 - **Error handling:** `AppError` enum (11 variants) serializes to `{ kind, message }` for Tauri 2 IPC. Specta-derived TS bindings.
 - **Undo/redo:** Two-tier model. In-editor: TipTap/ProseMirror history (cleared on blur). Page-level: `reverse.rs` computes inverse ops from op log. Non-reversible: `purge_block`, `delete_attachment`.
-- **Materializer:** Foreground queue (256 cap, core tables) + background queue (1024 cap, caches/FTS). Auto-dedup, silent drop on backpressure.
-- **Commands:** 28 Tauri command handlers in `commands.rs`. Each has an `inner_*` function taking `&SqlitePool` for testability.
+- **Materializer:** Foreground queue (256 cap, core tables + `BatchApplyOps`) + background queue (1024 cap, caches/FTS). Auto-dedup, silent drop on backpressure.
+- **Commands:** 33 Tauri command handlers in `commands.rs` (28 core + 5 sync). Each has an `inner_*` function taking `&SqlitePool` for testability.
+- **Sync daemon:** `sync_daemon.rs` — background task with mDNS discovery, TLS WebSocket server, initiator-side sync via `SyncOrchestrator`. Per-peer backoff via `SyncScheduler`.
+- **Sync cert:** `sync_cert.rs` — persistent TLS certificate (generate-once-then-load pattern). `PersistedCert` managed state.
 
 ## TypeScript Bindings (specta)
 
@@ -117,7 +120,7 @@ During development, run only the relevant check:
 - **Min SDK:** 24, **Target SDK:** 36, **NDK:** 27
 - **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`
 - **DB path:** `/data/data/com.blocknotes.app/notes.db` (via `app.path().app_data_dir()`)
-- **Known issues:** 24 open items in REVIEW-LATER.md Tier 4+5. ProGuard keep rules empty — release APK crashes (#63).
+- **Known issues:** 3 open items in REVIEW-LATER.md. ProGuard keep rules empty — release APK crashes (#63).
 - **Headless testing:** See `.devin/rules/android-testing.md` for ADB recipes and debugging workflow.
 
 ## Subagent Workflow
@@ -143,4 +146,4 @@ Every step is mandatory. No self-reviewed commits. See `.devin/rules/workflow.md
 | `AGENTS.md` | This file | Only with explicit user approval |
 | `project-plan.md` | Master task list + ADRs | When task status changes |
 
-When resolving REVIEW-LATER items: `- **Resolved:** yes — [commit hash] <note>`
+When resolving REVIEW-LATER items: remove the item entirely (table row + detail section). Record the removal in the summary log.
