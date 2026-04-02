@@ -418,7 +418,7 @@
 |---|---------|--------|-------|-------|-------|
 | 183 | i18n framework + UI string extraction | Planned | 5 | — | |
 | 184 | RTL layout validation | Partial | 5 | — | Tailwind `rtl:` variants prepared; no tests |
-| 185 | Noto Sans font bundling (CJK + Arabic coverage) | Planned | 5 | — | |
+| 185 | Noto Sans font bundling (CJK + Arabic coverage) | Done | 1 | none | In CSS font stack; system fallback covers all platforms |
 
 ---
 

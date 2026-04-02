@@ -38,7 +38,7 @@ Anytype, faster than Logseq.
 | Desktop shell | Tauri 2.0 | Lightweight native wrapper. Ships a WebView, not a bundled browser. |
 | Frontend | React 18 + Vite | Locked by TipTap and shadcn/ui ecosystem. |
 | Editor | TipTap (ProseMirror) | WYSIWYG inline nodes for token chips. See [Editor Architecture](#7-editor-architecture). |
-| UI library | shadcn/ui + Tailwind | Copy-paste components, no lock-in. `rtl:` variants for future i18n. |
+| UI library | shadcn/ui + Tailwind | Copy-paste components, no lock-in. Noto Sans in font stack. `rtl:` variants for future i18n. |
 | Linting/formatting | Biome | Replaces ESLint + Prettier. Non-negotiable from day one — retrofitting means a whole-repo reformat. |
 | Database | SQLite via sqlx | Async, compile-time query validation. WAL mode for concurrent readers. |
 | State management | Zustand | Lightweight stores with explicit state enums for boot and editor lifecycle. |
@@ -664,6 +664,13 @@ BlockTree's concerns are decomposed into focused hooks:
 | `useUndoShortcuts` | Global Ctrl+Z / Ctrl+Y (outside editor contentEditable) |
 | `useViewportObserver` | IntersectionObserver for off-screen block placeholders |
 | `useMobile` | Responsive breakpoint detection for mobile layout |
+| `usePaginatedQuery` | Cursor-based pagination with stale response detection and auto-refetch |
+| `usePollingQuery` | Fixed-interval polling with optional refetch-on-focus |
+
+`usePaginatedQuery` and `usePollingQuery` replace per-component boilerplate across
+PageBrowser, TrashView, ConflictList, BacklinksPanel, HistoryView, StatusPanel, and
+`useHasConflicts`. The caller stabilises `queryFn` with `useCallback`; when its identity
+changes the hook re-fetches page 1 (paginated) or restarts polling.
 
 ---
 

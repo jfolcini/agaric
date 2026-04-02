@@ -8,8 +8,6 @@
 | ADR | Title | Status | Remaining work |
 |-----|-------|--------|----------------|
 | 01 | Shell & Frontend | **Partial** | Export (P5). |
-| 02 | State Management | **Complete** | — |
-| 03 | UI Components | **Partial** | Noto Sans bundling deferred to P5 (i18n). |
 | 06 | Data Model | **Partial** | Export (P5) pending. |
 | 12 | Search | **Partial** | Tantivy + lindera CJK search (P5). |
 | 16 | Build Order | **Reference** | Phase 5 remaining. Phase 4 complete. |
@@ -18,7 +16,7 @@
 | 20 | Content Storage | **Partial** | Export (P5) pending. |
 
 **Legend:** P1=Phase 1, P2=Phase 2, etc. See ARCHITECTURE.md for all implemented decisions
-(former ADR-04, 05, 07, 08, 09, 10, 11, 13, 14, 15, 18).
+(former ADR-02, 03, 04, 05, 07, 08, 09, 10, 11, 13, 14, 15, 18).
 
 ---
 
@@ -30,29 +28,6 @@ auto-split, keyboard handling, viewport observer. See ARCHITECTURE.md §1, §7.
 **Pending:**
 
 - **Export (Phase 5):** Markdown export with ULID → human name substitution. Not started.
-
----
-
-## ADR-02 — State Management (Remaining)
-
-**Implemented:** Zustand with explicit state enums for boot (`booting → recovering → ready | error`)
-and editor lifecycle. Two-tier undo: TipTap history within session, page-level op reversal via
-`useUndoStore` + `reverse.rs` for cross-flush Ctrl+Z/Y. Custom `usePaginatedQuery` and
-`usePollingQuery` hooks replace pagination/polling boilerplate across all list views.
-See ARCHITECTURE.md §7, §8.
-
----
-
-## ADR-03 — UI Components (Remaining)
-
-**Implemented:** shadcn/ui (copy-paste, owned), Tailwind with `rtl:` variants. See
-ARCHITECTURE.md §1.
-
-**Pending:**
-
-- **Noto Sans bundling (Phase 5, i18n):** System fonts cause inconsistent CJK/Arabic rendering on
-  Android. Noto Sans must be bundled for reliable multi-script display. Deferred because it adds
-  ~4 MB to the APK and is only needed for i18n support.
 
 ---
 
@@ -102,7 +77,7 @@ UI. See ARCHITECTURE.md §9.
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 4 — Sync + Android | mDNS, pairing, op streaming, merge, Android spike. | **Complete.** |
-| 5 — Polish | i18n (Noto Sans bundling), CJK search (Tantivy + lindera), export (ULID → name substitution, Markdown output), auto-updates, graph view. | Pending. |
+| 5 — Polish | i18n, CJK search (Tantivy + lindera), export (ULID → name substitution, Markdown output), auto-updates, graph view. | Pending. |
 
 **Total at ~10 h/week:** 12–18 months. Daily driver by month 3–4.
 

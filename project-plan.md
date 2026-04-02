@@ -341,7 +341,7 @@ These tasks block everything downstream. Ship them before moving on.
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
 | p4-t23 | Full Android build pipeline | infra | | [ADR-01] Tauri 2.0 Android target. CI: cross-compile Rust, APK build. Not throwaway spike — production target. |
-| p4-t24 | Android layout: virtual keyboard + safe areas | frontend | | [ADR-01, ADR-03] WindowInsets. Keyboard avoid. Tailwind rtl: variants active. Noto Sans rendering validated. |
+| p4-t24 | Android layout: virtual keyboard + safe areas | frontend | | [ADR-01, ADR-03] WindowInsets. Keyboard avoid. Tailwind rtl: variants active. |
 | p4-t25 | Android: mDNS + sync UI | frontend | | [ADR-01, ADR-09] Same sync flow as Linux. QR scan for pairing on Android. Platform-specific camera permission. |
 
 ---
@@ -357,8 +357,8 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p5-t1 | i18n framework selection + string extraction | frontend, dx | | [ADR-03] Extract all UI strings. RTL layout: Tailwind rtl: variants already prepared. Noto Sans covers CJK + Arabic. |
-| p5-t2 | RTL layout validation | frontend, testing | | [ADR-03] Block tree, pickers, journal, history panel. rtl: Tailwind variants. Noto Sans rendering on Android confirmed. |
+| p5-t1 | i18n framework selection + string extraction | frontend, dx | | [ADR-03] Extract all UI strings. RTL layout: Tailwind rtl: variants already prepared. |
+| p5-t2 | RTL layout validation | frontend, testing | | [ADR-03] Block tree, pickers, journal, history panel. rtl: Tailwind variants. |
 
 ### CJK Search — Tantivy + lindera
 
@@ -405,7 +405,7 @@ These tasks block everything downstream. Ship them before moving on.
 | blake3 | backend | Op log hash chaining. |
 | FxHashMap | backend | Hot-path hash maps. FxHashSet for tag queries. |
 | Zustand | frontend | Boot + editor state enums only. Minimal. |
-| shadcn/ui + Tailwind | frontend | Copy-paste, owned, no lock-in. Noto Sans bundled. |
+| shadcn/ui + Tailwind | frontend | Copy-paste, owned, no lock-in. |
 | Vitest | dx | Frontend unit tests. Serializer test suite lives here. |
 | GitHub Actions + tauri-action | infra | CI before features. |
 
