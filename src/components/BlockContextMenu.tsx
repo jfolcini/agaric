@@ -42,6 +42,8 @@ export interface BlockContextMenuProps {
   isCollapsed?: boolean
   todoState?: string | null
   priority?: string | null
+  /** Due date in YYYY-MM-DD format (for future use). */
+  dueDate?: string | null
 }
 
 interface MenuItem {
@@ -97,6 +99,7 @@ export function BlockContextMenu({
   isCollapsed,
   todoState,
   priority,
+  dueDate: _dueDate,
 }: BlockContextMenuProps): React.ReactElement {
   const menuRef = useRef<HTMLDivElement>(null)
   const [focusedIndex, setFocusedIndex] = useState(0)

@@ -816,6 +816,33 @@ export function setupMock(): void {
         return undefined
       }
 
+      case 'set_todo_state': {
+        const a = args as Record<string, unknown>
+        const b = blocks.get(a.blockId as string)
+        if (!b) throw new Error('not found')
+        b.todo_state = (a.state as string | null) ?? null
+        pushOp('set_todo_state', { block_id: a.blockId, state: b.todo_state })
+        return { ...b }
+      }
+
+      case 'set_priority': {
+        const a = args as Record<string, unknown>
+        const b = blocks.get(a.blockId as string)
+        if (!b) throw new Error('not found')
+        b.priority = (a.level as string | null) ?? null
+        pushOp('set_priority', { block_id: a.blockId, level: b.priority })
+        return { ...b }
+      }
+
+      case 'set_due_date': {
+        const a = args as Record<string, unknown>
+        const b = blocks.get(a.blockId as string)
+        if (!b) throw new Error('not found')
+        b.due_date = (a.date as string | null) ?? null
+        pushOp('set_due_date', { block_id: a.blockId, date: b.due_date })
+        return { ...b }
+      }
+
       default:
         return null
     }

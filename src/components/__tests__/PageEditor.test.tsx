@@ -9,7 +9,7 @@
  *  - Reloads blocks when pageId prop changes
  *  - Detail panel: hidden when no block focused
  *  - Detail panel: renders when a block is focused
- *  - Detail panel: tab switching between history/properties
+ *  - Detail panel: history tab
  *  - Detail panel: persists when focusedBlockId becomes null
  *  - Detail panel: collapsible
  */
@@ -59,12 +59,6 @@ vi.mock('../HistoryPanel', () => ({
   HistoryPanel: (props: { blockId: string | null }) => {
     capturedHistoryBlockId = props.blockId
     return <div data-testid="history-panel" data-block-id={props.blockId ?? ''} />
-  },
-}))
-
-vi.mock('../PropertiesPanel', () => ({
-  PropertiesPanel: (props: { blockId: string | null }) => {
-    return <div data-testid="properties-panel" data-block-id={props.blockId ?? ''} />
   },
 }))
 
@@ -373,13 +367,11 @@ describe('PageEditor detail panel', () => {
     const panel = screen.getByTestId('detail-panel')
     expect(panel).toBeInTheDocument()
 
-    // Tab buttons should be visible
+    // History tab button should be visible
     expect(screen.getByRole('tab', { name: /history/i })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: /properties/i })).toBeInTheDocument()
 
     // Panel content should NOT be auto-opened
     expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('properties-panel')).not.toBeInTheDocument()
   })
 
   it('passes correct blockId to panel components after tab click', async () => {
@@ -394,22 +386,13 @@ describe('PageEditor detail panel', () => {
     expect(capturedHistoryBlockId).toBe('BLOCK_42')
   })
 
-  it('switches between history and properties tabs', async () => {
+  it('opens history panel when history tab is clicked', async () => {
     const user = userEvent.setup()
     useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
 
-    // Open History tab first (panel is collapsed by default)
-    await user.click(screen.getByRole('tab', { name: /history/i }))
-    expect(screen.getByTestId('history-panel')).toBeInTheDocument()
-
-    // Switch to Properties tab
-    await user.click(screen.getByRole('tab', { name: /properties/i }))
-    expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
-    expect(screen.getByTestId('properties-panel')).toBeInTheDocument()
-
-    // Switch back to History tab
+    // Open History tab
     await user.click(screen.getByRole('tab', { name: /history/i }))
     expect(screen.getByTestId('history-panel')).toBeInTheDocument()
     expect(capturedHistoryBlockId).toBe('BLOCK_1')
@@ -498,7 +481,7 @@ describe('PageEditor detail panel', () => {
     expect(contentEl).toHaveClass('overflow-y-auto')
   })
 
-  it('clicking a tab while collapsed expands the panel', async () => {
+  it('clicking history tab while collapsed re-expands the panel', async () => {
     const user = userEvent.setup()
     useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
 
@@ -509,9 +492,9 @@ describe('PageEditor detail panel', () => {
     await user.click(screen.getByRole('button', { name: /collapse detail panel/i }))
     expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument()
 
-    // Click Properties tab — should expand and switch tab
-    await user.click(screen.getByRole('tab', { name: /properties/i }))
-    expect(screen.getByTestId('properties-panel')).toBeInTheDocument()
+    // Click History tab again — should expand
+    await user.click(screen.getByRole('tab', { name: /history/i }))
+    expect(screen.getByTestId('history-panel')).toBeInTheDocument()
   })
 
   it('has no a11y violations when detail panel is visible', async () => {
@@ -526,7 +509,7 @@ describe('PageEditor detail panel', () => {
     })
   })
 
-  it('tab bar has tablist role and tab buttons have tab role with aria-selected', () => {
+  it('tab bar has tablist role and history tab has tab role with aria-selected', () => {
     useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
 
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -535,15 +518,12 @@ describe('PageEditor detail panel', () => {
     const tablist = screen.getByRole('tablist', { name: /block details/i })
     expect(tablist).toBeInTheDocument()
 
-    // Each tab button
+    // History tab button
     const historyTab = screen.getByRole('tab', { name: /history/i })
-    const propertiesTab = screen.getByRole('tab', { name: /properties/i })
-
     expect(historyTab).toHaveAttribute('aria-selected', 'false')
-    expect(propertiesTab).toHaveAttribute('aria-selected', 'false')
   })
 
-  it('clicking a tab sets aria-selected and renders tabpanel with aria-labelledby', async () => {
+  it('clicking history tab sets aria-selected and renders tabpanel with aria-labelledby', async () => {
     const user = userEvent.setup()
     useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
 
@@ -559,18 +539,6 @@ describe('PageEditor detail panel', () => {
     const tabpanel = screen.getByRole('tabpanel')
     expect(tabpanel).toHaveAttribute('id', 'detail-tabpanel')
     expect(tabpanel).toHaveAttribute('aria-labelledby', 'detail-tab-history')
-
-    // Switch to properties
-    await user.click(screen.getByRole('tab', { name: /properties/i }))
-
-    expect(screen.getByRole('tab', { name: /history/i })).toHaveAttribute('aria-selected', 'false')
-    expect(screen.getByRole('tab', { name: /properties/i })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    )
-
-    const updatedTabpanel = screen.getByRole('tabpanel')
-    expect(updatedTabpanel).toHaveAttribute('aria-labelledby', 'detail-tab-properties')
   })
 })
 

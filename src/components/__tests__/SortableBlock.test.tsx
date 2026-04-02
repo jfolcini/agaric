@@ -30,6 +30,14 @@ vi.mock('../EditableBlock', () => ({
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
+  CalendarDays: (props: { size: number; className?: string }) => (
+    <svg
+      data-testid="calendar-days-icon"
+      width={props.size}
+      height={props.size}
+      className={props.className}
+    />
+  ),
   Check: (props: { size: number; className?: string }) => (
     <svg
       data-testid="check-icon"
@@ -1832,5 +1840,197 @@ describe('SortableBlock drag cancels long-press', () => {
 
     // Context menu SHOULD appear because isDragging was never true
     expect(screen.getByTestId('block-context-menu')).toBeInTheDocument()
+  })
+})
+
+// =========================================================================
+// Due date chip tests (#565)
+// =========================================================================
+
+describe('SortableBlock due date chip', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('does not render due date chip when dueDate is null', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate={null}
+      />,
+    )
+
+    expect(container.querySelector('.due-date-chip')).not.toBeInTheDocument()
+  })
+
+  it('does not render due date chip when dueDate is undefined', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    expect(container.querySelector('.due-date-chip')).not.toBeInTheDocument()
+  })
+
+  it('renders due date chip with CalendarDays icon when dueDate is set', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate="2025-06-15"
+      />,
+    )
+
+    expect(container.querySelector('.due-date-chip')).toBeInTheDocument()
+    expect(screen.getByTestId('calendar-days-icon')).toBeInTheDocument()
+  })
+
+  it('formats current-year date as "Mon DD" (no year)', () => {
+    const now = new Date()
+    const year = now.getFullYear()
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate={`${year}-03-15`}
+      />,
+    )
+
+    // Should show "Mar 15" without year
+    expect(screen.getByText('Mar 15')).toBeInTheDocument()
+  })
+
+  it('formats past-year date as "Mon DD, YYYY"', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate="2023-12-25"
+      />,
+    )
+
+    expect(screen.getByText('Dec 25, 2023')).toBeInTheDocument()
+  })
+
+  it('has aria-label with formatted date', () => {
+    const now = new Date()
+    const year = now.getFullYear()
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate={`${year}-07-04`}
+      />,
+    )
+
+    const chip = screen.getByLabelText('Due Jul 4')
+    expect(chip).toBeInTheDocument()
+  })
+
+  it('due date chip is inside inline-controls', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate="2025-06-15"
+      />,
+    )
+
+    const inlineControls = container.querySelector('.inline-controls')
+    const chip = inlineControls?.querySelector('.due-date-chip')
+    expect(chip).toBeInTheDocument()
+  })
+
+  it('applies red styling for overdue dates', () => {
+    // Use a date far in the past to ensure it's always overdue
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate="2020-01-01"
+      />,
+    )
+
+    const chip = container.querySelector('.due-date-chip')
+    expect(chip?.className).toContain('bg-red-100')
+    expect(chip?.className).toContain('text-red-700')
+  })
+
+  it('applies muted styling for future dates', () => {
+    // Use a date far in the future
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate="2099-12-31"
+      />,
+    )
+
+    const chip = container.querySelector('.due-date-chip')
+    expect(chip?.className).toContain('bg-muted')
+    expect(chip?.className).toContain('text-muted-foreground')
+  })
+
+  it('renders due date chip after priority badge when both are set', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="A"
+        dueDate="2025-06-15"
+      />,
+    )
+
+    const inlineControls = container.querySelector('.inline-controls')
+    const priorityBadge = inlineControls?.querySelector('.priority-badge')
+    const dueChip = inlineControls?.querySelector('.due-date-chip')
+    expect(priorityBadge).toBeInTheDocument()
+    expect(dueChip).toBeInTheDocument()
+
+    // Priority badge should come before due date chip in DOM order
+    const children = Array.from(inlineControls?.children ?? [])
+    const priorityIdx = children.indexOf(priorityBadge as Element)
+    const dueIdx = children.indexOf(dueChip as Element)
+    expect(priorityIdx).toBeLessThan(dueIdx)
+  })
+
+  it('renders invalid date string as-is without crashing', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate="not-a-date"
+      />,
+    )
+
+    const chip = container.querySelector('.due-date-chip')
+    expect(chip).toBeInTheDocument()
+    expect(chip?.textContent).toContain('not-a-date')
   })
 })

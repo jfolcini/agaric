@@ -1,6 +1,6 @@
 # Session Log
 
-## Session 55 — 2026-04-02 — Phase 5 Wave 2 + Wave 3 batches 1-2
+## Session 55 — 2026-04-02 — Phase 5 Wave 2 + Wave 3 batches 1-4
 
 ### Batch 1 — Wave 2 completion: PagePropertyTable (#553, #554)
 2 remaining Phase 5 Wave 2 items resolved: schema-driven property table UI + property key suggestions. Completes Wave 2.
@@ -53,11 +53,22 @@ Built by 1 subagent, reviewed by 1 subagent (PASS WITH FIXES — query_by_proper
 | `bindings.ts` | Regenerated — 3 new command bindings. |
 | `.sqlx/` | 2 cache files regenerated. |
 
+### Batch 4 — Wave 3: Backlink filter direct-column variants (#564)
+1 backend item: TodoState/Priority/DueDate as new BacklinkFilter variants querying blocks columns directly. Contains/StartsWith CompareOp variants. Frontend exhaustiveness fix.
+
+Built by 1 subagent, reviewed by 1 subagent (PASS, no issues).
+
+| File | Change |
+|------|--------|
+| `backlink_query.rs` | #564: 3 new BacklinkFilter variants (TodoState, Priority, DueDate). 2 new CompareOp variants (Contains, StartsWith). 3 resolve_filter match arms with NULL guards. Updated existing PropertyText/PropertyNum/PropertyDate for new ops. 5 new tests. |
+| `BacklinkFilterBuilder.tsx` | Contains/StartsWith cases in opLabel() for TS exhaustiveness. |
+| `bindings.ts` | Regenerated — new filter variants + CompareOp values. |
+
 ### Stats
-- Rust: 1380 tests pass (1363 + 15 new + 2 review-fix tests)
+- Rust: 1386 tests pass (1380 + 6 new)
 - Frontend: 78/78 test files, 2183 tests pass
-- Commits: `b3c5247` (Wave 2), `143f1ae` (Wave 3 batch 1), `99152d4` (Wave 3 batch 2)
-- REVIEW-LATER.md: 25 → 16 open items (resolved #553, #554, #558-#563, #568)
+- Commits: `b3c5247` (Wave 2), `143f1ae` (Wave 3 batch 1), `99152d4` (Wave 3 batch 2), `9726464` (batch 4)
+- REVIEW-LATER.md: 25 → 15 open items (resolved #553, #554, #558-#564, #568)
 
 ## Session 54 — 2026-04-02 — Phase 5 Wave 2: Property Definitions + PageHeader (#548-#552, #555-#557)
 

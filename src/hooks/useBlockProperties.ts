@@ -2,20 +2,20 @@
  * useBlockProperties — hook for block property state and task cycling.
  *
  * Manages:
- * - blockProperties state map
- * - getTodoState callback
+ * - getTodoState callback (reads from block store)
  * - handleToggleTodo callback (cycles through TODO/DOING/DONE/none)
+ * - handleTogglePriority callback (cycles through A/B/C/none)
  *
- * NOTE: The batch property fetch effect is intentionally kept in BlockTree
- * (not in this hook) to preserve the original effect ordering:
- * load() must fire before property fetch.
+ * Uses thin commands (set_todo_state / set_priority) instead of the generic
+ * set_property / delete_property, and reads state from the block store
+ * instead of a separate properties cache.
  */
 
-import { useCallback, useState } from 'react'
+import { useCallback } from 'react'
 import { toast } from 'sonner'
 import { announce } from '../lib/announcer'
-import type { PropertyRow } from '../lib/tauri'
-import { deleteProperty, setProperty } from '../lib/tauri'
+import { setPriority as setPriorityCmd, setTodoState as setTodoStateCmd } from '../lib/tauri'
+import { useBlockStore } from '../stores/blocks'
 
 /** Task state cycle: none -> TODO -> DOING -> DONE -> none. */
 const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE']
@@ -30,156 +30,67 @@ export interface UseBlockPropertiesReturn {
   getTodoState: (blockId: string) => string | null
   handleToggleTodo: (blockId: string) => Promise<void>
   handleTogglePriority: (blockId: string) => Promise<void>
-  blockProperties: Map<string, PropertyRow[]>
-  setBlockProperties: React.Dispatch<React.SetStateAction<Map<string, PropertyRow[]>>>
 }
 
 export function useBlockProperties(): UseBlockPropertiesReturn {
-  const [blockProperties, setBlockProperties] = useState<Map<string, PropertyRow[]>>(new Map())
-
-  /** Get the current todo state for a block from the properties cache. */
-  const getTodoState = useCallback(
-    (blockId: string): string | null => {
-      const props = blockProperties.get(blockId)
-      const todoProp = props?.find((p) => p.key === 'todo')
-      return todoProp?.value_text ?? null
-    },
-    [blockProperties],
-  )
+  /** Get the current todo state for a block from the block store. */
+  const getTodoState = useCallback((blockId: string): string | null => {
+    return useBlockStore.getState().blocks.find((b) => b.id === blockId)?.todo_state ?? null
+  }, [])
 
   /** Cycle through task states: none -> TODO -> DOING -> DONE -> none. */
-  const handleToggleTodo = useCallback(
-    async (blockId: string) => {
-      const current = getTodoState(blockId)
-      const currentIdx = TASK_CYCLE.indexOf(current)
-      const nextIdx = (currentIdx + 1) % TASK_CYCLE.length
-      const nextState = TASK_CYCLE[nextIdx]
+  const handleToggleTodo = useCallback(async (blockId: string) => {
+    const current =
+      useBlockStore.getState().blocks.find((b) => b.id === blockId)?.todo_state ?? null
+    const currentIdx = TASK_CYCLE.indexOf(current)
+    const nextIdx = (currentIdx + 1) % TASK_CYCLE.length
+    const nextState = TASK_CYCLE[nextIdx]
 
-      // Optimistic cache update (before IPC) to prevent race on rapid toggles
-      setBlockProperties((prev) => {
-        const next = new Map(prev)
-        if (nextState === null) {
-          const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'todo')
-          if (props.length === 0) next.delete(blockId)
-          else next.set(blockId, props)
-        } else {
-          const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'todo')
-          props.push({
-            key: 'todo',
-            value_text: nextState,
-            value_num: null,
-            value_date: null,
-            value_ref: null,
-          })
-          next.set(blockId, props)
-        }
-        return next
-      })
+    // Optimistic update (before IPC) to prevent race on rapid toggles
+    useBlockStore.setState((s) => ({
+      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: nextState } : b)),
+    }))
 
-      try {
-        if (nextState === null) {
-          await deleteProperty(blockId, 'todo')
-        } else {
-          await setProperty({ blockId, key: 'todo', valueText: nextState })
-        }
-      } catch {
-        // Revert optimistic update on failure
-        setBlockProperties((prev) => {
-          const next = new Map(prev)
-          if (current === null) {
-            const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'todo')
-            if (props.length === 0) next.delete(blockId)
-            else next.set(blockId, props)
-          } else {
-            const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'todo')
-            props.push({
-              key: 'todo',
-              value_text: current,
-              value_num: null,
-              value_date: null,
-              value_ref: null,
-            })
-            next.set(blockId, props)
-          }
-          return next
-        })
-        toast.error('Failed to update task state')
-        return
-      }
+    try {
+      await setTodoStateCmd(blockId, nextState)
+    } catch {
+      // Revert optimistic update on failure
+      useBlockStore.setState((s) => ({
+        blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: current } : b)),
+      }))
+      toast.error('Failed to update task state')
+      return
+    }
 
-      announce(`Task state: ${nextState ? (STATE_LABELS[nextState] ?? nextState) : 'none'}`)
-    },
-    [getTodoState],
-  )
+    announce(`Task state: ${nextState ? (STATE_LABELS[nextState] ?? nextState) : 'none'}`)
+  }, [])
 
   /** Cycle through priority levels: none -> A -> B -> C -> none. */
-  const handleTogglePriority = useCallback(
-    async (blockId: string) => {
-      const props = blockProperties.get(blockId)
-      const current = props?.find((p) => p.key === 'priority')?.value_text ?? null
-      const currentIdx = PRIORITY_CYCLE.indexOf(current)
-      const nextIdx = (currentIdx + 1) % PRIORITY_CYCLE.length
-      const nextState = PRIORITY_CYCLE[nextIdx]
+  const handleTogglePriority = useCallback(async (blockId: string) => {
+    const current = useBlockStore.getState().blocks.find((b) => b.id === blockId)?.priority ?? null
+    const currentIdx = PRIORITY_CYCLE.indexOf(current)
+    const nextIdx = (currentIdx + 1) % PRIORITY_CYCLE.length
+    const nextState = PRIORITY_CYCLE[nextIdx]
 
-      // Optimistic cache update (before IPC) to prevent race on rapid toggles
-      setBlockProperties((prev) => {
-        const next = new Map(prev)
-        if (nextState === null) {
-          const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'priority')
-          if (props.length === 0) next.delete(blockId)
-          else next.set(blockId, props)
-        } else {
-          const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'priority')
-          props.push({
-            key: 'priority',
-            value_text: nextState,
-            value_num: null,
-            value_date: null,
-            value_ref: null,
-          })
-          next.set(blockId, props)
-        }
-        return next
-      })
+    // Optimistic update (before IPC) to prevent race on rapid toggles
+    useBlockStore.setState((s) => ({
+      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, priority: nextState } : b)),
+    }))
 
-      try {
-        if (nextState === null) {
-          await deleteProperty(blockId, 'priority')
-        } else {
-          await setProperty({ blockId, key: 'priority', valueText: nextState })
-        }
-      } catch {
-        // Revert optimistic update on failure
-        setBlockProperties((prev) => {
-          const next = new Map(prev)
-          if (current === null) {
-            const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'priority')
-            if (props.length === 0) next.delete(blockId)
-            else next.set(blockId, props)
-          } else {
-            const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'priority')
-            props.push({
-              key: 'priority',
-              value_text: current,
-              value_num: null,
-              value_date: null,
-              value_ref: null,
-            })
-            next.set(blockId, props)
-          }
-          return next
-        })
-        toast.error('Failed to update priority')
-      }
-    },
-    [blockProperties],
-  )
+    try {
+      await setPriorityCmd(blockId, nextState)
+    } catch {
+      // Revert optimistic update on failure
+      useBlockStore.setState((s) => ({
+        blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, priority: current } : b)),
+      }))
+      toast.error('Failed to update priority')
+    }
+  }, [])
 
   return {
     getTodoState,
     handleToggleTodo,
     handleTogglePriority,
-    blockProperties,
-    setBlockProperties,
   }
 }

@@ -28,15 +28,15 @@ import { useBlockProperties } from '../hooks/useBlockProperties'
 import { useBlockResolve } from '../hooks/useBlockResolve'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import { announce } from '../lib/announcer'
-import type { PropertyRow } from '../lib/tauri'
 import {
   batchResolve,
   createBlock,
   editBlock,
-  getBatchProperties,
   getBlock,
   listBlocks,
-  setProperty,
+  setDueDate as setDueDateCmd,
+  setPriority as setPriorityCmd,
+  setTodoState as setTodoStateCmd,
 } from '../lib/tauri'
 import { getDragDescendants } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
@@ -158,23 +158,15 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   // ── Collapse state ─────────────────────────────────────────────────
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
 
-  // ── Date picker for /DATE command ─────────────────────────────────
+  // ── Date picker for /DATE and /DUE commands ────────────────────────
   const [datePickerOpen, setDatePickerOpen] = useState(false)
+  const [datePickerMode, setDatePickerMode] = useState<'date' | 'due'>('date')
   const datePickerCursorPos = useRef<number | undefined>(undefined)
 
   // ── Extracted hooks ────────────────────────────────────────────────
   const resolve = useBlockResolve()
   const properties = useBlockProperties()
-  const { getTodoState, handleToggleTodo, handleTogglePriority, setBlockProperties } = properties
-
-  /** Get the priority value for a block from the properties cache. */
-  const getPriority = useCallback(
-    (blockId: string): string | null => {
-      const props = properties.blockProperties.get(blockId)
-      return props?.find((p) => p.key === 'priority')?.value_text ?? null
-    },
-    [properties.blockProperties],
-  )
+  const { handleToggleTodo, handleTogglePriority } = properties
 
   /** Set of block IDs that have children (next block in flat tree has greater depth). */
   const hasChildrenSet = useMemo(() => {
@@ -219,6 +211,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       { id: 'doing', label: 'DOING — Mark as in progress' },
       { id: 'done', label: 'DONE — Mark as complete' },
       { id: 'date', label: 'DATE — Link to a date page' },
+      { id: 'due', label: 'DUE — Set due date on block' },
     ],
     [],
   )
@@ -324,24 +317,6 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     }
   }, [blocks])
 
-  // ── Fetch properties for all blocks (batch) ────────────────────────
-  useEffect(() => {
-    if (blocks.length === 0) return
-    const fetchProps = async () => {
-      try {
-        const propsRecord = await getBatchProperties(blocks.map((b) => b.id))
-        const propsMap = new Map<string, PropertyRow[]>()
-        for (const [blockId, props] of Object.entries(propsRecord)) {
-          if (props.length > 0) propsMap.set(blockId, props)
-        }
-        setBlockProperties(propsMap)
-      } catch {
-        /* batch fetch failed — non-critical */
-      }
-    }
-    fetchProps()
-  }, [blocks, setBlockProperties])
-
   // Keyboard callbacks
   const handleFlush = useCallback((): string | null => {
     if (!rovingEditor.activeBlockId) return null
@@ -358,30 +333,19 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         // Check for checkbox markdown syntax before saving
         const { cleanContent, todoState } = processCheckboxSyntax(changed)
         if (todoState) {
-          // Set the todo property and save cleaned content
-          setProperty({ blockId, key: 'todo', valueText: todoState })
+          // Set todo state via thin command and save cleaned content
+          setTodoStateCmd(blockId, todoState).catch(() => toast.error('Failed to set task state'))
+          useBlockStore.setState((s) => ({
+            blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: todoState } : b)),
+          }))
           edit(blockId, cleanContent)
-          // Update local properties cache
-          setBlockProperties((prev) => {
-            const next = new Map(prev)
-            const props = (next.get(blockId) ?? []).filter((p) => p.key !== 'todo')
-            props.push({
-              key: 'todo',
-              value_text: todoState,
-              value_num: null,
-              value_date: null,
-              value_ref: null,
-            })
-            next.set(blockId, props)
-            return next
-          })
         } else {
           edit(blockId, changed)
         }
       }
     }
     return changed
-  }, [rovingEditor, edit, splitBlock, setBlockProperties])
+  }, [rovingEditor, edit, splitBlock])
 
   // ── DnD hook (needs handleFlush + collapsedVisible) ────────────────
   const dnd = useBlockDnD({
@@ -474,21 +438,12 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       if (item.id === 'todo' || item.id === 'doing' || item.id === 'done') {
         const state = item.id.toUpperCase()
         try {
-          await setProperty({ blockId: focusedBlockId, key: 'todo', valueText: state })
-          // Update local properties cache
-          setBlockProperties((prev) => {
-            const next = new Map(prev)
-            const props = (next.get(focusedBlockId) ?? []).filter((p) => p.key !== 'todo')
-            props.push({
-              key: 'todo',
-              value_text: state,
-              value_num: null,
-              value_date: null,
-              value_ref: null,
-            })
-            next.set(focusedBlockId, props)
-            return next
-          })
+          await setTodoStateCmd(focusedBlockId, state)
+          useBlockStore.setState((s) => ({
+            blocks: s.blocks.map((b) =>
+              b.id === focusedBlockId ? { ...b, todo_state: state } : b,
+            ),
+          }))
         } catch {
           toast.error('Failed to set task state')
         }
@@ -498,6 +453,13 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         // Save cursor position before opening the date picker — the editor
         // will lose focus when the user clicks the calendar.
         datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
+        setDatePickerMode('date')
+        setDatePickerOpen(true)
+      }
+
+      if (item.id === 'due') {
+        datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
+        setDatePickerMode('due')
         setDatePickerOpen(true)
       }
 
@@ -509,20 +471,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         const priority =
           item.id === 'priority-high' ? 'A' : item.id === 'priority-medium' ? 'B' : 'C'
         try {
-          await setProperty({ blockId: focusedBlockId, key: 'priority', valueText: priority })
-          setBlockProperties((prev) => {
-            const next = new Map(prev)
-            const props = (next.get(focusedBlockId) ?? []).filter((p) => p.key !== 'priority')
-            props.push({
-              key: 'priority',
-              value_text: priority,
-              value_num: null,
-              value_date: null,
-              value_ref: null,
-            })
-            next.set(focusedBlockId, props)
-            return next
-          })
+          await setPriorityCmd(focusedBlockId, priority)
+          useBlockStore.setState((s) => ({
+            blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, priority } : b)),
+          }))
         } catch {
           toast.error('Failed to set priority')
         }
@@ -559,7 +511,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         }
       }
     },
-    [focusedBlockId, setBlockProperties],
+    [focusedBlockId],
   )
 
   /** Handle date selection from the /DATE picker. Finds or creates the date page and inserts a block link. */
@@ -571,6 +523,24 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       const mm = String(d.getMonth() + 1).padStart(2, '0')
       const yyyy = d.getFullYear()
       const dateStr = `${yyyy}-${mm}-${dd}`
+
+      if (datePickerMode === 'due') {
+        // /DUE mode — set due_date on the focused block
+        if (!focusedBlockId) return
+        try {
+          await setDueDateCmd(focusedBlockId, dateStr)
+          useBlockStore.setState((s) => ({
+            blocks: s.blocks.map((b) =>
+              b.id === focusedBlockId ? { ...b, due_date: dateStr } : b,
+            ),
+          }))
+        } catch {
+          toast.error('Failed to set due date')
+        }
+        return
+      }
+
+      // /DATE mode — insert block link to a date page
       // Also check for the legacy DD/MM/YYYY format to avoid duplicates
       const legacyStr = `${dd}/${mm}/${yyyy}`
 
@@ -600,7 +570,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         })
       }
     },
-    [rovingEditor],
+    [rovingEditor, datePickerMode, focusedBlockId],
   )
 
   // Keep the slash command ref in sync
@@ -793,25 +763,19 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   // ── Priority keyboard shortcut event listeners (Mod+Shift+1/2/3) ───
   useEffect(() => {
-    const handlePriorityEvent = (e: Event) => {
+    const handlePriorityEvent = async (e: Event) => {
       if (!focusedBlockId) return
       const eventType = e.type
       const priority =
         eventType === 'set-priority-1' ? 'A' : eventType === 'set-priority-2' ? 'B' : 'C'
-      setProperty({ blockId: focusedBlockId, key: 'priority', valueText: priority })
-      setBlockProperties((prev) => {
-        const next = new Map(prev)
-        const props = (next.get(focusedBlockId) ?? []).filter((p) => p.key !== 'priority')
-        props.push({
-          key: 'priority',
-          value_text: priority,
-          value_num: null,
-          value_date: null,
-          value_ref: null,
-        })
-        next.set(focusedBlockId, props)
-        return next
-      })
+      try {
+        await setPriorityCmd(focusedBlockId, priority)
+        useBlockStore.setState((s) => ({
+          blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, priority } : b)),
+        }))
+      } catch {
+        toast.error('Failed to set priority')
+      }
     }
     document.addEventListener('set-priority-1', handlePriorityEvent)
     document.addEventListener('set-priority-2', handlePriorityEvent)
@@ -821,13 +785,14 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       document.removeEventListener('set-priority-2', handlePriorityEvent)
       document.removeEventListener('set-priority-3', handlePriorityEvent)
     }
-  }, [focusedBlockId, setBlockProperties])
+  }, [focusedBlockId])
 
   // ── Listen for toolbar date picker event ────────────────────────────
   useEffect(() => {
     const handleDateEvent = () => {
       if (!focusedBlockId) return
       datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
+      setDatePickerMode('date')
       setDatePickerOpen(true)
     }
     document.addEventListener('open-date-picker', handleDateEvent)
@@ -919,10 +884,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                     hasChildren={hasChildrenSet.has(block.id)}
                     isCollapsed={collapsedIds.has(block.id)}
                     onToggleCollapse={toggleCollapse}
-                    todoState={getTodoState(block.id)}
+                    todoState={block.todo_state ?? null}
                     onToggleTodo={handleToggleTodo}
-                    priority={getPriority(block.id)}
+                    priority={block.priority ?? null}
                     onTogglePriority={handleTogglePriority}
+                    dueDate={block.due_date ?? null}
                     onIndent={(id) => indent(id)}
                     onDedent={(id) => dedent(id)}
                     onMoveUp={(id) => {

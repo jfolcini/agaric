@@ -967,33 +967,11 @@ describe('BlockTree task cycling', () => {
     mockedInvoke.mockReset()
   })
 
-  it('passes todoState to SortableBlock based on fetched properties', async () => {
-    const tree = [makeBlock('A', null, 0, 'Task block')]
+  it('passes todoState to SortableBlock from block store field', async () => {
+    const tree = [{ ...makeBlock('A', null, 0, 'Task block'), todo_state: 'TODO' }]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
-
-    // Mock get_batch_properties to return a TODO property for block A
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) {
-          if (id === 'A')
-            result[id] = [
-              {
-                key: 'todo',
-                value_text: 'TODO',
-                value_num: null,
-                value_date: null,
-                value_ref: null,
-              },
-            ]
-          else result[id] = []
-        }
-        return result
-      }
-      return []
-    })
+    mockedInvoke.mockResolvedValue([])
 
     render(<BlockTree />)
 
@@ -1002,21 +980,11 @@ describe('BlockTree task cycling', () => {
     })
   })
 
-  it('passes empty todoState when block has no todo property', async () => {
+  it('passes empty todoState when block has no todo_state', async () => {
     const tree = [makeBlock('A', null, 0, 'No task')]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
-
-    // Mock get_batch_properties to return empty arrays
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) result[id] = []
-        return result
-      }
-      return []
-    })
+    mockedInvoke.mockResolvedValue([])
 
     render(<BlockTree />)
 
@@ -1030,9 +998,7 @@ describe('BlockTree task cycling', () => {
     const tree = [makeBlock('A', null, 0, 'Block')]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
-
-    // Initially no properties
-    mockedInvoke.mockResolvedValue([])
+    mockedInvoke.mockResolvedValue(null)
 
     render(<BlockTree />)
 
@@ -1040,20 +1006,13 @@ describe('BlockTree task cycling', () => {
       expect(screen.getByTestId('todo-toggle-A')).toBeInTheDocument()
     })
 
-    // Now mock set_property for the cycling call
-    mockedInvoke.mockResolvedValue(null)
-
     await user.click(screen.getByTestId('todo-toggle-A'))
 
-    // Should have called set_property with TODO
+    // Should have called set_todo_state with TODO
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
         blockId: 'A',
-        key: 'todo',
-        valueText: 'TODO',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        state: 'TODO',
       })
     })
 
@@ -1065,32 +1024,10 @@ describe('BlockTree task cycling', () => {
 
   it('cycles from TODO to DOING', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [{ ...makeBlock('A', null, 0, 'Block'), todo_state: 'TODO' }]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
-
-    // Block A starts with TODO property
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) {
-          if (id === 'A')
-            result[id] = [
-              {
-                key: 'todo',
-                value_text: 'TODO',
-                value_num: null,
-                value_date: null,
-                value_ref: null,
-              },
-            ]
-          else result[id] = []
-        }
-        return result
-      }
-      return []
-    })
+    mockedInvoke.mockResolvedValue(null)
 
     render(<BlockTree />)
 
@@ -1098,19 +1035,12 @@ describe('BlockTree task cycling', () => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'TODO')
     })
 
-    // Mock the set_property call
-    mockedInvoke.mockResolvedValue(null)
-
     await user.click(screen.getByTestId('todo-toggle-A'))
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
         blockId: 'A',
-        key: 'todo',
-        valueText: 'DOING',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        state: 'DOING',
       })
     })
 
@@ -1119,34 +1049,12 @@ describe('BlockTree task cycling', () => {
     })
   })
 
-  it('cycles from DONE to none (deletes property)', async () => {
+  it('cycles from DONE to none (clears state)', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [{ ...makeBlock('A', null, 0, 'Block'), todo_state: 'DONE' }]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
-
-    // Block A starts with DONE property
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) {
-          if (id === 'A')
-            result[id] = [
-              {
-                key: 'todo',
-                value_text: 'DONE',
-                value_num: null,
-                value_date: null,
-                value_ref: null,
-              },
-            ]
-          else result[id] = []
-        }
-        return result
-      }
-      return []
-    })
+    mockedInvoke.mockResolvedValue(null)
 
     render(<BlockTree />)
 
@@ -1154,15 +1062,12 @@ describe('BlockTree task cycling', () => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'DONE')
     })
 
-    // Mock the delete_property call
-    mockedInvoke.mockResolvedValue(null)
-
     await user.click(screen.getByTestId('todo-toggle-A'))
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('delete_property', {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
         blockId: 'A',
-        key: 'todo',
+        state: null,
       })
     })
 
@@ -1175,7 +1080,6 @@ describe('BlockTree task cycling', () => {
     const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
-
     mockedInvoke.mockResolvedValue([])
 
     render(<BlockTree />)
@@ -1190,17 +1094,13 @@ describe('BlockTree task cycling', () => {
     const tree = [makeBlock('A', null, 0, 'Focused block')]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
-
-    mockedInvoke.mockResolvedValue([])
+    mockedInvoke.mockResolvedValue(null)
 
     render(<BlockTree />)
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
     })
-
-    // Mock set_property for the Ctrl+Enter cycling call
-    mockedInvoke.mockResolvedValue(null)
 
     // Fire Ctrl+Enter keydown
     const event = new KeyboardEvent('keydown', {
@@ -1211,13 +1111,9 @@ describe('BlockTree task cycling', () => {
     document.dispatchEvent(event)
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
         blockId: 'A',
-        key: 'todo',
-        valueText: 'TODO',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        state: 'TODO',
       })
     })
   })
@@ -1226,7 +1122,6 @@ describe('BlockTree task cycling', () => {
     const tree = [makeBlock('A', null, 0, 'Block')]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
-
     mockedInvoke.mockResolvedValue([])
 
     render(<BlockTree />)
@@ -1243,10 +1138,9 @@ describe('BlockTree task cycling', () => {
     })
     document.dispatchEvent(event)
 
-    // Should not call set_property or delete_property
+    // Should not call set_todo_state
     await new Promise((r) => setTimeout(r, 50))
-    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
-    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_property', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_todo_state', expect.anything())
   })
 })
 
@@ -1349,8 +1243,8 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(4)
-    expect(results?.map((r) => r.id)).toEqual(['todo', 'doing', 'done', 'date'])
+    expect(results).toHaveLength(5)
+    expect(results?.map((r) => r.id)).toEqual(['todo', 'doing', 'done', 'date', 'due'])
   })
 
   it('searchSlashCommands filters commands by query', async () => {
@@ -1825,13 +1719,9 @@ describe('BlockTree priority slash commands', () => {
     })
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        key: 'priority',
-        valueText: 'A',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        level: 'A',
       })
     })
   })
@@ -1855,13 +1745,9 @@ describe('BlockTree priority slash commands', () => {
     })
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        key: 'priority',
-        valueText: 'B',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        level: 'B',
       })
     })
   })
@@ -1885,43 +1771,18 @@ describe('BlockTree priority slash commands', () => {
     })
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        key: 'priority',
-        valueText: 'C',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        level: 'C',
       })
     })
   })
 
-  it('passes priority prop to SortableBlock based on fetched properties', async () => {
-    const tree = [makeBlock('A', null, 0, 'Priority block')]
+  it('passes priority prop to SortableBlock from block store field', async () => {
+    const tree = [{ ...makeBlock('A', null, 0, 'Priority block'), priority: 'B' }]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
-
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) {
-          if (id === 'A')
-            result[id] = [
-              {
-                key: 'priority',
-                value_text: 'B',
-                value_num: null,
-                value_date: null,
-                value_ref: null,
-              },
-            ]
-          else result[id] = []
-        }
-        return result
-      }
-      return []
-    })
+    mockedInvoke.mockResolvedValue([])
 
     render(<BlockTree />)
 
@@ -1950,9 +1811,7 @@ describe('BlockTree priority slash commands', () => {
     const tree = [makeBlock('A', null, 0, 'Block')]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
-
-    // Initially no properties
-    mockedInvoke.mockResolvedValue([])
+    mockedInvoke.mockResolvedValue(null)
 
     render(<BlockTree />)
 
@@ -1960,20 +1819,13 @@ describe('BlockTree priority slash commands', () => {
       expect(screen.getByTestId('priority-toggle-A')).toBeInTheDocument()
     })
 
-    // Now mock set_property for the cycling call
-    mockedInvoke.mockResolvedValue(null)
-
     await user.click(screen.getByTestId('priority-toggle-A'))
 
-    // Should have called set_property with priority A (cycling from none)
+    // Should have called set_priority with A (cycling from none)
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        key: 'priority',
-        valueText: 'A',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        level: 'A',
       })
     })
 
@@ -2225,18 +2077,13 @@ describe('BlockTree aria-live announcements', () => {
     const tree = [makeBlock('A', null, 0, 'Task block')]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
-
-    // Initially no properties
-    mockedInvoke.mockResolvedValue([])
+    mockedInvoke.mockResolvedValue(null)
 
     render(<BlockTree />)
 
     await waitFor(() => {
       expect(screen.getByTestId('todo-toggle-A')).toBeInTheDocument()
     })
-
-    // Mock set_property for the cycling call
-    mockedInvoke.mockResolvedValue(null)
 
     await user.click(screen.getByTestId('todo-toggle-A'))
 
@@ -2247,40 +2094,16 @@ describe('BlockTree aria-live announcements', () => {
 
   it('announces task state when cycling from TODO to DOING', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Task block')]
+    const tree = [{ ...makeBlock('A', null, 0, 'Task block'), todo_state: 'TODO' }]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
-
-    // Block A starts with TODO property
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) {
-          if (id === 'A')
-            result[id] = [
-              {
-                key: 'todo',
-                value_text: 'TODO',
-                value_num: null,
-                value_date: null,
-                value_ref: null,
-              },
-            ]
-          else result[id] = []
-        }
-        return result
-      }
-      return []
-    })
+    mockedInvoke.mockResolvedValue(null)
 
     render(<BlockTree />)
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'TODO')
     })
-
-    mockedInvoke.mockResolvedValue(null)
 
     await user.click(screen.getByTestId('todo-toggle-A'))
 
@@ -2291,40 +2114,16 @@ describe('BlockTree aria-live announcements', () => {
 
   it('announces "Task state: none" when cycling from DONE to none', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Task block')]
+    const tree = [{ ...makeBlock('A', null, 0, 'Task block'), todo_state: 'DONE' }]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
-
-    // Block A starts with DONE property
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
-    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
-      if (cmd === 'get_batch_properties') {
-        const result: Record<string, unknown[]> = {}
-        for (const id of args?.blockIds ?? []) {
-          if (id === 'A')
-            result[id] = [
-              {
-                key: 'todo',
-                value_text: 'DONE',
-                value_num: null,
-                value_date: null,
-                value_ref: null,
-              },
-            ]
-          else result[id] = []
-        }
-        return result
-      }
-      return []
-    })
+    mockedInvoke.mockResolvedValue(null)
 
     render(<BlockTree />)
 
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-todo-state', 'DONE')
     })
-
-    mockedInvoke.mockResolvedValue(null)
 
     await user.click(screen.getByTestId('todo-toggle-A'))
 
@@ -2729,7 +2528,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     const tree = [makeBlock('A', null, 0, 'Block')]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue([])
+    mockedInvoke.mockResolvedValue(null)
 
     render(<BlockTree />)
 
@@ -2742,13 +2541,9 @@ describe('BlockTree priority keyboard shortcuts', () => {
     })
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        key: 'priority',
-        valueText: 'A',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        level: 'A',
       })
     })
 
@@ -2762,7 +2557,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     const tree = [makeBlock('A', null, 0, 'Block')]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue([])
+    mockedInvoke.mockResolvedValue(null)
 
     render(<BlockTree />)
 
@@ -2775,13 +2570,9 @@ describe('BlockTree priority keyboard shortcuts', () => {
     })
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        key: 'priority',
-        valueText: 'B',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        level: 'B',
       })
     })
 
@@ -2794,7 +2585,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     const tree = [makeBlock('A', null, 0, 'Block')]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue([])
+    mockedInvoke.mockResolvedValue(null)
 
     render(<BlockTree />)
 
@@ -2807,13 +2598,9 @@ describe('BlockTree priority keyboard shortcuts', () => {
     })
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
         blockId: 'A',
-        key: 'priority',
-        valueText: 'C',
-        valueNum: null,
-        valueDate: null,
-        valueRef: null,
+        level: 'C',
       })
     })
 
@@ -2839,7 +2626,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     })
 
     await new Promise((r) => setTimeout(r, 50))
-    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_priority', expect.anything())
   })
 })
 
@@ -2963,6 +2750,76 @@ describe('BlockTree handleDatePick date format', () => {
 
     // Should NOT call create_block since the page already exists
     await new Promise((r) => setTimeout(r, 50))
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({ content: '2025-03-15' }),
+    )
+  })
+
+  it('sets due date on block when /due command is executed', async () => {
+    const tree = [makeBlock('A', null, 0, 'Some block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    // Return block A for list_blocks so load() doesn't wipe the store
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') {
+        return { items: [tree[0]], next_cursor: null, has_more: false }
+      }
+      return emptyPage
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    // Trigger the /due command to open the date picker in due-date mode
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'due', label: 'DUE — Set due date on block' })
+    })
+
+    // The date picker should now be open
+    await waitFor(() => {
+      expect(mockCalendarOnSelect).toBeDefined()
+    })
+
+    // Mock set_due_date response
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'A',
+      block_type: 'content',
+      content: 'Some block',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+      archived_at: null,
+      is_conflict: false,
+      conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: '2025-03-15',
+    })
+
+    // Simulate selecting March 15, 2025 from the calendar
+    await act(async () => {
+      mockCalendarOnSelect?.(new Date(2025, 2, 15))
+    })
+
+    // Verify set_due_date was called (not create_block for a date page)
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_due_date', {
+        blockId: 'A',
+        date: '2025-03-15',
+      })
+    })
+
+    // Verify block store was updated optimistically
+    await waitFor(() => {
+      const block = useBlockStore.getState().blocks.find((b) => b.id === 'A')
+      expect(block?.due_date).toBe('2025-03-15')
+    })
+
+    // Verify it did NOT call create_block (no date page created)
     expect(mockedInvoke).not.toHaveBeenCalledWith(
       'create_block',
       expect.objectContaining({ content: '2025-03-15' }),

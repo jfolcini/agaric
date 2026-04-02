@@ -277,6 +277,25 @@ export async function getBatchProperties(
   return invoke('get_batch_properties', { blockIds })
 }
 
+// ---------------------------------------------------------------------------
+// Block fixed-field commands (thin wrappers for reserved properties)
+// ---------------------------------------------------------------------------
+
+/** Set or clear the todo state on a block. Pass null to clear. */
+export async function setTodoState(blockId: string, state: string | null): Promise<BlockRow> {
+  return invoke('set_todo_state', { blockId, state })
+}
+
+/** Set or clear the priority level on a block. Pass null to clear. */
+export async function setPriority(blockId: string, level: string | null): Promise<BlockRow> {
+  return invoke('set_priority', { blockId, level })
+}
+
+/** Set or clear the due date on a block. Pass null to clear. */
+export async function setDueDate(blockId: string, date: string | null): Promise<BlockRow> {
+  return invoke('set_due_date', { blockId, date })
+}
+
 /** List global operation history (page-scoped), paginated (newest first). */
 export async function listPageHistory(params: {
   pageId: string

@@ -17,32 +17,6 @@ import { BlockTree } from './BlockTree'
 import { HistoryPanel } from './HistoryPanel'
 import { LinkedReferences } from './LinkedReferences'
 import { PageHeader } from './PageHeader'
-import { PropertiesPanel } from './PropertiesPanel'
-
-/** Inline Settings2 icon — avoids adding to the lucide-react import which breaks existing test mocks. */
-function Settings2Icon({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      role="img"
-      aria-label="Properties"
-    >
-      <path d="M20 7h-9" />
-      <path d="M14 17H5" />
-      <circle cx="17" cy="17" r="3" />
-      <circle cx="7" cy="7" r="3" />
-    </svg>
-  )
-}
 
 export interface PageEditorProps {
   pageId: string
@@ -50,8 +24,6 @@ export interface PageEditorProps {
   onBack?: () => void
   onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
 }
-
-type DetailTab = 'history' | 'properties'
 
 export function PageEditor({
   pageId,
@@ -85,7 +57,7 @@ export function PageEditor({
 
   // Detail panel state
   const focusedBlockId = useBlockStore((s) => s.focusedBlockId)
-  const [activeTab, setActiveTab] = useState<DetailTab | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [panelCollapsed, setPanelCollapsed] = useState(false)
   const lastBlockIdRef = useRef<string | null>(null)
 
@@ -163,7 +135,7 @@ export function PageEditor({
         </Button>
       </div>
 
-      {/* Detail panel — tab bar shown when a block has been focused, content shown when tab selected */}
+      {/* Detail panel — History tab shown when a block has been focused */}
       {effectiveBlockId != null && (
         <div className="detail-panel rounded-lg border" data-testid="detail-panel">
           {/* Tab bar + collapse toggle */}
@@ -172,40 +144,24 @@ export function PageEditor({
               <Button
                 role="tab"
                 id="detail-tab-history"
-                aria-selected={activeTab === 'history'}
+                aria-selected={historyOpen}
                 aria-controls="detail-tabpanel"
-                variant={activeTab === 'history' ? 'default' : 'ghost'}
+                variant={historyOpen ? 'default' : 'ghost'}
                 size="sm"
                 className="detail-tab-history gap-1"
                 onClick={() => {
-                  setActiveTab('history')
+                  setHistoryOpen(true)
                   setPanelCollapsed(false)
                 }}
               >
                 <History className="h-3.5 w-3.5" />
                 History
               </Button>
-              <Button
-                role="tab"
-                id="detail-tab-properties"
-                aria-selected={activeTab === 'properties'}
-                aria-controls="detail-tabpanel"
-                variant={activeTab === 'properties' ? 'default' : 'ghost'}
-                size="sm"
-                className="detail-tab-properties gap-1"
-                onClick={() => {
-                  setActiveTab('properties')
-                  setPanelCollapsed(false)
-                }}
-              >
-                <Settings2Icon className="h-3.5 w-3.5" />
-                Properties
-              </Button>
             </div>
 
             <div className="flex-1" />
 
-            {activeTab != null && (
+            {historyOpen && (
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -222,15 +178,14 @@ export function PageEditor({
           </div>
 
           {/* Panel content */}
-          {activeTab != null && !panelCollapsed && (
+          {historyOpen && !panelCollapsed && (
             <div
               role="tabpanel"
               id="detail-tabpanel"
-              aria-labelledby={`detail-tab-${activeTab}`}
+              aria-labelledby="detail-tab-history"
               className="detail-panel-content max-h-96 overflow-y-auto p-3"
             >
-              {activeTab === 'history' && <HistoryPanel blockId={effectiveBlockId} />}
-              {activeTab === 'properties' && <PropertiesPanel blockId={effectiveBlockId} />}
+              <HistoryPanel blockId={effectiveBlockId} />
             </div>
           )}
         </div>

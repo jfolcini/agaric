@@ -14,7 +14,7 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Check, ChevronRight, GripVertical, Trash2 } from 'lucide-react'
+import { CalendarDays, Check, ChevronRight, GripVertical, Trash2 } from 'lucide-react'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { cn } from '../lib/utils'
@@ -36,6 +36,45 @@ const LONG_PRESS_DELAY = 400
 
 /** Max touch movement (px) before the long-press gesture is cancelled. */
 const LONG_PRESS_MOVE_THRESHOLD = 10
+
+/** Short month names for compact date display. */
+const MONTH_SHORT = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+]
+
+/** Format a YYYY-MM-DD date string compactly. Same year → "Apr 15", different year → "Apr 15, 2025". */
+function formatCompactDate(dateStr: string): string {
+  const parts = dateStr.split('-')
+  if (parts.length !== 3) return dateStr
+  const [y, m, d] = parts.map(Number)
+  if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return dateStr
+  const month = MONTH_SHORT[(m ?? 1) - 1] ?? 'Jan'
+  const day = d ?? 1
+  const now = new Date()
+  if (y === now.getFullYear()) return `${month} ${day}`
+  return `${month} ${day}, ${y}`
+}
+
+/** Determine the color class for a due date chip based on whether it's overdue, today, or future. */
+function dueDateColor(dateStr: string): string {
+  const now = new Date()
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  if (dateStr < todayStr) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+  if (dateStr === todayStr)
+    return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+  return 'bg-muted text-muted-foreground'
+}
 
 interface SortableBlockProps {
   blockId: string
@@ -68,6 +107,8 @@ interface SortableBlockProps {
   priority?: string | null
   /** Callback to cycle priority: none → A → B → C → none. */
   onTogglePriority?: (blockId: string) => void
+  /** Due date in YYYY-MM-DD format, or null/undefined if not set. */
+  dueDate?: string | null
   /** Move block up among siblings. */
   onMoveUp?: (blockId: string) => void
   /** Move block down among siblings. */
@@ -95,6 +136,7 @@ function SortableBlockInner({
   onToggleTodo,
   priority,
   onTogglePriority,
+  dueDate,
   onMoveUp,
   onMoveDown,
 }: SortableBlockProps): React.ReactElement {
@@ -339,6 +381,21 @@ function SortableBlockInner({
               </TooltipContent>
             </Tooltip>
           )}
+
+          {/* Due date chip — read-only display when set */}
+          {dueDate && (
+            <span
+              role="img"
+              className={cn(
+                'due-date-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 mt-1 text-[10px] font-medium leading-none select-none',
+                dueDateColor(dueDate),
+              )}
+              aria-label={`Due ${formatCompactDate(dueDate)}`}
+            >
+              <CalendarDays size={14} className="flex-shrink-0" />
+              {formatCompactDate(dueDate)}
+            </span>
+          )}
         </div>
 
         {/* ── Block content ─────────────────────────────────────────── */}
@@ -375,6 +432,7 @@ function SortableBlockInner({
             isCollapsed={isCollapsed}
             todoState={todoState}
             priority={priority}
+            dueDate={dueDate}
           />
         )}
       </div>
