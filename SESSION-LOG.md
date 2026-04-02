@@ -1,6 +1,6 @@
 # Session Log
 
-## Session 55 — 2026-04-02 — Phase 5 Wave 2 + Wave 3 batches 1-4
+## Session 55 — 2026-04-02 — Phase 5 Wave 2 + Wave 3 batches 1-5
 
 ### Batch 1 — Wave 2 completion: PagePropertyTable (#553, #554)
 2 remaining Phase 5 Wave 2 items resolved: schema-driven property table UI + property key suggestions. Completes Wave 2.
@@ -64,11 +64,27 @@ Built by 1 subagent, reviewed by 1 subagent (PASS, no issues).
 | `BacklinkFilterBuilder.tsx` | Contains/StartsWith cases in opLabel() for TS exhaustiveness. |
 | `bindings.ts` | Regenerated — new filter variants + CompareOp values. |
 
+### Batch 5 — Wave 3: Frontend wiring (#565, #566, #567)
+3 frontend items: wire inline badges to BlockRow fields + due date chip, update command calls to thin commands + /due slash command, remove Properties tab from detail panel.
+
+Built by 1 subagent, reviewed by 1 subagent (PASS WITH FIXES — tauri-mock handlers, /due test, date validation). Orchestrator applied all review fixes.
+
+| File | Change |
+|------|--------|
+| `tauri.ts` | #566: 3 thin command wrappers (setTodoState, setPriority, setDueDate). |
+| `useBlockProperties.ts` | #566: Major rewrite — reads from block store, calls thin commands, no more properties cache Map. |
+| `BlockTree.tsx` | #565+#566: Removed getBatchProperties call + properties cache. Reads todo_state/priority/due_date from BlockRow. Added /due slash command (datePickerMode state). Updated all command call sites to thin commands. |
+| `SortableBlock.tsx` | #565: Added dueDate prop + compact date chip with color-coding (overdue/today/future). formatCompactDate with input validation. |
+| `PageEditor.tsx` | #567: Removed Properties tab — detail panel now History-only. |
+| `BlockContextMenu.tsx` | #565: Added dueDate prop pass-through for future use. |
+| `tauri-mock.ts` | Review fix: 3 thin command handlers for browser preview/E2E. |
+| 4 test files | Updated: useBlockProperties rewrite, BlockTree mock/assertion fixes, SortableBlock due date chip tests (13 new), PageEditor Properties tab removal, /due command test. |
+
 ### Stats
-- Rust: 1386 tests pass (1380 + 6 new)
-- Frontend: 78/78 test files, 2183 tests pass
-- Commits: `b3c5247` (Wave 2), `143f1ae` (Wave 3 batch 1), `99152d4` (Wave 3 batch 2), `9726464` (batch 4)
-- REVIEW-LATER.md: 25 → 15 open items (resolved #553, #554, #558-#564, #568)
+- Rust: 1386 tests pass (unchanged)
+- Frontend: 78/78 test files, 2196 tests pass (2183 + 13 new)
+- Commits: `b3c5247` (Wave 2), `143f1ae` (batch 2), `99152d4` (batch 3), `9726464` (batch 4), `79aeb1c` (batch 5)
+- REVIEW-LATER.md: 25 → 12 open items (resolved #553, #554, #558-#567, #568)
 
 ## Session 54 — 2026-04-02 — Phase 5 Wave 2: Property Definitions + PageHeader (#548-#552, #555-#557)
 
