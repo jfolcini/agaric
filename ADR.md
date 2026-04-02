@@ -7,8 +7,8 @@
 
 | ADR | Title | Status | Remaining work |
 |-----|-------|--------|----------------|
-| 01 | Shell & Frontend | **Partial** | Export (P5). TanStack Query not started. |
-| 02 | State Management | **Partial** | TanStack Query (P3+) pending. |
+| 01 | Shell & Frontend | **Partial** | Export (P5). |
+| 02 | State Management | **Complete** | — |
 | 03 | UI Components | **Partial** | Noto Sans bundling deferred to P5 (i18n). |
 | 06 | Data Model | **Partial** | Export (P5) pending. |
 | 12 | Search | **Partial** | Tantivy + lindera CJK search (P5). |
@@ -30,8 +30,6 @@ auto-split, keyboard handling, viewport observer. See ARCHITECTURE.md §1, §7.
 **Pending:**
 
 - **Export (Phase 5):** Markdown export with ULID → human name substitution. Not started.
-- **TanStack Query:** Planned for Phase 3+ to manage server state with Tauri event invalidation.
-  Not started — Zustand is sufficient for current complexity.
 
 ---
 
@@ -39,15 +37,9 @@ auto-split, keyboard handling, viewport observer. See ARCHITECTURE.md §1, §7.
 
 **Implemented:** Zustand with explicit state enums for boot (`booting → recovering → ready | error`)
 and editor lifecycle. Two-tier undo: TipTap history within session, page-level op reversal via
-`useUndoStore` + `reverse.rs` for cross-flush Ctrl+Z/Y. See ARCHITECTURE.md §7, §8.
-
-**Pending:**
-
-| Phase | Addition |
-|-------|----------|
-| 3+ | TanStack Query for server state, invalidated by Tauri events |
-
-TanStack Query is additive — it layers on top of existing Zustand stores, not replaces them.
+`useUndoStore` + `reverse.rs` for cross-flush Ctrl+Z/Y. Custom `usePaginatedQuery` and
+`usePollingQuery` hooks replace pagination/polling boilerplate across all list views.
+See ARCHITECTURE.md §7, §8.
 
 ---
 
@@ -109,7 +101,7 @@ UI. See ARCHITECTURE.md §9.
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| 4 — Sync + Android | mDNS, pairing, op streaming, merge, Android spike. | **Complete.** Remaining: TanStack Query, Tauri command wiring for end-to-end sync. |
+| 4 — Sync + Android | mDNS, pairing, op streaming, merge, Android spike. | **Complete.** |
 | 5 — Polish | i18n (Noto Sans bundling), CJK search (Tantivy + lindera), export (ULID → name substitution, Markdown output), auto-updates, graph view. | Pending. |
 
 **Total at ~10 h/week:** 12–18 months. Daily driver by month 3–4.

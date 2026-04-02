@@ -277,7 +277,7 @@ These tasks block everything downstream. Ship them before moving on.
 **Estimate:** 12–16 weeks
 **ADRs:** ADR-09, ADR-10, ADR-07, ADR-02
 
-> The most complex phase. DAG log, diffy merge, mDNS pairing, snapshot protocol, full Android. TanStack Query enters.
+> The most complex phase. DAG log, diffy merge, mDNS pairing, snapshot protocol, full Android.
 >
 > **Prerequisite resolved:** 18 Tier 1 sync blockers from REVIEW-LATER.md fixed in commit `a3a38a5` (2026-04-01). Canonical JSON, BlockId newtypes, DeviceId encapsulation, expression indexes, WAL checkpoint, compaction guards, merge conflict semantics, and ADR-09 design decisions for delete+edit / move conflicts / tag dedup.
 
@@ -285,7 +285,7 @@ These tasks block everything downstream. Ship them before moving on.
 
 | ID | Task | Tags | Critical | Notes |
 |----|------|------|----------|-------|
-| p4-t1 | TanStack Query — server state layer | frontend, dx | | [ADR-02] Replace manual Tauri invoke + useState patterns. Invalidated by Tauri events. Enables stale-while-revalidate in frontend. |
+| p4-t1 | Custom query hooks (usePaginatedQuery, usePollingQuery) | frontend, dx | | [ADR-02] Done — replaced manual pagination/polling boilerplate across 7 components with shared hooks. Stale response detection, auto-refetch on deps change. |
 | p4-t2a | Sync event emission infrastructure | backend, frontend | | Done (`b988164`) — SyncOrchestrator emits Progress/Complete/Error via SyncEventSink trait. Frontend useSyncEvents hook listens + updates Zustand store. |
 
 ### DAG Op Log
@@ -434,7 +434,6 @@ These tasks block everything downstream. Ship them before moving on.
 | zstd | backend | Snapshot compression. |
 | ciborium | backend | CBOR for snapshot encoding. |
 | tokio-tungstenite + rustls | backend | Sync transport. |
-| TanStack Query | frontend | Server state, invalidated by Tauri events. |
 
 ### Phase 5
 | Dep | Side | Notes |
