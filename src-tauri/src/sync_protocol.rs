@@ -193,38 +193,79 @@ pub async fn check_reset_required(
 
 /// Insert remote ops into the local op log and enqueue materialisation.
 ///
-/// Each op is inserted via [`dag::insert_remote_op`] which uses
-/// `INSERT OR IGNORE` — duplicates are detected by the zero `rows_affected`
-/// return, avoiding a redundant pre-check SELECT per op.
+/// All ops are inserted inside a **single explicit transaction** to amortise
+/// the per-op `BEGIN IMMEDIATE` / `COMMIT` overhead.  Materialisation tasks
+/// are enqueued only *after* the transaction commits, guaranteeing that every
+/// op is durable before any of them are processed.
+///
+/// Duplicates are detected via `INSERT OR IGNORE` on the composite PK
+/// `(device_id, seq)` — zero `rows_affected` means the op was already
+/// present.
 pub async fn apply_remote_ops(
     pool: &SqlitePool,
     materializer: &Materializer,
     ops: Vec<OpTransfer>,
 ) -> Result<ApplyResult, AppError> {
+    use crate::hash::verify_op_hash;
+
     let mut result = ApplyResult {
         inserted: 0,
         duplicates: 0,
         hash_mismatches: 0,
     };
+    let mut to_materialize = Vec::new();
+
+    // Wrap all inserts in a single transaction to reduce per-op overhead.
+    let mut tx = pool.begin().await?;
 
     for op in ops {
         let record: OpRecord = op.into();
 
-        match dag::insert_remote_op(pool, &record).await {
-            Ok(true) => {
-                materializer
-                    .enqueue_foreground(MaterializeTask::ApplyOp(record))
-                    .await?;
-                result.inserted += 1;
-            }
-            Ok(false) => {
-                result.duplicates += 1;
-            }
-            Err(AppError::InvalidOperation(ref msg)) if msg.contains("hash mismatch") => {
-                result.hash_mismatches += 1;
-            }
-            Err(e) => return Err(e),
+        // Hash verification (same logic as dag::insert_remote_op)
+        if !verify_op_hash(
+            &record.hash,
+            &record.device_id,
+            record.seq,
+            record.parent_seqs.as_deref(),
+            &record.op_type,
+            &record.payload,
+        ) {
+            result.hash_mismatches += 1;
+            continue;
         }
+
+        // INSERT OR IGNORE — duplicate delivery is a no-op
+        let r = sqlx::query(
+            "INSERT OR IGNORE INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&record.device_id)
+        .bind(record.seq)
+        .bind(&record.parent_seqs)
+        .bind(&record.hash)
+        .bind(&record.op_type)
+        .bind(&record.payload)
+        .bind(&record.created_at)
+        .execute(&mut *tx)
+        .await?;
+
+        if r.rows_affected() > 0 {
+            to_materialize.push(record);
+            result.inserted += 1;
+        } else {
+            result.duplicates += 1;
+        }
+    }
+
+    tx.commit().await?;
+
+    // Enqueue materialization AFTER commit — ensures all ops are durable
+    // before any are processed.
+    for record in to_materialize {
+        materializer
+            .enqueue_foreground(MaterializeTask::ApplyOp(record))
+            .await?;
     }
 
     Ok(result)
