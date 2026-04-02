@@ -1,6 +1,6 @@
 # Session Log
 
-## Session 55 — 2026-04-02 — Phase 5 Wave 2 + Wave 3 batch 1
+## Session 55 — 2026-04-02 — Phase 5 Wave 2 + Wave 3 batches 1-2
 
 ### Batch 1 — Wave 2 completion: PagePropertyTable (#553, #554)
 2 remaining Phase 5 Wave 2 items resolved: schema-driven property table UI + property key suggestions. Completes Wave 2.
@@ -34,11 +34,30 @@ Built by 1 subagent, reviewed by 1 subagent (PASS, no issues). Orchestrator fixe
 | 6 snapshot files | Updated with todo_state/priority/due_date: ~ (null). |
 | 9 frontend files | Added todo_state/priority/due_date: null to BlockRow object literals for TS type safety. |
 
+### Batch 3 — Wave 3 core: Thin commands, routing, agenda cache, snapshot v2 (#561, #562, #563, #568)
+4 tightly-coupled backend items: new thin commands for fixed fields, materializer/command routing of reserved keys to blocks columns, agenda cache UNION ALL for due_date, snapshot schema v2.
+
+Built by 1 subagent, reviewed by 1 subagent (PASS WITH FIXES — query_by_property and delete_property needed reserved key routing). Orchestrator applied review fixes + 2 integration tests.
+
+| File | Change |
+|------|--------|
+| `op.rs` | #562: Added `is_reserved_property_key()` helper. Updated `validate_set_property` to allow all-null for reserved keys (clear). |
+| `commands.rs` | #561: 3 thin commands (set_todo_state/set_priority/set_due_date) + inner functions + validation. #562: Updated set_property_inner step 5 routing + step 7 return. Updated delete_property_inner for reserved keys. 9 new tests. |
+| `materializer.rs` | #562: SetProperty handler routes reserved keys to blocks columns. DeleteProperty handler clears columns for reserved keys. 1 new test. |
+| `cache.rs` | #563: Third UNION ALL branch in rebuild_agenda_cache for blocks.due_date column. |
+| `snapshot.rs` | #568: SCHEMA_VERSION=2, BlockSnapshot +3 fields with #[serde(default)], version range check 1..=2, collect_tables/apply_snapshot updated. 4 new tests. |
+| `lib.rs` | Registered 3 new commands in specta_builder() and run(). |
+| `pagination.rs` | Review fix: query_by_property branches on reserved keys — direct column query instead of block_properties join. |
+| `command_integration_tests.rs` | Review fix: 2 new integration tests (query_by_property reserved key, delete_property reserved key). |
+| `integration_tests.rs` | Fixed 2 tests using reserved keys as generic property keys. |
+| `bindings.ts` | Regenerated — 3 new command bindings. |
+| `.sqlx/` | 2 cache files regenerated. |
+
 ### Stats
-- Rust: 1363 tests pass
+- Rust: 1380 tests pass (1363 + 15 new + 2 review-fix tests)
 - Frontend: 78/78 test files, 2183 tests pass
-- Commits: `b3c5247` (Wave 2), `143f1ae` (Wave 3 batch 1)
-- REVIEW-LATER.md: 25 → 20 open items (resolved #553, #554, #558, #559, #560)
+- Commits: `b3c5247` (Wave 2), `143f1ae` (Wave 3 batch 1), `99152d4` (Wave 3 batch 2)
+- REVIEW-LATER.md: 25 → 16 open items (resolved #553, #554, #558-#563, #568)
 
 ## Session 54 — 2026-04-02 — Phase 5 Wave 2: Property Definitions + PageHeader (#548-#552, #555-#557)
 
