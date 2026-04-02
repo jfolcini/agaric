@@ -55,7 +55,9 @@ function EditableBlockInner({
   resolveBlockStatus,
   resolveTagStatus,
 }: EditableBlockProps): React.ReactElement {
-  const { setFocused, edit, splitBlock } = useBlockStore()
+  const setFocused = useBlockStore((s) => s.setFocused)
+  const edit = useBlockStore((s) => s.edit)
+  const splitBlock = useBlockStore((s) => s.splitBlock)
   const wrapperRef = useRef<HTMLElement>(null)
 
   // Scroll the editor wrapper into view when the block becomes focused.

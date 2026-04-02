@@ -139,23 +139,21 @@ interface BlockTreeProps {
 }
 
 export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): React.ReactElement {
-  const {
-    blocks,
-    rootParentId,
-    focusedBlockId,
-    loading,
-    load,
-    setFocused,
-    remove,
-    edit,
-    splitBlock,
-    indent,
-    dedent,
-    reorder,
-    moveToParent,
-    moveUp,
-    moveDown,
-  } = useBlockStore()
+  const blocks = useBlockStore((s) => s.blocks)
+  const rootParentId = useBlockStore((s) => s.rootParentId)
+  const focusedBlockId = useBlockStore((s) => s.focusedBlockId)
+  const loading = useBlockStore((s) => s.loading)
+  const load = useBlockStore((s) => s.load)
+  const setFocused = useBlockStore((s) => s.setFocused)
+  const remove = useBlockStore((s) => s.remove)
+  const edit = useBlockStore((s) => s.edit)
+  const splitBlock = useBlockStore((s) => s.splitBlock)
+  const indent = useBlockStore((s) => s.indent)
+  const dedent = useBlockStore((s) => s.dedent)
+  const reorder = useBlockStore((s) => s.reorder)
+  const moveToParent = useBlockStore((s) => s.moveToParent)
+  const moveUp = useBlockStore((s) => s.moveUp)
+  const moveDown = useBlockStore((s) => s.moveDown)
 
   // ── Collapse state ─────────────────────────────────────────────────
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())

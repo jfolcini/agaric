@@ -63,7 +63,9 @@ export function PageEditor({
 }: PageEditorProps): React.ReactElement {
   const [editableTitle, setEditableTitle] = useState(title)
   const titleRef = useRef<HTMLDivElement>(null)
-  const { blocks, createBelow, setFocused } = useBlockStore()
+  const blocks = useBlockStore((s) => s.blocks)
+  const createBelow = useBlockStore((s) => s.createBelow)
+  const setFocused = useBlockStore((s) => s.setFocused)
 
   // Scroll to and focus a specific block when navigating via a link
   const selectedBlockId = useNavigationStore((s) => s.selectedBlockId)

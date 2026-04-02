@@ -54,12 +54,14 @@ vi.mock('../StaticBlock', () => ({
 const mockEdit = vi.fn()
 const mockSplitBlock = vi.fn()
 const mockSetFocused = vi.fn()
+const _mockStore = {
+  setFocused: mockSetFocused,
+  edit: mockEdit,
+  splitBlock: mockSplitBlock,
+}
 vi.mock('../../stores/blocks', () => ({
-  useBlockStore: () => ({
-    setFocused: mockSetFocused,
-    edit: mockEdit,
-    splitBlock: mockSplitBlock,
-  }),
+  useBlockStore: (selector?: (s: typeof _mockStore) => unknown) =>
+    selector ? selector(_mockStore) : _mockStore,
 }))
 
 // ── Helpers ──────────────────────────────────────────────────────────────

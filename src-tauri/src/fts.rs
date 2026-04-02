@@ -68,38 +68,60 @@ pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, A
     result = ITALIC_RE.replace_all(&result, "$1").to_string();
     result = CODE_RE.replace_all(&result, "$1").to_string();
 
-    // Step 4: Replace tag references
-    let mut tag_ids: Vec<String> = Vec::new();
-    for cap in TAG_REF_RE.captures_iter(&result) {
-        tag_ids.push(cap[1].to_string());
-    }
-    for tag_id in &tag_ids {
-        let name = sqlx::query_scalar!(
-            "SELECT content FROM blocks WHERE id = ? AND block_type = 'tag' AND deleted_at IS NULL",
-            tag_id
+    // Step 4: Batch-fetch tag names and replace
+    let tag_ids: Vec<String> = TAG_REF_RE
+        .captures_iter(&result)
+        .map(|cap| cap[1].to_string())
+        .collect();
+
+    if !tag_ids.is_empty() {
+        let ids_json = serde_json::to_string(&tag_ids)?;
+        let rows = sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT id, content FROM blocks \
+             WHERE id IN (SELECT value FROM json_each(?1)) \
+             AND block_type = 'tag' AND deleted_at IS NULL",
         )
-        .fetch_optional(pool)
+        .bind(&ids_json)
+        .fetch_all(pool)
         .await?;
-        let replacement = name.flatten().unwrap_or_default();
-        let pattern = format!("#[{tag_id}]");
-        result = result.replace(&pattern, &replacement);
+        let tag_names: HashMap<String, String> = rows
+            .into_iter()
+            .filter_map(|(id, content)| content.map(|c| (id, c)))
+            .collect();
+        result = TAG_REF_RE
+            .replace_all(&result, |caps: &regex::Captures| {
+                let ulid = &caps[1];
+                tag_names.get(ulid).cloned().unwrap_or_default()
+            })
+            .to_string();
     }
 
-    // Step 5: Replace page links
-    let mut page_ids: Vec<String> = Vec::new();
-    for cap in PAGE_LINK_RE.captures_iter(&result) {
-        page_ids.push(cap[1].to_string());
-    }
-    for page_id in &page_ids {
-        let title = sqlx::query_scalar!(
-            "SELECT content FROM blocks WHERE id = ? AND block_type = 'page' AND deleted_at IS NULL",
-            page_id
+    // Step 5: Batch-fetch page titles and replace
+    let page_ids: Vec<String> = PAGE_LINK_RE
+        .captures_iter(&result)
+        .map(|cap| cap[1].to_string())
+        .collect();
+
+    if !page_ids.is_empty() {
+        let ids_json = serde_json::to_string(&page_ids)?;
+        let rows = sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT id, content FROM blocks \
+             WHERE id IN (SELECT value FROM json_each(?1)) \
+             AND block_type = 'page' AND deleted_at IS NULL",
         )
-        .fetch_optional(pool)
+        .bind(&ids_json)
+        .fetch_all(pool)
         .await?;
-        let replacement = title.flatten().unwrap_or_default();
-        let pattern = format!("[[{page_id}]]");
-        result = result.replace(&pattern, &replacement);
+        let page_titles: HashMap<String, String> = rows
+            .into_iter()
+            .filter_map(|(id, content)| content.map(|c| (id, c)))
+            .collect();
+        result = PAGE_LINK_RE
+            .replace_all(&result, |caps: &regex::Captures| {
+                let ulid = &caps[1];
+                page_titles.get(ulid).cloned().unwrap_or_default()
+            })
+            .to_string();
     }
 
     // Step 6: Unescape backslash sequences (\* -> *, \` -> `)
@@ -678,6 +700,19 @@ mod tests {
         let result = strip_for_fts("**bold *italic***", &pool).await.unwrap();
         // After bold strip: "bold *italic*", after italic strip: "bold italic"
         assert_eq!(result, "bold italic");
+    }
+
+    #[tokio::test]
+    async fn strip_multiple_refs_batched() {
+        let (pool, _dir) = test_pool().await;
+        let tag_id = "01AAAAAAAAAAAAAAAAAAAAATAG";
+        let page_id = "01AAAAAAAAAAAAAAAAAAAAPGE1";
+        insert_block(&pool, tag_id, "tag", "urgent", None, None).await;
+        insert_block(&pool, page_id, "page", "My Page", None, None).await;
+
+        let input = format!("task #[{tag_id}] and #[{tag_id}] see [[{page_id}]] and [[{page_id}]]");
+        let result = strip_for_fts(&input, &pool).await.unwrap();
+        assert_eq!(result, "task urgent and urgent see My Page and My Page");
     }
 
     // ======================================================================

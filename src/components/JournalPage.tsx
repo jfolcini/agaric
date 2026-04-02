@@ -356,7 +356,7 @@ export function JournalPage({
   // Track per-day pageIds that were created by handleAddBlock so we can
   // immediately show BlockTree without waiting for a full refetch.
   const [createdPages, setCreatedPages] = useState<Map<string, string>>(new Map())
-  const { load } = useBlockStore()
+  const load = useBlockStore((s) => s.load)
 
   /** Fetch all pages and build a dateStr->pageId lookup. */
   const fetchPages = useCallback(async () => {
