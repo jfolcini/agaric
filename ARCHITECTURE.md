@@ -1079,6 +1079,76 @@ Idle → ExchangingHeads → StreamingOps → ApplyingOps → Merging → Comple
 On sync failure (connection lost mid-stream): `peer_refs` is **not** updated. Next sync restarts
 from `last_hash`. Duplicate delivery is safe due to `INSERT OR IGNORE` on the composite PK.
 
+### SyncDaemon (auto-sync orchestrator)
+
+`sync_daemon.rs` — long-lived background task spawned during `lib.rs` setup. Ties together all
+sync building blocks into an always-on sync service.
+
+**Lifecycle:**
+1. Starts TLS WebSocket server on random port via `SyncServer::start()`
+2. Announces device via mDNS (`MdnsService::announce()`)
+3. Starts mDNS browse and enters main loop
+4. Managed as Tauri state; shuts down cleanly on app exit
+
+**Main loop** (`tokio::select!` with three branches):
+- **mDNS discovery** (500ms poll): drains `browse_rx.try_recv()`, updates `HashMap<String, DiscoveredPeer>`, triggers immediate sync for newly discovered paired peers
+- **Change-triggered sync**: `SyncScheduler::wait_for_debounced_change()` wakes the daemon when local ops are materialized (3s debounce window)
+- **Periodic resync**: `SyncScheduler::peers_due_for_resync()` identifies stale peers (>60s since last sync)
+
+**`try_sync_with_peer()`:** Runs a single initiator-side sync session:
+1. Checks `SyncScheduler::may_retry()` (exponential backoff gate)
+2. Acquires per-peer mutex via `try_lock_peer()` (prevents concurrent syncs)
+3. Looks up `cert_hash` from `peer_refs` for TLS certificate pinning
+4. Connects via `connect_to_peer(addr, cert_hash)`
+5. Runs `SyncOrchestrator` message exchange loop
+6. On success: `record_success()` (resets backoff), emits `SyncEvent::Complete`
+7. On failure: `record_failure()` (doubles backoff 1s→60s max), emits `SyncEvent::Error`
+
+### SyncScheduler
+
+`sync_scheduler.rs` — manages per-peer backoff, debounced change notifications, and resync timing.
+
+| Function | Purpose |
+|----------|---------|
+| `try_lock_peer(id)` | Per-peer mutex (RAII guard). Only one sync session per peer at a time. |
+| `may_retry(id)` | Returns false if peer is in backoff period |
+| `record_failure(id)` | Doubles backoff: 1s → 2s → 4s → ... → 60s max |
+| `record_success(id)` | Clears backoff entirely |
+| `notify_change()` | Signals a local op was materialized |
+| `wait_for_debounced_change()` | Blocks until notifications stop for `debounce_window` (3s) |
+| `peers_due_for_resync(peers)` | Filters peers whose `synced_at` is older than `resync_interval` (60s) |
+
+### Tauri sync commands
+
+Five commands registered in the invoke handler (`commands.rs` + `lib.rs`):
+
+| Command | Backend function | Purpose |
+|---------|-----------------|---------|
+| `start_pairing` | `start_pairing_inner()` | Generate passphrase + QR SVG, store `PairingSession` in managed state |
+| `confirm_pairing` | `confirm_pairing_inner()` | Derive key from passphrase, upsert `peer_ref`, clear session |
+| `cancel_pairing` | `cancel_pairing_inner()` | Clear pairing session |
+| `start_sync` | `start_sync_inner()` | Check backoff, acquire lock, notify daemon via `scheduler.notify_change()` |
+| `cancel_sync` | `cancel_sync_inner()` | Placeholder (future: cancel active sync task) |
+
+Managed state: `PairingState(Mutex<Option<PairingSession>>)`, `Arc<SyncScheduler>`.
+TypeScript bindings auto-generated via specta (`PairingInfo`, `SyncSessionInfo` types).
+
+### Frontend sync integration
+
+| Hook/Component | Purpose |
+|----------------|---------|
+| `useSyncTrigger` | Recursive setTimeout with exponential backoff (60s→600s max). Syncs on mount (2s delay) + periodic. Checks `navigator.onLine` before attempting. |
+| `useSyncEvents` | Listens to `sync:progress`, `sync:complete`, `sync:error` Tauri events. Updates `useSyncStore`. Shows toast on completion/failure. Checks for conflicts after sync. |
+| `useOnlineStatus` | `useSyncExternalStore` hook tracking `navigator.onLine` with event listeners. |
+| Sidebar Sync button | Shows `WifiOff` + "Offline" when offline. Tooltip: "Syncing..." during active sync. |
+
+### Batch sync performance
+
+`apply_remote_ops()` wraps all inserts in a single explicit transaction (not N implicit
+transactions). After commit, enqueues a single `MaterializeTask::BatchApplyOps(Vec<OpRecord>)`
+instead of N individual `ApplyOp` messages. Foreground consumer iterates and `apply_op`s each
+in sequence, preserving ordering.
+
 ### Duplicate tag dedup
 
 On cache rebuild after sync, the materializer detects tag blocks with duplicate content
