@@ -134,7 +134,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   },
 
   createBelow: async (afterBlockId: string, content = '') => {
-    const { blocks } = get()
+    const { blocks, rootParentId } = get()
     const idx = blocks.findIndex((b) => b.id === afterBlockId)
     const afterBlock = blocks[idx]
     if (!afterBlock) return null
@@ -171,7 +171,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       const newBlocks = [...blocks]
       newBlocks.splice(insertIdx, 0, newBlock)
       set({ blocks: newBlocks })
-      notifyUndoNewAction(get().rootParentId)
+      notifyUndoNewAction(rootParentId)
       return result.id
     } catch {
       toast.error('Failed to create block')
@@ -180,19 +180,20 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   },
 
   edit: async (blockId: string, content: string) => {
+    const { rootParentId } = get()
+    set((state) => ({
+      blocks: state.blocks.map((b) => (b.id === blockId ? { ...b, content } : b)),
+    }))
     try {
       await editBlock(blockId, content)
-      set((state) => ({
-        blocks: state.blocks.map((b) => (b.id === blockId ? { ...b, content } : b)),
-      }))
-      notifyUndoNewAction(get().rootParentId)
+      notifyUndoNewAction(rootParentId)
     } catch {
       toast.error('Failed to save changes')
     }
   },
 
   remove: async (blockId: string) => {
-    const { blocks } = get()
+    const { blocks, rootParentId } = get()
     try {
       await deleteBlock(blockId)
       // Remove block AND its descendants from the flat tree
@@ -201,7 +202,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
         blocks: state.blocks.filter((b) => b.id !== blockId && !descendants.has(b.id)),
         focusedBlockId: state.focusedBlockId === blockId ? null : state.focusedBlockId,
       }))
-      notifyUndoNewAction(get().rootParentId)
+      notifyUndoNewAction(rootParentId)
     } catch {
       toast.error('Failed to delete block')
     }
@@ -239,7 +240,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   },
 
   reorder: async (blockId: string, newIndex: number) => {
-    const { blocks } = get()
+    const { blocks, rootParentId } = get()
     const oldIndex = blocks.findIndex((b) => b.id === blockId)
     if (oldIndex < 0 || oldIndex === newIndex) return
 
@@ -252,12 +253,8 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     const siblings = blocks.filter(
       (b) => b.id !== blockId && (b.parent_id ?? null) === (parentId ?? null),
     )
-    const lastSiblingPos = siblings.length > 0
-      ? (siblings[siblings.length - 1].position ?? 0)
-      : 0
-    const firstSiblingPos = siblings.length > 0
-      ? (siblings[0].position ?? 0)
-      : 0
+    const lastSiblingPos = siblings.length > 0 ? (siblings[siblings.length - 1].position ?? 0) : 0
+    const firstSiblingPos = siblings.length > 0 ? (siblings[0].position ?? 0) : 0
 
     let newPosition: number
     if (newIndex > oldIndex) {
@@ -293,7 +290,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
         position: newPosition,
       })
       set({ blocks: newBlocks })
-      notifyUndoNewAction(get().rootParentId)
+      notifyUndoNewAction(rootParentId)
     } catch {
       toast.error('Failed to reorder block')
     }
@@ -314,7 +311,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   },
 
   indent: async (blockId: string) => {
-    const { blocks } = get()
+    const { blocks, rootParentId } = get()
     const idx = blocks.findIndex((b) => b.id === blockId)
     if (idx <= 0) return // First block or not found — can't indent
 
@@ -363,14 +360,14 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
 
       remaining.splice(insertAt, 0, ...movedItems)
       set({ blocks: remaining })
-      notifyUndoNewAction(get().rootParentId)
+      notifyUndoNewAction(rootParentId)
     } catch {
       toast.error('Failed to indent block')
     }
   },
 
   dedent: async (blockId: string) => {
-    const { blocks } = get()
+    const { blocks, rootParentId } = get()
     const block = blocks.find((b) => b.id === blockId)
     if (!block?.parent_id) return // Already at root — can't dedent
 
@@ -406,7 +403,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
 
       remaining.splice(insertAt, 0, ...movedItems)
       set({ blocks: remaining })
-      notifyUndoNewAction(get().rootParentId)
+      notifyUndoNewAction(rootParentId)
     } catch {
       toast.error('Failed to dedent block')
     }

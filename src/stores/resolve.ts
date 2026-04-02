@@ -65,9 +65,14 @@ export const useResolveStore = create<ResolveStore>((set, get) => ({
       // (state.cache is current at commit time thanks to the updater pattern)
       set((state) => {
         const cache = new Map([...fetchedPages, ...fetchedTags, ...state.cache])
+        const fetchedIds = new Set(pagesList.map((p) => p.id))
+        const mergedPagesList = [
+          ...pagesList,
+          ...state.pagesList.filter((p) => !fetchedIds.has(p.id)),
+        ]
         return {
           cache,
-          pagesList,
+          pagesList: mergedPagesList,
           version: state.version + 1,
           _preloaded: true,
         }

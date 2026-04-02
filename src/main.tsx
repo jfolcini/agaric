@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 async function main() {
   // When running in a regular browser (not Tauri webview), activate IPC mocks
@@ -15,7 +16,9 @@ async function main() {
   if (!rootEl) throw new Error('Root element not found')
   createRoot(rootEl).render(
     <StrictMode>
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </StrictMode>,
   )
 }

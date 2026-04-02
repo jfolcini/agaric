@@ -135,6 +135,27 @@ describe('preload', () => {
     // Other fetched entries should still be present
     expect(state.cache.get('PAGE_1')).toEqual({ title: 'Page One', deleted: false })
   })
+
+  it('preserves pages created via set() during preload in pagesList (#534)', async () => {
+    // Simulate a page created via set() before preload completes
+    useResolveStore.getState().set('CREATED_DURING', 'New Page', false)
+
+    const mockPages = [{ id: 'PAGE_1', content: 'Page One', deleted_at: null }]
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return { items: mockPages, next_cursor: null, has_more: false }
+      if (cmd === 'list_tags_by_prefix') return []
+      return null
+    })
+
+    await useResolveStore.getState().preload()
+
+    const state = useResolveStore.getState()
+    // pagesList should contain both fetched pages AND the page created during preload
+    expect(state.pagesList).toHaveLength(2)
+    expect(state.pagesList.find((p) => p.id === 'PAGE_1')).toBeTruthy()
+    expect(state.pagesList.find((p) => p.id === 'CREATED_DURING')).toBeTruthy()
+  })
 })
 
 // ---------------------------------------------------------------------------

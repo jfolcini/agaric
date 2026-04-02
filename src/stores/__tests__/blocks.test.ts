@@ -356,7 +356,7 @@ describe('useBlockStore', () => {
       expect(useBlockStore.getState().blocks[0].content).toBe('new')
     })
 
-    it('does not update local state on backend error', async () => {
+    it('preserves optimistic content on backend error', async () => {
       useBlockStore.setState({
         blocks: [makeBlock({ id: 'A', content: 'old' })],
       })
@@ -364,7 +364,7 @@ describe('useBlockStore', () => {
 
       await useBlockStore.getState().edit('A', 'new')
 
-      expect(useBlockStore.getState().blocks[0].content).toBe('old')
+      expect(useBlockStore.getState().blocks[0].content).toBe('new')
     })
 
     it('only updates the target block, leaving others unchanged', async () => {
@@ -377,6 +377,22 @@ describe('useBlockStore', () => {
 
       expect(useBlockStore.getState().blocks[0].content).toBe('aaa-updated')
       expect(useBlockStore.getState().blocks[1].content).toBe('bbb')
+    })
+
+    it('notifies undo with the original rootParentId even if it changes during await', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A', content: 'old' })],
+        rootParentId: 'PAGE_1',
+      })
+      mockedInvoke.mockImplementation(async () => {
+        // Simulate navigation during IPC — rootParentId changes
+        useBlockStore.setState({ rootParentId: 'PAGE_2' })
+        return {}
+      })
+
+      await useBlockStore.getState().edit('A', 'new')
+
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
     })
   })
 
