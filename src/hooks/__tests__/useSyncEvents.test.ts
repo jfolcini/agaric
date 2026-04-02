@@ -528,4 +528,21 @@ describe('useSyncEvents', () => {
       unmount()
     })
   })
+
+  describe('listen rejection (#447)', () => {
+    it('handles listen() promise rejection without crashing', async () => {
+      mockListen.mockRejectedValue(new Error('IPC unavailable'))
+
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      // Give time for the rejected promises to settle
+      await new Promise((r) => setTimeout(r, 20))
+
+      // Should not crash — hook catches the rejection internally
+      // Unlisten should not be called since listen never resolved
+      expect(mockUnlisten).not.toHaveBeenCalled()
+
+      unmount()
+    })
+  })
 })

@@ -81,10 +81,12 @@ export function useSyncEvents(): void {
       store.setState(mapBackendState(state))
       store.setOpsReceived(ops_received)
       store.setOpsSent(ops_sent)
-    }).then((unlisten) => {
-      if (cancelled) unlisten()
-      else cleanups.push(unlisten)
     })
+      .then((unlisten) => {
+        if (cancelled) unlisten()
+        else cleanups.push(unlisten)
+      })
+      .catch(() => {})
 
     // sync:complete
     listen<SyncCompletePayload>('sync:complete', (event) => {
@@ -108,20 +110,24 @@ export function useSyncEvents(): void {
         useBlockStore.getState().load(rootParentId ?? undefined)
         useResolveStore.getState().preload()
       }
-    }).then((unlisten) => {
-      if (cancelled) unlisten()
-      else cleanups.push(unlisten)
     })
+      .then((unlisten) => {
+        if (cancelled) unlisten()
+        else cleanups.push(unlisten)
+      })
+      .catch(() => {})
 
     // sync:error
     listen<SyncErrorPayload>('sync:error', (event) => {
       const { message } = event.payload
       useSyncStore.getState().setState('error', message)
       toast.error(`Sync failed: ${message}`)
-    }).then((unlisten) => {
-      if (cancelled) unlisten()
-      else cleanups.push(unlisten)
     })
+      .then((unlisten) => {
+        if (cancelled) unlisten()
+        else cleanups.push(unlisten)
+      })
+      .catch(() => {})
 
     return () => {
       cancelled = true

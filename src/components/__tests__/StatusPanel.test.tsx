@@ -485,4 +485,75 @@ describe('StatusPanel', () => {
       expect(lastSyncedEl?.textContent).toBe('--')
     })
   })
+
+  describe('sync section', () => {
+    it('shows "Not configured" when sync has no peers', async () => {
+      // Default mock has peers: [] — should show "Not configured"
+      mockedInvoke.mockResolvedValue(mockStatus)
+      render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+      expect(screen.getByText('Not configured')).toBeInTheDocument()
+    })
+
+    it('shows sync state indicator when peers exist', async () => {
+      mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+      mockSyncStoreState.state = 'idle'
+      mockedInvoke.mockResolvedValue(mockStatus)
+      render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+      expect(screen.getByText('Idle')).toBeInTheDocument()
+    })
+
+    it('shows sync error message when error is set', async () => {
+      mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+      mockSyncStoreState.state = 'error'
+      mockSyncStoreState.error = 'Connection lost'
+      mockedInvoke.mockResolvedValue(mockStatus)
+      render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+      expect(screen.getByText('Connection lost')).toBeInTheDocument()
+    })
+
+    it('shows sync metrics (peers count, ops received/sent)', async () => {
+      mockSyncStoreState.peers = [{ peer_id: 'P1' }, { peer_id: 'P2' }]
+      mockSyncStoreState.state = 'syncing'
+      mockSyncStoreState.opsReceived = 99
+      mockSyncStoreState.opsSent = 17
+      mockedInvoke.mockResolvedValue(mockStatus)
+      render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+      expect(screen.getByText('Peers')).toBeInTheDocument()
+      const peerCount = document.querySelector('.sync-peer-count')
+      expect(peerCount?.textContent).toBe('2')
+      const opsReceived = document.querySelector('.sync-ops-received')
+      expect(opsReceived?.textContent).toBe('99')
+      const opsSent = document.querySelector('.sync-ops-sent')
+      expect(opsSent?.textContent).toBe('17')
+    })
+
+    it('shows "Syncing..." state label during active sync', async () => {
+      mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+      mockSyncStoreState.state = 'syncing'
+      mockedInvoke.mockResolvedValue(mockStatus)
+      render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+      expect(screen.getByText('Syncing...')).toBeInTheDocument()
+    })
+
+    it('shows tooltip on sync metric label hover', async () => {
+      mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+      mockSyncStoreState.state = 'idle'
+      mockedInvoke.mockResolvedValue(mockStatus)
+      const user = userEvent.setup()
+      render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+      // Hover over "Ops Received" metric label
+      const label = screen.getByText('Ops Received')
+      await user.hover(label)
+      await waitFor(() => {
+        const matches = screen.getAllByText(/operations received from peers/i)
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      })
+    })
+  })
 })

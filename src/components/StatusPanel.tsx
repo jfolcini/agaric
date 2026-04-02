@@ -24,6 +24,11 @@ const TOOLTIP_TEXT: Record<string, string> = {
   'Background Queue': 'Cache rebuild and FTS indexing tasks. Non-critical, best-effort processing.',
   'Ops Dispatched': 'Total operations processed since app start.',
   'Background Dispatched': 'Total background cache tasks completed since app start.',
+  Peer: 'Number of paired devices',
+  Peers: 'Number of paired devices',
+  'Last Synced': 'Time since last successful sync',
+  'Ops Received': 'Total operations received from peers (resets on app restart)',
+  'Ops Sent': 'Total operations sent to peers (resets on app restart)',
 }
 
 function queueHealthClasses(depth: number): string {
@@ -235,26 +240,26 @@ export function StatusPanel(): React.ReactElement {
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="rounded-lg border bg-muted/30 p-4 text-center">
                     <dd className="sync-peer-count text-2xl font-bold">{syncPeers.length}</dd>
-                    <dt className="text-sm text-muted-foreground">
-                      Peer{syncPeers.length !== 1 ? 's' : ''}
-                    </dt>
+                    <MetricLabel
+                      label={`Peer${syncPeers.length !== 1 ? 's' : ''}`}
+                    />
                   </div>
 
                   <div className="rounded-lg border bg-muted/30 p-4 text-center">
                     <dd className="sync-last-synced text-2xl font-bold">
                       {syncLastSynced ? formatTimestamp(syncLastSynced, 'relative') : '--'}
                     </dd>
-                    <dt className="text-sm text-muted-foreground">Last Synced</dt>
+                    <MetricLabel label="Last Synced" />
                   </div>
 
                   <div className="rounded-lg border bg-muted/30 p-4 text-center">
                     <dd className="sync-ops-received text-2xl font-bold">{syncOpsReceived}</dd>
-                    <dt className="text-sm text-muted-foreground">Ops Received</dt>
+                    <MetricLabel label="Ops Received" />
                   </div>
 
                   <div className="rounded-lg border bg-muted/30 p-4 text-center">
                     <dd className="sync-ops-sent text-2xl font-bold">{syncOpsSent}</dd>
-                    <dt className="text-sm text-muted-foreground">Ops Sent</dt>
+                    <MetricLabel label="Ops Sent" />
                   </div>
                 </dl>
               </div>
