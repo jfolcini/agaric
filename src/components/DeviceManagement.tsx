@@ -41,6 +41,13 @@ export function DeviceManagement(): React.ReactElement {
   const [unpairPeerId, setUnpairPeerId] = useState<string | null>(null)
   const [syncingPeerId, setSyncingPeerId] = useState<string | null>(null)
   const [syncingAll, setSyncingAll] = useState(false)
+  const [renamingPeerId, setRenamingPeerId] = useState<string | null>(null)
+  const [, setTick] = useState(0)
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 60_000)
+    return () => clearInterval(id)
+  }, [])
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -281,17 +288,25 @@ export function DeviceManagement(): React.ReactElement {
                             onClick={async () => {
                               const name = window.prompt('Device name:', peer.device_name ?? '')
                               if (name !== null) {
+                                setRenamingPeerId(peer.peer_id)
                                 try {
                                   await updatePeerName(peer.peer_id, name.trim() || null)
                                   await loadData()
                                 } catch (e) {
                                   setError(e instanceof Error ? e.message : 'Failed to rename')
+                                } finally {
+                                  setRenamingPeerId(null)
                                 }
                               }
                             }}
+                            disabled={renamingPeerId === peer.peer_id}
                             aria-label={`Rename device ${peer.device_name || truncateId(peer.peer_id)}`}
                           >
-                            <Pencil className="h-3.5 w-3.5" />
+                            {renamingPeerId === peer.peer_id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Pencil className="h-3.5 w-3.5" />
+                            )}
                           </Button>
                           <Button
                             variant="outline"

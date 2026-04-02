@@ -7,6 +7,7 @@ import {
   GitMerge,
   History,
   Keyboard,
+  RefreshCw,
   Search,
   Tag,
   Trash2,
@@ -43,6 +44,7 @@ import {
 } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
 import { useSyncEvents } from './hooks/useSyncEvents'
+import { useSyncTrigger } from './hooks/useSyncTrigger'
 import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { announce } from './lib/announcer'
 import { createBlock, getConflicts } from './lib/tauri'
@@ -145,6 +147,7 @@ function App() {
   const hasConflicts = useHasConflicts()
   const syncState = useSyncStore((s) => s.state)
   const syncPeers = useSyncStore((s) => s.peers)
+  const { syncing, syncAll } = useSyncTrigger()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const mainContentRef = useRef<HTMLDivElement>(null)
 
@@ -293,6 +296,12 @@ function App() {
           </SidebarContent>
           <SidebarFooter>
             <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton tooltip={syncing ? 'Syncing...' : 'Sync all devices'} onClick={syncAll} disabled={syncing}>
+                  <RefreshCw className={syncing ? 'animate-spin' : ''} />
+                  <span>Sync</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton tooltip="Shortcuts" onClick={() => setShortcutsOpen(true)}>
                   <Keyboard />

@@ -21,6 +21,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { PairingDialog } from '../PairingDialog'
@@ -30,6 +31,13 @@ vi.mock('react-qr-code', () => ({
   default: ({ value, ...props }: { value: string; [key: string]: unknown }) => (
     <div data-testid="pairing-qr-code-legacy" data-value={value} {...props} />
   ),
+}))
+
+vi.mock('sonner', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
 }))
 
 vi.mock('../../stores/sync', () => ({
@@ -66,6 +74,8 @@ const mockPeers = [
     synced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 min ago
     reset_count: 0,
     last_reset_at: null,
+    cert_hash: null,
+    device_name: null,
   },
   {
     peer_id: 'peer-def-0987654321',
@@ -74,6 +84,8 @@ const mockPeers = [
     synced_at: null,
     reset_count: 2,
     last_reset_at: '2025-01-01T00:00:00Z',
+    cert_hash: null,
+    device_name: null,
   },
 ]
 
@@ -635,5 +647,34 @@ describe('PairingDialog', () => {
     })
 
     document.body.removeChild(triggerRef.current)
+  })
+
+  it('shows success toast after pairing (#436)', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
+      list_peer_refs: [],
+      confirm_pairing: undefined,
+    })
+
+    render(<PairingDialog open={true} onOpenChange={onOpenChange} />)
+
+    await screen.findByText('alpha bravo charlie delta')
+
+    const inputs = screen.getAllByRole('textbox')
+    await user.type(inputs[0], 'echo')
+    await user.type(inputs[1], 'foxtrot')
+    await user.type(inputs[2], 'golf')
+    await user.type(inputs[3], 'hotel')
+
+    const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
+    await user.click(pairBtn)
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Device paired successfully')
+    })
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 })

@@ -11,6 +11,7 @@ use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use hkdf::Hkdf;
 use rand::seq::SliceRandom;
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::sync::LazyLock;
 
@@ -201,6 +202,66 @@ impl PairingSession {
         salt.extend_from_slice(ids[1].as_bytes());
         salt
     }
+}
+
+// ---------------------------------------------------------------------------
+// Pairing message types for device verification (ADR-pending)
+// ---------------------------------------------------------------------------
+
+/// Messages exchanged during the device verification step of pairing.
+///
+/// After passphrase confirmation, both peers exchange their device ID and
+/// TLS certificate hash so that each side can pin the other's identity.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PairingMessage {
+    /// Initiator sends their identity.
+    DeviceOffer {
+        device_id: String,
+        cert_hash: String,
+    },
+    /// Responder confirms with their identity.
+    DeviceAccept {
+        device_id: String,
+        cert_hash: String,
+    },
+    /// Error during pairing.
+    PairingError { message: String },
+}
+
+/// Extract and optionally verify the remote device info from a [`PairingMessage`].
+///
+/// If `expected_peer_id` is `Some`, the extracted `device_id` must match or
+/// an `AppError::InvalidOperation` is returned.  Returns `(device_id, cert_hash)`.
+pub fn verify_device_exchange(
+    msg: &PairingMessage,
+    expected_peer_id: Option<&str>,
+) -> Result<(String, String), crate::error::AppError> {
+    let (device_id, cert_hash) = match msg {
+        PairingMessage::DeviceOffer {
+            device_id,
+            cert_hash,
+        }
+        | PairingMessage::DeviceAccept {
+            device_id,
+            cert_hash,
+        } => (device_id.clone(), cert_hash.clone()),
+        PairingMessage::PairingError { message } => {
+            return Err(crate::error::AppError::InvalidOperation(format!(
+                "remote pairing error: {message}"
+            )));
+        }
+    };
+
+    if let Some(expected) = expected_peer_id {
+        if device_id != expected {
+            return Err(crate::error::AppError::InvalidOperation(format!(
+                "device ID mismatch: expected {expected}, got {device_id}"
+            )));
+        }
+    }
+
+    Ok((device_id, cert_hash))
 }
 
 // ---------------------------------------------------------------------------
@@ -396,5 +457,148 @@ mod tests {
             passphrase,
             "special characters must survive JSON round-trip"
         );
+    }
+
+    #[test]
+    fn pairing_message_serialization_roundtrip() {
+        let msg = PairingMessage::DeviceOffer {
+            device_id: "DEVICE01".to_string(),
+            cert_hash: "abc123".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: PairingMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, parsed);
+        assert!(json.contains("\"type\":\"device_offer\""));
+    }
+
+    #[test]
+    fn verify_device_exchange_accepts_matching_id() {
+        let msg = PairingMessage::DeviceOffer {
+            device_id: "DEV123".to_string(),
+            cert_hash: "hash456".to_string(),
+        };
+        let (id, hash) = verify_device_exchange(&msg, Some("DEV123")).unwrap();
+        assert_eq!(id, "DEV123");
+        assert_eq!(hash, "hash456");
+    }
+
+    #[test]
+    fn verify_device_exchange_rejects_mismatch() {
+        let msg = PairingMessage::DeviceAccept {
+            device_id: "WRONG".to_string(),
+            cert_hash: "hash".to_string(),
+        };
+        let err = verify_device_exchange(&msg, Some("EXPECTED")).unwrap_err();
+        assert!(err.to_string().contains("device ID mismatch"));
+    }
+
+    #[test]
+    fn verify_device_exchange_no_expected_always_passes() {
+        let msg = PairingMessage::DeviceOffer {
+            device_id: "ANY".to_string(),
+            cert_hash: "hash".to_string(),
+        };
+        assert!(verify_device_exchange(&msg, None).is_ok());
+    }
+
+    #[test]
+    fn verify_device_exchange_returns_error_on_pairing_error() {
+        let msg = PairingMessage::PairingError {
+            message: "timeout".to_string(),
+        };
+        let err = verify_device_exchange(&msg, None).unwrap_err();
+        assert!(err.to_string().contains("remote pairing error"));
+    }
+
+    // ======================================================================
+    // #456 — PairingSession concurrent/edge cases
+    // ======================================================================
+
+    #[test]
+    fn concurrent_pairing_sessions_are_independent() {
+        let s1 = PairingSession::new("alice-phone", "bob-laptop");
+        let s2 = PairingSession::new("carol-tablet", "dave-desktop");
+
+        // Different device pairs must produce different keys
+        assert_ne!(
+            s1.session_key, s2.session_key,
+            "sessions for different device pairs must have different keys"
+        );
+
+        // Both sessions are independently non-expired
+        assert!(!s1.is_expired(), "session 1 must not be expired");
+        assert!(!s2.is_expired(), "session 2 must not be expired");
+
+        // Cross-session decryption must fail
+        let plaintext = b"only for session 1";
+        let encrypted = encrypt_message(&s1.session_key, plaintext)
+            .expect("encrypt with session 1 key should succeed");
+        let result = decrypt_message(&s2.session_key, &encrypted);
+        assert!(
+            result.is_err(),
+            "decrypting session-1 ciphertext with session-2 key must fail"
+        );
+    }
+
+    #[test]
+    fn session_key_works_after_session_expires() {
+        let mut session = PairingSession::new("A", "B");
+        // Force session past the 300s timeout
+        session.created_at =
+            std::time::Instant::now() - std::time::Duration::from_secs(301);
+        assert!(session.is_expired(), "session should be expired after 301s");
+
+        let plaintext = b"secret message";
+        let encrypted = encrypt_message(&session.session_key, plaintext).unwrap();
+        let decrypted = decrypt_message(&session.session_key, &encrypted).unwrap();
+        assert_eq!(
+            decrypted, plaintext,
+            "key should still work for crypto even after session expires"
+        );
+    }
+
+    // ======================================================================
+    // #457 — encrypt/decrypt edge cases
+    // ======================================================================
+
+    #[test]
+    fn encrypt_decrypt_large_plaintext() {
+        let key = [42u8; 32];
+        let plaintext = vec![0xAB_u8; 1_048_576]; // 1 MB
+        let encrypted = encrypt_message(&key, &plaintext).unwrap();
+        let decrypted = decrypt_message(&key, &encrypted).unwrap();
+        assert_eq!(decrypted, plaintext, "1 MB plaintext should roundtrip correctly");
+        // Verify ciphertext is larger than plaintext (nonce + tag overhead)
+        assert_eq!(
+            encrypted.len(),
+            plaintext.len() + 12 + 16,
+            "ciphertext should be plaintext + 28 bytes overhead"
+        );
+    }
+
+    #[test]
+    fn decrypt_corrupted_nonce_fails() {
+        let key = [42u8; 32];
+        let plaintext = b"hello world";
+        let mut encrypted = encrypt_message(&key, plaintext).unwrap();
+        // Corrupt the nonce (first 12 bytes)
+        for i in 0..12 {
+            encrypted[i] ^= 0xFF;
+        }
+        let result = decrypt_message(&key, &encrypted);
+        assert!(result.is_err(), "corrupted nonce should fail decryption");
+    }
+
+    #[test]
+    fn decrypt_truncated_ciphertext_various_lengths() {
+        let key = [42u8; 32];
+        for len in [1, 12, 15, 27] {
+            let garbage = vec![0xAA; len];
+            let result = decrypt_message(&key, &garbage);
+            assert!(
+                result.is_err(),
+                "ciphertext of {len} bytes should fail"
+            );
+        }
     }
 }

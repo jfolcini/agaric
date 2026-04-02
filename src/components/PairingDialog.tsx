@@ -12,6 +12,7 @@
 import { Loader2, Smartphone, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -182,12 +183,14 @@ export function PairingDialog({
       const peerList = await listPeerRefs()
       setPeers(peerList)
       setWords(['', '', '', ''])
+      toast.success('Device paired successfully')
+      onOpenChange(false)
     } catch (err) {
       console.error('Pairing failed:', err)
       setError(`Pairing failed: ${String(err instanceof Error ? err.message : err)}`)
     }
     setPairLoading(false)
-  }, [words, syncSetState])
+  }, [words, syncSetState, onOpenChange])
 
   // #279: Space auto-advance and Enter-to-submit (uses DOM queries for focus)
   const handleWordKeyDown = useCallback(

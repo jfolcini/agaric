@@ -772,4 +772,51 @@ describe('DeviceManagement', () => {
     expect(names[1]).toBe('Zebra')
     expect(names[2]).toBe('peer-3')
   })
+
+  it('shows loading state during rename (#435)', async () => {
+    let resolveRename: () => void
+    const renamePromise = new Promise<void>((resolve) => {
+      resolveRename = resolve
+    })
+
+    vi.spyOn(window, 'prompt').mockReturnValue('New Name')
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_device_id') return mockDeviceId
+      if (cmd === 'list_peer_refs') return mockPeers
+      if (cmd === 'update_peer_name') {
+        await renamePromise
+        return undefined
+      }
+      return undefined
+    })
+
+    const { container } = render(<DeviceManagement />)
+
+    await screen.findByText('peer-abc-123...')
+
+    const renameBtns = container.querySelectorAll('.device-rename-btn')
+    expect(renameBtns.length).toBeGreaterThan(0)
+
+    // Click rename on the first peer
+    await act(async () => {
+      fireEvent.click(renameBtns[0])
+    })
+
+    // The button should be disabled and show a spinner while renaming
+    await waitFor(() => {
+      expect(renameBtns[0]).toBeDisabled()
+      expect(renameBtns[0].querySelector('.animate-spin')).toBeTruthy()
+    })
+
+    // Resolve the rename to clean up
+    await act(async () => {
+      resolveRename!()
+    })
+
+    // After completion, button should be re-enabled
+    await waitFor(() => {
+      expect(container.querySelector('.device-rename-btn:disabled')).toBeNull()
+    })
+  })
 })
