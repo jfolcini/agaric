@@ -78,7 +78,7 @@ prek run                 # Staged files only
 - **Error handling:** `AppError` enum (11 variants) serializes to `{ kind, message }` for Tauri 2 IPC. Specta-derived TS bindings.
 - **Undo/redo:** Two-tier model. In-editor: TipTap/ProseMirror history (cleared on blur). Page-level: `reverse.rs` computes inverse ops from op log. Non-reversible: `purge_block`, `delete_attachment`.
 - **Materializer:** Foreground queue (256 cap, core tables + `BatchApplyOps`) + background queue (1024 cap, caches/FTS). Auto-dedup, silent drop on backpressure.
-- **Commands:** 33 Tauri command handlers in `commands.rs` (28 core + 5 sync). Each has an `inner_*` function taking `&SqlitePool` for testability.
+- **Commands:** 41 Tauri command handlers in `commands.rs` (36 core + 5 sync). Each has an `inner_*` function taking `&SqlitePool` for testability.
 - **Sync daemon:** `sync_daemon.rs` — background task with mDNS discovery, TLS WebSocket server, initiator-side sync via `SyncOrchestrator`. Per-peer backoff via `SyncScheduler`.
 - **Sync cert:** `sync_cert.rs` — persistent TLS certificate (generate-once-then-load pattern). `PersistedCert` managed state.
 
@@ -120,7 +120,7 @@ During development, run only the relevant check:
 - **Min SDK:** 24, **Target SDK:** 36, **NDK:** 27
 - **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`
 - **DB path:** `/data/data/com.blocknotes.app/notes.db` (via `app.path().app_data_dir()`)
-- **Known issues:** 3 open items in REVIEW-LATER.md. ProGuard keep rules empty — release APK crashes (#63).
+- **Known issues:** 12 open items in REVIEW-LATER.md. ProGuard keep rules empty — release APK crashes (#63).
 - **Headless testing:** See `.devin/rules/android-testing.md` for ADB recipes and debugging workflow.
 
 ## Subagent Workflow
