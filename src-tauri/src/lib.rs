@@ -19,9 +19,11 @@ pub mod recovery;
 pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;
+pub mod sync_cert;
 pub mod sync_events;
 pub mod sync_net;
 pub mod sync_protocol;
+pub mod sync_scheduler;
 pub mod tag_query;
 pub mod ulid;
 pub mod word_diff;
@@ -88,7 +90,14 @@ mod specta_tests {
             crate::commands::list_peer_refs,
             crate::commands::get_peer_ref,
             crate::commands::delete_peer_ref,
+            crate::commands::update_peer_name,
             crate::commands::get_device_id,
+            // Sync — pairing & session (#275, #278)
+            crate::commands::start_pairing,
+            crate::commands::confirm_pairing,
+            crate::commands::cancel_pairing,
+            crate::commands::start_sync,
+            crate::commands::cancel_sync,
         ])
     }
 
@@ -169,6 +178,7 @@ pub fn run() {
     use db::{ReadPool, WritePool};
     use device::DeviceId;
     use materializer::Materializer;
+    use sync_cert::PersistedCert;
     use tauri::Manager;
     use tauri_specta::{collect_commands, Builder};
     use tracing_subscriber::EnvFilter;
@@ -215,7 +225,14 @@ pub fn run() {
         commands::list_peer_refs,
         commands::get_peer_ref,
         commands::delete_peer_ref,
+        commands::update_peer_name,
         commands::get_device_id,
+        // Sync — pairing & session (#275, #278)
+        commands::start_pairing,
+        commands::confirm_pairing,
+        commands::cancel_pairing,
+        commands::start_sync,
+        commands::cancel_sync,
     ]);
 
     tauri::Builder::default()
@@ -232,6 +249,11 @@ pub fn run() {
             // Read or generate a persistent device UUID (ADR-07)
             let device_id_path = app_data_dir.join("device-id");
             let device_id = device::get_or_create_device_id(&device_id_path)?;
+
+            // Read or generate a persistent TLS certificate for sync (#380)
+            let cert_path = app_data_dir.join("sync-cert");
+            let sync_cert = sync_cert::get_or_create_sync_cert(&cert_path, &device_id)?;
+            tracing::info!(cert_hash = %sync_cert.cert_hash, "TLS cert loaded");
 
             // Run crash recovery before anything else (ADR-07)
             // Recovery needs write access
@@ -253,7 +275,12 @@ pub fn run() {
             app.manage(WritePool(pools.write));
             app.manage(ReadPool(pools.read));
             app.manage(DeviceId::new(device_id));
+            app.manage(PersistedCert::new(sync_cert));
             app.manage(materializer);
+
+            // Sync state (#275, #278)
+            app.manage(commands::PairingState(std::sync::Mutex::new(None)));
+            app.manage(sync_scheduler::SyncScheduler::new());
 
             Ok(())
         })

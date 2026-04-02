@@ -381,12 +381,79 @@ async deletePeerRef(peerId: string) : Promise<Result<null, { kind: string; messa
     else return { status: "error", error: e  as any };
 }
 },
+async updatePeerName(peerId: string, deviceName: string | null) : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_peer_name", { peerId, deviceName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Tauri command: return the local device's persistent UUID.
  */
 async getDeviceId() : Promise<Result<string, { kind: string; message: string }>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_device_id") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: start a new pairing session.
+ * Generates a passphrase + QR SVG and stores the session in managed state.
+ */
+async startPairing() : Promise<Result<PairingInfo, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_pairing") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: confirm pairing with a remote device.
+ * Stores the peer ref in the database and clears the pairing session.
+ */
+async confirmPairing(passphrase: string, remoteDeviceId: string) : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("confirm_pairing", { passphrase, remoteDeviceId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: cancel an in-progress pairing session.
+ */
+async cancelPairing() : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_pairing") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: start sync with a remote peer.
+ * Checks backoff (#278), acquires the per-peer lock, and returns session info.
+ */
+async startSync(peerId: string) : Promise<Result<SyncSessionInfo, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_sync", { peerId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: cancel an active sync session.
+ * Placeholder until SyncDaemon (#382) provides task handle tracking.
+ */
+async cancelSync() : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_sync") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -406,7 +473,7 @@ async getDeviceId() : Promise<Result<string, { kind: string; message: string }>>
 
 /**
  * Tagged union of filter predicates for backlink queries.
- *
+ * 
  * Filters are combined with AND semantics at the top level.
  * Use `And`/`Or`/`Not` variants for compound boolean logic.
  */
@@ -447,20 +514,33 @@ export type MoveResponse = { block_id: string; new_parent_id: string | null; new
 export type OpRef = { device_id: string; seq: number }
 /**
  * Paginated response.
- *
+ * 
  * `total_count` is intentionally omitted — see module docs.
  */
 export type PageResponse<T> = { items: T[]; next_cursor: string | null; has_more: boolean }
 /**
+ * Response payload returned by [`start_pairing`].
+ */
+export type PairingInfo = { passphrase: string; qr_svg: string; port: number }
+/**
  * A row from the `peer_refs` table representing a remote sync peer.
  */
-export type PeerRef = { peer_id: string; last_hash: string | null; last_sent_hash: string | null; synced_at: string | null; reset_count: number; last_reset_at: string | null }
+export type PeerRef = { peer_id: string; last_hash: string | null; last_sent_hash: string | null; synced_at: string | null; reset_count: number; last_reset_at: string | null; 
+/**
+ * SHA-256 hex of the peer's TLS certificate, observed during pairing.
+ * Used for certificate pinning on reconnection.
+ */
+cert_hash: string | null; 
+/**
+ * Human-readable name/label for this peer (e.g. "Javier's Phone").
+ */
+device_name: string | null }
 export type PropertyRow = { key: string; value_text: string | null; value_num: number | null; value_date: string | null; value_ref: string | null }
 export type PurgeResponse = { block_id: string; purged_count: number }
 /**
  * Lightweight metadata returned by [`batch_resolve_inner`].
  */
-export type ResolvedBlock = { id: string;
+export type ResolvedBlock = { id: string; 
 /**
  * `content` column — page title, tag name, or content text (truncated).
  */
@@ -472,11 +552,15 @@ export type RestoreResponse = { block_id: string; restored_count: number }
 export type SortDir = "Asc" | "Desc"
 /**
  * Serializable status snapshot of the materializer queues.
- *
+ * 
  * Built from [`QueueMetrics`] (atomic counters) and channel capacity info.
  * Exposed by the `get_status` command.
  */
 export type StatusInfo = { foreground_queue_depth: number; background_queue_depth: number; total_ops_dispatched: number; total_background_dispatched: number; fg_high_water: number; bg_high_water: number; fg_errors: number; bg_errors: number; fg_panics: number; bg_panics: number }
+/**
+ * Response payload returned by [`start_sync`].
+ */
+export type SyncSessionInfo = { state: string; local_device_id: string; remote_device_id: string; ops_received: number; ops_sent: number }
 /**
  * Row from `tags_cache`, used by `list_tags_by_prefix`.
  */
@@ -485,19 +569,19 @@ export type TagResponse = { block_id: string; tag_id: string }
 /**
  * Result of an undo or redo operation.
  */
-export type UndoResult = {
+export type UndoResult = { 
 /**
  * The op that was reversed (the original op for undo, the undo-op for redo).
  */
-reversed_op: OpRef;
+reversed_op: OpRef; 
 /**
  * The newly appended reverse op.
  */
-new_op_ref: OpRef;
+new_op_ref: OpRef; 
 /**
  * The op_type of the newly appended op.
  */
-new_op_type: string;
+new_op_type: string; 
 /**
  * Whether this was a redo (true) or undo (false).
  */
