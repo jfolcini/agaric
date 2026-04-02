@@ -576,7 +576,7 @@ impl SyncConnection {
 // =========================================================================
 
 /// Messages exchanged over a sync connection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SyncMessage {
     /// Step 1: Exchange heads.
@@ -601,7 +601,7 @@ pub enum SyncMessage {
 }
 
 /// A device's current head in the op-log DAG.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeviceHead {
     pub device_id: String,
     pub seq: i64,
@@ -609,7 +609,7 @@ pub struct DeviceHead {
 }
 
 /// A single operation transferred during sync.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OpTransfer {
     pub device_id: String,
     pub seq: i64,
@@ -860,5 +860,171 @@ mod tests {
             }
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    // -- 7. Integration network tests -------------------------------------
+
+    /// Install the `ring` CryptoProvider for rustls (idempotent).
+    fn install_crypto_provider() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tls_roundtrip_json_exchange() {
+        install_crypto_provider();
+        let cert = generate_self_signed_cert("test-device").unwrap();
+
+        // Start server
+        let (server, port) = SyncServer::start(&cert, |mut conn| {
+            tokio::spawn(async move {
+                // Server: receive a message and echo it back
+                let msg: SyncMessage = conn.recv_json().await.unwrap();
+                conn.send_json(&msg).await.unwrap();
+                conn.close().await.ok();
+            });
+        })
+        .await
+        .unwrap();
+
+        // Connect client (no cert pinning)
+        let mut client = connect_to_peer(&format!("127.0.0.1:{port}"), None)
+            .await
+            .unwrap();
+
+        // Send a HeadExchange message
+        let msg = SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "dev-A".into(),
+                seq: 42,
+                hash: "abc123".into(),
+            }],
+        };
+        client.send_json(&msg).await.unwrap();
+
+        // Receive echo
+        let response: SyncMessage = client.recv_json().await.unwrap();
+        assert_eq!(response, msg, "server should echo the message back");
+
+        client.close().await.ok();
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cert_pinning_correct_hash_succeeds() {
+        install_crypto_provider();
+        let cert = generate_self_signed_cert("pin-test").unwrap();
+        let expected_hash = cert.cert_hash.clone();
+
+        let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
+
+        // Connect with correct hash
+        let conn = connect_to_peer(&format!("127.0.0.1:{port}"), Some(&expected_hash)).await;
+        assert!(
+            conn.is_ok(),
+            "connection with correct cert hash should succeed"
+        );
+
+        // Verify the peer cert hash matches
+        let conn = conn.unwrap();
+        assert_eq!(
+            conn.peer_cert_hash().as_deref(),
+            Some(expected_hash.as_str()),
+            "peer cert hash should match the server's cert hash"
+        );
+
+        conn.close().await.ok();
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cert_pinning_wrong_hash_fails() {
+        install_crypto_provider();
+        let cert = generate_self_signed_cert("pin-fail").unwrap();
+
+        let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
+
+        // Connect with wrong hash
+        let wrong_hash =
+            "0000000000000000000000000000000000000000000000000000000000000000";
+        let result = connect_to_peer(&format!("127.0.0.1:{port}"), Some(wrong_hash)).await;
+        assert!(
+            result.is_err(),
+            "connection with wrong cert hash should fail"
+        );
+
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => unreachable!("already asserted is_err"),
+        };
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("cert")
+                || err_msg.contains("hash")
+                || err_msg.contains("tls")
+                || err_msg.contains("TLS")
+                || err_msg.contains("alert"),
+            "error should mention cert/hash/tls issue, got: {err_msg}"
+        );
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn connection_refused_returns_error() {
+        install_crypto_provider();
+        // Use a port that's almost certainly not listening
+        let result = connect_to_peer("127.0.0.1:1", None).await;
+        assert!(result.is_err(), "connection to closed port should fail");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn binary_message_roundtrip() {
+        install_crypto_provider();
+        let cert = generate_self_signed_cert("binary-test").unwrap();
+
+        let (server, port) = SyncServer::start(&cert, |mut conn| {
+            tokio::spawn(async move {
+                let data = conn.recv_binary().await.unwrap();
+                conn.send_binary(&data).await.unwrap();
+                conn.close().await.ok();
+            });
+        })
+        .await
+        .unwrap();
+
+        let mut client = connect_to_peer(&format!("127.0.0.1:{port}"), None)
+            .await
+            .unwrap();
+
+        let payload = vec![0xDE, 0xAD, 0xBE, 0xEF, 0x42];
+        client.send_binary(&payload).await.unwrap();
+
+        let response = client.recv_binary().await.unwrap();
+        assert_eq!(response, payload, "binary data should roundtrip correctly");
+
+        client.close().await.ok();
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn peer_cert_hash_populated_on_client() {
+        install_crypto_provider();
+        let cert = generate_self_signed_cert("hash-capture").unwrap();
+
+        let (server, port) = SyncServer::start(&cert, |_conn| {}).await.unwrap();
+
+        let conn = connect_to_peer(&format!("127.0.0.1:{port}"), None)
+            .await
+            .unwrap();
+        let hash = conn.peer_cert_hash();
+        assert!(hash.is_some(), "client should capture peer cert hash");
+        assert_eq!(
+            hash.unwrap(),
+            cert.cert_hash,
+            "captured hash should match server cert"
+        );
+
+        conn.close().await.ok();
+        server.shutdown().await;
     }
 }
