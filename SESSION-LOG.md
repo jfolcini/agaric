@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 48 — 2026-04-02 — Frontend Fixes (#531, #532, #535, #536)
+
+4 S-cost frontend items resolved: undo state leak, resolve callback instability, brittle blur guard, date format inconsistency. Built by 1 subagent, reviewed by 1 separate subagent (reviewer fixed biome lint + TS unused var in #532).
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `PageEditor.tsx` | #531: Added `useEffect` cleanup calling `clearPage(pageId)` on unmount/navigation to garbage-collect undo state. |
+| `useBlockResolve.ts` | #532: Replaced `[version]` callback deps with `useRef(cache)` pattern — 4 resolve callbacks now stable across version bumps. Removed 4 biome-ignore comments. |
+| `EditableBlock.tsx` | #535: Extracted 8 hardcoded CSS selectors to exported `EDITOR_PORTAL_SELECTORS` constant. Refactored `handleBlur` to use `.some()`. |
+| `BlockTree.tsx` | #536: Changed `handleDatePick` from DD/MM/YYYY to YYYY-MM-DD (ISO 8601). Legacy format still checked for backward compat. |
+| `PageEditor.test.tsx` | #531: 2 tests — undo state cleared on unmount, cleared on pageId change. |
+| `useBlockResolve.test.ts` | #532: 2 tests — callback ref stability across version bumps, stable callbacks read fresh cache via ref. |
+| `EditableBlock.test.tsx` | #535: 3 tests — export check, selector contents, blur guard behavior. |
+| `BlockTree.test.tsx` | #536: 2 tests — date page created in YYYY-MM-DD, existing page found by new format. |
+
+### Reviews
+- #531, #535, #536: PASS. #532: reviewer fixed biome `noUnusedVariables` (`_version` → bare hook call) and formatting.
+
+### Stats
+- Frontend: 74/74 test files, 2106 tests pass (+9 new tests)
+- 8 files changed, 316 insertions, 55 deletions
+- Commit: `72b6d74`
+- REVIEW-LATER.md: 58 → 54 open items (resolved #531, #532, #535, #536)
+
+---
+
 ## Session 47 — 2026-04-02 — Sync Code Quality (#525, #526, #527)
 
 3 S-cost sync hardening items resolved: observability logging, mutex poison recovery, message size cap. Built by 1 subagent, reviewed by 1 separate subagent (reviewer fixed 3 missed locations + removed duplicate trailing lines).
