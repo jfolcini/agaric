@@ -1,5 +1,32 @@
 # Session Log
 
+## Session 52 — 2026-04-02 — Phase 5 Wave 1: LinkedReferences + Backend Tests (#541, #542, #547)
+
+3 Phase 5 Wave 1 items resolved: LinkedReferences component with source page grouping (#541, #542) and backend integration tests for grouped backlinks (#547). Built by 2 parallel subagents (frontend + backend), reviewed by 2 parallel subagents (both PASS).
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `LinkedReferences.tsx` (new) | #541+#542: Page-bottom component with collapsible header ("N Linked References"), source page grouping with collapsible sub-headers, cursor-based pagination, batchResolve cache for [[ULID]] tokens, default expand logic (all if ≤5 groups, first 3 if >5). |
+| `tauri.ts` | Added `listBacklinksGrouped` wrapper. Exported `BacklinkGroup`, `GroupedBacklinkResponse` types. |
+| `PageEditor.tsx` | Imported and rendered `LinkedReferences` between BlockTree and Add block button. |
+| `LinkedReferences.test.tsx` (new) | 25 tests: render, empty state, header toggle, group headers, group toggle, default expand, block navigation, keyboard nav, pagination, loading, error, pageId change, a11y (axe). |
+| `PageEditor.test.tsx` | Added LinkedReferences mock + capture variable. New test: "renders LinkedReferences with correct pageId". |
+| `App.test.tsx` | Added LinkedReferences mock to prevent IPC calls in full-app tests. |
+| `command_integration_tests.rs` | #547: 12 new integration tests for `list_backlinks_grouped_inner` — grouping, pagination, SourcePage include/exclude filter, Contains filter, orphan blocks, deleted blocks, edge cases. |
+
+### Reviews
+- #541+#542 (frontend): PASS — component follows BacklinksPanel patterns, a11y correct, tests comprehensive.
+- #547 (backend): PASS with WARNs — renamed misleading orphan test, all patterns consistent.
+
+### Stats
+- Rust: 1346 tests pass (1334 existing + 12 new)
+- Frontend: 75/75 test files, 2132 tests pass (2106 existing + 26 new)
+- 7 files changed, 2163 insertions
+- Commit: `39d732d`
+- REVIEW-LATER.md: 47 → 44 open items (resolved #541, #542, #547)
+
 ## Session 51 — 2026-04-02 — Phase 5 Wave 1 Backend (#538, #539, #540)
 
 3 Phase 5 Wave 1 backend items resolved: grouped backlinks command, total/filtered count split, and SourcePage filter. Built by 1 subagent, reviewed by 1 subagent (CONDITIONAL PASS — reviewer caught missing `is_conflict = 0` in SourcePage filter CTEs, fixed before commit).
