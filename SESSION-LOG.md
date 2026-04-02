@@ -1,10 +1,10 @@
 # Session Log
 
-## Session 55 — 2026-04-02 — Phase 5 Wave 2: PagePropertyTable (#553, #554)
+## Session 55 — 2026-04-02 — Phase 5 Wave 2 + Wave 3 batch 1
 
+### Batch 1 — Wave 2 completion: PagePropertyTable (#553, #554)
 2 remaining Phase 5 Wave 2 items resolved: schema-driven property table UI + property key suggestions. Completes Wave 2.
 
-### Changes
 Built by 1 subagent, reviewed by 1 subagent (PASS WITH FIXES — Biome formatting, import ordering, test mock mutation bug).
 
 | File | Change |
@@ -16,10 +16,29 @@ Built by 1 subagent, reviewed by 1 subagent (PASS WITH FIXES — Biome formattin
 | `PageHeader.test.tsx` | Added ChevronDown/Right to lucide mock, get_properties/list_property_defs handlers. |
 | `App.test.tsx` | Added PagePropertyTable mock to prevent IPC calls in App-level tests. Defensive Array.isArray check in component. |
 
+### Batch 2 — Wave 3 foundation: Block fixed fields migration + BlockRow (#558, #559, #560)
+3 tightly-coupled backend items: new migration adding todo_state/priority/due_date columns to blocks, backfill from block_properties, and BlockRow struct + all query updates.
+
+Built by 1 subagent, reviewed by 1 subagent (PASS, no issues). Orchestrator fixed frontend TS errors from updated BlockRow type.
+
+| File | Change |
+|------|--------|
+| `0012_block_fixed_fields.sql` (new) | #558+#559: ALTER TABLE adds 3 TEXT columns, partial indexes on todo_state/due_date. Backfills from block_properties (keys: todo/priority/due). Deletes migrated rows. |
+| `pagination.rs` | #560: BlockRow struct +3 fields. 8 query_as! SELECT lists updated. |
+| `commands.rs` | #560: 3 query_as! SELECT lists updated. 3 manual BlockRow constructions updated. |
+| `backlink_query.rs` | #560: 2 dynamic query SELECT lists updated. |
+| `tag_query.rs` | #560: 1 dynamic query SELECT list updated. |
+| `fts.rs` | #560: FtsSearchRow struct +3 fields, FTS query +3 columns, mapping +3 fields. |
+| `.sqlx/` | 10 cache files regenerated (hash changed). |
+| `bindings.ts` | Regenerated — BlockRow now has todo_state/priority/due_date. |
+| 6 snapshot files | Updated with todo_state/priority/due_date: ~ (null). |
+| 9 frontend files | Added todo_state/priority/due_date: null to BlockRow object literals for TS type safety. |
+
 ### Stats
-- Frontend: 78/78 test files, 2183 tests pass (2163 + 20 new)
-- Commit: `b3c5247`
-- REVIEW-LATER.md: 25 → 23 open items (resolved #553, #554)
+- Rust: 1363 tests pass
+- Frontend: 78/78 test files, 2183 tests pass
+- Commits: `b3c5247` (Wave 2), `143f1ae` (Wave 3 batch 1)
+- REVIEW-LATER.md: 25 → 20 open items (resolved #553, #554, #558, #559, #560)
 
 ## Session 54 — 2026-04-02 — Phase 5 Wave 2: Property Definitions + PageHeader (#548-#552, #555-#557)
 
