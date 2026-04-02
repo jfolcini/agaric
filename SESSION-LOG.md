@@ -1,5 +1,35 @@
 # Session Log
 
+## Session 51 — 2026-04-02 — Phase 5 Wave 1 Backend (#538, #539, #540)
+
+3 Phase 5 Wave 1 backend items resolved: grouped backlinks command, total/filtered count split, and SourcePage filter. Built by 1 subagent, reviewed by 1 subagent (CONDITIONAL PASS — reviewer caught missing `is_conflict = 0` in SourcePage filter CTEs, fixed before commit).
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `backlink_query.rs` | #538: New `BacklinkGroup`, `GroupedBacklinkResponse` types. New `resolve_root_pages` helper (batch recursive CTE walks ancestor chain). New `eval_backlink_query_grouped` function (base set, filter, resolve root pages, group, sort, paginate). |
+| `backlink_query.rs` | #539: Added `filtered_count` field to `BacklinkQueryResponse`. Changed `total_count` to mean unfiltered base set size. Updated all 5 return sites in `eval_backlink_query`. |
+| `backlink_query.rs` | #540: New `BacklinkFilter::SourcePage { included, excluded }` variant. Recursive CTEs walk page subtrees for descendant expansion. Reviewer fix: added `is_conflict = 0` to both CTEs. |
+| `backlink_query.rs` (tests) | 13 new tests: 2 count tests, 4 resolve_root_pages tests, 4 grouped eval tests, 3 SourcePage filter tests. Updated 20+ existing tests for `filtered_count`. |
+| `commands.rs` | #538: New `list_backlinks_grouped_inner` + Tauri command wrapper. |
+| `lib.rs` | Registered `list_backlinks_grouped` in both specta and runtime builders. |
+| `command_integration_tests.rs` | Updated 6 backlink test assertions for `filtered_count`. |
+| 3 snapshot files | Added `filtered_count` field. |
+| `bindings.ts` | Regenerated (new types + `filtered_count` field). |
+
+### Reviews
+- #538 + #539 + #540: CONDITIONAL PASS — reviewer found SourcePage filter CTEs missing `is_conflict = 0` in descendant walk. Fixed before commit.
+
+### Stats
+- Rust: 1334 tests pass (1321 existing + 13 new)
+- Frontend: 74/74 test files, 2106 tests pass (unchanged)
+- 8 files changed, 945 insertions, 24 deletions
+- Commit: `cbf4f42`
+- REVIEW-LATER.md: 50 → 47 open items (resolved #538, #539, #540)
+
+---
+
 ## Session 50 — 2026-04-02 — Sync: cancel_sync + daemon tests (#528, #491)
 
 2 sync-domain items resolved: functional cancel_sync command (was no-op placeholder) and sync_daemon.rs unit tests (was zero). Built by 1 combined subagent, reviewed by 1 subagent (PASS, no fixes needed). Clippy caught too-many-arguments on 2 functions — fixed with `#[allow]` attributes, cargo fmt applied.
