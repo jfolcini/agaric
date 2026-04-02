@@ -58,6 +58,8 @@ describe('useSyncTrigger', () => {
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
       },
     ])
 
@@ -84,6 +86,8 @@ describe('useSyncTrigger', () => {
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
       },
     ])
 
@@ -117,6 +121,8 @@ describe('useSyncTrigger', () => {
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('connection failed'))
@@ -141,6 +147,8 @@ describe('useSyncTrigger', () => {
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
       },
     ])
     mockStartSync.mockImplementation(
@@ -192,6 +200,8 @@ describe('useSyncTrigger', () => {
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
       },
     ])
 
@@ -214,6 +224,8 @@ describe('useSyncTrigger', () => {
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('connection refused'))
@@ -250,6 +262,8 @@ describe('useSyncTrigger', () => {
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
       },
     ])
 
@@ -277,6 +291,8 @@ describe('useSyncTrigger', () => {
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
       },
     ])
 
@@ -315,6 +331,8 @@ describe('useSyncTrigger', () => {
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('fail'))
@@ -348,6 +366,8 @@ describe('useSyncTrigger', () => {
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
       },
     ])
     // First sync fails
@@ -393,6 +413,8 @@ describe('useSyncTrigger', () => {
         synced_at: null,
         reset_count: 0,
         last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
       },
     ])
 
