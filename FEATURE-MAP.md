@@ -261,7 +261,7 @@ HeadExchange, OpBatch (1000 ops/chunk), ResetRequired, SnapshotOffer/Accept/Reje
 
 ### Views (9)
 
-journal, search, pages, tags, trash, status, conflicts, history, page-editor
+journal, search, pages, tags, trash, status, conflicts, history, page-editor — see **section 8** for dedicated per-view breakdown.
 
 ### Components (39 domain + 15 shadcn/ui + 1 editor = 55 total)
 
@@ -316,7 +316,141 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor
 
 ---
 
-## 8. Editor System
+## 8. Views (Sidebar Navigation)
+
+8 sidebar buttons + 1 programmatic view. Each maps to a top-level component rendered by App.tsx based on `useNavigationStore.currentView`.
+
+### 8.1 Journal (`journal`)
+
+**Component**: `JournalPage.tsx` (~1140 lines) + `JournalControls` (inline)
+**Store**: `useJournalStore` (mode, currentDate)
+**Sidebar icon**: Calendar
+
+4 sub-modes controlled by `useJournalStore.mode`:
+
+| Mode | Description |
+|------|-------------|
+| **Daily** | Single day page with prev/next navigation and "today" button. Auto-creates today's page on launch. |
+| **Weekly** | Mon–Sun calendar grid, each day as a collapsible section. |
+| **Monthly** | Calendar grid (react-day-picker) with content indicators; click a day to switch to daily. |
+| **Agenda** | Task panels (TODO/DOING/DONE) with priority sorting, collapsible sections, and AgendaFilterBuilder (status, priority, dueDate, scheduledDate, tag dimensions). |
+
+- Floating calendar picker for date jumping
+- Days with content highlighted
+- Template support: auto-populates structure on new journal page via `loadJournalTemplate` + `insertTemplateBlocks`
+- Keyboard: Alt+Left/Right (prev/next period), Alt+T (go to today)
+- See also: **section 15** (Journal / Daily Notes), **section 14** (Property System — fixed-column date fields drive agenda)
+
+### 8.2 Search (`search`)
+
+**Component**: `SearchPanel.tsx` (~214 lines)
+**Sidebar icon**: Search
+
+- Full-text search via FTS5 trigram tokenizer (case-insensitive)
+- Debounced input (300ms), immediate on Enter/button click
+- Cursor-based pagination with "Load more" (limit 50)
+- Results show block content with clickable navigation to source page
+- CJK limitation notice (trigram tokenizer requires ≥3 chars)
+- See also: **section 12** (Search / FTS5 — backend tokenizer, indexing, optimization)
+
+### 8.3 Pages (`pages`)
+
+**Component**: `PageBrowser.tsx` (~246 lines)
+**Sidebar icon**: FileText
+
+- Lists all page blocks (`block_type = 'page'`, non-deleted)
+- Default sort: ULID ascending (oldest first)
+- Cursor-based pagination
+- Create new page button (Ctrl+N)
+- Delete with confirmation dialog
+- Click to navigate to page (switches to page-editor view)
+
+### 8.4 Tags (`tags`)
+
+**Component**: `TagList.tsx` (~195 lines) + `TagFilterPanel.tsx`
+**Sidebar icon**: Tag
+
+- Lists all tag blocks (`block_type = 'tag'`)
+- Create new tag via inline form
+- Delete with confirmation dialog
+- Click tag name to navigate to tag page (switches to page-editor)
+- **TagFilterPanel**: Boolean tag queries (AND/OR/NOT) via TagExpr
+- See also: **section 16** (Tag System — hierarchy, prefix search, TagExpr)
+
+### 8.5 Trash (`trash`)
+
+**Component**: `TrashView.tsx` (~183 lines)
+**Sidebar icon**: Trash2
+
+- Shows soft-deleted blocks (`deleted_at IS NOT NULL`)
+- Cursor-based pagination
+- **Restore**: un-delete (reversible)
+- **Purge**: permanent physical delete (non-reversible, confirmation dialog)
+- Displays deletion timestamp
+
+### 8.6 Status (`status`)
+
+**Component**: `StatusPanel.tsx` (~274 lines) + `DeviceManagement`
+**Sidebar icon**: Activity (with colored dot: green=idle, amber=syncing, red=error, gray=no peers)
+
+- Materializer queue metrics (polled every 5s):
+  - Foreground queue depth (ops waiting)
+  - Background queue depth (cache/FTS tasks)
+  - Total ops dispatched
+  - Total background tasks dispatched
+- Color-coded queue health (green/amber/red)
+- **DeviceManagement** sub-panel: paired peers list, sync stats (ops received/sent, last synced), pair/unpair actions
+
+### 8.7 Conflicts (`conflicts`)
+
+**Component**: `ConflictList.tsx` (~364 lines)
+**Sidebar icon**: GitMerge (with red dot when unresolved conflicts exist, polled every 30s)
+
+- Shows blocks where `is_conflict = 1` (sync merge conflict copies)
+- Cursor-based pagination
+- Conflict type badge (Text / Property / Move)
+- Metadata: conflict source block ID, created timestamp (ULID decoded)
+- Expandable content preview
+- Two actions (two-click confirmation each):
+  - **Keep**: edit original with conflict content + delete conflict copy
+  - **Discard**: delete conflict copy
+- Navigation link to original block
+
+### 8.8 History (`history`)
+
+**Component**: `HistoryView.tsx` (~627 lines)
+**Sidebar icon**: History
+
+- Global operation log browser with multi-select for batch revert
+- Filter by op type: edit, create, delete, move, tag, property, attachment, restore, purge
+- Word-level diff display for edit operations (via `computeEditDiff`)
+- Cursor-based pagination
+- Keyboard navigation:
+  - j/k: vim-style up/down
+  - Space: toggle selection
+  - Shift+Click: range select
+  - Ctrl+A: select all
+  - Enter: revert selected
+- Batch revert with confirmation dialog
+- See also: **section 11** (Undo/Redo System — reverse.rs, undoStore)
+
+### 8.9 Page Editor (`page-editor`)
+
+**Component**: `PageEditor.tsx` (~129 lines) + PageHeader, BlockTree, LinkedReferences, UnlinkedReferences, PagePropertyTable
+**Not in sidebar** — navigated to programmatically via `navigateToPage()` which pushes onto `pageStack`.
+
+- Editable page title (PageHeader)
+- Block tree with full outliner editing (BlockTree, see **section 9**)
+- Page properties table (PagePropertyTable, see **section 14**)
+- Linked references grouped by source page
+- Unlinked references (blocks mentioning page but not linked, see **section 17**)
+- Zoom-in: breadcrumb trail when viewing a sub-block as root
+- Back navigation pops from `pageStack`; empty stack returns to Pages view
+- "Add block" button for creating new child blocks
+
+---
+
+## 9. Editor System
 
 ### TipTap Configuration
 
@@ -339,9 +473,9 @@ Minimal extension set (no starter-kit). Single roving instance per ADR-01.
 
 ### Slash Commands
 
-**Base**: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT, ASSIGNEE, LOCATION, REPEAT
+**Base**: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT, ASSIGNEE, LOCATION, TEMPLATE
 
-**Progressive disclosure**: PRIORITY 1/2/3, Heading 1-6
+**Progressive disclosure**: PRIORITY 1/2/3, REPEAT (daily/weekly/monthly/yearly), Heading 1-6
 
 ### Markdown Serializer (`markdown-serializer.ts`, 684 lines)
 
@@ -361,10 +495,11 @@ Zero external dependencies. O(n) bidirectional conversion.
 - **Tab / Shift+Tab**: Indent / dedent.
 - **Auto-split**: Multiple paragraphs split into separate blocks on blur.
 - **Ctrl+.**: Collapse/expand children (client-side state, not persisted).
+- **Zoom-in**: Context menu "Zoom in" on blocks with children. Filters tree to descendants with breadcrumb trail navigation.
 
 ---
 
-## 9. Keyboard Shortcuts
+## 10. Keyboard Shortcuts
 
 | Category | Shortcut | Action |
 |----------|----------|--------|
@@ -400,7 +535,7 @@ Zero external dependencies. O(n) bidirectional conversion.
 
 ---
 
-## 10. Undo/Redo System
+## 11. Undo/Redo System
 
 **Two-tier model**:
 
@@ -415,7 +550,7 @@ Zero external dependencies. O(n) bidirectional conversion.
 
 ---
 
-## 11. Search (FTS5)
+## 12. Search (FTS5)
 
 - **Tokenizer**: trigram (case_sensitive=0). ~3x larger index for better CJK support.
 - **Strip pass**: Remove markdown formatting, resolve `#[ULID]` → tag name, `[[ULID]]` → page title.
@@ -424,7 +559,7 @@ Zero external dependencies. O(n) bidirectional conversion.
 
 ---
 
-## 12. Pagination
+## 13. Pagination
 
 All list queries use cursor-based keyset pagination.
 
@@ -434,7 +569,7 @@ All list queries use cursor-based keyset pagination.
 
 ---
 
-## 13. Property System
+## 14. Property System
 
 - **Types**: text, number, date, ref (stored in separate columns on block_properties)
 - **Fixed columns**: todo_state, priority, due_date, scheduled_date (denormalized to blocks table for fast indexed queries)
@@ -444,17 +579,17 @@ All list queries use cursor-based keyset pagination.
 
 ---
 
-## 14. Journal / Daily Notes
+## 15. Journal / Daily Notes
 
 - **4 modes**: Daily, Weekly, Monthly, Agenda
-- **Auto-create**: Today's page created on launch + Ctrl+N shortcut
+- **Auto-create**: Today's page created on launch + Enter/n keyboard shortcut on empty journal
 - **Calendar picker**: react-day-picker with content indicators
 - **Agenda panels**: TODO/DOING/DONE with priority sorting
-- **AgendaFilterBuilder**: status, priority, dueDate, tag dimensions
+- **AgendaFilterBuilder**: status, priority, dueDate (6 presets: Today/This week/Overdue/Next 7/14/30 days), scheduledDate (6 presets), tag dimensions
 
 ---
 
-## 15. Tag System
+## 16. Tag System
 
 - Tags are first-class blocks (block_type='tag')
 - Hierarchy via naming convention (e.g., `work/meeting`) — no parent-child relationships
@@ -464,7 +599,7 @@ All list queries use cursor-based keyset pagination.
 
 ---
 
-## 16. Backlinks & References
+## 17. Backlinks & References
 
 - **block_links table**: Derived index from `[[ULID]]` tokens in content
 - **Linked references**: Grouped by source page
@@ -474,7 +609,7 @@ All list queries use cursor-based keyset pagination.
 
 ---
 
-## 17. Error Handling
+## 18. Error Handling
 
 **AppError** enum (11 variants): Database, Migration, Io, Json, Ulid, NotFound, InvalidOperation, Channel, Snapshot, Validation, NonReversible
 
@@ -482,13 +617,13 @@ All serialize as `{ kind, message }` for Tauri 2 frontend.
 
 ---
 
-## 18. Rust Backend Modules (30)
+## 19. Rust Backend Modules (30)
 
 backlink_query, cache, commands, dag, db, device, draft, error, fts, hash, materializer, merge, op, op_log, pagination, pairing, peer_refs, recovery, reverse, snapshot, soft_delete, sync_cert, sync_daemon, sync_events, sync_net, sync_protocol, sync_scheduler, tag_query, ulid, word_diff
 
 ---
 
-## 19. Testing Infrastructure
+## 20. Testing Infrastructure
 
 | Layer | Framework | Count |
 |-------|-----------|-------|
@@ -506,7 +641,7 @@ backlink_query, cache, commands, dag, db, device, draft, error, fts, hash, mater
 
 ---
 
-## 20. Build & CI
+## 21. Build & CI
 
 ### Platforms
 
@@ -530,23 +665,22 @@ trailing-whitespace, end-of-file-fixer, check-yaml/toml/json, check-merge-confli
 
 ---
 
-## 21. Deferred Features (REVIEW-LATER)
+## 22. Deferred Features (REVIEW-LATER)
 
 | ID | Feature | Phase |
 |----|---------|-------|
 | 522 | mDNS peer discovery on iOS (manual IP fallback) | iOS |
-| 630 | Journal templates (auto-populate structure) | Journaling |
-| 632 | `/template` slash command | Journaling |
-| 634 | Agenda view advanced date filters | Journaling |
-| 637 | Zoom-in to block with breadcrumb trail | Outlining |
 | 639 | Templates system (comprehensive) | Journaling |
-| 640 | Recurrence UI (`/repeat` command) | Journaling |
 | 641 | Scheduling semantics (due/scheduled drive agenda) | Journaling |
-| 642 | Agenda filter by custom properties | Journaling |
+| 642 | Agenda filter by creation/completion dates, custom properties | Journaling |
+| 643 | Properties management view (browse, create, rename, delete) | Properties |
+| 644 | Repeating tasks (modes, end conditions, agenda projection) | Tasks |
+| 645 | Block property UX (inline chips, click-to-edit, property drawer) | Properties |
+| 646 | Property type enforcement (type/date/field validation in set_property) | Properties |
 
 ---
 
-## 22. Key Dependencies
+## 23. Key Dependencies
 
 ### Frontend
 

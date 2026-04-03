@@ -83,7 +83,7 @@ Update SESSION-LOG.md with a summary of what was done (follow the existing forma
 
 In REVIEW-LATER.md: remove resolved items entirely — both the summary table row AND the detail section. Update the summary count at the top and the "Previously resolved" line. Never add "Resolved" sections.
 
-**Keep FEATURE-MAP.md in sync:** If the session added new commands, components, hooks, stores, database tables, or other user-facing features, update the relevant section of FEATURE-MAP.md. Also update the deferred features list (section 21) when REVIEW-LATER items are added or resolved.
+**Keep FEATURE-MAP.md in sync:** If the session added new commands, components, hooks, stores, database tables, or other user-facing features, update the relevant section of FEATURE-MAP.md. Also update the deferred features list (section 22) when REVIEW-LATER items are added or resolved.
 
 **Concurrent edits to REVIEW-LATER.md:** Other agents may be working on REVIEW-LATER.md at the same time (resolving items, adding new ones, updating counts). Before writing to the file, always re-read it first to get the latest content. Never cache or assume stale state. If you read the file, make edits in memory, and then write — re-read immediately before writing to avoid overwriting another agent's changes.
 
@@ -93,7 +93,7 @@ In REVIEW-LATER.md: remove resolved items entirely — both the summary table ro
 
 ### Step A: Deep review
 
-Pick one large feature area to review using **FEATURE-MAP.md** for discovery. Good candidates: sync (section 6), materializer (section 4), editor (section 8), stores (section 7), property system (section 13), or any area not recently reviewed in SESSION-LOG.md. The properties system (#643, #645) is particularly worth reviewing — it's designed as the primary extension point and has many expandable surface areas.
+Pick one feature area to review. **Prioritize recently finished features first** — check SESSION-LOG.md for the latest completed work and review those before more stable areas. Newly shipped code is more likely to have bugs, edge cases, and test gaps than code that has been stable for multiple sessions. Use **FEATURE-MAP.md** for discovery and to understand how the feature fits into the broader system. If all recent features have already been reviewed, fall back to stable areas: sync (section 6), materializer (section 4), editor (section 9), stores (section 7), property system (section 14), or any area not recently reviewed in SESSION-LOG.md. The properties system (#643, #645) is particularly worth reviewing — it's designed as the primary extension point and has many expandable surface areas.
 
 Launch **parallel review subagents covering both technical and UX dimensions**:
 
