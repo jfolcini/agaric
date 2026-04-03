@@ -59,6 +59,8 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
 
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }) => {
+        if (items.length === 0) return false
+
         if (event.key === 'ArrowUp') {
           setSelectedIndex((prev) => (prev <= 0 ? items.length - 1 : prev - 1))
           return true
@@ -77,7 +79,9 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
 
     if (items.length === 0) {
       return (
-        <output className="suggestion-empty p-2 text-sm text-muted-foreground">No results</output>
+        <output className="suggestion-empty p-2 text-sm text-muted-foreground" aria-live="polite">
+          No results
+        </output>
       )
     }
 

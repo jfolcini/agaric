@@ -24,6 +24,7 @@ import type {
 // -- Constants ----------------------------------------------------------------
 
 const ULID_RE = /^[0-9A-Z]{26}$/
+const MAX_LINK_SCAN = 10_000
 
 // -- Serialize (PM doc → Markdown) --------------------------------------------
 
@@ -330,10 +331,11 @@ function probeExternalLink(s: Scanner): LinkMatch | null {
 
   const pos = s.pos + 1 // past [
 
-  // Find matching ] (tracking bracket depth)
+  // Find matching ] (tracking bracket depth, capped to avoid O(n) on unclosed brackets)
+  const maxPos = Math.min(pos + MAX_LINK_SCAN, s.src.length)
   let depth = 1
   let textEnd = -1
-  for (let i = pos; i < s.src.length; i++) {
+  for (let i = pos; i < maxPos; i++) {
     if (s.src[i] === '\\' && i + 1 < s.src.length) {
       i++ // skip escaped char
       continue
@@ -447,7 +449,8 @@ export function parse(markdown: string): DocNode {
 
     // Fenced code block: ```
     if (line.startsWith('```')) {
-      const language = line.slice(3).trim() || null
+      const rawLang = line.slice(3).trim() || null
+      const language = rawLang && /^[a-zA-Z0-9_+\-#.]+$/.test(rawLang) ? rawLang : null
       const codeLines: string[] = []
       i++ // skip opening fence
       while (i < lines.length && !lines[i].startsWith('```')) {

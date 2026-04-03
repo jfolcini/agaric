@@ -288,4 +288,31 @@ describe('SuggestionList', () => {
     const listbox = screen.getByRole('listbox')
     expect(listbox).toHaveAttribute('aria-label', 'Tags')
   })
+
+  // -- Empty state hardening ---------------------------------------------------
+
+  it('onKeyDown returns false for all keys when items are empty', () => {
+    const ref = createRef<SuggestionListRef>()
+    const command = vi.fn()
+    render(<SuggestionList ref={ref} items={[]} command={command} />)
+
+    for (const key of ['ArrowUp', 'ArrowDown', 'Enter']) {
+      let handled: boolean | undefined
+      act(() => {
+        handled = ref.current?.onKeyDown({ event: makeKeyEvent(key) })
+      })
+      expect(handled).toBe(false)
+    }
+
+    expect(command).not.toHaveBeenCalled()
+  })
+
+  it('"No results" element has status role and aria-live="polite"', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={[]} command={command} />)
+
+    const el = screen.getByRole('status')
+    expect(el).toHaveTextContent('No results')
+    expect(el).toHaveAttribute('aria-live', 'polite')
+  })
 })

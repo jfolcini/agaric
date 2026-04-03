@@ -29,6 +29,14 @@ export const ExternalLink = Link.extend({
   openOnClick: false,
   autolink: true,
   linkOnPaste: true,
+  validate: (url: string) => {
+    try {
+      const u = new URL(url)
+      return /^https?:$/.test(u.protocol)
+    } catch {
+      return false
+    }
+  },
   HTMLAttributes: {
     class: 'external-link',
     rel: 'noopener noreferrer',

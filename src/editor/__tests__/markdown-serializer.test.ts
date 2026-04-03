@@ -1054,4 +1054,47 @@ describe('code blocks', () => {
     expect(result.content?.[1].type).toBe('codeBlock')
     expect(result.content?.[2].type).toBe('paragraph')
   })
+
+  it('invalid code block language is sanitized to null', () => {
+    const md = '```not a language!\nconsole.log("hi")\n```'
+    const result = parse(md)
+    expect(result.content).toHaveLength(1)
+    const block = result.content![0]
+    expect(block.type).toBe('codeBlock')
+    // Language should be stripped because it contains spaces / invalid chars
+    expect((block as { attrs?: { language?: string } }).attrs?.language).toBeUndefined()
+  })
+
+  it('valid code block language is preserved', () => {
+    const md = '```typescript\nconst x = 1\n```'
+    const result = parse(md)
+    const block = result.content![0]
+    expect(block.type).toBe('codeBlock')
+    expect((block as { attrs?: { language?: string } }).attrs?.language).toBe('typescript')
+  })
+
+  it('code block language with special valid chars (c++, c#, .net)', () => {
+    for (const lang of ['c++', 'c#', 'objective-c', 'f#', '.net']) {
+      const md = `\`\`\`${lang}\ncode\n\`\`\``
+      const result = parse(md)
+      const block = result.content![0]
+      expect((block as { attrs?: { language?: string } }).attrs?.language).toBe(lang)
+    }
+  })
+})
+
+// -- hardening: link scan depth -----------------------------------------------
+
+describe('hardening: link scan depth', () => {
+  it('unclosed [ with 20KB of text does not hang (completes < 100ms)', () => {
+    const huge = `[${'a'.repeat(20_000)}`
+    const start = performance.now()
+    const result = parse(huge)
+    const elapsed = performance.now() - start
+    // Should complete quickly — the scan is capped at MAX_LINK_SCAN
+    expect(elapsed).toBeLessThan(100)
+    // The unclosed bracket is treated as literal text
+    expect(result.content).toHaveLength(1)
+    expect(result.content?.[0].type).toBe('paragraph')
+  })
 })
