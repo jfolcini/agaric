@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 69 — 2026-04-03 — Property Definitions + Slash Commands (#591, #594, #596)
+
+### Seed built-in property definitions + effort/assignee/location slash commands
+3 items resolved: property definitions seed migration, /effort, /assignee, /location.
+
+Built by orchestrator (migration) + 1 subagent (slash commands + 3 tests). No review — trivial additive changes.
+
+| File | Change |
+|------|--------|
+| `0014_seed_builtin_properties.sql` (new) | #591: Seeds 9 built-in property definitions (todo_state, priority, due_date, scheduled_date, created_at, completed_at, effort, assignee, location). |
+| `BlockTree.tsx` | #594+#596: 3 new slash commands (/effort, /assignee, /location) + handler calling setProperty. |
+| `BlockTree.test.tsx` | Updated count 9→12, 3 new search tests. |
+
+### Stats
+- Rust: 1429 tests pass
+- Frontend: 79/79 test files, 2251 tests pass (2248 + 3 new)
+- Commit: `06da2bf`
+
 ## Session 68 — 2026-04-03 — Mobile Parity Quick Wins (#590)
 
 ### Four mobile-accessibility fixes for Android readiness

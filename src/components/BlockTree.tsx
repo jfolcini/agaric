@@ -36,6 +36,7 @@ import {
   listBlocks,
   setDueDate as setDueDateCmd,
   setPriority as setPriorityCmd,
+  setProperty,
   setScheduledDate as setScheduledDateCmd,
   setTodoState as setTodoStateCmd,
 } from '../lib/tauri'
@@ -225,6 +226,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       { id: 'link', label: 'LINK — Insert page link' },
       { id: 'tag', label: 'TAG — Insert tag reference' },
       { id: 'code', label: 'CODE — Insert code block' },
+      { id: 'effort', label: 'EFFORT — Set effort estimate (15m/30m/1h/2h/4h/1d)' },
+      { id: 'assignee', label: 'ASSIGNEE — Set assignee' },
+      { id: 'location', label: 'LOCATION — Set location' },
     ],
     [],
   )
@@ -545,6 +549,17 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         } catch {
           toast.error('Failed to set heading')
         }
+      }
+
+      if (item.id === 'effort' || item.id === 'assignee' || item.id === 'location') {
+        if (!focusedBlockId) return
+        try {
+          await setProperty({ blockId: focusedBlockId, key: item.id, valueText: '' })
+          toast.success(`Added ${item.label.split(' — ')[0].toLowerCase()} property`)
+        } catch {
+          toast.error('Failed to add property')
+        }
+        return
       }
     },
     [focusedBlockId],

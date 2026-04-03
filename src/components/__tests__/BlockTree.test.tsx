@@ -1282,7 +1282,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(9)
+    expect(results).toHaveLength(12)
     expect(results?.map((r) => r.id)).toEqual([
       'todo',
       'doing',
@@ -1293,6 +1293,9 @@ describe('BlockTree slash command wiring', () => {
       'link',
       'tag',
       'code',
+      'effort',
+      'assignee',
+      'location',
     ])
   })
 
@@ -1380,6 +1383,48 @@ describe('BlockTree slash command wiring', () => {
     const results = await capturedSearchSlashCommands?.('code')
 
     expect(results?.some((r) => r.id === 'code')).toBe(true)
+  })
+
+  it('searchSlashCommands returns /effort command when query matches "effort"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('effort')
+
+    expect(results?.some((r) => r.id === 'effort')).toBe(true)
+  })
+
+  it('searchSlashCommands returns /assignee command when query matches "assignee"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('assignee')
+
+    expect(results?.some((r) => r.id === 'assignee')).toBe(true)
+  })
+
+  it('searchSlashCommands returns /location command when query matches "location"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('location')
+
+    expect(results?.some((r) => r.id === 'location')).toBe(true)
   })
 })
 
