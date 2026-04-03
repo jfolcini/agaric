@@ -28,16 +28,30 @@ vi.mock('../EditableBlock', () => ({
   ),
 }))
 
-// Mock PropertyChip with a simple rendering that passes through onClick
+// Mock PropertyChip with a simple rendering that passes through onClick and onKeyClick
 vi.mock('../PropertyChip', () => ({
-  PropertyChip: (props: { propKey: string; value: string; onClick?: () => void }) => (
+  PropertyChip: (props: {
+    propKey: string
+    value: string
+    onClick?: () => void
+    onKeyClick?: () => void
+  }) => (
     <button
       type="button"
       data-testid={`property-chip-${props.propKey}`}
       className="property-chip"
       onClick={props.onClick}
     >
-      {props.propKey}: {props.value}
+      <span
+        data-testid={`property-key-${props.propKey}`}
+        onClick={(e: { stopPropagation: () => void }) => {
+          e.stopPropagation()
+          props.onKeyClick?.()
+        }}
+      >
+        {props.propKey}:
+      </span>
+      <span>{props.value}</span>
     </button>
   ),
 }))
@@ -2441,8 +2455,8 @@ describe('SortableBlock property chips', () => {
 
     expect(screen.getByTestId('property-chip-effort')).toBeInTheDocument()
     expect(screen.getByTestId('property-chip-assignee')).toBeInTheDocument()
-    expect(screen.getByText('effort: 2h')).toBeInTheDocument()
-    expect(screen.getByText('assignee: Alice')).toBeInTheDocument()
+    expect(screen.getByTestId('property-chip-effort')).toHaveTextContent('effort:2h')
+    expect(screen.getByTestId('property-chip-assignee')).toHaveTextContent('assignee:Alice')
   })
 
   it('does not render property chips when properties is undefined', () => {
@@ -2945,6 +2959,170 @@ describe('SortableBlock vertical alignment', () => {
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+})
+
+// =========================================================================
+// Due date chip click-to-edit (#645-6)
+// =========================================================================
+
+describe('SortableBlock due date chip click-to-edit', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('clicking due date chip dispatches open-due-date-picker event', async () => {
+    const user = userEvent.setup()
+    const handler = vi.fn()
+    document.addEventListener('open-due-date-picker', handler)
+
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate="2026-06-15"
+      />,
+    )
+
+    const chip = container.querySelector('.due-date-chip') as HTMLElement
+    expect(chip).toBeInTheDocument()
+    await user.click(chip)
+
+    expect(handler).toHaveBeenCalledOnce()
+    document.removeEventListener('open-due-date-picker', handler)
+  })
+
+  it('clicking scheduled date chip dispatches open-scheduled-date-picker event', async () => {
+    const user = userEvent.setup()
+    const handler = vi.fn()
+    document.addEventListener('open-scheduled-date-picker', handler)
+
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        scheduledDate="2026-06-10"
+      />,
+    )
+
+    const chip = container.querySelector('.scheduled-chip') as HTMLElement
+    expect(chip).toBeInTheDocument()
+    await user.click(chip)
+
+    expect(handler).toHaveBeenCalledOnce()
+    document.removeEventListener('open-scheduled-date-picker', handler)
+  })
+
+  it('due date chip has cursor-pointer class', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate="2026-06-15"
+      />,
+    )
+
+    const chip = container.querySelector('.due-date-chip')
+    expect(chip?.className).toContain('cursor-pointer')
+  })
+
+  it('scheduled date chip has cursor-pointer class', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        scheduledDate="2026-06-10"
+      />,
+    )
+
+    const chip = container.querySelector('.scheduled-chip')
+    expect(chip?.className).toContain('cursor-pointer')
+  })
+})
+
+// =========================================================================
+// Property key rename tests (#645-7c)
+// =========================================================================
+
+describe('SortableBlock property key rename', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('clicking property key label opens key rename input', async () => {
+    const user = userEvent.setup()
+
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'effort', value: '2h' }]}
+      />,
+    )
+
+    const keyLabel = screen.getByTestId('property-key-effort')
+    await user.click(keyLabel)
+
+    const keyEditor = container.querySelector('.property-key-editor input')
+    expect(keyEditor).toBeInTheDocument()
+  })
+
+  it('renaming a property key creates new key and deletes old key', async () => {
+    const user = userEvent.setup()
+    mockSetProperty.mockResolvedValue({})
+
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_42"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'effort', value: '2h' }]}
+      />,
+    )
+
+    // Click key label to open rename input
+    const keyLabel = screen.getByTestId('property-key-effort')
+    await user.click(keyLabel)
+
+    const input = container.querySelector('.property-key-editor input') as HTMLInputElement
+    expect(input).toBeInTheDocument()
+
+    // Clear and type new key name
+    await user.clear(input)
+    await user.type(input, 'duration')
+
+    // Blur to trigger save
+    await act(async () => {
+      fireEvent.blur(input)
+    })
+
+    // Should call setProperty twice: once to create new key, once to delete old key
+    await waitFor(() => {
+      expect(mockSetProperty).toHaveBeenCalledTimes(2)
+    })
+    expect(mockSetProperty).toHaveBeenCalledWith({
+      blockId: 'BLOCK_42',
+      key: 'duration',
+      valueText: '2h',
+    })
+    expect(mockSetProperty).toHaveBeenCalledWith({
+      blockId: 'BLOCK_42',
+      key: 'effort',
+      valueText: null,
     })
   })
 })

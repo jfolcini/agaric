@@ -15,7 +15,13 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { groupByDate, sortAgendaBlocks, type AgendaGroup } from '../lib/agenda-sort'
+import {
+  groupByDate,
+  groupByPriority,
+  groupByState,
+  sortAgendaBlocks,
+  type AgendaGroup,
+} from '../lib/agenda-sort'
 import type { BlockRow } from '../lib/tauri'
 
 export interface AgendaResultsProps {
@@ -35,8 +41,8 @@ export interface AgendaResultsProps {
   onClearFilters: () => void
   /** Resolved page titles for breadcrumbs */
   pageTitles: Map<string, string>
-  /** Group blocks by this dimension. When set to 'date', renders date section headers. Default: 'none'. */
-  groupBy?: 'date' | 'none'
+  /** Group blocks by this dimension. Default: 'none'. */
+  groupBy?: 'date' | 'priority' | 'state' | 'none'
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -271,10 +277,17 @@ export function AgendaResults({
           : t('agenda.resultCount', { count: blocks.length })}
       </div>
 
-      {groupBy === 'date' ? (
+      {groupBy === 'date' || groupBy === 'priority' || groupBy === 'state' ? (
         <>
-          {groupByDate(blocks).map((group) => {
-            const displayLabel = GROUP_I18N[group.label] ? t(GROUP_I18N[group.label]) : group.label
+          {(groupBy === 'date'
+            ? groupByDate(blocks)
+            : groupBy === 'priority'
+              ? groupByPriority(blocks)
+              : groupByState(blocks)
+          ).map((group) => {
+            const displayLabel = GROUP_I18N[group.label]
+              ? t(GROUP_I18N[group.label])
+              : group.label
             return (
               <div key={group.label} className="agenda-group mb-3">
                 <h3
@@ -284,7 +297,9 @@ export function AgendaResults({
                   )}
                 >
                   {displayLabel}
-                  <span className="ml-1.5 text-muted-foreground font-normal">({group.blocks.length})</span>
+                  <span className="ml-1.5 text-muted-foreground font-normal">
+                    ({group.blocks.length})
+                  </span>
                 </h3>
                 <ul className="agenda-results-list space-y-1" aria-label={displayLabel}>
                   {group.blocks.map((block) => renderItem(block))}

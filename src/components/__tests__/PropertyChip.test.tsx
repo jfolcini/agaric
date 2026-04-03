@@ -100,4 +100,43 @@ describe('PropertyChip', () => {
     expect(chipWithoutClick?.className).not.toContain('cursor-pointer')
     expect(chipWithoutClick?.className).not.toContain('hover:bg-accent/50')
   })
+
+  it('key label calls onKeyClick when clicked', async () => {
+    const user = userEvent.setup()
+    const handleKeyClick = vi.fn()
+    const handleClick = vi.fn()
+
+    render(
+      <PropertyChip
+        propKey="effort"
+        value="2h"
+        onClick={handleClick}
+        onKeyClick={handleKeyClick}
+      />,
+    )
+
+    const keyLabel = screen.getByText('effort:')
+    await user.click(keyLabel)
+
+    expect(handleKeyClick).toHaveBeenCalledOnce()
+    // onClick should NOT be called because onKeyClick stops propagation
+    expect(handleClick).not.toHaveBeenCalled()
+  })
+
+  it('key label has hover:underline class when onKeyClick is provided', () => {
+    render(
+      <PropertyChip propKey="effort" value="2h" onKeyClick={() => {}} />,
+    )
+
+    const keyLabel = screen.getByText('effort:')
+    expect(keyLabel.className).toContain('hover:underline')
+    expect(keyLabel.className).toContain('cursor-pointer')
+  })
+
+  it('key label does not have hover:underline class when onKeyClick is not provided', () => {
+    render(<PropertyChip propKey="effort" value="2h" />)
+
+    const keyLabel = screen.getByText('effort:')
+    expect(keyLabel.className).not.toContain('hover:underline')
+  })
 })

@@ -4022,3 +4022,179 @@ describe('BlockTree Ctrl+Shift+P keyboard shortcut', () => {
     expect(typeof capturedBlockKeyboardOpts?.onShowProperties).toBe('function')
   })
 })
+
+// =========================================================================
+// Assignee slash command presets (#645-12)
+// =========================================================================
+
+describe('BlockTree assignee slash command presets', () => {
+  it('searchSlashCommands returns assignee presets when query matches "assignee"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('assignee')
+
+    expect(results).toBeDefined()
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).toContain('assignee')
+    expect(ids).toContain('assignee-me')
+    expect(ids).toContain('assignee-custom')
+  })
+
+  it('assignee-me preset sets assignee property to "Me"', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'assignee-me', label: 'ASSIGNEE Me — Assign to me' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'assignee',
+        valueText: 'Me',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('assignee-custom preset sets assignee property to empty string', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({
+        id: 'assignee-custom',
+        label: 'ASSIGNEE Custom... — Enter custom assignee',
+      })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'assignee',
+        valueText: '',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+})
+
+// =========================================================================
+// Location slash command presets (#645-12)
+// =========================================================================
+
+describe('BlockTree location slash command presets', () => {
+  it('searchSlashCommands returns location presets when query matches "location"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('location')
+
+    expect(results).toBeDefined()
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).toContain('location')
+    expect(ids).toContain('location-office')
+    expect(ids).toContain('location-home')
+    expect(ids).toContain('location-remote')
+    expect(ids).toContain('location-custom')
+  })
+
+  it('location-office preset sets location property to "Office"', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'location-office', label: 'LOCATION Office — Office' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'location',
+        valueText: 'Office',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('location-custom preset sets location property to empty string', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({
+        id: 'location-custom',
+        label: 'LOCATION Custom... — Enter custom location',
+      })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'location',
+        valueText: '',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+})

@@ -123,6 +123,104 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
   return result
 }
 
+/**
+ * Group blocks by priority level. Returns groups in order: P1, P2, P3, No priority.
+ * Within each group, blocks are sorted by date ASC then state.
+ */
+export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
+  const buckets = new Map<string, BlockRow[]>([
+    ['P1', []],
+    ['P2', []],
+    ['P3', []],
+    ['No priority', []],
+  ])
+
+  for (const block of blocks) {
+    const key =
+      block.priority === '1' ? 'P1'
+        : block.priority === '2' ? 'P2'
+          : block.priority === '3' ? 'P3'
+            : 'No priority'
+    buckets.get(key)!.push(block)
+  }
+
+  const sortWithin = (a: BlockRow, b: BlockRow): number => {
+    // date ASC
+    const dateA = effectiveDate(a)
+    const dateB = effectiveDate(b)
+    if (dateA !== dateB) return dateA < dateB ? -1 : 1
+    // state
+    return stateRank(a.todo_state) - stateRank(b.todo_state)
+  }
+
+  const CLASS_MAP: Record<string, string> = {
+    P1: 'text-red-600 dark:text-red-400',
+    P2: 'text-yellow-600 dark:text-yellow-400',
+    P3: 'text-blue-600 dark:text-blue-400',
+    'No priority': 'text-muted-foreground',
+  }
+
+  const result: AgendaGroup[] = []
+  for (const [label, group] of buckets) {
+    if (group.length === 0) continue
+    result.push({
+      label,
+      blocks: [...group].sort(sortWithin),
+      className: CLASS_MAP[label],
+    })
+  }
+  return result
+}
+
+/**
+ * Group blocks by todo state. Returns groups in order: DOING, TODO, DONE, No state.
+ * Within each group, blocks are sorted by date ASC then priority.
+ */
+export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
+  const buckets = new Map<string, BlockRow[]>([
+    ['DOING', []],
+    ['TODO', []],
+    ['DONE', []],
+    ['No state', []],
+  ])
+
+  for (const block of blocks) {
+    const key =
+      block.todo_state === 'DOING' ? 'DOING'
+        : block.todo_state === 'TODO' ? 'TODO'
+          : block.todo_state === 'DONE' ? 'DONE'
+            : 'No state'
+    buckets.get(key)!.push(block)
+  }
+
+  const sortWithin = (a: BlockRow, b: BlockRow): number => {
+    // date ASC
+    const dateA = effectiveDate(a)
+    const dateB = effectiveDate(b)
+    if (dateA !== dateB) return dateA < dateB ? -1 : 1
+    // priority
+    return priorityRank(a.priority) - priorityRank(b.priority)
+  }
+
+  const CLASS_MAP: Record<string, string> = {
+    DOING: 'text-amber-600 dark:text-amber-400',
+    TODO: 'text-blue-600 dark:text-blue-400',
+    DONE: 'text-green-600 dark:text-green-400',
+    'No state': 'text-muted-foreground',
+  }
+
+  const result: AgendaGroup[] = []
+  for (const [label, group] of buckets) {
+    if (group.length === 0) continue
+    result.push({
+      label,
+      blocks: [...group].sort(sortWithin),
+      className: CLASS_MAP[label],
+    })
+  }
+  return result
+}
+
 /** Short month names for compact date display. */
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 

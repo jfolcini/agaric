@@ -179,6 +179,7 @@ function SortableBlockInner({
   // ── Context menu state ───────────────────────────────────────────
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [editingProp, setEditingProp] = useState<{ key: string; value: string } | null>(null)
+  const [editingKey, setEditingKey] = useState<{ oldKey: string; value: string } | null>(null)
   const [selectOptions, setSelectOptions] = useState<string[] | null>(null)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const touchStartPos = useRef<{ x: number; y: number } | null>(null)
@@ -456,30 +457,36 @@ function SortableBlockInner({
             </Tooltip>
           )}
 
-          {/* Due date chip — read-only display when set */}
+          {/* Due date chip — clickable to open date picker */}
           {dueDate && (
             <span
               role="img"
               className={cn(
-                'due-date-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none',
+                'due-date-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none cursor-pointer',
                 dueDateColor(dueDate),
               )}
               aria-label={t('block.dueDate', { date: formatCompactDate(dueDate) })}
+              onClick={() => {
+                document.dispatchEvent(new CustomEvent('open-due-date-picker'))
+              }}
             >
               <CalendarDays size={14} className="flex-shrink-0" />
               {formatCompactDate(dueDate)}
             </span>
           )}
 
-          {/* Scheduled date chip — read-only display when set */}
+          {/* Scheduled date chip — clickable to open date picker */}
           {scheduledDate && (
             <span
               role="img"
               className={cn(
-                'scheduled-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none',
+                'scheduled-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none cursor-pointer',
                 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
               )}
               aria-label={t('block.scheduledDate', { date: formatCompactDate(scheduledDate) })}
+              onClick={() => {
+                document.dispatchEvent(new CustomEvent('open-scheduled-date-picker'))
+              }}
             >
               <Calendar size={14} className="flex-shrink-0" />
               {formatCompactDate(scheduledDate)}
@@ -512,6 +519,7 @@ function SortableBlockInner({
                     propKey={p.key}
                     value={p.value}
                     onClick={() => setEditingProp({ key: p.key, value: p.value })}
+                    onKeyClick={() => setEditingKey({ oldKey: p.key, value: p.value })}
                   />
                 ))}
               {properties.filter((p) => p.key !== 'repeat').length > 3 && (
@@ -576,6 +584,42 @@ function SortableBlockInner({
                 }}
               />
             )}
+          </div>
+        )}
+
+        {/* ── Property key rename popover ───────────────────────────── */}
+        {editingKey && (
+          <div className="property-key-editor absolute z-50 mt-1 rounded-md border bg-popover p-1 shadow-lg">
+            <input
+              ref={(el) => el?.focus()}
+              type="text"
+              className="rounded border px-2 py-1 text-sm w-32"
+              defaultValue={editingKey.oldKey}
+              onBlur={async (e) => {
+                const newKey = e.target.value.trim()
+                if (newKey && newKey !== editingKey.oldKey) {
+                  try {
+                    await setProperty({
+                      blockId,
+                      key: newKey,
+                      valueText: editingKey.value,
+                    })
+                    await setProperty({
+                      blockId,
+                      key: editingKey.oldKey,
+                      valueText: null,
+                    })
+                  } catch {
+                    toast.error('Failed to rename property')
+                  }
+                }
+                setEditingKey(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                if (e.key === 'Escape') setEditingKey(null)
+              }}
+            />
           </div>
         )}
 

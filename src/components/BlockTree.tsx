@@ -477,6 +477,26 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     [],
   )
 
+  /** Assignee commands — shown only when query matches (progressive disclosure). */
+  const ASSIGNEE_COMMANDS: PickerItem[] = useMemo(
+    () => [
+      { id: 'assignee-me', label: 'ASSIGNEE Me — Assign to me' },
+      { id: 'assignee-custom', label: 'ASSIGNEE Custom... — Enter custom assignee' },
+    ],
+    [],
+  )
+
+  /** Location commands — shown only when query matches (progressive disclosure). */
+  const LOCATION_COMMANDS: PickerItem[] = useMemo(
+    () => [
+      { id: 'location-office', label: 'LOCATION Office — Office' },
+      { id: 'location-home', label: 'LOCATION Home — Home' },
+      { id: 'location-remote', label: 'LOCATION Remote — Remote' },
+      { id: 'location-custom', label: 'LOCATION Custom... — Enter custom location' },
+    ],
+    [],
+  )
+
   const searchSlashCommands = useCallback(
     async (query: string): Promise<PickerItem[]> => {
       const q = query.toLowerCase()
@@ -486,9 +506,27 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       const headingResults = HEADING_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       const repeatResults = REPEAT_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       const effortResults = EFFORT_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-      return [...baseResults, ...priorityResults, ...headingResults, ...repeatResults, ...effortResults]
+      const assigneeResults = ASSIGNEE_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
+      const locationResults = LOCATION_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
+      return [
+        ...baseResults,
+        ...priorityResults,
+        ...headingResults,
+        ...repeatResults,
+        ...effortResults,
+        ...assigneeResults,
+        ...locationResults,
+      ]
     },
-    [SLASH_COMMANDS, PRIORITY_COMMANDS, HEADING_COMMANDS, REPEAT_COMMANDS, EFFORT_COMMANDS],
+    [
+      SLASH_COMMANDS,
+      PRIORITY_COMMANDS,
+      HEADING_COMMANDS,
+      REPEAT_COMMANDS,
+      EFFORT_COMMANDS,
+      ASSIGNEE_COMMANDS,
+      LOCATION_COMMANDS,
+    ],
   )
 
   // ── Roving editor ──────────────────────────────────────────────────
@@ -831,6 +869,50 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           toast.success(`Added ${item.label.split(' — ')[0].toLowerCase()} property`)
         } catch {
           toast.error('Failed to add property')
+        }
+        return
+      }
+
+      if (item.id.startsWith('assignee-')) {
+        if (!focusedBlockId) return
+        const preset = item.id.replace('assignee-', '')
+        if (preset === 'custom') {
+          try {
+            await setProperty({ blockId: focusedBlockId, key: 'assignee', valueText: '' })
+            toast.success('Added assignee property')
+          } catch {
+            toast.error('Failed to add property')
+          }
+        } else {
+          const value = item.label.split(' — ')[0].replace('ASSIGNEE ', '')
+          try {
+            await setProperty({ blockId: focusedBlockId, key: 'assignee', valueText: value })
+            toast.success(`Set assignee to ${value}`)
+          } catch {
+            toast.error('Failed to set assignee')
+          }
+        }
+        return
+      }
+
+      if (item.id.startsWith('location-')) {
+        if (!focusedBlockId) return
+        const preset = item.id.replace('location-', '')
+        if (preset === 'custom') {
+          try {
+            await setProperty({ blockId: focusedBlockId, key: 'location', valueText: '' })
+            toast.success('Added location property')
+          } catch {
+            toast.error('Failed to add property')
+          }
+        } else {
+          const value = item.label.split(' — ')[0].replace('LOCATION ', '')
+          try {
+            await setProperty({ blockId: focusedBlockId, key: 'location', valueText: value })
+            toast.success(`Set location to ${value}`)
+          } catch {
+            toast.error('Failed to set location')
+          }
         }
         return
       }

@@ -313,4 +313,46 @@ describe('AgendaResults', () => {
     expect(items[0]).toHaveTextContent('Earlier task')
     expect(items[1]).toHaveTextContent('Later task')
   })
+
+  it('renders priority group headers when groupBy is priority', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', priority: '1', content: 'Urgent' }),
+      makeBlock({ id: 'B2', priority: '2', content: 'Medium' }),
+      makeBlock({ id: 'B3', priority: '3', content: 'Low' }),
+      makeBlock({ id: 'B4', priority: null, content: 'None' }),
+    ]
+
+    const { container } = render(
+      <AgendaResults {...defaultProps({ blocks })} groupBy="priority" />,
+    )
+
+    const headers = container.querySelectorAll('.agenda-group-header')
+    const labels = [...headers].map((h) => h.textContent?.replace(/\(\d+\)/, '').trim())
+    expect(labels).toEqual(['P1', 'P2', 'P3', 'No priority'])
+
+    // Count badges
+    const badges = screen.getAllByText('(1)')
+    expect(badges.length).toBe(4)
+  })
+
+  it('renders state group headers when groupBy is state', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', todo_state: 'DOING', content: 'In progress' }),
+      makeBlock({ id: 'B2', todo_state: 'TODO', content: 'Pending' }),
+      makeBlock({ id: 'B3', todo_state: 'DONE', content: 'Finished' }),
+      makeBlock({ id: 'B4', todo_state: null, content: 'Unset' }),
+    ]
+
+    const { container } = render(
+      <AgendaResults {...defaultProps({ blocks })} groupBy="state" />,
+    )
+
+    const headers = container.querySelectorAll('.agenda-group-header')
+    const labels = [...headers].map((h) => h.textContent?.replace(/\(\d+\)/, '').trim())
+    expect(labels).toEqual(['DOING', 'TODO', 'DONE', 'No state'])
+
+    // Count badges
+    const badges = screen.getAllByText('(1)')
+    expect(badges.length).toBe(4)
+  })
 })
