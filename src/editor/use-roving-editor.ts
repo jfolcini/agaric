@@ -12,10 +12,12 @@ import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
 import HardBreak from '@tiptap/extension-hard-break'
 import Heading from '@tiptap/extension-heading'
+import Highlight from '@tiptap/extension-highlight'
 import History from '@tiptap/extension-history'
 import Italic from '@tiptap/extension-italic'
 import Paragraph from '@tiptap/extension-paragraph'
 import Placeholder from '@tiptap/extension-placeholder'
+import Strike from '@tiptap/extension-strike'
 import Text from '@tiptap/extension-text'
 import { type Editor, Extension, useEditor } from '@tiptap/react'
 import { common, createLowlight } from 'lowlight'
@@ -217,6 +219,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Bold,
       Italic,
       Code,
+      Strike,
+      Highlight,
       CodeBlockWithShortcut.configure({ lowlight }),
       Heading.configure({ levels: [1, 2, 3, 4, 5, 6] }),
       HardBreak,

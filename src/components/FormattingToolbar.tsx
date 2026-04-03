@@ -1,7 +1,7 @@
 /**
  * FormattingToolbar — always-visible toolbar rendered above the active editor.
  *
- * Buttons: Bold, Italic, Code | External Link, Code Block, Heading | Priority 1/2/3, Date, Due Date, Scheduled Date, TODO | Undo, Redo.
+ * Buttons: Bold, Italic, Code, Strikethrough, Highlight | External Link, Code Block, Heading | Priority 1/2/3, Date, Due Date, Scheduled Date, TODO | Undo, Redo.
  * Uses onPointerDown + preventDefault so clicks never steal focus from TipTap.
  * Active marks are highlighted via aria-pressed + bg-accent.
  *
@@ -25,10 +25,12 @@ import {
   FileCode2,
   FileSymlink,
   Heading,
+  Highlighter,
   Italic,
   Link2,
   Redo2,
   Signal,
+  Strikethrough,
   Undo2,
   X,
 } from 'lucide-react'
@@ -75,6 +77,8 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
       bold: ctx.editor.isActive('bold'),
       italic: ctx.editor.isActive('italic'),
       code: ctx.editor.isActive('code'),
+      strike: ctx.editor.isActive('strike'),
+      highlight: ctx.editor.isActive('highlight'),
       link: ctx.editor.isActive('link'),
       codeBlock: ctx.editor.isActive('codeBlock'),
       headingLevel: ctx.editor.isActive('heading', { level: 1 })
@@ -162,6 +166,36 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             }}
           >
             <Code size={14} />
+          </Button>
+        </Tip>
+        <Tip label={t('toolbar.strikethroughTip')}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('toolbar.strikethrough')}
+            aria-pressed={state.strike}
+            className={state.strike ? 'bg-accent text-accent-foreground' : ''}
+            onPointerDown={(e) => {
+              e.preventDefault()
+              editor.chain().focus().toggleStrike().run()
+            }}
+          >
+            <Strikethrough size={14} />
+          </Button>
+        </Tip>
+        <Tip label={t('toolbar.highlightTip')}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('toolbar.highlight')}
+            aria-pressed={state.highlight}
+            className={state.highlight ? 'bg-accent text-accent-foreground' : ''}
+            onPointerDown={(e) => {
+              e.preventDefault()
+              editor.chain().focus().toggleHighlight().run()
+            }}
+          >
+            <Highlighter size={14} />
           </Button>
         </Tip>
 

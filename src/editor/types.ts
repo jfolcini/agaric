@@ -20,12 +20,20 @@ export interface CodeMark {
   readonly type: 'code'
 }
 
+export interface StrikeMark {
+  readonly type: 'strike'
+}
+
+export interface HighlightMark {
+  readonly type: 'highlight'
+}
+
 export interface LinkMark {
   readonly type: 'link'
   readonly attrs: { readonly href: string }
 }
 
-export type PMMark = BoldMark | ItalicMark | CodeMark | LinkMark
+export type PMMark = BoldMark | ItalicMark | CodeMark | StrikeMark | HighlightMark | LinkMark
 
 // -- Node types ---------------------------------------------------------------
 
@@ -97,6 +105,14 @@ export function italic(t: string): TextNode {
 
 export function code(t: string): TextNode {
   return text(t, [{ type: 'code' }])
+}
+
+export function strike(t: string): TextNode {
+  return text(t, [{ type: 'strike' }])
+}
+
+export function highlight(t: string): TextNode {
+  return text(t, [{ type: 'highlight' }])
 }
 
 export function boldItalic(t: string): TextNode {

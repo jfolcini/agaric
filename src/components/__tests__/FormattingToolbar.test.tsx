@@ -2,7 +2,7 @@
  * Tests for FormattingToolbar component.
  *
  * Validates:
- *  - Renders all eighteen buttons (Bold, Italic, Code, External link, Internal link, Tag, Code block, Heading, Priority 1/2/3, Date, Due Date, Scheduled Date, TODO, Undo, Redo)
+ *  - Renders all twenty buttons (Bold, Italic, Code, Strikethrough, Highlight, External link, Internal link, Tag, Code block, Heading, Priority 1/2/3, Date, Due Date, Scheduled Date, TODO, Undo, Redo)
  *  - Active marks get aria-pressed=true + bg-accent
  *  - Undo/Redo disabled state reflects editor.can()
  *  - Clicking buttons calls the correct editor chain commands
@@ -26,6 +26,8 @@ const mockEditorState = {
   bold: false,
   italic: false,
   code: false,
+  strike: false,
+  highlight: false,
   link: false,
   codeBlock: false,
   headingLevel: 0,
@@ -104,6 +106,8 @@ const mockRun = vi.fn()
 const mockToggleBold = vi.fn(() => ({ run: mockRun }))
 const mockToggleItalic = vi.fn(() => ({ run: mockRun }))
 const mockToggleCode = vi.fn(() => ({ run: mockRun }))
+const mockToggleStrike = vi.fn(() => ({ run: mockRun }))
+const mockToggleHighlight = vi.fn(() => ({ run: mockRun }))
 const mockToggleCodeBlock = vi.fn(() => ({ run: mockRun }))
 const mockToggleHeading = vi.fn(() => ({ run: mockRun }))
 const mockSetLink = vi.fn(() => ({ run: mockRun }))
@@ -115,6 +119,8 @@ const mockFocus = vi.fn(() => ({
   toggleBold: mockToggleBold,
   toggleItalic: mockToggleItalic,
   toggleCode: mockToggleCode,
+  toggleStrike: mockToggleStrike,
+  toggleHighlight: mockToggleHighlight,
   toggleCodeBlock: mockToggleCodeBlock,
   toggleHeading: mockToggleHeading,
   setLink: mockSetLink,
@@ -146,6 +152,8 @@ describe('FormattingToolbar', () => {
     mockEditorState.bold = false
     mockEditorState.italic = false
     mockEditorState.code = false
+    mockEditorState.strike = false
+    mockEditorState.highlight = false
     mockEditorState.link = false
     mockEditorState.codeBlock = false
     mockEditorState.headingLevel = 0
@@ -168,12 +176,14 @@ describe('FormattingToolbar', () => {
       expect(toolbar).toBeInTheDocument()
     })
 
-    it('renders all eighteen formatting buttons', () => {
+    it('renders all twenty formatting buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Italic' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Code' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Strikethrough' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Highlight' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'External link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert tag' })).toBeInTheDocument()
@@ -234,7 +244,7 @@ describe('FormattingToolbar', () => {
     it('shows marks as not pressed when inactive', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      for (const label of ['Bold', 'Italic', 'Code']) {
+      for (const label of ['Bold', 'Italic', 'Code', 'Strikethrough', 'Highlight']) {
         const btn = screen.getByRole('button', { name: label })
         expect(btn).toHaveAttribute('aria-pressed', 'false')
         // Check that bg-accent is NOT a standalone class (hover:bg-accent is expected from ghost variant)
@@ -542,6 +552,8 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Italic' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Code' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Strikethrough' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Highlight' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'External link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert tag' })).toBeInTheDocument()

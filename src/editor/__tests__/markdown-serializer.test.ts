@@ -10,8 +10,10 @@ import {
   doc,
   hardBreak,
   heading,
+  highlight,
   italic,
   paragraph,
+  strike,
   tagRef,
   text,
 } from '../types'
@@ -66,6 +68,14 @@ describe('serialize', () => {
 
     it('code', () => {
       expect(serialize(doc(paragraph(code('fn()'))))).toBe('`fn()`')
+    })
+
+    it('strikethrough', () => {
+      expect(serialize(doc(paragraph(strike('deleted'))))).toBe('~~deleted~~')
+    })
+
+    it('highlight', () => {
+      expect(serialize(doc(paragraph(highlight('important'))))).toBe('==important==')
     })
 
     it('bold + italic (nested)', () => {
@@ -174,6 +184,14 @@ describe('serialize', () => {
       expect(serialize(doc(paragraph(text('a ` b'))))).toBe('a \\` b')
     })
 
+    it('escapes literal tilde', () => {
+      expect(serialize(doc(paragraph(text('a ~ b'))))).toBe('a \\~ b')
+    })
+
+    it('escapes literal equals', () => {
+      expect(serialize(doc(paragraph(text('a = b'))))).toBe('a \\= b')
+    })
+
     it('escapes literal #[', () => {
       expect(serialize(doc(paragraph(text('use #[not a tag'))))).toBe('use \\#\\[not a tag')
     })
@@ -232,6 +250,14 @@ describe('parse', () => {
 
     it('code', () => {
       expect(parse('`fn()`')).toEqual(doc(paragraph(code('fn()'))))
+    })
+
+    it('strikethrough', () => {
+      expect(parse('~~deleted~~')).toEqual(doc(paragraph(strike('deleted'))))
+    })
+
+    it('highlight', () => {
+      expect(parse('==important==')).toEqual(doc(paragraph(highlight('important'))))
     })
 
     it('bold + italic nested', () => {
@@ -310,6 +336,14 @@ describe('parse', () => {
 
     it('unclosed code with bold syntax inside', () => {
       expect(parse('`**stuff')).toEqual(doc(paragraph(text('`**stuff'))))
+    })
+
+    it('unclosed strikethrough becomes plain text', () => {
+      expect(parse('~~unclosed')).toEqual(doc(paragraph(text('~~unclosed'))))
+    })
+
+    it('unclosed highlight becomes plain text', () => {
+      expect(parse('==unclosed')).toEqual(doc(paragraph(text('==unclosed'))))
     })
 
     it('empty bold **** produces empty paragraph', () => {
@@ -418,6 +452,14 @@ describe('parse', () => {
       expect(parse('a \\\\ b')).toEqual(doc(paragraph(text('a \\ b'))))
     })
 
+    it('escaped tilde', () => {
+      expect(parse('a \\~ b')).toEqual(doc(paragraph(text('a ~ b'))))
+    })
+
+    it('escaped equals', () => {
+      expect(parse('a \\= b')).toEqual(doc(paragraph(text('a = b'))))
+    })
+
     it('escaped #[', () => {
       expect(parse('use \\#[not a tag')).toEqual(doc(paragraph(text('use #[not a tag'))))
     })
@@ -461,11 +503,15 @@ describe('round-trip: serialize(parse(s)) === s', () => {
     ['bold', '**strong**'],
     ['italic', '*emphasis*'],
     ['code', '`fn()`'],
+    ['strikethrough', '~~deleted~~'],
+    ['highlight', '==important=='],
     ['bold+italic', '***both***'],
     ['tag_ref', '#[01ARZ3NDEKTSV4RRFFQ69G5FAV]'],
     ['block_link', '[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]'],
     ['escaped asterisk', 'a \\* b'],
     ['escaped backtick', 'a \\` b'],
+    ['escaped tilde', 'a \\~ b'],
+    ['escaped equals', 'a \\= b'],
     ['escaped backslash', 'a \\\\ b'],
     ['escaped #[', 'use \\#\\[not a tag'],
     ['escaped [[', 'use \\[\\[not a link'],

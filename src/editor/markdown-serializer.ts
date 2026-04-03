@@ -36,7 +36,7 @@ function escapeText(s: string): string {
       out += '\\\\'
       continue
     }
-    if (ch === '*' || ch === '`') {
+    if (ch === '*' || ch === '`' || ch === '~' || ch === '=') {
       out += `\\${ch}`
       continue
     }
@@ -71,18 +71,24 @@ function escapeText(s: string): string {
  */
 function emitMarkTransition(from: ReadonlySet<string>, to: ReadonlySet<string>): string {
   let result = ''
-  // Close marks no longer needed (inner first: italic before bold)
+  // Close marks no longer needed (inner first: highlight, strike, italic before bold)
+  if (from.has('highlight') && !to.has('highlight')) result += '=='
+  if (from.has('strike') && !to.has('strike')) result += '~~'
   if (from.has('italic') && !to.has('italic')) result += '*'
   if (from.has('bold') && !to.has('bold')) result += '**'
-  // Open marks newly needed (outer first: bold before italic)
+  // Open marks newly needed (outer first: bold, italic before strike, highlight)
   if (to.has('bold') && !from.has('bold')) result += '**'
   if (to.has('italic') && !from.has('italic')) result += '*'
+  if (to.has('strike') && !from.has('strike')) result += '~~'
+  if (to.has('highlight') && !from.has('highlight')) result += '=='
   return result
 }
 
-/** Close all active marks (inner first: italic before bold). */
+/** Close all active marks (inner first: highlight, strike, italic before bold). */
 function emitCloseAll(active: ReadonlySet<string>): string {
   let result = ''
+  if (active.has('highlight')) result += '=='
+  if (active.has('strike')) result += '~~'
   if (active.has('italic')) result += '*'
   if (active.has('bold')) result += '**'
   return result
@@ -184,10 +190,10 @@ function serializeInlineNodes(nodes: readonly InlineNode[]): string {
         continue
       }
 
-      // Compute desired bold/italic mark set for this node
+      // Compute desired bold/italic/strike/highlight mark set for this node
       const desired = new Set<string>()
       for (const m of marks) {
-        if (m.type === 'bold' || m.type === 'italic') desired.add(m.type)
+        if (m.type === 'bold' || m.type === 'italic' || m.type === 'strike' || m.type === 'highlight') desired.add(m.type)
       }
 
       // Emit delimiters for any mark changes
@@ -509,19 +515,27 @@ function parseLine(line: string): InlineNode[] {
   let inBold = false
   let inItalic = false
   let inCode = false
+  let inStrike = false
+  let inHighlight = false
 
   // Track positions where marks were opened so we can revert if unclosed
   let boldOpenPos = -1
   let italicOpenPos = -1
+  let strikeOpenPos = -1
+  let highlightOpenPos = -1
   // Snapshots of nodes array length at mark open (for unclosed mark revert)
   let boldOpenNodeLen = 0
   let italicOpenNodeLen = 0
   let codeOpenNodeLen = 0
+  let strikeOpenNodeLen = 0
+  let highlightOpenNodeLen = 0
 
   function currentMarks(): PMMark[] {
     const m: PMMark[] = []
     if (inBold) m.push({ type: 'bold' })
     if (inItalic) m.push({ type: 'italic' })
+    if (inStrike) m.push({ type: 'strike' })
+    if (inHighlight) m.push({ type: 'highlight' })
     return m
   }
 
@@ -557,7 +571,9 @@ function parseLine(line: string): InlineNode[] {
         next === '\\' ||
         next === '#' ||
         next === '[' ||
-        next === ']'
+        next === ']' ||
+        next === '~' ||
+        next === '='
       ) {
         buf += next
         s.pos += 2
@@ -602,6 +618,42 @@ function parseLine(line: string): InlineNode[] {
       continue
     }
 
+    // Strikethrough: ~~
+    if (ch === '~' && peek(s, 1) === '~') {
+      if (inStrike) {
+        // Close strike
+        buf = flushText(buf, currentMarks(), nodes)
+        inStrike = false
+        s.pos += 2
+        continue
+      }
+      // Open strike
+      buf = flushText(buf, currentMarks(), nodes)
+      strikeOpenPos = s.pos
+      strikeOpenNodeLen = nodes.length
+      inStrike = true
+      s.pos += 2
+      continue
+    }
+
+    // Highlight: ==
+    if (ch === '=' && peek(s, 1) === '=') {
+      if (inHighlight) {
+        // Close highlight
+        buf = flushText(buf, currentMarks(), nodes)
+        inHighlight = false
+        s.pos += 2
+        continue
+      }
+      // Open highlight
+      buf = flushText(buf, currentMarks(), nodes)
+      highlightOpenPos = s.pos
+      highlightOpenNodeLen = nodes.length
+      inHighlight = true
+      s.pos += 2
+      continue
+    }
+
     // Italic: single *
     if (ch === '*') {
       if (inItalic) {
@@ -629,6 +681,16 @@ function parseLine(line: string): InlineNode[] {
   if (inCode) {
     const revertedNodes = nodes.splice(codeOpenNodeLen)
     buf = `\`${revertedNodes.map(nodeToPlainText).join('')}${buf}`
+  }
+
+  if (inHighlight) {
+    const revertedNodes = nodes.splice(highlightOpenNodeLen)
+    buf = `==${revertedNodes.map(nodeToPlainText).join('')}${buf}`
+  }
+
+  if (inStrike) {
+    const revertedNodes = nodes.splice(strikeOpenNodeLen)
+    buf = `~~${revertedNodes.map(nodeToPlainText).join('')}${buf}`
   }
 
   if (inItalic) {
