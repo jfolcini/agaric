@@ -516,7 +516,7 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      // Set up mocks: create daily page + create child block + load(pageId)
+      // Set up mocks: create daily page + journal-template query + create child block + load(pageId)
       mockedInvoke
         .mockResolvedValueOnce({
           id: 'DP1',
@@ -525,6 +525,7 @@ describe('JournalPage', () => {
           parent_id: null,
           position: null,
         })
+        .mockResolvedValueOnce(emptyPage) // query_by_property for journal-template → none
         .mockResolvedValueOnce({
           id: 'B1',
           block_type: 'text',
@@ -1990,6 +1991,138 @@ describe('JournalPage', () => {
       )
       expect(createPageCalls).toHaveLength(0)
     })
+
+    it('auto-create applies journal template when it exists', async () => {
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_blocks') {
+          const params = args as { parentId?: string }
+          if (params?.parentId === 'TMPL-PAGE') {
+            return {
+              items: [
+                {
+                  id: 'TC1',
+                  block_type: 'content',
+                  content: '## Morning Review',
+                  parent_id: 'TMPL-PAGE',
+                  position: 0,
+                },
+                {
+                  id: 'TC2',
+                  block_type: 'content',
+                  content: '## Tasks',
+                  parent_id: 'TMPL-PAGE',
+                  position: 1,
+                },
+              ],
+              next_cursor: null,
+              has_more: false,
+            }
+          }
+          return emptyPage
+        }
+        if (cmd === 'query_by_property') {
+          const params = args as { key: string }
+          if (params.key === 'journal-template') {
+            return {
+              items: [
+                {
+                  id: 'TMPL-PAGE',
+                  block_type: 'page',
+                  content: 'Journal Template',
+                },
+              ],
+              next_cursor: null,
+              has_more: false,
+            }
+          }
+          return emptyPage
+        }
+        if (cmd === 'create_block') {
+          const params = args as { blockType: string; content?: string; parentId?: string }
+          if (params.blockType === 'page') {
+            return {
+              id: 'DP-TMPL',
+              block_type: 'page',
+              content: todayStr,
+              parent_id: null,
+              position: null,
+            }
+          }
+          if (params.blockType === 'content') {
+            return {
+              id: `NEW-${params.content?.replace(/\s+/g, '-') ?? 'block'}`,
+              block_type: 'content',
+              content: params.content ?? '',
+              parent_id: params.parentId,
+              position: 0,
+            }
+          }
+        }
+        return emptyPage
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: todayStr,
+          parentId: null,
+          position: null,
+        })
+      })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'query_by_property',
+          expect.objectContaining({
+            key: 'journal-template',
+            valueText: 'true',
+          }),
+        )
+      })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'list_blocks',
+          expect.objectContaining({
+            parentId: 'TMPL-PAGE',
+          }),
+        )
+      })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'create_block',
+          expect.objectContaining({
+            blockType: 'content',
+            content: '## Morning Review',
+            parentId: 'DP-TMPL',
+          }),
+        )
+      })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'create_block',
+          expect.objectContaining({
+            blockType: 'content',
+            content: '## Tasks',
+            parentId: 'DP-TMPL',
+          }),
+        )
+      })
+
+      const emptyBlockCalls = mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'create_block' &&
+          (args as { blockType: string; content: string }).blockType === 'content' &&
+          (args as { blockType: string; content: string }).content === '',
+      )
+      expect(emptyBlockCalls).toHaveLength(0)
+    })
   })
 
   // ── Keyboard shortcut for new block (#633) ──────────────────────────
@@ -2017,6 +2150,7 @@ describe('JournalPage', () => {
           parent_id: null,
           position: null,
         })
+        .mockResolvedValueOnce(emptyPage) // query_by_property for journal-template → none
         .mockResolvedValueOnce({
           id: 'B-KEY',
           block_type: 'content',

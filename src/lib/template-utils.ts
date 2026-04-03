@@ -10,6 +10,16 @@ export async function loadTemplatePages(): Promise<BlockRow[]> {
 }
 
 /**
+ * Load the journal template page (property `journal-template` = 'true').
+ * Returns the first matching page, or null if none exists.
+ */
+export async function loadJournalTemplate(): Promise<BlockRow | null> {
+  const resp = await queryByProperty({ key: 'journal-template', valueText: 'true', limit: 1 })
+  const page = resp.items.find((b) => b.block_type === 'page')
+  return page ?? null
+}
+
+/**
  * Insert a template's children as new blocks under the given parent.
  * Copies content and ordering from the template page's direct children.
  * Returns the IDs of the created blocks.

@@ -52,6 +52,7 @@ import {
   listBlocks,
   queryByProperty,
 } from '../lib/tauri'
+import { insertTemplateBlocks, loadJournalTemplate } from '../lib/template-utils'
 import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
 import { useResolveStore } from '../stores/resolve'
@@ -606,6 +607,7 @@ export function JournalPage({
     async (dateStr: string, autoFocus = false) => {
       try {
         let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
+        const isNewPage = !pageId
 
         if (!pageId) {
           const page = await createBlock({ blockType: 'page', content: dateStr })
@@ -615,16 +617,35 @@ export function JournalPage({
           useResolveStore.getState().set(page.id, dateStr, false)
         }
 
-        const block = await createBlock({
-          blockType: 'content',
-          content: '',
-          parentId: pageId,
-        })
-
-        await load(pageId)
-
-        if (autoFocus && block.id) {
-          useBlockStore.setState({ focusedBlockId: block.id })
+        if (isNewPage) {
+          const journalTemplate = await loadJournalTemplate()
+          if (journalTemplate) {
+            const ids = await insertTemplateBlocks(journalTemplate.id, pageId)
+            await load(pageId)
+            if (autoFocus && ids.length > 0) {
+              useBlockStore.setState({ focusedBlockId: ids[0] })
+            }
+          } else {
+            const block = await createBlock({
+              blockType: 'content',
+              content: '',
+              parentId: pageId,
+            })
+            await load(pageId)
+            if (autoFocus && block.id) {
+              useBlockStore.setState({ focusedBlockId: block.id })
+            }
+          }
+        } else {
+          const block = await createBlock({
+            blockType: 'content',
+            content: '',
+            parentId: pageId,
+          })
+          await load(pageId)
+          if (autoFocus && block.id) {
+            useBlockStore.setState({ focusedBlockId: block.id })
+          }
         }
       } catch {
         toast.error(t('journal.addBlockFailed'))

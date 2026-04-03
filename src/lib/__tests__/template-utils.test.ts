@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { insertTemplateBlocks, loadTemplatePages } from '../template-utils'
+import { insertTemplateBlocks, loadJournalTemplate, loadTemplatePages } from '../template-utils'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -107,5 +107,38 @@ describe('insertTemplateBlocks', () => {
     expect(ids).toEqual([])
     // Only the list_blocks call should happen
     expect(mockedInvoke).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('loadJournalTemplate', () => {
+  it('returns the journal template page when it exists', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [{ id: 'JT1', block_type: 'page', content: 'Journal Template' }],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const result = await loadJournalTemplate()
+
+    expect(result).not.toBeNull()
+    expect(result?.id).toBe('JT1')
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'query_by_property',
+      expect.objectContaining({
+        key: 'journal-template',
+        valueText: 'true',
+      }),
+    )
+  })
+
+  it('returns null when no journal template exists', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const result = await loadJournalTemplate()
+    expect(result).toBeNull()
   })
 })
