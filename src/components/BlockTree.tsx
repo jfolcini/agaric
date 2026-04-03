@@ -322,6 +322,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   // via ref to avoid circular dependency with rovingEditor.
   const handleNavigateRef = useRef<(id: string) => void>(() => {})
   const handleSlashCommandRef = useRef<(item: PickerItem) => void>(() => {})
+  const handleCheckboxRef = useRef<(state: 'TODO' | 'DONE') => void>(() => {})
 
   const rovingEditor = useRovingEditor({
     resolveBlockTitle: resolve.resolveBlockTitle,
@@ -335,6 +336,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     onCreateTag: resolve.onCreateTag,
     searchSlashCommands,
     onSlashCommand: (item: PickerItem) => handleSlashCommandRef.current(item),
+    onCheckbox: (state: 'TODO' | 'DONE') => handleCheckboxRef.current(state),
   })
 
   const viewport = useViewportObserver()
@@ -697,6 +699,19 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   // Keep the slash command ref in sync
   handleSlashCommandRef.current = handleSlashCommand
 
+  const handleCheckboxSyntax = useCallback(
+    (state: 'TODO' | 'DONE') => {
+      if (!focusedBlockId) return
+      setTodoStateCmd(focusedBlockId, state).catch(() => toast.error('Failed to set task state'))
+      useBlockStore.setState((s) => ({
+        blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, todo_state: state } : b)),
+      }))
+    },
+    [focusedBlockId],
+  )
+
+  handleCheckboxRef.current = handleCheckboxSyntax
+
   const handleFocusPrev = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx > 0) {
@@ -973,6 +988,18 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     }
     document.addEventListener('open-due-date-picker', handler)
     return () => document.removeEventListener('open-due-date-picker', handler)
+  }, [focusedBlockId, rovingEditor])
+
+  // ── Listen for toolbar scheduled-date picker event ──────────────────
+  useEffect(() => {
+    const handler = () => {
+      if (!focusedBlockId) return
+      datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos ?? undefined
+      setDatePickerMode('schedule')
+      setDatePickerOpen(true)
+    }
+    document.addEventListener('open-scheduled-date-picker', handler)
+    return () => document.removeEventListener('open-scheduled-date-picker', handler)
   }, [focusedBlockId, rovingEditor])
 
   // ── Listen for toolbar toggle-todo-state event ──────────────────────

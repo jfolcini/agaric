@@ -23,6 +23,7 @@ import { useCallback, useRef } from 'react'
 import { AtTagPicker } from './extensions/at-tag-picker'
 import { BlockLink } from './extensions/block-link'
 import { BlockLinkPicker } from './extensions/block-link-picker'
+import { CheckboxInputRule } from './extensions/checkbox-input-rule'
 import { ExternalLink } from './extensions/external-link'
 import { SlashCommand } from './extensions/slash-command'
 import { TagRef } from './extensions/tag-ref'
@@ -121,6 +122,8 @@ export interface RovingEditorOptions {
   searchSlashCommands?: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Execute a selected slash command. */
   onSlashCommand?: (item: PickerItem) => void
+  /** Called when checkbox syntax (- [ ] or - [x]) is detected during typing. */
+  onCheckbox?: ((state: 'TODO' | 'DONE') => void) | null
   /** Check whether a linked block is active or deleted (broken link). */
   resolveBlockStatus?: (id: string) => 'active' | 'deleted'
   /** Check whether a referenced tag is active or deleted. */
@@ -176,6 +179,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     onNavigate,
     searchSlashCommands = () => [],
     onSlashCommand,
+    onCheckbox,
     resolveBlockStatus,
     resolveTagStatus,
   } = options
@@ -202,6 +206,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   onCreateTagRef.current = onCreateTag
   const onSlashCommandRef = useRef(onSlashCommand)
   onSlashCommandRef.current = onSlashCommand
+  const onCheckboxRef = useRef(onCheckbox)
+  onCheckboxRef.current = onCheckbox
 
   const editor = useEditor({
     extensions: [
@@ -246,6 +252,9 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       SlashCommand.configure({
         items: searchSlashCommands,
         onCommand: (item: PickerItem) => onSlashCommandRef.current?.(item),
+      }),
+      CheckboxInputRule.configure({
+        onCheckbox: (state: 'TODO' | 'DONE') => onCheckboxRef.current?.(state),
       }),
     ],
     editable: true,

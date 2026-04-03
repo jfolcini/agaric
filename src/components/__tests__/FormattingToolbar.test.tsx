@@ -2,7 +2,7 @@
  * Tests for FormattingToolbar component.
  *
  * Validates:
- *  - Renders all sixteen buttons (Bold, Italic, Code, External link, Internal link, Tag, Code block, Heading, Priority 1/2/3, Date, Due Date, TODO, Undo, Redo)
+ *  - Renders all eighteen buttons (Bold, Italic, Code, External link, Internal link, Tag, Code block, Heading, Priority 1/2/3, Date, Due Date, Scheduled Date, TODO, Undo, Redo)
  *  - Active marks get aria-pressed=true + bg-accent
  *  - Undo/Redo disabled state reflects editor.can()
  *  - Clicking buttons calls the correct editor chain commands
@@ -168,7 +168,7 @@ describe('FormattingToolbar', () => {
       expect(toolbar).toBeInTheDocument()
     })
 
-    it('renders all seventeen formatting buttons', () => {
+    it('renders all eighteen formatting buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
@@ -184,6 +184,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Priority 3 (low)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert date' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Set due date' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Set scheduled date' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Toggle TODO state' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Redo' })).toBeInTheDocument()
@@ -551,6 +552,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Priority 3 (low)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert date' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Set due date' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Set scheduled date' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Toggle TODO state' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Redo' })).toBeInTheDocument()
@@ -589,6 +591,24 @@ describe('FormattingToolbar', () => {
       fireEvent.pointerDown(screen.getByRole('button', { name: 'Set due date' }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('open-due-date-picker', spy)
+    })
+  })
+
+  // ── #631: Scheduled Date button ─────────────────────────────────────────
+
+  describe('scheduled date button', () => {
+    it('renders with aria-label "Set scheduled date"', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      expect(screen.getByRole('button', { name: 'Set scheduled date' })).toBeInTheDocument()
+    })
+
+    it('dispatches open-scheduled-date-picker custom event on pointerdown', () => {
+      const spy = vi.fn()
+      document.addEventListener('open-scheduled-date-picker', spy)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Set scheduled date' }))
+      expect(spy).toHaveBeenCalledOnce()
+      document.removeEventListener('open-scheduled-date-picker', spy)
     })
   })
 

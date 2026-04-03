@@ -1,7 +1,7 @@
 /**
  * useUndoShortcuts — global keyboard shortcuts for undo/redo.
  *
- * Registers Ctrl+Z (undo) and Ctrl+Y (redo) on the document.
+ * Registers Ctrl+Z (undo) and Ctrl+Y / Ctrl+Shift+Z (redo) on the document.
  * Only fires when the page-editor view is active and the focus is
  * NOT inside a contentEditable, input, or textarea element.
  */
@@ -43,7 +43,7 @@ export function useUndoShortcuts(): void {
       const pageId = pageStack[pageStack.length - 1].pageId
 
       // Ctrl+Z (or Cmd+Z on Mac) — Undo
-      // Skip Ctrl+Shift+Z (that's TipTap's redo, handled by the editor)
+      // Skip Ctrl+Shift+Z (that's page-level redo, handled below)
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault()
         useUndoStore
@@ -59,8 +59,11 @@ export function useUndoShortcuts(): void {
         return
       }
 
-      // Ctrl+Y (or Cmd+Y on Mac) — Redo
-      if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+      // Ctrl+Y (or Cmd+Y on Mac) or Ctrl+Shift+Z (Linux/Windows convention) — Redo
+      if (
+        ((e.ctrlKey || e.metaKey) && e.key === 'y') ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z'))
+      ) {
         e.preventDefault()
         useUndoStore
           .getState()

@@ -243,13 +243,24 @@ describe('useUndoShortcuts', () => {
     unmount()
   })
 
-  it('Ctrl+Shift+Z does NOT trigger undo (that is TipTap redo)', () => {
+  it('Ctrl+Shift+Z dispatches redo (Linux/Windows convention)', () => {
     const { unmount } = renderHook(() => useUndoShortcuts())
 
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true, shiftKey: true })
 
     expect(mockUndo).not.toHaveBeenCalled()
-    expect(mockRedo).not.toHaveBeenCalled()
+    expect(mockRedo).toHaveBeenCalledWith('PAGE_1')
+
+    unmount()
+  })
+
+  it('Ctrl+Shift+Z (uppercase key) dispatches redo', () => {
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'Z', ctrlKey: true, shiftKey: true })
+
+    expect(mockUndo).not.toHaveBeenCalled()
+    expect(mockRedo).toHaveBeenCalledWith('PAGE_1')
 
     unmount()
   })

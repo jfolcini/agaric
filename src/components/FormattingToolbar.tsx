@@ -1,7 +1,7 @@
 /**
  * FormattingToolbar — always-visible toolbar rendered above the active editor.
  *
- * Buttons: Bold, Italic, Code | External Link, Code Block, Heading | Priority 1/2/3, Date, Due Date, TODO | Undo, Redo.
+ * Buttons: Bold, Italic, Code | External Link, Code Block, Heading | Priority 1/2/3, Date, Due Date, Scheduled Date, TODO | Undo, Redo.
  * Uses onPointerDown + preventDefault so clicks never steal focus from TipTap.
  * Active marks are highlighted via aria-pressed + bg-accent.
  *
@@ -17,6 +17,7 @@ import { useEditorState } from '@tiptap/react'
 import {
   AtSign,
   Bold,
+  CalendarCheck2,
   CalendarClock,
   CalendarDays,
   CheckSquare,
@@ -366,6 +367,19 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             }}
           >
             <CalendarClock size={14} />
+          </Button>
+        </Tip>
+        <Tip label={t('toolbar.scheduledDateTip')}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('toolbar.setScheduledDate')}
+            onPointerDown={(e) => {
+              e.preventDefault()
+              document.dispatchEvent(new CustomEvent('open-scheduled-date-picker'))
+            }}
+          >
+            <CalendarCheck2 size={14} />
           </Button>
         </Tip>
         <Tip label={t('toolbar.todoToggleTip')}>

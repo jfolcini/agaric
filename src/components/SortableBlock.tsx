@@ -298,7 +298,7 @@ function SortableBlockInner({
               className="flex-shrink-0 p-0.5 mt-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
               onClick={() => onShowHistory(blockId)}
             >
-              <Clock size={14} />
+              <Clock size={16} />
             </button>
           )}
 
