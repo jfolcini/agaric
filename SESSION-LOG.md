@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 107 — 2026-04-03 — Full Graph Markdown Export (#659)
+
+### Export all pages as ZIP
+
+1 build subagent.
+
+| File | Change |
+|------|--------|
+| `export-graph.ts` (new) | #659: `exportGraphAsZip()` — iterates all pages, calls `exportPageMarkdown` for each, bundles into ZIP via JSZip. Sanitized filenames with duplicate ULID suffix. `downloadBlob()` triggers browser download. |
+| `export-graph.test.ts` (new) | #659: 3 tests (ZIP blob creation, duplicate names, empty graph). |
+| `PageBrowser.tsx` | #659: "Export all pages" button with Download icon, loading state, toast feedback. |
+| `PageBrowser.test.tsx` | #659: 1 new test (button renders). |
+| `i18n.ts` | 4 new keys (pageBrowser.exportAll/exporting/exportSuccess/exportFailed). |
+| `package.json` | Added `jszip` dependency. |
+
+### Stats
+- Frontend: 2470 tests pass (2466 + 4 new)
+- Commit: `65e9847`
+- REVIEW-LATER: 17 → 16 items (#659 resolved)
+
 ## Session 106 — 2026-04-03 — Tags View Fixes + Template Placeholder (#650, #662)
 
 ### Tags error handling + template discoverability
