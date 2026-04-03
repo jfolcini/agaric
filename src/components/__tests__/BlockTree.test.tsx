@@ -1292,7 +1292,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(13)
+    expect(results).toHaveLength(14)
     expect(results?.map((r) => r.id)).toEqual([
       'todo',
       'doing',
@@ -1307,6 +1307,7 @@ describe('BlockTree slash command wiring', () => {
       'assignee',
       'location',
       'repeat',
+      'template',
     ])
   })
 
@@ -3904,5 +3905,39 @@ describe('BlockTree zoom-in', () => {
 
     // Breadcrumb should be gone
     expect(screen.queryByRole('navigation', { name: 'Block breadcrumb' })).not.toBeInTheDocument()
+  })
+})
+
+// =========================================================================
+// Template slash command tests (#632)
+// =========================================================================
+
+describe('BlockTree /template slash command', () => {
+  it('searchSlashCommands returns /template command when query matches "template"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('template')
+
+    expect(results?.some((r) => r.id === 'template')).toBe(true)
+  })
+
+  it('searchSlashCommands includes template in full command list', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('')
+
+    expect(results?.some((r) => r.id === 'template')).toBe(true)
   })
 })

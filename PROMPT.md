@@ -69,6 +69,8 @@ Update SESSION-LOG.md with a summary of what was done (follow the existing forma
 
 In REVIEW-LATER.md: remove resolved items entirely — both the summary table row AND the detail section. Update the summary count at the top and the "Previously resolved" line. Never add "Resolved" sections.
 
+**Concurrent edits to REVIEW-LATER.md:** Other agents may be working on REVIEW-LATER.md at the same time (resolving items, adding new ones, updating counts). Before writing to the file, always re-read it first to get the latest content. Never cache or assume stale state. If you read the file, make edits in memory, and then write — re-read immediately before writing to avoid overwriting another agent's changes.
+
 ---
 
 ## Phase 2 — Generate new items (only if REVIEW-LATER is empty)

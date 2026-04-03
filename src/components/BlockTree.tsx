@@ -43,6 +43,7 @@ import {
   setScheduledDate as setScheduledDateCmd,
   setTodoState as setTodoStateCmd,
 } from '../lib/tauri'
+import { insertTemplateBlocks, loadTemplatePages } from '../lib/template-utils'
 import { getDragDescendants } from '../lib/tree-utils'
 import { cn } from '../lib/utils'
 import { useBlockStore } from '../stores/blocks'
@@ -166,6 +167,64 @@ function DatePickerOverlay({
   )
 }
 
+function TemplatePicker({
+  templatePages,
+  onSelect,
+  onClose,
+}: {
+  templatePages: Array<{ id: string; content: string }>
+  onSelect: (templatePageId: string) => void
+  onClose: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  useEffect(() => {
+    const btn = dialogRef.current?.querySelector<HTMLElement>('button')
+    btn?.focus()
+  }, [])
+
+  return (
+    <>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('slash.templatePicker')}
+        className="fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 min-w-[200px] max-w-[300px]"
+      >
+        <p className="px-2 py-1 text-xs font-medium text-muted-foreground">
+          {t('slash.selectTemplate')}
+        </p>
+        {templatePages.map((tp) => (
+          <button
+            key={tp.id}
+            type="button"
+            className="w-full text-left rounded px-2 py-1.5 text-sm hover:bg-accent transition-colors"
+            onClick={() => onSelect(tp.id)}
+          >
+            {tp.content || t('block.untitled')}
+          </button>
+        ))}
+      </div>
+    </>
+  )
+}
+
 /**
  * Detect markdown checkbox syntax at the start of content.
  * `- [ ] ` → TODO, `- [x] ` / `- [X] ` → DONE.
@@ -221,6 +280,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const [datePickerOpen, setDatePickerOpen] = useState(false)
   const [datePickerMode, setDatePickerMode] = useState<'date' | 'due' | 'schedule'>('date')
   const datePickerCursorPos = useRef<number | undefined>(undefined)
+
+  // ── Template picker for /TEMPLATE command ──────────────────────────
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
+  const [templatePages, setTemplatePages] = useState<Array<{ id: string; content: string }>>([])
 
   // ── Enter-creates-block refs ───────────────────────────────────────
   const justCreatedBlockIds = useRef(new Set<string>())
@@ -318,6 +381,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       { id: 'assignee', label: 'ASSIGNEE — Set assignee' },
       { id: 'location', label: 'LOCATION — Set location' },
       { id: 'repeat', label: 'REPEAT — Set recurrence (daily/weekly/monthly/+Nd)' },
+      { id: 'template', label: 'TEMPLATE — Insert block template' },
     ],
     [],
   )
@@ -677,6 +741,21 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         }
         return
       }
+
+      if (item.id === 'template') {
+        try {
+          const pages = await loadTemplatePages()
+          if (pages.length === 0) {
+            toast.error(t('slash.noTemplates'))
+            return
+          }
+          setTemplatePages(pages.map((p) => ({ id: p.id, content: p.content ?? '' })))
+          setTemplatePickerOpen(true)
+        } catch {
+          toast.error(t('slash.templateLoadFailed'))
+        }
+        return
+      }
     },
     [focusedBlockId],
   )
@@ -754,6 +833,28 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       }
     },
     [rovingEditor, datePickerMode, focusedBlockId],
+  )
+
+  /** Handle template selection from the picker. */
+  const handleTemplateSelect = useCallback(
+    async (templatePageId: string) => {
+      setTemplatePickerOpen(false)
+      if (!focusedBlockId) return
+      const block = blocks.find((b) => b.id === focusedBlockId)
+      if (!block) return
+      try {
+        const parentId = block.parent_id ?? rootParentId
+        if (!parentId) return
+        const ids = await insertTemplateBlocks(templatePageId, parentId)
+        if (ids.length > 0) {
+          await load(parentId)
+          toast.success(t('slash.templateInserted'))
+        }
+      } catch {
+        toast.error(t('slash.templateInsertFailed'))
+      }
+    },
+    [focusedBlockId, blocks, rootParentId, load, t],
   )
 
   // Keep the slash command ref in sync
@@ -1286,6 +1387,15 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         <DatePickerOverlay
           onSelect={(day) => day && handleDatePick(day)}
           onClose={() => setDatePickerOpen(false)}
+        />
+      )}
+
+      {/* Floating template picker for /TEMPLATE slash command */}
+      {templatePickerOpen && (
+        <TemplatePicker
+          templatePages={templatePages}
+          onSelect={handleTemplateSelect}
+          onClose={() => setTemplatePickerOpen(false)}
         />
       )}
 

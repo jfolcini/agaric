@@ -174,6 +174,12 @@ const resources = {
       // Slash commands
       'slash.repeatSet': 'Set repeat to {{value}}',
       'slash.repeatFailed': 'Failed to set repeat',
+      'slash.noTemplates': 'No templates found. Create a page and set template property to true.',
+      'slash.templateLoadFailed': 'Failed to load templates',
+      'slash.templateInserted': 'Template inserted',
+      'slash.templateInsertFailed': 'Failed to insert template',
+      'slash.templatePicker': 'Select template',
+      'slash.selectTemplate': 'Select a template',
 
       // Linked References
       'references.headerOne': '1 Reference',
