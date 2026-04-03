@@ -10,10 +10,12 @@
 import { Filter, Plus, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import i18n from '../lib/i18n'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,18 +39,21 @@ export interface AgendaFilterBuilderProps {
 
 const DIMENSION_OPTIONS: Record<
   AgendaFilterDimension,
-  { label: string; choices: string[] | null }
+  { labelKey: string; choices: string[] | null }
 > = {
-  status: { label: 'Status', choices: ['TODO', 'DOING', 'DONE'] },
-  priority: { label: 'Priority', choices: ['1', '2', '3'] },
-  dueDate: { label: 'Due date', choices: ['Today', 'This week', 'Overdue', 'Next 7 days'] },
-  tag: { label: 'Tag', choices: null }, // free-text
+  status: { labelKey: 'agendaFilter.status', choices: ['TODO', 'DOING', 'DONE'] },
+  priority: { labelKey: 'agendaFilter.priority', choices: ['1', '2', '3'] },
+  dueDate: {
+    labelKey: 'agendaFilter.dueDate',
+    choices: ['Today', 'This week', 'Overdue', 'Next 7 days'],
+  },
+  tag: { labelKey: 'agendaFilter.tag', choices: null }, // free-text
 }
 
 const ALL_DIMENSIONS: AgendaFilterDimension[] = ['status', 'priority', 'dueDate', 'tag']
 
 export function dimensionLabel(dim: AgendaFilterDimension): string {
-  return DIMENSION_OPTIONS[dim].label
+  return i18n.t(DIMENSION_OPTIONS[dim].labelKey)
 }
 
 // ---------------------------------------------------------------------------
@@ -73,8 +78,11 @@ function ChoiceValuePicker({
   onChange: (values: string[]) => void
 }): React.ReactElement {
   return (
-    <fieldset className="flex flex-col gap-1 border-0 p-0 m-0" aria-label={`${label} options`}>
-      <legend className="sr-only">{label} options</legend>
+    <fieldset
+      className="flex flex-col gap-1 border-0 p-0 m-0"
+      aria-label={i18n.t('agendaFilter.optionsLabel', { label })}
+    >
+      <legend className="sr-only">{i18n.t('agendaFilter.optionsLabel', { label })}</legend>
       {choices.map((choice) => {
         const checked = selected.includes(choice)
         return (
@@ -109,12 +117,13 @@ function TextValuePicker({
   selected: string[]
   onChange: (values: string[]) => void
 }): React.ReactElement {
+  const { t } = useTranslation()
   const [text, setText] = useState(selected[0] ?? '')
   return (
     <div className="flex flex-col gap-1.5">
       <Input
         className="h-7 text-xs"
-        placeholder="Tag name prefix..."
+        placeholder={t('agendaFilter.tagPlaceholder')}
         value={text}
         onChange={(e) => {
           setText(e.target.value)
@@ -124,7 +133,7 @@ function TextValuePicker({
             onChange([])
           }
         }}
-        aria-label="Tag name"
+        aria-label={t('agendaFilter.tagName')}
       />
     </div>
   )
@@ -132,12 +141,13 @@ function TextValuePicker({
 
 function ValuePicker({ dimension, selected, onChange }: ValuePickerProps): React.ReactElement {
   const meta = DIMENSION_OPTIONS[dimension]
+  const label = dimensionLabel(dimension)
 
   if (meta.choices) {
     return (
       <ChoiceValuePicker
         choices={meta.choices}
-        label={meta.label}
+        label={label}
         selected={selected}
         onChange={onChange}
       />
@@ -160,6 +170,7 @@ function AddFilterPopover({
   existingDimensions,
   onAdd,
 }: AddFilterPopoverProps): React.ReactElement {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<'pick-dimension' | 'pick-values'>('pick-dimension')
   const [dimension, setDimension] = useState<AgendaFilterDimension | null>(null)
@@ -201,15 +212,18 @@ function AddFilterPopover({
           variant="outline"
           size="xs"
           className="h-7 gap-1 text-xs"
-          aria-label="Add filter"
+          aria-label={t('agendaFilter.addFilter')}
         >
           <Plus size={12} />
-          Add filter
+          {t('agendaFilter.addFilter')}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-56 p-3">
         {step === 'pick-dimension' && (
-          <ul className="flex flex-col gap-1 list-none m-0 p-0" aria-label="Filter dimensions">
+          <ul
+            className="flex flex-col gap-1 list-none m-0 p-0"
+            aria-label={t('agendaFilter.filterDimensions')}
+          >
             {ALL_DIMENSIONS.map((dim) => {
               const alreadyUsed = existingDimensions.has(dim)
               return (
@@ -240,9 +254,9 @@ function AddFilterPopover({
               className="h-7 text-xs"
               disabled={values.length === 0}
               onClick={handleApply}
-              aria-label="Apply filter"
+              aria-label={t('agendaFilter.applyFilter')}
             >
-              Apply
+              {t('agendaFilter.apply')}
             </Button>
           </div>
         )}
@@ -268,6 +282,7 @@ function EditFilterPopover({
   onRemove,
   children,
 }: EditFilterPopoverProps): React.ReactElement {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
 
   return (
@@ -285,9 +300,11 @@ function EditFilterPopover({
               onRemove()
               setOpen(false)
             }}
-            aria-label={`Remove ${dimensionLabel(filter.dimension)} filter`}
+            aria-label={t('agendaFilter.removeFilterLabel', {
+              label: dimensionLabel(filter.dimension),
+            })}
           >
-            Remove filter
+            {t('agendaFilter.removeFilter')}
           </Button>
         </div>
       </PopoverContent>
@@ -303,6 +320,7 @@ export function AgendaFilterBuilder({
   filters,
   onFiltersChange,
 }: AgendaFilterBuilderProps): React.ReactElement {
+  const { t } = useTranslation()
   const existingDimensions = new Set(filters.map((f) => f.dimension))
 
   const handleAdd = useCallback(
@@ -328,18 +346,23 @@ export function AgendaFilterBuilder({
   )
 
   return (
-    <fieldset className="agenda-filter-builder border-0 p-0 m-0" aria-label="Agenda filters">
-      <legend className="sr-only">Agenda filters</legend>
+    <fieldset
+      className="agenda-filter-builder border-0 p-0 m-0"
+      aria-label={t('agendaFilter.agendaFilters')}
+    >
+      <legend className="sr-only">{t('agendaFilter.agendaFilters')}</legend>
 
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {filters.length} filter{filters.length === 1 ? '' : 's'} applied
+        {filters.length === 1
+          ? t('agendaFilter.filterAppliedOne')
+          : t('agendaFilter.filtersApplied', { count: filters.length })}
       </div>
 
       <div className="flex items-center gap-1.5 overflow-x-auto">
         <Filter className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
 
         {filters.length > 0 && (
-          <ul aria-label="Applied filters" className="contents list-none m-0 p-0">
+          <ul aria-label={t('agendaFilter.appliedFilters')} className="contents list-none m-0 p-0">
             {filters.map((filter, idx) => (
               <li key={filter.dimension} className="contents">
                 <div className="flex items-center gap-0 rounded-full bg-muted text-xs shrink-0">
@@ -351,7 +374,9 @@ export function AgendaFilterBuilder({
                     <button
                       type="button"
                       className="flex items-center gap-1 rounded-l-full px-2 py-1 hover:bg-accent cursor-pointer"
-                      aria-label={`Edit ${dimensionLabel(filter.dimension)} filter`}
+                      aria-label={t('agendaFilter.editFilter', {
+                        label: dimensionLabel(filter.dimension),
+                      })}
                     >
                       <span className="font-medium">{dimensionLabel(filter.dimension)}:</span>
                       <span>{filter.values.join(', ')}</span>
@@ -361,7 +386,9 @@ export function AgendaFilterBuilder({
                     type="button"
                     className="rounded-r-full px-1.5 py-1 text-muted-foreground hover:text-foreground hover:bg-accent"
                     onClick={() => handleRemove(idx)}
-                    aria-label={`Remove ${dimensionLabel(filter.dimension)} filter`}
+                    aria-label={t('agendaFilter.removeFilterLabel', {
+                      label: dimensionLabel(filter.dimension),
+                    })}
                   >
                     <X size={12} />
                   </button>
@@ -375,7 +402,7 @@ export function AgendaFilterBuilder({
 
         {filters.length >= 2 && (
           <span className="shrink-0 text-xs text-muted-foreground" aria-live="polite">
-            Filters combined with AND
+            {t('agendaFilter.combinedWithAnd')}
           </span>
         )}
       </div>

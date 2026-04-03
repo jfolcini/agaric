@@ -10,6 +10,7 @@
 import { CheckCircle2, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, queryByProperty } from '../lib/tauri'
@@ -27,6 +28,7 @@ function truncateContent(content: string | null, max = 120): string {
 }
 
 export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.ReactElement | null {
+  const { t } = useTranslation()
   const [blocks, setBlocks] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
@@ -61,7 +63,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
           const resolved = await batchResolve(uniqueParentIds)
           const titleMap = new Map(pageTitles)
           for (const r of resolved) {
-            titleMap.set(r.id, r.title ?? 'Untitled')
+            titleMap.set(r.id, r.title ?? t('donePanel.untitled'))
           }
           setPageTitles(titleMap)
         }
@@ -71,7 +73,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
         setLoading(false)
       }
     },
-    [date, blocks, totalCount, pageTitles],
+    [date, blocks, totalCount, pageTitles, t],
   )
 
   // Fetch on mount and when date changes
@@ -107,7 +109,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
           if (cancelled) return
           const titleMap = new Map<string, string>()
           for (const r of resolved) {
-            titleMap.set(r.id, r.title ?? 'Untitled')
+            titleMap.set(r.id, r.title ?? t('donePanel.untitled'))
           }
           setPageTitles(titleMap)
         }
@@ -121,7 +123,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
     return () => {
       cancelled = true
     }
-  }, [date])
+  }, [date, t])
 
   const loadMore = useCallback(() => {
     if (nextCursor) {
@@ -137,11 +139,11 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
     (block: BlockRow) => {
       const parentId = block.parent_id
       if (parentId) {
-        const title = pageTitles.get(parentId) ?? 'Untitled'
+        const title = pageTitles.get(parentId) ?? t('donePanel.untitled')
         onNavigateToPage?.(parentId, title, block.id)
       }
     },
-    [onNavigateToPage, pageTitles],
+    [onNavigateToPage, pageTitles, t],
   )
 
   const handleBlockKeyDown = useCallback(
@@ -161,7 +163,9 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
     const groupMap = new Map<string, { pageId: string; title: string; items: BlockRow[] }>()
     for (const block of blocks) {
       const pageId = block.parent_id ?? '__none__'
-      const title = block.parent_id ? (pageTitles.get(block.parent_id) ?? 'Untitled') : 'Untitled'
+      const title = block.parent_id
+        ? (pageTitles.get(block.parent_id) ?? t('donePanel.untitled'))
+        : t('donePanel.untitled')
       if (!groupMap.has(pageId)) {
         groupMap.set(pageId, { pageId, title, items: [] })
       }
@@ -181,10 +185,11 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
     return null
   }
 
-  const headerLabel = totalCount === 1 ? '1 Completed' : `${totalCount} Completed`
+  const headerLabel =
+    totalCount === 1 ? t('donePanel.headerOne') : t('donePanel.header', { count: totalCount })
 
   return (
-    <section className="done-panel" aria-label="Completed items">
+    <section className="done-panel" aria-label={t('donePanel.completedItems')}>
       {/* Main header -- collapsible */}
       <button
         type="button"
@@ -210,7 +215,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
               role="status"
             >
               <Loader2 className="h-4 w-4 animate-spin" data-testid="loader-spinner" />
-              <span className="text-sm text-muted-foreground">Loading...</span>
+              <span className="text-sm text-muted-foreground">{t('donePanel.loading')}</span>
             </div>
           )}
 
@@ -224,7 +229,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
 
               <ul
                 className="done-panel-blocks ml-2 space-y-1"
-                aria-label={`${group.title} completed items`}
+                aria-label={t('donePanel.groupItemsLabel', { title: group.title })}
               >
                 {group.items.map((block) => (
                   <li
@@ -246,7 +251,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
                     {/* Source page breadcrumb */}
                     {block.parent_id && (
                       <span className="done-panel-breadcrumb text-xs text-muted-foreground shrink-0">
-                        → {pageTitles.get(block.parent_id) ?? 'Untitled'}
+                        → {pageTitles.get(block.parent_id) ?? t('donePanel.untitled')}
                       </span>
                     )}
                   </li>
@@ -264,14 +269,14 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
               onClick={loadMore}
               disabled={loading}
               aria-busy={loading}
-              aria-label={loading ? 'Loading more completed items' : 'Load more completed items'}
+              aria-label={loading ? t('donePanel.loadingMore') : t('donePanel.loadMoreLabel')}
             >
               {loading ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+                  <Loader2 className="h-4 w-4 animate-spin" /> {t('donePanel.loading')}
                 </>
               ) : (
-                'Load more'
+                t('donePanel.loadMore')
               )}
             </Button>
           )}

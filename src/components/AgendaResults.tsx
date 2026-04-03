@@ -12,6 +12,7 @@
 import { CheckCircle2, Circle, Clock, Loader2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { BlockRow } from '../lib/tauri'
@@ -130,14 +131,16 @@ export function AgendaResults({
   onClearFilters,
   pageTitles,
 }: AgendaResultsProps): React.ReactElement {
+  const { t } = useTranslation()
+
   const handleItemClick = useCallback(
     (block: BlockRow) => {
       if (block.parent_id && onNavigateToPage) {
-        const title = pageTitles.get(block.parent_id) ?? 'Untitled'
+        const title = pageTitles.get(block.parent_id) ?? t('agenda.untitled')
         onNavigateToPage(block.parent_id, title, block.id)
       }
     },
-    [onNavigateToPage, pageTitles],
+    [onNavigateToPage, pageTitles, t],
   )
 
   const handleItemKeyDown = useCallback(
@@ -159,7 +162,7 @@ export function AgendaResults({
         role="status"
       >
         <Loader2 className="h-5 w-5 animate-spin" data-testid="loader-spinner" />
-        <span className="text-sm text-muted-foreground">Loading tasks...</span>
+        <span className="text-sm text-muted-foreground">{t('agenda.loadingTasks')}</span>
       </div>
     )
   }
@@ -169,23 +172,21 @@ export function AgendaResults({
     if (hasActiveFilters) {
       return (
         <div className="agenda-results-empty flex flex-col items-center gap-3 py-8 text-center">
-          <p className="text-sm text-muted-foreground">No blocks match your filters.</p>
+          <p className="text-sm text-muted-foreground">{t('agenda.noMatch')}</p>
           <Button variant="outline" size="sm" onClick={onClearFilters}>
-            Clear all filters
+            {t('agenda.clearFilters')}
           </Button>
           <div role="status" className="sr-only">
-            0 results
+            {t('agenda.zeroResults')}
           </div>
         </div>
       )
     }
     return (
       <div className="agenda-results-empty flex flex-col items-center gap-2 py-8 text-center">
-        <p className="text-sm text-muted-foreground">
-          No tasks found. Create blocks with TODO/DOING/DONE status.
-        </p>
+        <p className="text-sm text-muted-foreground">{t('agenda.noTasks')}</p>
         <div role="status" className="sr-only">
-          0 results
+          {t('agenda.zeroResults')}
         </div>
       </div>
     )
@@ -196,10 +197,12 @@ export function AgendaResults({
     <div className="agenda-results space-y-1">
       {/* Screen-reader result count */}
       <div role="status" className="sr-only">
-        {blocks.length} {blocks.length === 1 ? 'result' : 'results'}
+        {blocks.length === 1
+          ? t('agenda.resultOne')
+          : t('agenda.resultCount', { count: blocks.length })}
       </div>
 
-      <ul className="agenda-results-list space-y-1" aria-label="Agenda results">
+      <ul className="agenda-results-list space-y-1" aria-label={t('agenda.agendaResults')}>
         {blocks.map((block) => (
           <li
             key={block.id}
@@ -244,7 +247,7 @@ export function AgendaResults({
             {/* Source page breadcrumb */}
             {block.parent_id && (
               <span className="agenda-results-breadcrumb text-xs text-muted-foreground shrink-0">
-                &rarr; {pageTitles.get(block.parent_id) ?? 'Untitled'}
+                &rarr; {pageTitles.get(block.parent_id) ?? t('agenda.untitled')}
               </span>
             )}
           </li>
@@ -260,14 +263,15 @@ export function AgendaResults({
           onClick={onLoadMore}
           disabled={loading}
           aria-busy={loading}
-          aria-label={loading ? 'Loading more tasks' : 'Load more tasks'}
+          aria-label={loading ? t('agenda.loadingMore') : t('agenda.loadMoreLabel')}
         >
           {loading ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" data-testid="loader-spinner" /> Loading...
+              <Loader2 className="h-4 w-4 animate-spin" data-testid="loader-spinner" />{' '}
+              {t('agenda.loading')}
             </>
           ) : (
-            'Load more'
+            t('agenda.loadMore')
           )}
         </Button>
       )}

@@ -9,6 +9,7 @@
 import { FileText, Loader2, Plus, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -34,6 +35,8 @@ interface PageBrowserProps {
 }
 
 export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElement {
+  const { t } = useTranslation()
+
   const queryFn = useCallback(
     (cursor?: string) => listBlocks({ blockType: 'page', cursor, limit: 50 }),
     [],
@@ -44,7 +47,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     hasMore,
     loadMore,
     setItems: setPages,
-  } = usePaginatedQuery(queryFn, { onError: 'Failed to load pages' })
+  } = usePaginatedQuery(queryFn, { onError: t('pageBrowser.loadFailed') })
 
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [isCreating, setIsCreating] = useState(false)
@@ -63,7 +66,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   }, [pages.length])
 
   const handleCreatePage = useCallback(async () => {
-    const name = newPageName.trim() || 'Untitled'
+    const name = newPageName.trim() || t('pageBrowser.untitled')
     setIsCreating(true)
     try {
       const resp = await createBlock({ blockType: 'page', content: name })
@@ -85,12 +88,12 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       setPages((prev) => [newPage, ...prev])
       setNewPageName('')
     } catch (error) {
-      toast.error(`Failed to create page: ${String(error)}`, {
-        action: { label: 'Retry', onClick: () => handleCreatePage() },
+      toast.error(t('pageBrowser.createFailed', { error: String(error) }), {
+        action: { label: t('pageBrowser.retry'), onClick: () => handleCreatePage() },
       })
     }
     setIsCreating(false)
-  }, [newPageName, setPages])
+  }, [newPageName, setPages, t])
 
   const handleDeletePage = useCallback(
     async (pageId: string) => {
@@ -99,12 +102,12 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         setPages((prev) => prev.filter((p) => p.id !== pageId))
         useResolveStore.getState().set(pageId, '(deleted)', true)
       } catch (error) {
-        toast.error(`Failed to delete page: ${String(error)}`, {
-          action: { label: 'Retry', onClick: () => handleDeletePage(pageId) },
+        toast.error(t('pageBrowser.deleteFailed', { error: String(error) }), {
+          action: { label: t('pageBrowser.retry'), onClick: () => handleDeletePage(pageId) },
         })
       }
     },
-    [setPages],
+    [setPages, t],
   )
 
   const handleConfirmDelete = useCallback(() => {
@@ -127,12 +130,12 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         <Input
           value={newPageName}
           onChange={(e) => setNewPageName(e.target.value)}
-          placeholder="New page name..."
+          placeholder={t('pageBrowser.newPagePlaceholder')}
           className="flex-1"
         />
         <Button type="submit" variant="outline" disabled={isCreating}>
           {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-          New Page
+          {t('pageBrowser.newPage')}
         </Button>
       </form>
 
@@ -147,7 +150,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       {!loading && pages.length === 0 && (
         <div className="page-browser-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           <FileText className="mx-auto mb-2 h-5 w-5" />
-          No pages yet.
+          {t('pageBrowser.noPages')}
           <Button
             variant="ghost"
             size="sm"
@@ -160,7 +163,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
             ) : (
               <Plus className="h-4 w-4" />
             )}
-            Create your first page
+            {t('pageBrowser.createFirst')}
           </Button>
         </div>
       )}
@@ -177,19 +180,21 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
             <button
               type="button"
               className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer"
-              onClick={() => onPageSelect?.(page.id, page.content ?? 'Untitled')}
+              onClick={() => onPageSelect?.(page.id, page.content ?? t('pageBrowser.untitled'))}
             >
               <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="page-browser-item-title truncate">{page.content ?? 'Untitled'}</span>
+              <span className="page-browser-item-title truncate">
+                {page.content ?? t('pageBrowser.untitled')}
+              </span>
             </button>
             <Button
               variant="ghost"
               size="icon-xs"
-              aria-label="Delete page"
+              aria-label={t('pageBrowser.deleteButton')}
               className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
               onClick={(e) => {
                 e.stopPropagation()
-                setDeleteTarget({ id: page.id, name: page.content ?? 'Untitled' })
+                setDeleteTarget({ id: page.id, name: page.content ?? t('pageBrowser.untitled') })
               }}
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -206,7 +211,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           onClick={loadMore}
           disabled={loading}
         >
-          {loading ? 'Loading...' : 'Load more'}
+          {loading ? t('pageBrowser.loading') : t('pageBrowser.loadMore')}
         </Button>
       )}
 
@@ -223,15 +228,16 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete page?</AlertDialogTitle>
+            <AlertDialogTitle>{t('pageBrowser.deletePage')}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will delete the page &ldquo;{deleteTarget?.name}&rdquo;. This action cannot be
-              undone.
+              {t('pageBrowser.deleteDescription', { name: deleteTarget?.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDelete}>Delete</AlertDialogAction>
+            <AlertDialogCancel>{t('pageBrowser.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete}>
+              {t('pageBrowser.delete')}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

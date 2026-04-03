@@ -8,6 +8,7 @@
 import { ArrowLeft, Plus, Redo2, Undo2, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,6 +29,8 @@ export interface PageHeaderProps {
 }
 
 export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
+  const { t } = useTranslation()
+
   // --- Title editing ---
   const titleRef = useRef<HTMLDivElement>(null)
   const [editableTitle, setEditableTitle] = useState(title)
@@ -46,7 +49,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       .undo(pageId)
       .then(async (result) => {
         if (result) {
-          toast('Undone', { duration: 1500 })
+          toast(t('pageHeader.undone'), { duration: 1500 })
           await useBlockStore.getState().load(pageId)
           try {
             const pageBlock = await getBlock(pageId)
@@ -59,8 +62,8 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           }
         }
       })
-      .catch(() => toast.error('Undo failed'))
-  }, [pageId])
+      .catch(() => toast.error(t('pageHeader.undoFailed')))
+  }, [pageId, t])
 
   const handlePageRedo = useCallback(() => {
     useUndoStore
@@ -68,7 +71,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       .redo(pageId)
       .then(async (result) => {
         if (result) {
-          toast('Redone', { duration: 1500 })
+          toast(t('pageHeader.redone'), { duration: 1500 })
           await useBlockStore.getState().load(pageId)
           try {
             const pageBlock = await getBlock(pageId)
@@ -81,8 +84,8 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           }
         }
       })
-      .catch(() => toast.error('Redo failed'))
-  }, [pageId])
+      .catch(() => toast.error(t('pageHeader.redoFailed')))
+  }, [pageId, t])
 
   // --- Alias state ---
   const [aliases, setAliases] = useState<string[]>([])
@@ -123,12 +126,12 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         useNavigationStore.getState().replacePage(pageId, newTitle)
         useResolveStore.getState().set(pageId, newTitle, false)
       } catch {
-        toast.error('Failed to rename page')
+        toast.error(t('pageHeader.renameFailed'))
         setEditableTitle(title)
         if (titleRef.current) titleRef.current.textContent = title
       }
     }
-  }, [editableTitle, title, pageId])
+  }, [editableTitle, title, pageId, t])
 
   const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -141,10 +144,10 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const { allTags, appliedTagIds, handleAddTag, handleRemoveTag, handleCreateTag } =
     useBlockTags(pageId)
 
-  const appliedTags = allTags.filter((t) => appliedTagIds.has(t.id))
+  const appliedTags = allTags.filter((t_) => appliedTagIds.has(t_.id))
   const availableTags = allTags
-    .filter((t) => !appliedTagIds.has(t.id))
-    .filter((t) => !tagQuery || t.name.toLowerCase().includes(tagQuery.toLowerCase()))
+    .filter((t_) => !appliedTagIds.has(t_.id))
+    .filter((t_) => !tagQuery || t_.name.toLowerCase().includes(tagQuery.toLowerCase()))
 
   const handleTagAdd = useCallback(
     async (tagId: string) => {
@@ -168,7 +171,12 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       {/* Title row */}
       <div className="flex items-center gap-2">
         {onBack && (
-          <Button variant="ghost" size="icon-sm" onClick={onBack} aria-label="Go back">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onBack}
+            aria-label={t('pageHeader.goBack')}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
         )}
@@ -177,7 +185,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           ref={titleRef}
           role="textbox"
           tabIndex={0}
-          aria-label="Page title"
+          aria-label={t('pageHeader.pageTitle')}
           contentEditable
           suppressContentEditableWarning
           className={[
@@ -196,7 +204,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Undo last page action"
+            aria-label={t('pageHeader.undoAction')}
             onClick={handlePageUndo}
           >
             <Undo2 size={14} />
@@ -204,7 +212,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Redo last page action"
+            aria-label={t('pageHeader.redoAction')}
             disabled={!canRedo}
             onClick={handlePageRedo}
           >
@@ -216,7 +224,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       {/* Aliases */}
       {(aliases.length > 0 || editingAliases) && (
         <div className="flex flex-wrap items-center gap-1 px-1 text-xs text-muted-foreground">
-          <span className="font-medium">Also known as:</span>
+          <span className="font-medium">{t('pageHeader.aliases')}</span>
           {aliases.map((alias) => (
             <span key={alias} className="rounded-md bg-muted px-1.5 py-0.5">
               {alias}
@@ -228,10 +236,10 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                     const next = aliases.filter((a) => a !== alias)
                     setAliases(next)
                     setPageAliases(pageId, next).catch(() =>
-                      toast.error('Failed to update aliases'),
+                      toast.error(t('pageHeader.aliasUpdateFailed')),
                     )
                   }}
-                  aria-label={`Remove alias ${alias}`}
+                  aria-label={t('pageHeader.removeAlias', { alias })}
                 >
                   ×
                 </button>
@@ -246,7 +254,9 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                 if (aliasInput.trim()) {
                   const next = [...aliases, aliasInput.trim()]
                   setAliases(next)
-                  setPageAliases(pageId, next).catch(() => toast.error('Failed to update aliases'))
+                  setPageAliases(pageId, next).catch(() =>
+                    toast.error(t('pageHeader.aliasUpdateFailed')),
+                  )
                   setAliasInput('')
                 }
               }}
@@ -254,16 +264,16 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               <input
                 type="text"
                 className="w-24 rounded border px-1 py-0.5 text-xs"
-                placeholder="New alias..."
+                placeholder={t('pageHeader.newAliasPlaceholder')}
                 value={aliasInput}
                 onChange={(e) => setAliasInput(e.target.value)}
-                aria-label="New alias input"
+                aria-label={t('pageHeader.newAliasInput')}
               />
               <button type="submit" className="text-xs text-primary">
-                Add
+                {t('pageHeader.add')}
               </button>
               <button type="button" className="text-xs" onClick={() => setEditingAliases(false)}>
-                Done
+                {t('pageHeader.done')}
               </button>
             </form>
           ) : (
@@ -272,7 +282,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               className="text-xs text-primary hover:underline"
               onClick={() => setEditingAliases(true)}
             >
-              {aliases.length > 0 ? 'Edit' : '+ Add alias'}
+              {aliases.length > 0 ? t('pageHeader.edit') : t('pageHeader.addAlias')}
             </button>
           )}
         </div>
@@ -283,7 +293,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           className="text-xs text-muted-foreground hover:text-primary px-1"
           onClick={() => setEditingAliases(true)}
         >
-          + Add alias
+          {t('pageHeader.addAlias')}
         </button>
       )}
 
@@ -296,7 +306,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               type="button"
               className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
               onClick={() => handleRemoveTag(tag.id)}
-              aria-label={`Remove tag ${tag.name}`}
+              aria-label={t('pageHeader.removeTag', { name: tag.name })}
             >
               <X className="h-3 w-3" />
             </button>
@@ -309,15 +319,15 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               variant="ghost"
               size="xs"
               className="gap-1 text-muted-foreground"
-              aria-label="Add tag"
+              aria-label={t('pageHeader.addTag')}
             >
               <Plus className="h-3.5 w-3.5" />
-              {appliedTags.length === 0 ? 'Add tag' : ''}
+              {appliedTags.length === 0 ? t('pageHeader.addTag') : ''}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-64 space-y-2 p-3" aria-label="Tag picker">
+          <PopoverContent className="w-64 space-y-2 p-3" aria-label={t('pageHeader.tagPicker')}>
             <Input
-              placeholder="Search or create tag..."
+              placeholder={t('pageHeader.searchTags')}
               value={tagQuery}
               onChange={(e) => setTagQuery(e.target.value)}
               onKeyDown={(e) => {
@@ -326,7 +336,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                   handleTagCreate()
                 }
               }}
-              aria-label="Search tags"
+              aria-label={t('pageHeader.searchTagsLabel')}
             />
             <div className="max-h-40 overflow-y-auto">
               {availableTags.map((tag) => (
@@ -339,17 +349,19 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                   {tag.name}
                 </button>
               ))}
-              {tagQuery.trim() && !allTags.some((t) => t.name === tagQuery.trim()) && (
+              {tagQuery.trim() && !allTags.some((t_) => t_.name === tagQuery.trim()) && (
                 <button
                   type="button"
                   className="w-full rounded px-2 py-1 text-left text-sm text-muted-foreground hover:bg-accent"
                   onClick={handleTagCreate}
                 >
-                  Create &quot;{tagQuery.trim()}&quot;
+                  {t('pageHeader.createTag', { name: tagQuery.trim() })}
                 </button>
               )}
               {availableTags.length === 0 && !tagQuery.trim() && (
-                <p className="px-2 py-1 text-sm text-muted-foreground">No more tags</p>
+                <p className="px-2 py-1 text-sm text-muted-foreground">
+                  {t('pageHeader.noMoreTags')}
+                </p>
               )}
             </div>
           </PopoverContent>

@@ -15,6 +15,7 @@ import {
   WifiOff,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { BootGate } from './components/BootGate'
 import { ConflictList } from './components/ConflictList'
@@ -58,25 +59,27 @@ import { useResolveStore } from './stores/resolve'
 import { useSyncStore } from './stores/sync'
 
 /** Sidebar nav items — page-editor is not listed here (it's navigated to programmatically). */
-const NAV_ITEMS: { id: Exclude<View, 'page-editor'>; icon: React.ElementType; label: string }[] = [
-  { id: 'journal', icon: Calendar, label: 'Journal' },
-  { id: 'search', icon: Search, label: 'Search' },
-  { id: 'pages', icon: FileText, label: 'Pages' },
-  { id: 'tags', icon: Tag, label: 'Tags' },
-  { id: 'trash', icon: Trash2, label: 'Trash' },
-  { id: 'status', icon: Activity, label: 'Status' },
-  { id: 'conflicts', icon: GitMerge, label: 'Conflicts' },
-  { id: 'history', icon: History, label: 'History' },
-]
+const NAV_ITEMS: { id: Exclude<View, 'page-editor'>; icon: React.ElementType; labelKey: string }[] =
+  [
+    { id: 'journal', icon: Calendar, labelKey: 'sidebar.journal' },
+    { id: 'search', icon: Search, labelKey: 'sidebar.search' },
+    { id: 'pages', icon: FileText, labelKey: 'sidebar.pages' },
+    { id: 'tags', icon: Tag, labelKey: 'sidebar.tags' },
+    { id: 'trash', icon: Trash2, labelKey: 'sidebar.trash' },
+    { id: 'status', icon: Activity, labelKey: 'sidebar.status' },
+    { id: 'conflicts', icon: GitMerge, labelKey: 'sidebar.conflicts' },
+    { id: 'history', icon: History, labelKey: 'sidebar.history' },
+  ]
 
 function CollapseButton() {
+  const { t } = useTranslation()
   const { toggleSidebar } = useSidebar()
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton tooltip="Toggle Sidebar" onClick={toggleSidebar}>
+        <SidebarMenuButton tooltip={t('sidebar.toggleSidebar')} onClick={toggleSidebar}>
           <ChevronsLeft className="transition-transform group-data-[state=collapsed]:rotate-180" />
-          <span>Collapse</span>
+          <span>{t('sidebar.collapse')}</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>
@@ -85,12 +88,14 @@ function CollapseButton() {
 
 /** Resolve the header label from the current navigation state. */
 function useHeaderLabel(): string {
+  const { t } = useTranslation()
   const { currentView, pageStack } = useNavigationStore()
   // page-editor has its own editable title — don't duplicate it in the header
   if (currentView === 'page-editor' && pageStack.length > 0) {
     return ''
   }
-  return NAV_ITEMS.find((item) => item.id === currentView)?.label ?? ''
+  const item = NAV_ITEMS.find((item) => item.id === currentView)
+  return item ? t(item.labelKey) : ''
 }
 
 /** Compute the CSS class for the sync status dot colour. */
@@ -123,6 +128,7 @@ function useHasConflicts(): boolean {
 }
 
 function App() {
+  const { t } = useTranslation()
   const { currentView, pageStack, setView, navigateToPage, goBack } = useNavigationStore()
   const headerLabel = useHeaderLabel()
   const hasConflicts = useHasConflicts()
@@ -256,32 +262,35 @@ function App() {
             <SidebarGroup>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {NAV_ITEMS.map((item) => (
-                    <SidebarMenuItem key={item.id}>
-                      <SidebarMenuButton
-                        isActive={currentView === item.id}
-                        aria-current={currentView === item.id ? 'page' : undefined}
-                        tooltip={item.label}
-                        onClick={() => setView(item.id)}
-                      >
-                        <item.icon />
-                        <span>{item.label}</span>
-                        {item.id === 'conflicts' && hasConflicts && (
-                          <span
-                            role="status"
-                            className="ml-auto h-2 w-2 rounded-full bg-destructive"
-                            aria-label="Has unresolved conflicts"
-                          />
-                        )}
-                        {item.id === 'status' && (
-                          <span
-                            className={`ml-auto h-2.5 w-2.5 rounded-full ${syncDotClass(syncState, syncPeers.length > 0)}`}
-                            aria-hidden="true"
-                          />
-                        )}
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
+                  {NAV_ITEMS.map((item) => {
+                    const label = t(item.labelKey)
+                    return (
+                      <SidebarMenuItem key={item.id}>
+                        <SidebarMenuButton
+                          isActive={currentView === item.id}
+                          aria-current={currentView === item.id ? 'page' : undefined}
+                          tooltip={label}
+                          onClick={() => setView(item.id)}
+                        >
+                          <item.icon />
+                          <span>{label}</span>
+                          {item.id === 'conflicts' && hasConflicts && (
+                            <span
+                              role="status"
+                              className="ml-auto h-2 w-2 rounded-full bg-destructive"
+                              aria-label="Has unresolved conflicts"
+                            />
+                          )}
+                          {item.id === 'status' && (
+                            <span
+                              className={`ml-auto h-2.5 w-2.5 rounded-full ${syncDotClass(syncState, syncPeers.length > 0)}`}
+                              aria-hidden="true"
+                            />
+                          )}
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )
+                  })}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
@@ -289,14 +298,20 @@ function App() {
           <SidebarFooter>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton tooltip="New Page (Ctrl+N)" onClick={handleNewPage}>
+                <SidebarMenuButton tooltip={t('sidebar.newPageTooltip')} onClick={handleNewPage}>
                   <Plus />
-                  <span>New Page</span>
+                  <span>{t('sidebar.newPage')}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  tooltip={!isOnline ? 'Offline' : syncing ? 'Syncing...' : 'Sync all devices'}
+                  tooltip={
+                    !isOnline
+                      ? t('sidebar.offline')
+                      : syncing
+                        ? t('sidebar.syncing')
+                        : t('sidebar.syncTooltip')
+                  }
                   onClick={syncAll}
                   disabled={syncing || !isOnline}
                 >
@@ -305,13 +320,16 @@ function App() {
                   ) : (
                     <RefreshCw className={syncing ? 'animate-spin' : ''} />
                   )}
-                  <span>{isOnline ? 'Sync' : 'Offline'}</span>
+                  <span>{isOnline ? t('sidebar.sync') : t('sidebar.offline')}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Shortcuts" onClick={() => setShortcutsOpen(true)}>
+                <SidebarMenuButton
+                  tooltip={t('sidebar.shortcuts')}
+                  onClick={() => setShortcutsOpen(true)}
+                >
                   <Keyboard />
-                  <span>Shortcuts</span>
+                  <span>{t('sidebar.shortcuts')}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

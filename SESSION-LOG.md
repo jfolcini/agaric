@@ -185,6 +185,18 @@ Phase 2 materializer review (1 subagent) + 3 hardening fixes + i18n extraction b
 - SortableBlock: all aria-labels + tooltips with interpolation
 - Frontend: 82 test files, 2332 tests. Commit: `d4b1713`
 
+## Session 89 — 2026-04-03 — Complete i18n Extraction (#520 resolved)
+
+### All components i18n-ized — ~253 translation keys
+1 item fully resolved: every user-visible string now goes through i18n.
+
+**Batch 3 (this session):** DonePanel, AgendaResults, AgendaFilterBuilder, HistorySheet, PageHeader, PageBrowser, App sidebar — ~95 new keys.
+
+### Stats
+- Total i18n keys: ~253 across 15 components
+- Frontend: 82/82 test files, 2332 tests pass
+- Commits: `134d6f6` (batch 2), `fd5cfc5` (batch 3)
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command

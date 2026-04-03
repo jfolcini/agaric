@@ -6,6 +6,7 @@
  */
 
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import { HistoryPanel } from './HistoryPanel'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from './ui/sheet'
 
@@ -20,11 +21,12 @@ export function HistorySheet({
   open,
   onOpenChange,
 }: HistorySheetProps): React.ReactElement {
+  const { t } = useTranslation()
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right">
         <SheetHeader>
-          <SheetTitle>Block History</SheetTitle>
+          <SheetTitle>{t('history.title')}</SheetTitle>
         </SheetHeader>
         {blockId && <HistoryPanel blockId={blockId} />}
       </SheetContent>
