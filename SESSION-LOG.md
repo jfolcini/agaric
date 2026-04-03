@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 110 — 2026-04-03 — /effort Presets + Recursive Template Copy (#645-12, #649-T4)
+
+### Effort slash command presets + template nested structure
+
+2 parallel build subagents.
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | #645-12: `EFFORT_COMMANDS` (6 presets: 15m-1d) with progressive disclosure. Handler sets effort property with value. Removed 'effort' from empty-property group. |
+| `BlockTree.test.tsx` | #645-12: 2 new tests (search presets, set_property call). |
+| `template-utils.ts` | #649-T4: `insertTemplateBlocks` now recursively copies entire subtree via inner `copyChildren` helper. Preserves nested structure. |
+| `template-utils.test.ts` | #649-T4: 1 new test (3-level recursive copy). 1 existing test updated. |
+| `i18n.ts` | 2 new keys (slash.effortSet, slash.effortFailed). |
+
+### Stats
+- Frontend: ~2490 tests pass
+- Commit: `6947ff4`
+- #645-12 resolved, #649-T4 resolved
+
 ## Session 109 — 2026-04-03 — Blockquotes + Repeat Icon (#654 partial, #645-4)
 
 ### Blockquote editor support + repeat property icon
