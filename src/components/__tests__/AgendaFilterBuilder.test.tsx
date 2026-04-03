@@ -308,4 +308,45 @@ describe('AgendaFilterBuilder', () => {
     expect(within(group).getByLabelText('Next 14 days')).toBeInTheDocument()
     expect(within(group).getByLabelText('Next 30 days')).toBeInTheDocument()
   })
+
+  // -----------------------------------------------------------------------
+  // 18. completedDate dimension appears in picker and shows past-oriented choices
+  // -----------------------------------------------------------------------
+  it('completedDate dimension appears in the add filter picker', async () => {
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+
+    const list = screen.getByRole('list', { name: /Filter dimensions/i })
+    expect(within(list).getByText('Completed date')).toBeInTheDocument()
+  })
+
+  it('completedDate dimension shows past-oriented choices', async () => {
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+    await user.click(screen.getByText('Completed date'))
+
+    const group = screen.getByRole('group', { name: /Completed date options/i })
+    expect(within(group).getByLabelText('Today')).toBeInTheDocument()
+    expect(within(group).getByLabelText('This week')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Last 7 days')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Last 30 days')).toBeInTheDocument()
+  })
+
+  it('completedDate does not show Overdue or Next N days choices', async () => {
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+    await user.click(screen.getByText('Completed date'))
+
+    const group = screen.getByRole('group', { name: /Completed date options/i })
+    expect(within(group).queryByLabelText('Overdue')).not.toBeInTheDocument()
+    expect(within(group).queryByLabelText('Next 7 days')).not.toBeInTheDocument()
+    expect(within(group).queryByLabelText('Next 14 days')).not.toBeInTheDocument()
+    expect(within(group).queryByLabelText('Next 30 days')).not.toBeInTheDocument()
+  })
 })

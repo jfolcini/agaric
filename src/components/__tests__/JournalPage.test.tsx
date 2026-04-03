@@ -1534,6 +1534,72 @@ describe('JournalPage', () => {
       expect(listBlockCalls.length).toBeGreaterThanOrEqual(1)
       expect((listBlockCalls[0][1] as { agendaDate: string }).agendaDate).toBe(todayStr)
     })
+
+    it("completedDate 'Today' filter queries completed_at with today's date", async () => {
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_blocks') {
+          return emptyPage
+        }
+        if (cmd === 'query_by_property') {
+          const params = args as { key?: string; valueDate?: string }
+          if (params?.key === 'completed_at' && params?.valueDate === todayStr) {
+            return {
+              items: [
+                {
+                  id: 'DONE-TODAY-1',
+                  block_type: 'content',
+                  content: 'Completed task',
+                  parent_id: 'PAGE-1',
+                  position: 0,
+                  deleted_at: null,
+                  archived_at: null,
+                  is_conflict: false,
+                  conflict_type: null,
+                  todo_state: 'DONE',
+                  due_date: null,
+                  priority: null,
+                  scheduled_date: null,
+                },
+              ],
+              next_cursor: null,
+              has_more: false,
+            }
+          }
+          return emptyPage
+        }
+        if (cmd === 'batch_resolve') {
+          return [{ id: 'PAGE-1', title: 'My Project', block_type: 'page', deleted: false }]
+        }
+        return emptyPage
+      })
+
+      useJournalStore.setState({ mode: 'agenda' })
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByTestId('agenda-filter-builder')).toBeInTheDocument()
+      })
+
+      act(() => {
+        filterChangeRef.current?.([{ dimension: 'completedDate', values: ['Today'] }])
+      })
+
+      await waitFor(() => {
+        const results = screen.getByTestId('agenda-results')
+        expect(results).toHaveAttribute('data-block-count', '1')
+      })
+
+      // Verify it called query_by_property with key=completed_at and valueDate=today
+      const completedCalls = mockedInvoke.mock.calls.filter(
+        ([cmd, callArgs]) =>
+          cmd === 'query_by_property' &&
+          (callArgs as { key?: string })?.key === 'completed_at',
+      )
+      expect(completedCalls.length).toBeGreaterThanOrEqual(1)
+      expect((completedCalls[0][1] as { valueDate: string }).valueDate).toBe(todayStr)
+    })
   })
 
   // ── DuePanel & LinkedReferences in daily mode ─────────────────────

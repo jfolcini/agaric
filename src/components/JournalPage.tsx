@@ -532,6 +532,54 @@ export function JournalPage({
                   }
                 }
               }
+            } else if (filter.dimension === 'completedDate') {
+              // completed_at is a custom property — use queryByProperty with valueDate per day
+              const today = new Date()
+              const todayStr = formatDate(today)
+              for (const value of filter.values) {
+                if (value === 'Today') {
+                  const resp = await queryByProperty({ key: 'completed_at', valueDate: todayStr, limit: 500 })
+                  for (const b of resp.items) {
+                    ids.add(b.id)
+                    allBlocks.set(b.id, b)
+                  }
+                } else if (value === 'This week') {
+                  const day = today.getDay()
+                  const mondayOffset = day === 0 ? -6 : 1 - day
+                  for (let d = 0; d < 7; d++) {
+                    const date = new Date(today)
+                    date.setDate(today.getDate() + mondayOffset + d)
+                    const dateStr = formatDate(date)
+                    const resp = await queryByProperty({ key: 'completed_at', valueDate: dateStr, limit: 500 })
+                    for (const b of resp.items) {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
+                } else if (value === 'Last 7 days') {
+                  for (let d = 0; d < 7; d++) {
+                    const date = new Date(today)
+                    date.setDate(today.getDate() - d)
+                    const dateStr = formatDate(date)
+                    const resp = await queryByProperty({ key: 'completed_at', valueDate: dateStr, limit: 500 })
+                    for (const b of resp.items) {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
+                } else if (value === 'Last 30 days') {
+                  for (let d = 0; d < 30; d++) {
+                    const date = new Date(today)
+                    date.setDate(today.getDate() - d)
+                    const dateStr = formatDate(date)
+                    const resp = await queryByProperty({ key: 'completed_at', valueDate: dateStr, limit: 500 })
+                    for (const b of resp.items) {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
+                }
+              }
             } else if (filter.dimension === 'tag') {
               for (const value of filter.values) {
                 const resp = await listBlocks({ tagId: value, limit: 500 })

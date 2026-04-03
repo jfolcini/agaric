@@ -255,6 +255,7 @@ const resources = {
       'agendaFilter.priority': 'Priority',
       'agendaFilter.dueDate': 'Due date',
       'agendaFilter.scheduledDate': 'Scheduled date',
+      'agendaFilter.completedDate': 'Completed date',
       'agendaFilter.tag': 'Tag',
       'agendaFilter.tagPlaceholder': 'Tag name prefix...',
       'agendaFilter.tagName': 'Tag name',
