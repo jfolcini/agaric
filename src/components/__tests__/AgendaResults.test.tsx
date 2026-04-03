@@ -6,7 +6,7 @@
  *  2. Shows due date chip when block has due_date
  *  3. Shows source page breadcrumb from pageTitles
  *  4. Click on item calls onNavigateToPage
- *  5. Empty state without filters shows "No tasks found"
+ *  5. Empty state without filters shows "No dated tasks found"
  *  6. Empty state with filters shows "No blocks match" + clear button
  *  7. Load more button appears when hasMore=true
  *  8. A11y audit passes (axe)
@@ -175,12 +175,12 @@ describe('AgendaResults', () => {
     expect(onNavigateToPage).toHaveBeenCalledWith('PAGE1', 'Page Title', 'B1')
   })
 
-  // 5. Empty state without filters shows "No tasks found"
-  it('shows "No tasks found" empty state when no filters active', () => {
+  // 5. Empty state without filters shows "No dated tasks found"
+  it('shows "No dated tasks found" empty state when no filters active', () => {
     render(<AgendaResults {...defaultProps({ blocks: [], hasActiveFilters: false })} />)
 
     expect(
-      screen.getByText(/No tasks found\. Create blocks with TODO\/DOING\/DONE status\./),
+      screen.getByText(/No dated tasks found\. Add a due date or scheduled date/),
     ).toBeInTheDocument()
   })
 
@@ -268,5 +268,49 @@ describe('AgendaResults', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // 9. Date group headers with groupBy=date
+  it('renders date group headers when groupBy=date', () => {
+    const now = new Date()
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const blocks = [
+      makeBlock({ id: 'B1', due_date: todayStr, todo_state: 'TODO' }),
+      makeBlock({ id: 'B2', due_date: '2020-01-01', todo_state: 'TODO' }),
+    ]
+
+    render(<AgendaResults {...defaultProps({ blocks })} groupBy="date" />)
+
+    // Should see group headers
+    expect(screen.getByText(/Overdue/)).toBeInTheDocument()
+    expect(screen.getByText(/Today/)).toBeInTheDocument()
+  })
+
+  it('renders flat list when groupBy=none', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', due_date: '2020-01-01', todo_state: 'TODO', content: 'Task A' }),
+      makeBlock({ id: 'B2', due_date: '2025-12-01', todo_state: 'TODO', content: 'Task B' }),
+    ]
+
+    render(<AgendaResults {...defaultProps({ blocks })} groupBy="none" />)
+
+    // Should NOT see group headers
+    expect(screen.queryByText('Overdue')).not.toBeInTheDocument()
+    // Both tasks should be in the flat list
+    expect(screen.getByText('Task A')).toBeInTheDocument()
+    expect(screen.getByText('Task B')).toBeInTheDocument()
+  })
+
+  it('sorts blocks by date > state > priority even in flat mode', () => {
+    const blocks = [
+      makeBlock({ id: 'B2', due_date: '2025-06-20', todo_state: 'TODO', priority: '2', content: 'Later task' }),
+      makeBlock({ id: 'B1', due_date: '2025-06-15', todo_state: 'TODO', priority: '1', content: 'Earlier task' }),
+    ]
+
+    render(<AgendaResults {...defaultProps({ blocks })} />)
+
+    const items = screen.getAllByRole('listitem')
+    expect(items[0]).toHaveTextContent('Earlier task')
+    expect(items[1]).toHaveTextContent('Later task')
   })
 })

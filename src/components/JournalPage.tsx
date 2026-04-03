@@ -367,11 +367,23 @@ export function JournalPage({
         let blocks: BlockRow[] = []
 
         if (agendaFilters.length === 0) {
-          // Default: all blocks with any todo_state
-          const resp = await queryByProperty({ key: 'todo_state', limit: 200 })
-          blocks = resp.items
-          setAgendaHasMore(resp.has_more)
-          setAgendaCursor(resp.next_cursor)
+          // Default: blocks with due_date or scheduled_date (dated tasks only)
+          const [dueResp, schedResp] = await Promise.all([
+            queryByProperty({ key: 'due_date', limit: 500 }),
+            queryByProperty({ key: 'scheduled_date', limit: 500 }),
+          ])
+          // Merge and deduplicate by id
+          const seen = new Set<string>()
+          const merged: BlockRow[] = []
+          for (const b of [...dueResp.items, ...schedResp.items]) {
+            if (!seen.has(b.id)) {
+              seen.add(b.id)
+              merged.push(b)
+            }
+          }
+          blocks = merged
+          setAgendaHasMore(false) // merged set doesn't support cursor pagination
+          setAgendaCursor(null)
         } else {
           // Execute each filter dimension and intersect
           const resultSets: Set<string>[] = []
@@ -966,6 +978,7 @@ export function JournalPage({
           hasActiveFilters={agendaFilters.length > 0}
           onClearFilters={() => setAgendaFilters([])}
           pageTitles={agendaPageTitles}
+          groupBy="date"
         />
       </div>
     )

@@ -15,6 +15,7 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { groupByDate, sortAgendaBlocks, type AgendaGroup } from '../lib/agenda-sort'
 import type { BlockRow } from '../lib/tauri'
 
 export interface AgendaResultsProps {
@@ -34,6 +35,8 @@ export interface AgendaResultsProps {
   onClearFilters: () => void
   /** Resolved page titles for breadcrumbs */
   pageTitles: Map<string, string>
+  /** Group blocks by this dimension. When set to 'date', renders date section headers. Default: 'none'. */
+  groupBy?: 'date' | 'none'
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -130,6 +133,7 @@ export function AgendaResults({
   hasActiveFilters,
   onClearFilters,
   pageTitles,
+  groupBy,
 }: AgendaResultsProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -193,6 +197,71 @@ export function AgendaResults({
   }
 
   // ── Results list ───────────────────────────────────────────────────
+
+  /** Render a single agenda item (shared between flat and grouped modes). */
+  function renderItem(block: BlockRow) {
+    return (
+      <li
+        key={block.id}
+        className="agenda-results-item flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer hover:bg-accent/50 transition-colors"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
+        tabIndex={0}
+        onClick={() => handleItemClick(block)}
+        onKeyDown={(e) => handleItemKeyDown(e, block)}
+      >
+        {/* Status icon */}
+        <StatusIcon state={block.todo_state} />
+
+        {/* Priority badge */}
+        {block.priority && (
+          <span
+            className={cn(
+              'agenda-results-priority inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold',
+              priorityColor(block.priority),
+            )}
+          >
+            P{block.priority}
+          </span>
+        )}
+
+        {/* Due date chip */}
+        {block.due_date && (
+          <span
+            className={cn(
+              'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+              dueDateColor(block.due_date),
+            )}
+          >
+            {formatCompactDate(block.due_date)}
+          </span>
+        )}
+
+        {/* Block content */}
+        <span className="agenda-results-text flex-1 truncate text-sm">
+          {truncateContent(block.content)}
+        </span>
+
+        {/* Source page breadcrumb */}
+        {block.parent_id && (
+          <span className="agenda-results-breadcrumb text-xs text-muted-foreground shrink-0">
+            &rarr; {pageTitles.get(block.parent_id) ?? t('agenda.untitled')}
+          </span>
+        )}
+      </li>
+    )
+  }
+
+  // Map group labels to i18n keys for known groups
+  const GROUP_I18N: Record<string, string> = {
+    Overdue: 'agenda.overdue',
+    Today: 'agenda.today',
+    Tomorrow: 'agenda.tomorrow',
+    'No date': 'agenda.noDate',
+  }
+
+  // Apply sorting to blocks for consistent ordering
+  const sortedBlocks = sortAgendaBlocks(blocks)
+
   return (
     <div className="agenda-results space-y-1">
       {/* Screen-reader result count */}
@@ -202,57 +271,33 @@ export function AgendaResults({
           : t('agenda.resultCount', { count: blocks.length })}
       </div>
 
-      <ul className="agenda-results-list space-y-1" aria-label={t('agenda.agendaResults')}>
-        {blocks.map((block) => (
-          <li
-            key={block.id}
-            className="agenda-results-item flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer hover:bg-accent/50 transition-colors"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
-            tabIndex={0}
-            onClick={() => handleItemClick(block)}
-            onKeyDown={(e) => handleItemKeyDown(e, block)}
-          >
-            {/* Status icon */}
-            <StatusIcon state={block.todo_state} />
-
-            {/* Priority badge */}
-            {block.priority && (
-              <span
-                className={cn(
-                  'agenda-results-priority inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold',
-                  priorityColor(block.priority),
-                )}
-              >
-                P{block.priority}
-              </span>
-            )}
-
-            {/* Due date chip */}
-            {block.due_date && (
-              <span
-                className={cn(
-                  'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
-                  dueDateColor(block.due_date),
-                )}
-              >
-                {formatCompactDate(block.due_date)}
-              </span>
-            )}
-
-            {/* Block content */}
-            <span className="agenda-results-text flex-1 truncate text-sm">
-              {truncateContent(block.content)}
-            </span>
-
-            {/* Source page breadcrumb */}
-            {block.parent_id && (
-              <span className="agenda-results-breadcrumb text-xs text-muted-foreground shrink-0">
-                &rarr; {pageTitles.get(block.parent_id) ?? t('agenda.untitled')}
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
+      {groupBy === 'date' ? (
+        <>
+          {groupByDate(blocks).map((group) => {
+            const displayLabel = GROUP_I18N[group.label] ? t(GROUP_I18N[group.label]) : group.label
+            return (
+              <div key={group.label} className="agenda-group mb-3">
+                <h3
+                  className={cn(
+                    'agenda-group-header text-xs font-semibold uppercase tracking-wide px-2 py-1',
+                    group.className ?? 'text-muted-foreground',
+                  )}
+                >
+                  {displayLabel}
+                  <span className="ml-1.5 text-muted-foreground font-normal">({group.blocks.length})</span>
+                </h3>
+                <ul className="agenda-results-list space-y-1" aria-label={displayLabel}>
+                  {group.blocks.map((block) => renderItem(block))}
+                </ul>
+              </div>
+            )
+          })}
+        </>
+      ) : (
+        <ul className="agenda-results-list space-y-1" aria-label={t('agenda.agendaResults')}>
+          {sortedBlocks.map((block) => renderItem(block))}
+        </ul>
+      )}
 
       {/* Load more */}
       {hasMore && (

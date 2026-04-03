@@ -1774,7 +1774,10 @@ async fn set_property_in_tx(
 
         if let Some(expected_type) = def_type {
             let type_matches = match expected_type.as_str() {
-                "text" | "select" => value_text.is_some(),
+                // Also accept value_ref for 'text' definitions — there is no
+                // 'ref' value_type in the CHECK constraint, so ref-typed
+                // properties use 'text' as a fallback in property_definitions.
+                "text" | "select" => value_text.is_some() || value_ref.is_some(),
                 "number" => value_num.is_some(),
                 "date" => value_date.is_some(),
                 _ => true,
@@ -2195,16 +2198,16 @@ pub async fn set_todo_state_inner(
 
             // --- End condition: repeat-until ---
             let repeat_until: Option<String> = sqlx::query_scalar(
-                "SELECT value_text FROM block_properties WHERE block_id = ?1 AND key = 'repeat-until'",
+                "SELECT value_date FROM block_properties WHERE block_id = ?1 AND key = 'repeat-until'",
             )
             .bind(&block_id)
             .fetch_optional(pool)
             .await?;
 
             if let Some(ref until_str) = repeat_until {
-                if let Some(ref ref_date) = reference_date {
+                if let Some(ref_date) = reference_date {
                     // Simple lexicographic comparison works for YYYY-MM-DD strings
-                    if *ref_date > until_str.as_str() {
+                    if ref_date > until_str.as_str() {
                         // Shifted date is past the repeat-until deadline — stop recurring
                         return Ok(result);
                     }
@@ -2234,6 +2237,16 @@ pub async fn set_todo_state_inner(
                     return Ok(result);
                 }
             }
+
+            // --- Resolve repeat-origin for the chain ---
+            let repeat_origin: Option<String> = sqlx::query_scalar(
+                "SELECT value_ref FROM block_properties WHERE block_id = ?1 AND key = 'repeat-origin'",
+            )
+            .bind(&block_id)
+            .fetch_optional(pool)
+            .await?;
+            // Use existing origin, or this block is the first in the chain
+            let origin_id = repeat_origin.unwrap_or_else(|| block_id.clone());
 
             // --- Create the recurrence sibling ---
             // Single transaction for entire recurrence sequence
@@ -2341,9 +2354,9 @@ pub async fn set_todo_state_inner(
                     device_id,
                     new_block.id.clone(),
                     "repeat-until".to_string(),
+                    None,
+                    None,
                     Some(until_str.clone()),
-                    None,
-                    None,
                     None,
                 )
                 .await
@@ -2396,6 +2409,25 @@ pub async fn set_todo_state_inner(
                     Err(e) => {
                         tracing::warn!(error = %e, "failed to set repeat-seq on recurring block")
                     }
+                }
+            }
+
+            // Set repeat-origin on new block (points to original block in chain)
+            match set_property_in_tx(
+                &mut tx,
+                device_id,
+                new_block.id.clone(),
+                "repeat-origin".to_string(),
+                None,
+                None,
+                None,
+                Some(origin_id),
+            )
+            .await
+            {
+                Ok((_, op)) => op_records.push(op),
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to set repeat-origin on recurring block")
                 }
             }
 
@@ -13534,9 +13566,9 @@ mod tests {
             &mat,
             block.id.clone(),
             "repeat-until".to_string(),
+            None,
+            None,
             Some("2025-06-14".to_string()),
-            None,
-            None,
             None,
         )
         .await
@@ -13745,6 +13777,162 @@ mod tests {
             count_prop.unwrap().value_num,
             Some(3.0),
             "repeat-count should remain 3"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recurrence_sets_repeat_origin_on_sibling() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "origin task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-06-15".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+        mat.flush_background().await.unwrap();
+
+        // Transition to DONE — creates sibling
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Find the new sibling
+        let new_blocks: Vec<BlockRow> = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+                      is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+                      due_date, scheduled_date
+               FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
+            block.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(new_blocks.len(), 1);
+        let sibling = &new_blocks[0];
+
+        // Check repeat-origin points to original block
+        let props = get_properties_inner(&pool, sibling.id.clone()).await.unwrap();
+        let origin_prop = props.iter().find(|p| p.key == "repeat-origin");
+        assert!(origin_prop.is_some(), "sibling should have repeat-origin");
+        assert_eq!(
+            origin_prop.unwrap().value_ref.as_deref(),
+            Some(block.id.as_str()),
+            "repeat-origin should point to original block"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recurrence_preserves_repeat_origin_across_chain() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "chain task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-06-15".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+        mat.flush_background().await.unwrap();
+
+        // First DONE → creates sibling1
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Find sibling1
+        let sibling1_id: String = sqlx::query_scalar(
+            "SELECT id FROM blocks WHERE id != ?1 AND todo_state = 'TODO' AND deleted_at IS NULL",
+        )
+        .bind(&block.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Complete sibling1 → creates sibling2
+        set_todo_state_inner(&pool, DEV, &mat, sibling1_id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Find sibling2
+        let sibling2_id: String = sqlx::query_scalar(
+            "SELECT id FROM blocks WHERE id != ?1 AND id != ?2 AND todo_state = 'TODO' AND deleted_at IS NULL",
+        )
+        .bind(&block.id)
+        .bind(&sibling1_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Both sibling1 and sibling2 should point to the original block
+        let props1 = get_properties_inner(&pool, sibling1_id).await.unwrap();
+        let origin1 = props1.iter().find(|p| p.key == "repeat-origin");
+        assert_eq!(origin1.unwrap().value_ref.as_deref(), Some(block.id.as_str()));
+
+        let props2 = get_properties_inner(&pool, sibling2_id).await.unwrap();
+        let origin2 = props2.iter().find(|p| p.key == "repeat-origin");
+        assert_eq!(
+            origin2.unwrap().value_ref.as_deref(),
+            Some(block.id.as_str()),
+            "sibling2's repeat-origin should still point to the ORIGINAL block, not sibling1"
         );
 
         mat.shutdown();

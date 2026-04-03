@@ -1,0 +1,152 @@
+import { describe, expect, it } from 'vitest'
+import type { BlockRow } from '../tauri'
+import { sortAgendaBlocks, groupByDate } from '../agenda-sort'
+
+function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
+  return {
+    id: 'B1',
+    block_type: 'block',
+    content: 'test',
+    parent_id: null,
+    position: 0,
+    deleted_at: null,
+    archived_at: null,
+    is_conflict: false,
+    conflict_type: null,
+    todo_state: null,
+    priority: null,
+    due_date: null,
+    scheduled_date: null,
+    ...overrides,
+  }
+}
+
+describe('sortAgendaBlocks', () => {
+  it('sorts by date ascending', () => {
+    const blocks = [
+      makeBlock({ id: 'B2', due_date: '2025-06-20' }),
+      makeBlock({ id: 'B1', due_date: '2025-06-15' }),
+    ]
+    const sorted = sortAgendaBlocks(blocks)
+    expect(sorted[0].id).toBe('B1')
+    expect(sorted[1].id).toBe('B2')
+  })
+
+  it('uses scheduled_date as fallback when no due_date', () => {
+    const blocks = [
+      makeBlock({ id: 'B2', scheduled_date: '2025-06-20' }),
+      makeBlock({ id: 'B1', due_date: '2025-06-15' }),
+    ]
+    const sorted = sortAgendaBlocks(blocks)
+    expect(sorted[0].id).toBe('B1')
+    expect(sorted[1].id).toBe('B2')
+  })
+
+  it('sorts blocks with no date to bottom', () => {
+    const blocks = [
+      makeBlock({ id: 'B1' }),
+      makeBlock({ id: 'B2', due_date: '2025-06-15' }),
+    ]
+    const sorted = sortAgendaBlocks(blocks)
+    expect(sorted[0].id).toBe('B2')
+    expect(sorted[1].id).toBe('B1')
+  })
+
+  it('within same date, sorts DOING > TODO > DONE > null', () => {
+    const blocks = [
+      makeBlock({ id: 'done', due_date: '2025-06-15', todo_state: 'DONE' }),
+      makeBlock({ id: 'todo', due_date: '2025-06-15', todo_state: 'TODO' }),
+      makeBlock({ id: 'doing', due_date: '2025-06-15', todo_state: 'DOING' }),
+      makeBlock({ id: 'none', due_date: '2025-06-15', todo_state: null }),
+    ]
+    const sorted = sortAgendaBlocks(blocks)
+    expect(sorted.map((b) => b.id)).toEqual(['doing', 'todo', 'done', 'none'])
+  })
+
+  it('within same date and state, sorts by priority 1 > 2 > 3 > null', () => {
+    const blocks = [
+      makeBlock({ id: 'p3', due_date: '2025-06-15', todo_state: 'TODO', priority: '3' }),
+      makeBlock({ id: 'p1', due_date: '2025-06-15', todo_state: 'TODO', priority: '1' }),
+      makeBlock({ id: 'pn', due_date: '2025-06-15', todo_state: 'TODO', priority: null }),
+      makeBlock({ id: 'p2', due_date: '2025-06-15', todo_state: 'TODO', priority: '2' }),
+    ]
+    const sorted = sortAgendaBlocks(blocks)
+    expect(sorted.map((b) => b.id)).toEqual(['p1', 'p2', 'p3', 'pn'])
+  })
+
+  it('prefers due_date over scheduled_date when both present', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', due_date: '2025-06-20', scheduled_date: '2025-06-10' }),
+      makeBlock({ id: 'B2', due_date: '2025-06-15' }),
+    ]
+    const sorted = sortAgendaBlocks(blocks)
+    // B2 (due 06-15) should come before B1 (due 06-20, not sched 06-10)
+    expect(sorted[0].id).toBe('B2')
+    expect(sorted[1].id).toBe('B1')
+  })
+
+  it('does not mutate input array', () => {
+    const blocks = [
+      makeBlock({ id: 'B2', due_date: '2025-06-20' }),
+      makeBlock({ id: 'B1', due_date: '2025-06-15' }),
+    ]
+    const copy = [...blocks]
+    sortAgendaBlocks(blocks)
+    expect(blocks[0].id).toBe(copy[0].id)
+    expect(blocks[1].id).toBe(copy[1].id)
+  })
+})
+
+describe('groupByDate', () => {
+  it('puts overdue non-DONE tasks in Overdue group', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', due_date: '2020-01-01', todo_state: 'TODO' }),
+    ]
+    const groups = groupByDate(blocks)
+    expect(groups[0].label).toBe('Overdue')
+    expect(groups[0].blocks.length).toBe(1)
+  })
+
+  it('does not put DONE tasks in Overdue', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', due_date: '2020-01-01', todo_state: 'DONE' }),
+    ]
+    const groups = groupByDate(blocks)
+    // Should not be in "Overdue" group
+    const overdueGroup = groups.find((g) => g.label === 'Overdue')
+    expect(overdueGroup).toBeUndefined()
+  })
+
+  it('puts blocks with no date in "No date" group at the end', () => {
+    const blocks = [
+      makeBlock({ id: 'B1' }),
+      makeBlock({ id: 'B2', due_date: '2020-01-01', todo_state: 'TODO' }),
+    ]
+    const groups = groupByDate(blocks)
+    const lastGroup = groups[groups.length - 1]
+    expect(lastGroup.label).toBe('No date')
+    expect(lastGroup.blocks[0].id).toBe('B1')
+  })
+
+  it('includes count in group', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', due_date: '2020-01-01', todo_state: 'TODO' }),
+      makeBlock({ id: 'B2', due_date: '2020-01-02', todo_state: 'TODO' }),
+    ]
+    const groups = groupByDate(blocks)
+    expect(groups[0].label).toBe('Overdue')
+    expect(groups[0].blocks.length).toBe(2)
+  })
+
+  it('Overdue group is always first', () => {
+    const now = new Date()
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const blocks = [
+      makeBlock({ id: 'today', due_date: todayStr, todo_state: 'TODO' }),
+      makeBlock({ id: 'overdue', due_date: '2020-01-01', todo_state: 'TODO' }),
+    ]
+    const groups = groupByDate(blocks)
+    expect(groups[0].label).toBe('Overdue')
+    expect(groups[1].label).toBe('Today')
+  })
+})

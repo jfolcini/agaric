@@ -31,7 +31,6 @@ import {
   Quote,
   Redo2,
   Settings2,
-  Signal,
   Strikethrough,
   Undo2,
   X,
@@ -357,43 +356,46 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
         <Tip label={t('toolbar.priority1Tip')}>
           <Button
             variant="ghost"
-            size="xs"
+            size="icon-xs"
             aria-label={t('toolbar.priority1')}
             onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('set-priority-1'))
             }}
           >
-            <Signal size={14} className="text-red-500" />
-            <span className="text-[10px] font-bold">1</span>
+            <span className="rounded bg-red-500 px-1.5 py-0.5 text-xs font-bold leading-none text-white">
+              P1
+            </span>
           </Button>
         </Tip>
         <Tip label={t('toolbar.priority2Tip')}>
           <Button
             variant="ghost"
-            size="xs"
+            size="icon-xs"
             aria-label={t('toolbar.priority2')}
             onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('set-priority-2'))
             }}
           >
-            <Signal size={14} className="text-yellow-500" />
-            <span className="text-[10px] font-bold">2</span>
+            <span className="rounded bg-yellow-500 px-1.5 py-0.5 text-xs font-bold leading-none text-white">
+              P2
+            </span>
           </Button>
         </Tip>
         <Tip label={t('toolbar.priority3Tip')}>
           <Button
             variant="ghost"
-            size="xs"
+            size="icon-xs"
             aria-label={t('toolbar.priority3')}
             onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('set-priority-3'))
             }}
           >
-            <Signal size={14} className="text-blue-500" />
-            <span className="text-[10px] font-bold">3</span>
+            <span className="rounded bg-blue-500 px-1.5 py-0.5 text-xs font-bold leading-none text-white">
+              P3
+            </span>
           </Button>
         </Tip>
         <Tip label={t('toolbar.insertDateTip')}>

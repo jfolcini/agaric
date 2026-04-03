@@ -237,7 +237,7 @@ const resources = {
 
       // Agenda
       'agenda.loadingTasks': 'Loading tasks...',
-      'agenda.noTasks': 'No tasks found. Create blocks with TODO/DOING/DONE status.',
+      'agenda.noTasks': 'No dated tasks found. Add a due date or scheduled date to your tasks to see them here.',
       'agenda.noMatch': 'No blocks match your filters.',
       'agenda.clearFilters': 'Clear all filters',
       'agenda.zeroResults': '0 results',
@@ -249,6 +249,10 @@ const resources = {
       'agenda.loadingMore': 'Loading more tasks',
       'agenda.loadMoreLabel': 'Load more tasks',
       'agenda.agendaResults': 'Agenda results',
+      'agenda.overdue': 'Overdue',
+      'agenda.today': 'Today',
+      'agenda.tomorrow': 'Tomorrow',
+      'agenda.noDate': 'No date',
 
       // Agenda Filter
       'agendaFilter.status': 'Status',

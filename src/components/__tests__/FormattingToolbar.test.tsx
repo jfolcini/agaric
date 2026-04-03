@@ -503,6 +503,27 @@ describe('FormattingToolbar', () => {
       expect(prevented).toBe(true)
     })
 
+    it('priority buttons render P1/P2/P3 badge-style labels', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const p1 = screen.getByRole('button', { name: 'Priority 1 (high)' })
+      const p2 = screen.getByRole('button', { name: 'Priority 2 (medium)' })
+      const p3 = screen.getByRole('button', { name: 'Priority 3 (low)' })
+      // Badge text
+      expect(p1).toHaveTextContent('P1')
+      expect(p2).toHaveTextContent('P2')
+      expect(p3).toHaveTextContent('P3')
+      // Badge colors
+      const badge1 = p1.querySelector('span')
+      const badge2 = p2.querySelector('span')
+      const badge3 = p3.querySelector('span')
+      expect(badge1?.className).toContain('bg-red-500')
+      expect(badge1?.className).toContain('text-white')
+      expect(badge2?.className).toContain('bg-yellow-500')
+      expect(badge2?.className).toContain('text-white')
+      expect(badge3?.className).toContain('bg-blue-500')
+      expect(badge3?.className).toContain('text-white')
+    })
+
     it('date button prevents default to preserve editor focus', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const btn = screen.getByRole('button', { name: 'Insert date' })
