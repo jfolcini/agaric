@@ -197,6 +197,15 @@ Phase 2 materializer review (1 subagent) + 3 hardening fixes + i18n extraction b
 - Frontend: 82/82 test files, 2332 tests pass
 - Commits: `134d6f6` (batch 2), `fd5cfc5` (batch 3)
 
+## Session 90 — 2026-04-03 — Materializer Batch-Drain + i18n Complete
+
+### Foreground consumer restructured + i18n string extraction finished
+2 items progressed: #374 batch-drain foundation, #520 fully resolved.
+
+**#374 partial:** run_foreground now batch-drains + groups by block_id. Barrier boundaries respected. TODO marks join_all insertion point. 2 tests. Rust: 1464 tests. Commit: `a1bc391`.
+
+**#520 resolved (Session 89):** ~253 i18n keys, 15 components. Commit: `ff87e36`.
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command

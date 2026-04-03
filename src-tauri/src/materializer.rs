@@ -34,7 +34,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -278,9 +278,12 @@ impl Materializer {
 
     // -- consumer loops (type-safe, separate functions) --------------------
 
-    /// Foreground consumer: processes tasks one-at-a-time in FIFO order.
+    /// Foreground consumer: batch-drains available tasks, groups by `block_id`,
+    /// and processes each group sequentially. Barrier tasks act as ordering
+    /// fences — all tasks before a Barrier complete before it is signalled.
+    ///
     /// Each task runs in a spawned sub-task for panic isolation; we await the
-    /// handle immediately to preserve ordering.
+    /// handle immediately to preserve ordering within a group.
     async fn run_foreground(
         pool: SqlitePool,
         mut rx: mpsc::Receiver<MaterializeTask>,
@@ -288,33 +291,42 @@ impl Materializer {
         metrics: Arc<QueueMetrics>,
     ) {
         loop {
-            let task = match rx.recv().await {
+            let first_task = match rx.recv().await {
                 Some(t) => t,
                 None => break, // All senders dropped
             };
 
-            // Process the received task FIRST — even if shutdown has been
-            // signalled, the task was already dequeued and must not be lost.
-            let pool_clone = pool.clone();
-            let metrics_clone = Arc::clone(&metrics);
-            let result = tokio::task::spawn(async move {
-                handle_foreground_task(&pool_clone, &task, &metrics_clone).await
-            })
-            .await;
-
-            Self::log_consumer_result("fg", &result);
-
-            match &result {
-                Ok(Err(_)) => {
-                    metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
+            // Drain all immediately available tasks into a batch.
+            let mut batch = vec![first_task];
+            while let Ok(task) = rx.try_recv() {
+                batch.push(task);
+                if batch.len() >= FOREGROUND_CAPACITY {
+                    break;
                 }
-                Err(_) => {
-                    metrics.fg_panics.fetch_add(1, Ordering::Relaxed);
-                }
-                _ => {}
             }
 
-            metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
+            // Split batch at Barrier boundaries. Barriers are ordering
+            // fences: all tasks before a Barrier must complete before the
+            // Barrier is signalled, so we never group across them.
+            let mut segment: Vec<MaterializeTask> = Vec::new();
+            for task in batch {
+                if matches!(task, MaterializeTask::Barrier(_)) {
+                    // Process accumulated segment grouped by block_id.
+                    if !segment.is_empty() {
+                        Self::process_foreground_segment(&pool, mem::take(&mut segment), &metrics)
+                            .await;
+                    }
+                    // Process the barrier itself (signals the flush waiter).
+                    Self::process_single_foreground_task(&pool, task, &metrics).await;
+                } else {
+                    segment.push(task);
+                }
+            }
+
+            // Process remaining segment after all barriers.
+            if !segment.is_empty() {
+                Self::process_foreground_segment(&pool, segment, &metrics).await;
+            }
 
             // Check shutdown flag AFTER processing — `shutdown()` sends a
             // wake-up task so we don't block forever on recv.
@@ -323,6 +335,53 @@ impl Materializer {
             }
         }
         tracing::info!("foreground queue closed");
+    }
+
+    /// Process a segment of foreground tasks grouped by `block_id`.
+    ///
+    /// Tasks without a block_id go into a catch-all group processed last.
+    async fn process_foreground_segment(
+        pool: &SqlitePool,
+        tasks: Vec<MaterializeTask>,
+        metrics: &Arc<QueueMetrics>,
+    ) {
+        let groups = group_tasks_by_block_id(tasks);
+        // TODO(#374): Replace this sequential loop with join_all for
+        // independent groups. Each group's ops must stay sequential,
+        // but groups targeting different block_ids can run in parallel.
+        for (_block_id, group_tasks) in groups {
+            for task in group_tasks {
+                Self::process_single_foreground_task(pool, task, metrics).await;
+            }
+        }
+    }
+
+    /// Process a single foreground task with panic isolation and metrics.
+    async fn process_single_foreground_task(
+        pool: &SqlitePool,
+        task: MaterializeTask,
+        metrics: &Arc<QueueMetrics>,
+    ) {
+        let pool_clone = pool.clone();
+        let metrics_clone = Arc::clone(metrics);
+        let result = tokio::task::spawn(async move {
+            handle_foreground_task(&pool_clone, &task, &metrics_clone).await
+        })
+        .await;
+
+        Self::log_consumer_result("fg", &result);
+
+        match &result {
+            Ok(Err(_)) => {
+                metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(_) => {
+                metrics.fg_panics.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+
+        metrics.fg_processed.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Background consumer: batch-drains pending tasks, deduplicates, then
@@ -856,6 +915,72 @@ fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
                 }
             }
         }
+    }
+
+    result
+}
+
+// ---------------------------------------------------------------------------
+// Foreground batch grouping (§374)
+// ---------------------------------------------------------------------------
+
+/// Extract the target `block_id` from a foreground task's payload.
+///
+/// Uses lightweight [`BlockIdHint`] deserialization (only extracts the
+/// `block_id` field, ignoring the rest). Returns `None` for tasks
+/// without a `block_id` (e.g. `Barrier`, background-only tasks).
+fn extract_block_id(task: &MaterializeTask) -> Option<String> {
+    match task {
+        MaterializeTask::ApplyOp(record) => serde_json::from_str::<BlockIdHint>(&record.payload)
+            .ok()
+            .map(|h| h.block_id)
+            .filter(|id| !id.is_empty()),
+        MaterializeTask::BatchApplyOps(records) => records.first().and_then(|r| {
+            serde_json::from_str::<BlockIdHint>(&r.payload)
+                .ok()
+                .map(|h| h.block_id)
+                .filter(|id| !id.is_empty())
+        }),
+        _ => None,
+    }
+}
+
+/// Group foreground tasks by their target `block_id`.
+///
+/// Returns groups in first-seen order, with the `None` group (tasks
+/// without a `block_id`) moved to the end. Preserves original ordering
+/// within each group.
+fn group_tasks_by_block_id(
+    tasks: Vec<MaterializeTask>,
+) -> Vec<(Option<String>, Vec<MaterializeTask>)> {
+    let mut order: Vec<Option<String>> = Vec::new();
+    let mut groups: HashMap<Option<String>, Vec<MaterializeTask>> = HashMap::new();
+
+    for task in tasks {
+        let block_id = extract_block_id(&task);
+        if !groups.contains_key(&block_id) {
+            order.push(block_id.clone());
+        }
+        groups.entry(block_id).or_default().push(task);
+    }
+
+    // Build result in first-seen order, but move None group to the end.
+    let mut result = Vec::with_capacity(order.len());
+    let mut none_group = None;
+
+    for key in order {
+        if let Some(tasks) = groups.remove(&key) {
+            if key.is_none() {
+                none_group = Some(tasks);
+            } else {
+                result.push((key, tasks));
+            }
+        }
+    }
+
+    // Append None group last.
+    if let Some(tasks) = none_group {
+        result.push((None, tasks));
     }
 
     result
@@ -2426,6 +2551,95 @@ mod tests {
         assert!(matches!(deduped[0], MaterializeTask::FtsOptimize));
         assert!(matches!(deduped[1], MaterializeTask::RebuildFtsIndex));
         assert!(matches!(deduped[2], MaterializeTask::RebuildTagsCache));
+    }
+
+    // ======================================================================
+    // Foreground batch grouping (§374)
+    // ======================================================================
+
+    #[test]
+    fn batch_groups_ops_by_block_id() {
+        // Three ops targeting two different blocks, plus one without a block_id.
+        let tasks = vec![
+            MaterializeTask::ApplyOp(fake_op_record(
+                "edit_block",
+                r#"{"block_id":"blk-A","to_text":"a1"}"#,
+            )),
+            MaterializeTask::ApplyOp(fake_op_record(
+                "edit_block",
+                r#"{"block_id":"blk-B","to_text":"b1"}"#,
+            )),
+            MaterializeTask::ApplyOp(fake_op_record(
+                "edit_block",
+                r#"{"block_id":"blk-A","to_text":"a2"}"#,
+            )),
+            // No block_id → None group
+            MaterializeTask::RebuildTagsCache,
+        ];
+
+        let groups = group_tasks_by_block_id(tasks);
+
+        // Expect 3 groups: blk-A (2 ops), blk-B (1 op), None (1 op)
+        assert_eq!(groups.len(), 3, "should have 3 groups (blk-A, blk-B, None)");
+
+        // None group must be last
+        let (last_key, last_tasks) = groups.last().unwrap();
+        assert!(last_key.is_none(), "None group should be last");
+        assert_eq!(last_tasks.len(), 1);
+
+        // blk-A group: 2 ops
+        let a_group = groups
+            .iter()
+            .find(|(k, _)| k.as_deref() == Some("blk-A"))
+            .expect("blk-A group should exist");
+        assert_eq!(a_group.1.len(), 2, "blk-A should have 2 ops");
+
+        // blk-B group: 1 op
+        let b_group = groups
+            .iter()
+            .find(|(k, _)| k.as_deref() == Some("blk-B"))
+            .expect("blk-B group should exist");
+        assert_eq!(b_group.1.len(), 1, "blk-B should have 1 op");
+    }
+
+    #[test]
+    fn batch_preserves_order_within_group() {
+        // Three edits to the same block — order must be preserved.
+        let tasks = vec![
+            MaterializeTask::ApplyOp(fake_op_record(
+                "edit_block",
+                r#"{"block_id":"blk-X","to_text":"first"}"#,
+            )),
+            MaterializeTask::ApplyOp(fake_op_record(
+                "edit_block",
+                r#"{"block_id":"blk-X","to_text":"second"}"#,
+            )),
+            MaterializeTask::ApplyOp(fake_op_record(
+                "edit_block",
+                r#"{"block_id":"blk-X","to_text":"third"}"#,
+            )),
+        ];
+
+        let groups = group_tasks_by_block_id(tasks);
+        assert_eq!(groups.len(), 1, "all ops target same block → 1 group");
+
+        let (key, group_tasks) = &groups[0];
+        assert_eq!(key.as_deref(), Some("blk-X"));
+        assert_eq!(group_tasks.len(), 3);
+
+        // Verify ordering by checking payload content
+        for (i, expected) in ["first", "second", "third"].iter().enumerate() {
+            match &group_tasks[i] {
+                MaterializeTask::ApplyOp(record) => {
+                    assert!(
+                        record.payload.contains(expected),
+                        "task {i} should contain '{expected}', got '{}'",
+                        record.payload
+                    );
+                }
+                other => panic!("expected ApplyOp, got {other:?}"),
+            }
+        }
     }
 
     // ======================================================================
