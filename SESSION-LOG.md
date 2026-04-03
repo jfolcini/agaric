@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 113 — 2026-04-03 — Conflict Refresh + Template Error Handling (#651-C5, #649-T5)
+
+### Sync-aware conflict list + resilient template insertion
+
+2 parallel build subagents.
+
+| File | Change |
+|------|--------|
+| `ConflictList.tsx` | #651-C5: `sync:complete` event listener → auto-refresh. Manual Refresh button (RefreshCw icon). Proper cleanup on unmount. |
+| `ConflictList.test.tsx` | #651-C5: 5 new tests (event listener, cleanup, refetch, button render, click). |
+| `template-utils.ts` | #649-T5: Per-block try-catch in `copyChildren` — failure skips block, continues siblings. console.warn on skip. |
+| `template-utils.test.ts` | #649-T5: 1 new test (continues after single block failure). |
+
+### Stats
+- Frontend: ~2503 tests pass (6 new)
+- Commit: `d13b070`
+- #651-C5 resolved, #649-T5 resolved
+
 ## Session 112 — 2026-04-03 — Custom Task Keywords + Click-to-Edit (#658 partial, #645-5)
 
 ### Backend validation relaxed + property chip editing
