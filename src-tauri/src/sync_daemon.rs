@@ -5,9 +5,13 @@
 //! and the scheduler's exponential backoff (#278).  The daemon runs as
 //! a single `tokio::spawn` task for the lifetime of the application.
 //!
-//! **Current scope:** initiator-only mode.  The daemon discovers peers,
-//! connects outbound, and drives sync sessions.  Responder-mode (accepting
-//! inbound connections) is stubbed but not yet wired.
+//! Supports **both** initiator and responder modes:
+//! - **Initiator:** discovers peers via mDNS, connects outbound, sends
+//!   HeadExchange first, and receives ops from the responder.
+//! - **Responder (#615):** accepts inbound TLS WebSocket connections,
+//!   receives the initiator's HeadExchange, computes and sends missing
+//!   ops, and completes the session.  Per-peer mutual exclusion prevents
+//!   concurrent sync sessions with the same device.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -142,10 +146,24 @@ async fn daemon_loop(
     // 1. Start mDNS service
     let mdns = MdnsService::new()?;
 
-    // 2. Start TLS WebSocket server (responder mode is a placeholder)
-    let (server, port) = SyncServer::start(&cert, |_conn| {
-        // TODO(#382): wire responder-mode sync sessions
-        tracing::info!("incoming sync connection received (responder not yet wired)");
+    // 2. Start TLS WebSocket server (responder mode — #615)
+    let resp_pool = pool.clone();
+    let resp_device_id = device_id.clone();
+    let resp_materializer = materializer.clone();
+    let resp_scheduler = scheduler.clone();
+    let resp_event_sink = event_sink.clone();
+    let (server, port) = SyncServer::start(&cert, move |conn| {
+        let pool = resp_pool.clone();
+        let device_id = resp_device_id.clone();
+        let mat = resp_materializer.clone();
+        let sched = resp_scheduler.clone();
+        let sink = resp_event_sink.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = handle_incoming_sync(conn, pool, device_id, mat, sched, sink).await {
+                tracing::warn!("responder sync session failed: {e}");
+            }
+        });
     })
     .await?;
 
@@ -425,6 +443,119 @@ async fn run_sync_session(
                 }
             }
         }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// handle_incoming_sync — responder-mode sync session (#615)
+// ---------------------------------------------------------------------------
+
+/// Drive a complete responder-side sync session over an incoming connection.
+///
+/// Unlike the initiator path (`run_sync_session`), the responder does **not**
+/// call `SyncOrchestrator::start()`.  Instead it waits for the initiator's
+/// `HeadExchange`, processes it via `handle_message()` (which computes and
+/// returns an `OpBatch`), and then continues the message loop until a
+/// terminal state is reached.
+///
+/// Per-peer mutual exclusion is enforced after the first message reveals
+/// the remote device identity: if the scheduler already holds a lock for
+/// that peer (e.g. an outbound initiator-mode session is in progress) the
+/// connection is rejected with an `Error` message.
+async fn handle_incoming_sync(
+    mut conn: SyncConnection,
+    pool: SqlitePool,
+    device_id: String,
+    materializer: Materializer,
+    scheduler: Arc<SyncScheduler>,
+    event_sink: Arc<dyn SyncEventSink>,
+) -> Result<(), AppError> {
+    tracing::info!("incoming sync connection received, starting responder session");
+
+    let event_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(Arc::clone(&event_sink)));
+    let mut orch = SyncOrchestrator::new(pool, device_id.clone(), materializer)
+        .with_event_sink(event_sink_box);
+
+    // ── Receive the initiator's first message ─────────────────────────────
+    let first_msg: SyncMessage = conn.recv_json().await?;
+
+    // ── Per-peer mutual exclusion ─────────────────────────────────────────
+    // We can only identify the peer after seeing the HeadExchange.
+    let _peer_guard = if let SyncMessage::HeadExchange { ref heads } = first_msg {
+        let remote_id = heads
+            .iter()
+            .find(|h| h.device_id != device_id)
+            .map(|h| h.device_id.clone())
+            .unwrap_or_default();
+
+        if !remote_id.is_empty() {
+            match scheduler.try_lock_peer(&remote_id) {
+                Some(guard) => {
+                    tracing::info!(peer_id = %remote_id, "responder locked peer for sync");
+                    Some(guard)
+                }
+                None => {
+                    tracing::info!(
+                        peer_id = %remote_id,
+                        "rejecting incoming sync: already syncing with this peer"
+                    );
+                    conn.send_json(&SyncMessage::Error {
+                        message: "peer is busy with another sync session".into(),
+                    })
+                    .await?;
+                    let _ = conn.close().await;
+                    return Ok(());
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // ── Process first message ─────────────────────────────────────────────
+    let response = orch.handle_message(first_msg).await?;
+    if let Some(resp) = response {
+        conn.send_json(&resp).await?;
+    }
+
+    // ── Message loop (same structure as initiator) ────────────────────────
+    while !orch.is_terminal() {
+        let incoming: SyncMessage = conn.recv_json().await?;
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            orch.handle_message(incoming),
+        )
+        .await
+        .map_err(|_| AppError::InvalidOperation("handle_message timed out after 60s".into()))??;
+
+        match response {
+            Some(resp) => {
+                conn.send_json(&resp).await?;
+            }
+            None => {
+                let state = &orch.session().state;
+                if matches!(state, SyncState::Failed(_) | SyncState::ResetRequired) {
+                    tracing::warn!(state = ?state, "responder sync ended in non-complete state");
+                    break;
+                }
+            }
+        }
+    }
+
+    let session = orch.session();
+    tracing::info!(
+        ops_rx = session.ops_received,
+        ops_tx = session.ops_sent,
+        state = ?session.state,
+        "responder sync session finished"
+    );
+
+    if let Err(e) = conn.close().await {
+        tracing::debug!("failed to close responder connection: {e}");
     }
 
     Ok(())

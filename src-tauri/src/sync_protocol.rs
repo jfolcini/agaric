@@ -2347,4 +2347,96 @@ mod tests {
 
         materializer.shutdown();
     }
+
+    // ======================================================================
+    // #615 — Responder-mode: orchestrator handles HeadExchange in Idle state
+    // ======================================================================
+
+    /// Responder mode: receiving HeadExchange in Idle state (without calling
+    /// `start()`) should work — the orchestrator computes ops to send and
+    /// returns an OpBatch.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orchestrator_responder_handles_head_exchange_in_idle() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        // Add some local ops so the responder has data to offer
+        for i in 1..=2 {
+            append_local_op_at(
+                &pool,
+                "responder-dev",
+                test_create_payload(&format!("BLK{i}")),
+                FIXED_TS.into(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let mut orch = SyncOrchestrator::new(pool, "responder-dev".into(), materializer.clone());
+
+        // Do NOT call start() — this is responder mode.
+        // Initiator has no ops → sends empty heads.
+        let response = orch
+            .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+            .await
+            .unwrap();
+
+        // Should respond with OpBatch containing our local ops
+        assert!(response.is_some(), "responder should send OpBatch");
+        match response.unwrap() {
+            SyncMessage::OpBatch { ops, is_last } => {
+                assert!(is_last, "single batch should be marked last");
+                assert_eq!(ops.len(), 2, "should send 2 local ops to initiator");
+            }
+            other => panic!("expected OpBatch, got {other:?}"),
+        }
+
+        // State should be StreamingOps (waiting for initiator's SyncComplete)
+        assert_eq!(orch.session().state, SyncState::StreamingOps);
+        assert!(!orch.is_terminal());
+
+        materializer.shutdown();
+    }
+
+    /// Responder mode full flow: receive HeadExchange → send OpBatch →
+    /// receive SyncComplete → done, without ever calling `start()`.
+    ///
+    /// The protocol is one-directional per session: the responder sends
+    /// its ops to the initiator (via OpBatch), and the initiator replies
+    /// with SyncComplete.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orchestrator_responder_full_flow() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let mut orch = SyncOrchestrator::new(pool, "responder-dev".into(), materializer.clone());
+
+        // 1. Receive HeadExchange from initiator (empty) → respond with OpBatch
+        let resp1 = orch
+            .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+            .await
+            .unwrap();
+        assert!(
+            matches!(resp1, Some(SyncMessage::OpBatch { .. })),
+            "first response should be OpBatch"
+        );
+        assert_eq!(orch.session().state, SyncState::StreamingOps);
+
+        // 2. Receive SyncComplete from initiator → record sync → done
+        let resp2 = orch
+            .handle_message(SyncMessage::SyncComplete {
+                last_hash: String::new(),
+            })
+            .await
+            .unwrap();
+        assert!(
+            resp2.is_none(),
+            "SyncComplete should not produce a response"
+        );
+
+        assert!(orch.is_complete());
+        assert!(orch.is_terminal());
+
+        materializer.shutdown();
+    }
 }

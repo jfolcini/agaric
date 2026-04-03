@@ -33,6 +33,22 @@ REVIEW-LATER: 7 → 14 items (7 existing + 7 new sync findings).
 Rust: 1446 tests pass (1443 + 4 new - 1 updated). Commit: `a8d022c`.
 REVIEW-LATER: 14 → 9 items (resolved #614, #616, #617, #618, #619).
 
+## Session 76 — 2026-04-03 — Responder-Mode Sync (#615)
+
+### Inbound sync connections now handled
+1 item resolved: responder-mode sync sessions.
+
+Built by 1 subagent. Orchestrator already handled HeadExchange in Idle state — no protocol changes needed.
+
+| File | Change |
+|------|--------|
+| `sync_daemon.rs` | #615: `handle_incoming_sync()` — spawned from SyncServer callback. Creates orchestrator, receives initiator's HeadExchange, per-peer lock, message loop with 60s timeout. |
+| `sync_protocol.rs` | 2 new tests (responder in Idle, full responder flow). |
+
+### Stats
+- Rust: 1448 tests pass (1446 + 2 new)
+- Commit: `1b98ddd`
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command
