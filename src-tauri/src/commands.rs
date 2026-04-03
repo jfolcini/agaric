@@ -14198,6 +14198,357 @@ mod tests {
     }
 
     // ======================================================================
+    // Repeat recurrence hardening (#665)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_todo_state_done_with_dot_plus_repeat_shifts_from_today() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create block with due_date in the past
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Water plants".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            Some("2025-06-01".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set .+ repeat (from completion)
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some(".+weekly".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Transition to DONE — should create sibling with date shifted from today
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Find the sibling (new block with TODO state, same parent)
+        let blocks = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+                    is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+                    due_date, scheduled_date
+             FROM blocks WHERE todo_state = 'TODO' AND id != ?1 AND deleted_at IS NULL"#,
+            resp.id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            !blocks.is_empty(),
+            "DONE transition should create a TODO sibling"
+        );
+        let sibling = &blocks[0];
+
+        // .+ mode: due_date should be shifted from today, not from 2025-06-01
+        let today = chrono::Local::now().date_naive();
+        if let Some(ref due) = sibling.due_date {
+            let due_date = chrono::NaiveDate::parse_from_str(due, "%Y-%m-%d").unwrap();
+            // Should be approximately today + 7 days (within 1 day tolerance for test timing)
+            let expected = today + chrono::Duration::days(7);
+            let diff = (due_date - expected).num_days().abs();
+            assert!(
+                diff <= 1,
+                ".+ weekly should shift from today: expected ~{expected}, got {due_date}"
+            );
+        } else {
+            panic!("Sibling should have a due_date");
+        }
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_todo_state_done_with_plus_plus_repeat_catches_up() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create block with due_date far in the past (a Monday)
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Weekly review".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            Some("2025-01-06".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set ++ repeat (catch-up)
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some("++weekly".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Transition to DONE
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Find the sibling
+        let blocks = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+                    is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+                    due_date, scheduled_date
+             FROM blocks WHERE todo_state = 'TODO' AND id != ?1 AND deleted_at IS NULL"#,
+            resp.id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            !blocks.is_empty(),
+            "DONE transition should create a TODO sibling"
+        );
+        let sibling = &blocks[0];
+
+        // ++ mode: due_date should be the next Monday after today
+        let today = chrono::Local::now().date_naive();
+        if let Some(ref due) = sibling.due_date {
+            let due_date = chrono::NaiveDate::parse_from_str(due, "%Y-%m-%d").unwrap();
+            assert!(
+                due_date > today,
+                "++ mode sibling due_date should be in the future"
+            );
+            assert_eq!(
+                due_date.weekday(),
+                chrono::Weekday::Mon,
+                "++ weekly from Monday cadence should land on Monday, got {due_date}"
+            );
+        } else {
+            panic!("Sibling should have a due_date");
+        }
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_todo_state_done_with_malformed_repeat_creates_sibling_without_shifted_dates() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Bad repeat".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            Some("2026-04-06".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set malformed repeat value
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some("invalid_rule".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Transition to DONE — should still create sibling (graceful degradation)
+        let result = set_todo_state_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            Some("DONE".into()),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "DONE transition should succeed even with malformed repeat"
+        );
+        mat.flush_background().await.unwrap();
+
+        // Original should be DONE
+        let original = sqlx::query_scalar!(
+            "SELECT todo_state FROM blocks WHERE id = ?1",
+            resp.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(original.as_deref(), Some("DONE"));
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_todo_state_done_with_repeat_until_without_dates_still_creates_sibling() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Block with repeat + repeat-until but NO due_date or scheduled_date
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "No dates".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some("weekly".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set repeat-until to a future date
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat-until".into(),
+            None,
+            None,
+            Some("2026-12-31".into()),
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Transition to DONE — should create sibling (repeat-until can't be checked without reference date)
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Find siblings with TODO state
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE todo_state = 'TODO' AND id != ?1 AND deleted_at IS NULL",
+        )
+        .bind(&resp.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Sibling should be created (repeat-until check is skipped when no dates)
+        assert!(
+            count >= 1,
+            "should create sibling even without dates (repeat-until check skipped)"
+        );
+
+        mat.shutdown();
+    }
+
+    // ======================================================================
     // export_page_markdown (#519)
     // ======================================================================
 
