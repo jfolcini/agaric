@@ -251,8 +251,8 @@ export async function setProperty(params: {
   valueNum?: number | null
   valueDate?: string | null
   valueRef?: string | null
-}): Promise<void> {
-  await invoke('set_property', {
+}): Promise<BlockRow> {
+  return invoke('set_property', {
     blockId: params.blockId,
     key: params.key,
     valueText: params.valueText ?? null,

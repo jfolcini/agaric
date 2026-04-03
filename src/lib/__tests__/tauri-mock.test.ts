@@ -122,6 +122,11 @@ describe('get_block', () => {
       deleted_at: null,
       archived_at: null,
       is_conflict: false,
+      conflict_type: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
     })
   })
 

@@ -70,6 +70,29 @@ Deep review of db.rs, op_log.rs, pagination.rs, soft_delete.rs, backlink_query.r
 - Commit: `ec6669b`
 - REVIEW-LATER: 1 item (#522 iOS) — #626, #627 added and resolved in same session
 
+### Phase 2: Frontend lib review (tauri.ts + tree-utils + tauri-mock) + #628, #630 fixes
+
+Deep review of tauri.ts wrappers, tree-utils, tauri-mock.
+2 parallel reviewers (contract safety + correctness/test gaps) + 1 validator.
+
+**Review results:** 5 findings from wrapper reviewer, ~28 from tree-utils/mock reviewer. Validator downgraded all tauri.ts HIGH findings — setProperty void is intentional fire-and-forget, revertOps unknown is unused, listBacklinksGrouped pageId is semantically correct.
+
+**Confirmed items (#628-#630):**
+- #628 (S, MEDIUM): `setProperty` wrapper returns void — should return `BlockRow`
+- #629 (M, MEDIUM): 15 tauri.ts wrapper functions lack contract tests
+- #630 (S, MEDIUM): tauri-mock `makeBlock` missing 5 BlockRow fields
+
+| File | Change |
+|------|--------|
+| `tauri.ts` | #628: `setProperty` return type changed from `Promise<void>` to `Promise<BlockRow>`. |
+| `tauri-mock.ts` | #630: `makeBlock` + `create_block` handler now include all 13 BlockRow fields. |
+| `tauri-mock.test.ts` | Updated shape test to match new 13-field BlockRow. |
+| `REVIEW-LATER.md` | Added #628-#630, resolved #628, #630. 2 items remain (#522, #629). |
+
+- Frontend: 2332 tests pass (77 tauri + 118 mock unchanged)
+- Commit: `5e2b7eb`
+- REVIEW-LATER: 1 → 4 → 2 items (3 added, 2 resolved)
+
 ## Session 75 — 2026-04-03 — Phase 2: Sync Deep Review + New Findings
 
 ### Deep code review of sync subsystem generating 7 new REVIEW-LATER items
