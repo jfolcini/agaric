@@ -10,6 +10,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Settings2,
   Tag,
   Trash2,
   WifiOff,
@@ -24,6 +25,7 @@ import { JournalControls, JournalPage } from './components/JournalPage'
 import { KeyboardShortcuts } from './components/KeyboardShortcuts'
 import { PageBrowser } from './components/PageBrowser'
 import { PageEditor } from './components/PageEditor'
+import { PropertiesView } from './components/PropertiesView'
 import { SearchPanel } from './components/SearchPanel'
 import { StatusPanel } from './components/StatusPanel'
 import { TagFilterPanel } from './components/TagFilterPanel'
@@ -65,6 +67,7 @@ const NAV_ITEMS: { id: Exclude<View, 'page-editor'>; icon: React.ElementType; la
     { id: 'search', icon: Search, labelKey: 'sidebar.search' },
     { id: 'pages', icon: FileText, labelKey: 'sidebar.pages' },
     { id: 'tags', icon: Tag, labelKey: 'sidebar.tags' },
+    { id: 'properties', icon: Settings2, labelKey: 'sidebar.properties' },
     { id: 'trash', icon: Trash2, labelKey: 'sidebar.trash' },
     { id: 'status', icon: Activity, labelKey: 'sidebar.status' },
     { id: 'conflicts', icon: GitMerge, labelKey: 'sidebar.conflicts' },
@@ -370,6 +373,7 @@ function App() {
               </div>
             )}
             {currentView === 'trash' && <TrashView />}
+            {currentView === 'properties' && <PropertiesView />}
             {currentView === 'status' && <StatusPanel />}
             {currentView === 'conflicts' && <ConflictList />}
             {currentView === 'history' && <HistoryView />}

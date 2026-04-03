@@ -366,6 +366,20 @@ const resources = {
       'property.deleteConfirmDesc': 'This will remove the property from the block.',
       'property.createDefFailed': 'Failed to create property definition',
 
+      // Properties view
+      'sidebar.properties': 'Properties',
+      'propertiesView.title': 'Property Definitions',
+      'propertiesView.search': 'Search properties...',
+      'propertiesView.empty': 'No property definitions yet',
+      'propertiesView.createKey': 'Property key',
+      'propertiesView.createType': 'Type',
+      'propertiesView.create': 'Create',
+      'propertiesView.deleteConfirm': 'Delete this property definition?',
+      'propertiesView.deleteDesc': 'Blocks using this property will keep their values, but the definition will be removed.',
+      'propertiesView.deleted': 'Property definition deleted',
+      'propertiesView.created': 'Property definition created',
+      'propertiesView.editOptions': 'Edit options',
+
       // Tags
       'tags.loadFailed': 'Failed to load tags',
       'tags.nameTooLong': 'Tag name must be under 100 characters',
