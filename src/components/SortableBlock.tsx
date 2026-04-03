@@ -28,8 +28,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
-import { listBlocks, listPropertyDefs, setProperty } from '../lib/tauri'
+import { formatRepeatLabel } from '../lib/repeat-utils'
 import type { BlockRow } from '../lib/tauri'
+import { listBlocks, listPropertyDefs, setProperty } from '../lib/tauri'
 import { cn } from '../lib/utils'
 import { BlockContextMenu } from './BlockContextMenu'
 import { EditableBlock } from './EditableBlock'
@@ -232,8 +233,12 @@ function SortableBlockInner({
           setIsRefProp(true)
           setSelectOptions(null)
           listBlocks({ blockType: 'page' })
-            .then((res) => { if (!stale) setRefPages(res.items) })
-            .catch(() => { if (!stale) setRefPages([]) })
+            .then((res) => {
+              if (!stale) setRefPages(res.items)
+            })
+            .catch(() => {
+              if (!stale) setRefPages([])
+            })
         } else {
           setSelectOptions(null)
           setIsRefProp(false)
@@ -244,7 +249,9 @@ function SortableBlockInner({
         setSelectOptions(null)
         setIsRefProp(false)
       })
-    return () => { stale = true }
+    return () => {
+      stale = true
+    }
   }, [editingProp])
 
   const openContextMenu = useCallback((x: number, y: number) => {
@@ -525,7 +532,7 @@ function SortableBlockInner({
               })}
             >
               <Repeat size={12} className="flex-shrink-0" />
-              {properties.find((p) => p.key === 'repeat')?.value}
+              {formatRepeatLabel(properties.find((p) => p.key === 'repeat')?.value ?? '')}
             </span>
           )}
 
@@ -536,7 +543,9 @@ function SortableBlockInner({
                 .filter((p) => p.key !== 'repeat')
                 .slice(0, 3)
                 .map((p) => {
-                  const displayValue = resolveBlockTitle ? (resolveBlockTitle(p.value) || p.value) : p.value
+                  const displayValue = resolveBlockTitle
+                    ? resolveBlockTitle(p.value) || p.value
+                    : p.value
                   return (
                     <PropertyChip
                       key={p.key}
@@ -612,7 +621,10 @@ function SortableBlockInner({
                     })
                     if (filtered.length === 0) {
                       return (
-                        <div className="px-2 py-1 text-sm text-muted-foreground" data-testid="ref-no-results">
+                        <div
+                          className="px-2 py-1 text-sm text-muted-foreground"
+                          data-testid="ref-no-results"
+                        >
                           {t('block.noPagesFound')}
                         </div>
                       )

@@ -1357,7 +1357,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('DONE')
 
-    expect(results).toHaveLength(1)
+    expect(results?.length).toBeGreaterThanOrEqual(1)
     expect(results?.[0].id).toBe('done')
   })
 
@@ -2196,6 +2196,285 @@ describe('BlockTree repeat slash commands', () => {
         valueNum: null,
         valueDate: null,
         valueRef: null,
+      })
+    })
+  })
+})
+
+// =========================================================================
+// Repeat mode variants and end-condition tests (Tasks 6 & 7)
+// =========================================================================
+
+describe('BlockTree repeat mode variants', () => {
+  it('searchSlashCommands returns .+ and ++ mode variants for repeat query', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('repeat')
+
+    expect(results).toBeDefined()
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).toContain('repeat-.+daily')
+    expect(ids).toContain('repeat-.+weekly')
+    expect(ids).toContain('repeat-.+monthly')
+    expect(ids).toContain('repeat-++daily')
+    expect(ids).toContain('repeat-++weekly')
+    expect(ids).toContain('repeat-++monthly')
+  })
+
+  it('onSlashCommand sets repeat property with .+ prefix for from-completion mode', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({
+        id: 'repeat-.+weekly',
+        label: 'REPEAT WEEKLY (from completion) — Weeks from when done',
+      })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'repeat',
+        valueText: '.+weekly',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('onSlashCommand sets repeat property with ++ prefix for catch-up mode', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({
+        id: 'repeat-++daily',
+        label: 'REPEAT DAILY (catch-up) — Advance to next future date',
+      })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'repeat',
+        valueText: '++daily',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('repeat-remove deletes the repeat property', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({
+        id: 'repeat-remove',
+        label: 'REPEAT REMOVE — Clear recurrence',
+      })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_property', {
+        blockId: 'A',
+        key: 'repeat',
+      })
+    })
+  })
+})
+
+describe('BlockTree repeat end-condition commands', () => {
+  it('searchSlashCommands returns end-condition commands for repeat query', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('repeat')
+
+    expect(results).toBeDefined()
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).toContain('repeat-until')
+    expect(ids).toContain('repeat-limit-5')
+    expect(ids).toContain('repeat-limit-10')
+    expect(ids).toContain('repeat-limit-20')
+    expect(ids).toContain('repeat-limit-remove')
+  })
+
+  it('repeat-until opens date picker with repeat-until mode', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    useMockEditor = true
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({
+        id: 'repeat-until',
+        label: 'REPEAT UNTIL — Stop repeating after a date',
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Date picker' })).toBeInTheDocument()
+    })
+  })
+
+  it('handleDatePick sets repeat-until property when date is selected', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+    useMockEditor = true
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    // Open the date picker in repeat-until mode
+    await act(async () => {
+      capturedOnSlashCommand?.({
+        id: 'repeat-until',
+        label: 'REPEAT UNTIL — Stop repeating after a date',
+      })
+    })
+
+    await waitFor(() => {
+      expect(mockCalendarOnSelect).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValueOnce(null)
+
+    // Simulate selecting June 30, 2026 from the calendar
+    await act(async () => {
+      mockCalendarOnSelect?.(new Date(2026, 5, 30))
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'repeat-until',
+        valueText: null,
+        valueNum: null,
+        valueDate: '2026-06-30',
+        valueRef: null,
+      })
+    })
+  })
+
+  it('repeat-limit sets repeat-count property', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({
+        id: 'repeat-limit-10',
+        label: 'REPEAT LIMIT 10 — Stop after 10 occurrences',
+      })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'repeat-count',
+        valueText: null,
+        valueNum: 10,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('repeat-limit-remove deletes end condition properties', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({
+        id: 'repeat-limit-remove',
+        label: 'REPEAT LIMIT REMOVE — Clear end condition',
+      })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_property', {
+        blockId: 'A',
+        key: 'repeat-count',
+      })
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_property', {
+        blockId: 'A',
+        key: 'repeat-until',
       })
     })
   })

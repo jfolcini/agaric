@@ -31,9 +31,11 @@ import { useBlockResolve } from '../hooks/useBlockResolve'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import { announce } from '../lib/announcer'
 import { parseDate } from '../lib/parse-date'
+import { formatRepeatLabel } from '../lib/repeat-utils'
 import {
   batchResolve,
   createBlock,
+  deleteProperty,
   editBlock,
   getBatchProperties,
   getBlock,
@@ -49,8 +51,8 @@ import { getDragDescendants } from '../lib/tree-utils'
 import { cn } from '../lib/utils'
 import { useBlockStore } from '../stores/blocks'
 import { useResolveStore } from '../stores/resolve'
-import { EmptyState } from './EmptyState'
 import { BlockPropertyDrawer } from './BlockPropertyDrawer'
+import { EmptyState } from './EmptyState'
 import { HistorySheet } from './HistorySheet'
 import { SortableBlock } from './SortableBlock'
 import { Calendar } from './ui/calendar'
@@ -195,7 +197,10 @@ function TemplatePicker({
         if (buttons.length === 0) return
         const current = document.activeElement as HTMLElement
         const idx = Array.from(buttons).indexOf(current)
-        const next = e.key === 'ArrowDown' ? (idx + 1) % buttons.length : (idx - 1 + buttons.length) % buttons.length
+        const next =
+          e.key === 'ArrowDown'
+            ? (idx + 1) % buttons.length
+            : (idx - 1 + buttons.length) % buttons.length
         buttons[next]?.focus()
       }
     }
@@ -313,12 +318,16 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   // ── Date picker for /DATE and /DUE commands ────────────────────────
   const [datePickerOpen, setDatePickerOpen] = useState(false)
-  const [datePickerMode, setDatePickerMode] = useState<'date' | 'due' | 'schedule'>('date')
+  const [datePickerMode, setDatePickerMode] = useState<
+    'date' | 'due' | 'schedule' | 'repeat-until'
+  >('date')
   const datePickerCursorPos = useRef<number | undefined>(undefined)
 
   // ── Template picker for /TEMPLATE command ──────────────────────────
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
-  const [templatePages, setTemplatePages] = useState<Array<{ id: string; content: string; preview: string | null }>>([])
+  const [templatePages, setTemplatePages] = useState<
+    Array<{ id: string; content: string; preview: string | null }>
+  >([])
 
   // ── Enter-creates-block refs ───────────────────────────────────────
   const justCreatedBlockIds = useRef(new Set<string>())
@@ -459,10 +468,21 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   /** Repeat commands — shown only when query matches (progressive disclosure). */
   const REPEAT_COMMANDS: PickerItem[] = useMemo(
     () => [
+      // Standard mode (shift from due date)
       { id: 'repeat-daily', label: 'REPEAT DAILY — Every day' },
       { id: 'repeat-weekly', label: 'REPEAT WEEKLY — Every week' },
       { id: 'repeat-monthly', label: 'REPEAT MONTHLY — Every month' },
       { id: 'repeat-yearly', label: 'REPEAT YEARLY — Every year' },
+      // From-completion mode (.+ prefix)
+      { id: 'repeat-.+daily', label: 'REPEAT DAILY (from completion) — Days from when done' },
+      { id: 'repeat-.+weekly', label: 'REPEAT WEEKLY (from completion) — Weeks from when done' },
+      { id: 'repeat-.+monthly', label: 'REPEAT MONTHLY (from completion) — Months from when done' },
+      // Catch-up mode (++ prefix)
+      { id: 'repeat-++daily', label: 'REPEAT DAILY (catch-up) — Advance to next future date' },
+      { id: 'repeat-++weekly', label: 'REPEAT WEEKLY (catch-up) — Advance to next future date' },
+      { id: 'repeat-++monthly', label: 'REPEAT MONTHLY (catch-up) — Advance to next future date' },
+      // Remove
+      { id: 'repeat-remove', label: 'REPEAT REMOVE — Clear recurrence' },
     ],
     [],
   )
@@ -500,6 +520,18 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     [],
   )
 
+  /** Repeat end-condition commands — shown when query matches "repeat". */
+  const REPEAT_END_COMMANDS: PickerItem[] = useMemo(
+    () => [
+      { id: 'repeat-until', label: 'REPEAT UNTIL — Stop repeating after a date' },
+      { id: 'repeat-limit-5', label: 'REPEAT LIMIT 5 — Stop after 5 occurrences' },
+      { id: 'repeat-limit-10', label: 'REPEAT LIMIT 10 — Stop after 10 occurrences' },
+      { id: 'repeat-limit-20', label: 'REPEAT LIMIT 20 — Stop after 20 occurrences' },
+      { id: 'repeat-limit-remove', label: 'REPEAT LIMIT REMOVE — Clear end condition' },
+    ],
+    [],
+  )
+
   const searchSlashCommands = useCallback(
     async (query: string): Promise<PickerItem[]> => {
       const q = query.toLowerCase()
@@ -508,6 +540,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       const priorityResults = PRIORITY_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       const headingResults = HEADING_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       const repeatResults = REPEAT_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
+      const repeatEndResults = REPEAT_END_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       const effortResults = EFFORT_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       const assigneeResults = ASSIGNEE_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       const locationResults = LOCATION_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
@@ -516,6 +549,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         ...priorityResults,
         ...headingResults,
         ...repeatResults,
+        ...repeatEndResults,
         ...effortResults,
         ...assigneeResults,
         ...locationResults,
@@ -526,6 +560,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       PRIORITY_COMMANDS,
       HEADING_COMMANDS,
       REPEAT_COMMANDS,
+      REPEAT_END_COMMANDS,
       EFFORT_COMMANDS,
       ASSIGNEE_COMMANDS,
       LOCATION_COMMANDS,
@@ -705,7 +740,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         return next
       })
     },
-    [collapsedIds, blocks, focusedBlockId, handleFlush, setFocused],
+    [collapsedIds, blocks, focusedBlockId, handleFlush, setFocused, setCollapsedIds],
   )
 
   // ── Navigate to a block link target ────────────────────────────────
@@ -932,12 +967,56 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         return
       }
 
+      // Repeat end-condition: until date
+      if (item.id === 'repeat-until') {
+        if (!focusedBlockId) return
+        datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
+        setDatePickerMode('repeat-until')
+        setDatePickerOpen(true)
+        return
+      }
+
+      // Repeat end-condition: limit
+      if (item.id.startsWith('repeat-limit-')) {
+        if (!focusedBlockId) return
+        const sub = item.id.replace('repeat-limit-', '')
+        if (sub === 'remove') {
+          try {
+            await deleteProperty(focusedBlockId, 'repeat-count')
+            await deleteProperty(focusedBlockId, 'repeat-until')
+            toast.success('Repeat end condition removed')
+          } catch {
+            toast.error('Failed to remove end condition')
+          }
+          return
+        }
+        const count = Number.parseInt(sub, 10)
+        if (!Number.isNaN(count)) {
+          try {
+            await setProperty({ blockId: focusedBlockId, key: 'repeat-count', valueNum: count })
+            toast.success(`Repeat limited to ${count} occurrences`)
+          } catch {
+            toast.error('Failed to set repeat limit')
+          }
+        }
+        return
+      }
+
       if (item.id.startsWith('repeat-')) {
         if (!focusedBlockId) return
         const value = item.id.replace('repeat-', '')
+        if (value === 'remove') {
+          try {
+            await deleteProperty(focusedBlockId, 'repeat')
+            toast.success(t('slash.repeatRemoved'))
+          } catch {
+            toast.error(t('slash.repeatRemoveFailed'))
+          }
+          return
+        }
         try {
           await setProperty({ blockId: focusedBlockId, key: 'repeat', valueText: value })
-          toast.success(t('slash.repeatSet', { value }))
+          toast.success(t('slash.repeatSet', { value: formatRepeatLabel(value) }))
         } catch {
           toast.error(t('slash.repeatFailed'))
         }
@@ -984,6 +1063,17 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           }))
         } catch {
           toast.error('Failed to set due date')
+        }
+        return
+      }
+
+      if (datePickerMode === 'repeat-until') {
+        if (!focusedBlockId) return
+        try {
+          await setProperty({ blockId: focusedBlockId, key: 'repeat-until', valueDate: dateStr })
+          toast.success(`Repeat until ${dateStr}`)
+        } catch {
+          toast.error('Failed to set repeat end date')
         }
         return
       }
