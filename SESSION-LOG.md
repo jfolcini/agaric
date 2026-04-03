@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 116 — 2026-04-03 — Properties Management View (#643)
+
+### Dedicated sidebar view for property definitions
+
+1 build subagent.
+
+| File | Change |
+|------|--------|
+| `PropertiesView.tsx` (new) | #643: Full CRUD view — list definitions with type badges, search filter, create form (key + type dropdown), delete with confirmation, edit options for select types. |
+| `PropertiesView.test.tsx` (new) | 10 tests (render, loading, list, empty, create, delete dialog, confirm delete, search, edit options, axe a11y). |
+| `App.tsx` | #643: Added "Properties" to sidebar nav (Settings2 icon) + routing. |
+| `navigation.ts` | #643: Added `'properties'` to View type. |
+| `i18n.ts` | 13 new keys (sidebar.properties, propertiesView.*). |
+
+### Stats
+- Frontend: ~2521 tests pass (10 new)
+- Commit: `2ab6eb7`
+- REVIEW-LATER: 15 → 14 items (#643 resolved)
+
 ## Session 115 — 2026-04-03 — Block Property Drawer + Triggers (#645 sub-tasks 8-11)
 
 ### Full property CRUD drawer with 3 access methods
