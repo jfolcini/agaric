@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 98 — 2026-04-03 — Repeat Presets + Scheduled Date Filter (#640, #642)
+
+### /repeat presets + scheduledDate agenda dimension
+
+2 parallel build subagents + 1 review subagent. Orchestrator fixed Biome formatting (3 files).
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | #640: `REPEAT_COMMANDS` array (daily/weekly/monthly/yearly) with progressive disclosure matching /priority pattern. Handler extracts value and calls `setProperty`. Removed 'repeat' from empty-property group. |
+| `AgendaFilterBuilder.tsx` | #642: `scheduledDate` dimension added to type, DIMENSION_OPTIONS (6 choices), ALL_DIMENSIONS. |
+| `JournalPage.tsx` | #642: `scheduledDate` filter execution branch mirroring dueDate — Today, This week, Overdue, Next 7/14/30 days with `column:scheduled_date` source. |
+| `i18n.ts` | #640: `slash.repeatSet`, `slash.repeatFailed`. #642: `agendaFilter.scheduledDate`. |
+| `BlockTree.test.tsx` | #640: 8 new tests (3 search filtering + 4 handler + 1 mock fix). |
+| `AgendaFilterBuilder.test.tsx` | #642: 1 new test (6 scheduledDate choices). |
+| `JournalPage.test.tsx` | #642: 1 new test (scheduledDate Today filter). |
+
+### Stats
+- Frontend: 2430 tests pass (2420 + 10 new)
+- Commit: `f0cad49`
+- REVIEW-LATER: 8 → 6 items (#640, #642 resolved)
+
 ## Session 97 — 2026-04-03 — Zoom-in to Block with Breadcrumb (#637)
 
 ### Block zoom-in with breadcrumb navigation
