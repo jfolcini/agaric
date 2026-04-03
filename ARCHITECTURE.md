@@ -28,6 +28,7 @@ Anytype, faster than Logseq.
 16. [Query System](#16-query-system)
 17. [Android Platform](#17-android-platform)
 18. [Sync & Networking](#18-sync--networking)
+19. [Planned Features](#19-planned-features)
 
 ---
 
@@ -186,11 +187,14 @@ limited to PRAGMAs, FTS5 operations, and dynamic SQL (~11 queries).
 
 ```
 blocks              — id (ULID PK), block_type, content, parent_id, position,
-                      deleted_at, archived_at, is_conflict, conflict_source
+                      deleted_at, archived_at, is_conflict, conflict_source,
+                      todo_state, priority, due_date, scheduled_date
 block_tags          — (block_id, tag_id) composite PK
 block_properties    — (block_id, key) composite PK, value_text/value_num/value_date/value_ref
 block_links         — (source_id, target_id) composite PK — materializer-maintained cache
 attachments         — id (ULID PK), block_id, mime_type, filename, size_bytes, fs_path
+property_definitions — key PK, value_type (text/number/date/select), options (JSON)
+page_aliases        — (page_id, alias) composite PK — case-insensitive alternative names
 ```
 
 **Op log tables:**
@@ -341,7 +345,7 @@ task via spawned sub-tasks.
 |-------|----------------|-------------------|
 | `tags_cache` | create/delete/restore tag block, add/remove tag | 5s |
 | `pages_cache` | create/delete/restore/edit page block | 5s |
-| `agenda_cache` | set/delete property (value_date), add/remove tag (date pattern) | 2s |
+| `agenda_cache` | set/delete property (value_date), set due/scheduled date, add/remove tag (date pattern) | 2s |
 | `block_links` | edit_block — regex parse `[[ULID]]`, diff against prior index | immediate |
 
 **`tags_cache` rebuild query:** Uses `LEFT JOIN` from `blocks` to capture zero-usage tags (newly
@@ -482,7 +486,8 @@ overhead elsewhere.
 | ExternalLink | mark extension | `[text](url)` with autolink and paste detection |
 | AtTagPicker | suggestion | `@` triggers fuzzy search of `tags_cache` → inserts `tag_ref` node |
 | BlockLinkPicker | suggestion | `[[` triggers fuzzy search of `pages_cache` → inserts `block_link` node, "Create new" option |
-| SlashCommand | suggestion | `/` triggers command menu (TODO, DOING, DONE, DATE, PRIORITY HIGH/MED/LOW) |
+| SlashCommand | suggestion | `/` triggers 23 commands: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT, ASSIGNEE, LOCATION, REPEAT, TEMPLATE + PRIORITY 1/2/3 + H1-H6 |
+| CheckboxInputRule | input rule | `- [ ]` / `- [x]` → TODO/DONE state |
 | CodeBlockLowlight | node | Fenced code blocks with syntax highlighting |
 
 Pickers intercept keystrokes and open autocomplete popups. On selection, they insert the
@@ -567,6 +572,20 @@ Off-screen blocks render as height-preserving placeholder `<div>` elements. An
 `IntersectionObserver` (200px rootMargin) manages the visible window. Since TipTap only mounts for
 the focused block, there is zero per-block overhead for off-screen blocks.
 
+### Zoom-in (focus mode)
+
+BlockTree supports zooming into a block to show only it and its descendants. A breadcrumb trail
+shows the ancestor path with clickable navigation. Home button exits zoom. State is ephemeral
+(not persisted across page reloads).
+
+### Recurrence
+
+When a block with a `repeat` property (e.g. `daily`, `weekly`, `monthly`, `+Nd`, `+Nw`, `+Nm`)
+transitions to DONE via `set_todo_state`, the backend automatically creates a sibling block with
+the repeat rule copied and `due_date`/`scheduled_date` shifted forward by the interval. The
+original block stays DONE. The `shift_date` function in `commands.rs` handles date arithmetic
+with month-end clamping.
+
 ---
 
 ## 8. Frontend Architecture
@@ -638,6 +657,28 @@ Four modes, each rendering day sections with their own BlockTree:
 
 Features: floating date picker (react-day-picker), keyboard shortcuts (Alt+Left/Right for
 prev/next, Alt+T for today), scroll-to-date support.
+
+**Auto-create today's journal:** In daily mode, when the current date is today and no page exists,
+JournalPage auto-creates a page block. If a journal template is configured (a page with
+`journal-template=true` property), its children are copied as the initial structure.
+
+**Templates:** Pages marked with `template=true` property serve as templates. The `/template`
+slash command opens a picker to select and insert a template's block subtree. `template-utils.ts`
+provides `loadTemplatePages()`, `loadJournalTemplate()`, and `insertTemplateBlocks()`.
+
+**Page aliases:** Pages can have multiple alternative names via the `page_aliases` table.
+`resolve_page_by_alias` enables case-insensitive lookup by any alias. PageHeader UI shows alias
+badges with add/remove.
+
+**Unlinked references:** `UnlinkedReferences` component shows blocks that mention a page's title
+as plain text without an explicit `[[ULID]]` link. Grouped by source page with a "Link it" button
+to convert mentions into proper block links. Cursor-paginated.
+
+**DonePanel:** Shows blocks completed on a given date by querying `completed_at` property. Grouped
+by source page, cursor-paginated, rendered alongside the agenda in daily view.
+
+**Export:** `export_page_markdown` command produces a Markdown file with resolved `#[ULID]` → tag
+names, `[[ULID]]` → page titles, and YAML frontmatter for page properties.
 
 ### Drag and drop
 
@@ -915,6 +956,13 @@ matching. Keyset-paginated on `block_id ASC`. Excludes soft-deleted and conflict
 `value_ref`. The query API supports text, numeric, and date filtering via `CompareOp` (Eq, Neq,
 Lt, Gt, Lte, Gte). Reference filtering is a planned extension.
 
+### Agenda filtering
+
+`AgendaFilterBuilder` provides 5 filter dimensions: `status` (TODO/DOING/DONE), `priority`
+(A/B/C), `dueDate` and `scheduledDate` (presets: Today, This week, Overdue, Next 7/14/30 days),
+and `tag` (free-text search). The `agenda_cache` table indexes blocks by date for efficient
+single-date and preset-range lookups.
+
 ### Backlinks
 
 `get_backlinks(blockId)` returns blocks whose content contains `[[blockId]]` tokens. The
@@ -1162,3 +1210,22 @@ On cache rebuild after sync, the materializer detects tag blocks with duplicate 
 (case-insensitive). Keeps the lexicographically smallest ULID as canonical. Emits `edit_block`
 ops to rewrite `#[loser-ULID]` tokens in all referencing blocks. Background reconciliation,
 idempotent.
+
+---
+
+## 19. Planned Features
+
+See [REVIEW-LATER.md](REVIEW-LATER.md) for full details on all planned items. Key architectural
+extensions on the roadmap:
+
+| # | Feature | Architectural impact |
+|---|---------|---------------------|
+| 639 | Templates system — dynamic variables, CRUD UI | Extends template-utils.ts. No schema changes (templates are pages with properties). |
+| 641 | Scheduling semantics — due/scheduled drive agenda behavior | Agenda cache query changes. New semantic filtering in DuePanel/AgendaFilterBuilder. |
+| 644 | Repeating tasks — modes (.+, ++), end conditions, agenda projection | Extends `shift_date` in commands.rs. New properties (repeat-until, repeat-count, repeat-seq). Virtual agenda entries at query time. |
+| 645 | Block property UX — inline chips, click-to-edit, property drawer | Frontend only. Uses existing `getBatchProperties` API. |
+| 655 | Inline query blocks — `{{query ...}}` embedded live results | New TipTap node type + serializer extension. Query results in static divs (no editor conflict). |
+| 660 | Logseq/Markdown import | New backend command. Parser for Logseq `.md` format. UUID→ULID mapping. |
+
+All planned features use existing schema, op types, and materializer infrastructure. No
+architectural changes required unless explicitly noted.
