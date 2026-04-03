@@ -28,6 +28,15 @@ vi.mock('../EditableBlock', () => ({
   ),
 }))
 
+// Mock PropertyChip with a simple rendering
+vi.mock('../PropertyChip', () => ({
+  PropertyChip: (props: { propKey: string; value: string }) => (
+    <span data-testid={`property-chip-${props.propKey}`} className="property-chip">
+      {props.propKey}: {props.value}
+    </span>
+  ),
+}))
+
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
   Calendar: (props: { size: number; className?: string }) => (
@@ -928,7 +937,7 @@ describe('SortableBlock priority badge', () => {
     mockUseSortable.mockReturnValue(makeSortable())
   })
 
-  it('displays "1" for priority 1', () => {
+  it('displays "P1" for priority 1', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -939,11 +948,11 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    const badge = screen.getByRole('button', { name: /priority 1/i })
-    expect(badge).toHaveTextContent('1')
+    const badge = screen.getByRole('button', { name: /priority P1/i })
+    expect(badge).toHaveTextContent('P1')
   })
 
-  it('displays "2" for priority 2', () => {
+  it('displays "P2" for priority 2', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -954,11 +963,11 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    const badge = screen.getByRole('button', { name: /priority 2/i })
-    expect(badge).toHaveTextContent('2')
+    const badge = screen.getByRole('button', { name: /priority P2/i })
+    expect(badge).toHaveTextContent('P2')
   })
 
-  it('displays "3" for priority 3', () => {
+  it('displays "P3" for priority 3', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -969,8 +978,8 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    const badge = screen.getByRole('button', { name: /priority 3/i })
-    expect(badge).toHaveTextContent('3')
+    const badge = screen.getByRole('button', { name: /priority P3/i })
+    expect(badge).toHaveTextContent('P3')
   })
 
   it('does not render priority badge when no priority is set', () => {
@@ -1002,7 +1011,7 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    const badge = screen.getByRole('button', { name: /priority 1/i })
+    const badge = screen.getByRole('button', { name: /priority P1/i })
     await user.click(badge)
 
     expect(onTogglePriority).toHaveBeenCalledOnce()
@@ -1022,7 +1031,7 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    const badge = screen.getByRole('button', { name: /priority 1/i })
+    const badge = screen.getByRole('button', { name: /priority P1/i })
     // Should not throw
     await user.click(badge)
   })
@@ -1038,11 +1047,9 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    const badge = container.querySelector('.priority-badge > div')
-    expect(badge?.className).toContain('bg-red-100')
-    expect(badge?.className).toContain('text-red-700')
-    expect(badge?.className).toContain('ring-2')
-    expect(badge?.className).toContain('ring-red-400')
+    const badge = container.querySelector('.priority-badge > span')
+    expect(badge?.className).toContain('bg-red-500')
+    expect(badge?.className).toContain('text-white')
   })
 
   it('applies yellow styling for priority 2', () => {
@@ -1056,9 +1063,9 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    const badge = container.querySelector('.priority-badge > div')
-    expect(badge?.className).toContain('bg-yellow-100')
-    expect(badge?.className).toContain('text-yellow-700')
+    const badge = container.querySelector('.priority-badge > span')
+    expect(badge?.className).toContain('bg-yellow-500')
+    expect(badge?.className).toContain('text-white')
   })
 
   it('applies blue styling for priority 3', () => {
@@ -1072,11 +1079,9 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    const badge = container.querySelector('.priority-badge > div')
-    expect(badge?.className).toContain('bg-blue-100')
-    expect(badge?.className).toContain('text-blue-700')
-    expect(badge?.className).toContain('border-dashed')
-    expect(badge?.className).toContain('border-blue-400')
+    const badge = container.querySelector('.priority-badge > span')
+    expect(badge?.className).toContain('bg-blue-500')
+    expect(badge?.className).toContain('text-white')
   })
 
   it('does not render priority badge when priority is null (hidden)', () => {
@@ -1119,7 +1124,7 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: 'Priority 2. Click to cycle.' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Priority P2. Click to cycle.' })).toBeInTheDocument()
   })
 
   it('priority badge has correct aria-label for priority 1', () => {
@@ -1133,7 +1138,7 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: /Priority 1.*Click to cycle/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Priority P1.*Click to cycle/i })).toBeInTheDocument()
   })
 
   it('priority badge has correct aria-label for priority 3', () => {
@@ -1147,7 +1152,7 @@ describe('SortableBlock priority badge', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: /Priority 3.*Click to cycle/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Priority P3.*Click to cycle/i })).toBeInTheDocument()
   })
 
   it('priority badge has mt-1 for first-line alignment', () => {
@@ -1610,7 +1615,7 @@ describe('SortableBlock a11y enhancements', () => {
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
     const collapseBtn = screen.getByRole('button', { name: /collapse children/i })
     const marker = screen.getByRole('button', { name: /set as todo/i })
-    const badge = screen.getByRole('button', { name: /priority 1/i })
+    const badge = screen.getByRole('button', { name: /priority P1/i })
 
     for (const btn of [handle, deleteBtn, collapseBtn, marker, badge]) {
       expect(btn.className).toContain('active:scale-95')
@@ -2375,5 +2380,157 @@ describe('SortableBlock scheduled date chip', () => {
 
     expect(container.querySelector('.due-date-chip')).toBeInTheDocument()
     expect(container.querySelector('.scheduled-chip')).toBeInTheDocument()
+  })
+})
+
+// =========================================================================
+// Property chips tests
+// =========================================================================
+
+describe('SortableBlock property chips', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('renders property chips when properties are provided', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[
+          { key: 'effort', value: '2h' },
+          { key: 'assignee', value: 'Alice' },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('property-chip-effort')).toBeInTheDocument()
+    expect(screen.getByTestId('property-chip-assignee')).toBeInTheDocument()
+    expect(screen.getByText('effort: 2h')).toBeInTheDocument()
+    expect(screen.getByText('assignee: Alice')).toBeInTheDocument()
+  })
+
+  it('does not render property chips when properties is undefined', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    expect(container.querySelector('.property-chip')).not.toBeInTheDocument()
+  })
+
+  it('does not render property chips when properties is empty', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[]}
+      />,
+    )
+
+    expect(container.querySelector('.property-chip')).not.toBeInTheDocument()
+  })
+
+  it('shows at most 3 property chips', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[
+          { key: 'effort', value: '2h' },
+          { key: 'assignee', value: 'Alice' },
+          { key: 'location', value: 'Office' },
+          { key: 'repeat', value: 'weekly' },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('property-chip-effort')).toBeInTheDocument()
+    expect(screen.getByTestId('property-chip-assignee')).toBeInTheDocument()
+    expect(screen.getByTestId('property-chip-location')).toBeInTheDocument()
+    expect(screen.queryByTestId('property-chip-repeat')).not.toBeInTheDocument()
+  })
+
+  it('shows overflow "+N" indicator when more than 3 properties', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[
+          { key: 'effort', value: '2h' },
+          { key: 'assignee', value: 'Alice' },
+          { key: 'location', value: 'Office' },
+          { key: 'repeat', value: 'weekly' },
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('+1')).toBeInTheDocument()
+  })
+
+  it('shows correct overflow count for 5 properties', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[
+          { key: 'effort', value: '2h' },
+          { key: 'assignee', value: 'Alice' },
+          { key: 'location', value: 'Office' },
+          { key: 'repeat', value: 'weekly' },
+          { key: 'custom', value: 'test' },
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('+2')).toBeInTheDocument()
+  })
+
+  it('does not show overflow indicator when 3 or fewer properties', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[
+          { key: 'effort', value: '2h' },
+          { key: 'assignee', value: 'Alice' },
+        ]}
+      />,
+    )
+
+    expect(screen.queryByText(/^\+\d+$/)).not.toBeInTheDocument()
+  })
+
+  it('property chips are inside inline-controls', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'effort', value: '2h' }]}
+      />,
+    )
+
+    const inlineControls = container.querySelector('.inline-controls')
+    const chip = inlineControls?.querySelector('.property-chip')
+    expect(chip).toBeInTheDocument()
   })
 })

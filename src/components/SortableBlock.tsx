@@ -29,6 +29,7 @@ import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { cn } from '../lib/utils'
 import { BlockContextMenu } from './BlockContextMenu'
 import { EditableBlock } from './EditableBlock'
+import { PropertyChip } from './PropertyChip'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 
 /** Pixels of left padding per depth level. */
@@ -38,7 +39,7 @@ export const INDENT_WIDTH = 24
 const GUTTER_WIDTH = 'w-[44px]'
 
 /** Display labels for stored priority values. */
-const PRIORITY_DISPLAY: Record<string, string> = { '1': '1', '2': '2', '3': '3' }
+const PRIORITY_DISPLAY: Record<string, string> = { '1': 'P1', '2': 'P2', '3': 'P3' }
 
 /** Minimum touch hold duration (ms) to trigger the context menu. */
 const LONG_PRESS_DELAY = 400
@@ -120,6 +121,8 @@ interface SortableBlockProps {
   dueDate?: string | null
   /** Scheduled date in YYYY-MM-DD format, or null/undefined if not set. */
   scheduledDate?: string | null
+  /** Custom properties to display as inline chips. */
+  properties?: Array<{ key: string; value: string }>
   /** Move block up among siblings. */
   onMoveUp?: (blockId: string) => void
   /** Move block down among siblings. */
@@ -155,6 +158,7 @@ function SortableBlockInner({
   onTogglePriority,
   dueDate,
   scheduledDate,
+  properties,
   onMoveUp,
   onMoveDown,
   onMerge,
@@ -400,19 +404,16 @@ function SortableBlockInner({
                     onTogglePriority?.(blockId)
                   }}
                 >
-                  <div
+                  <span
                     className={cn(
-                      'w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold',
-                      priority === '1' &&
-                        'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 ring-2 ring-red-400 dark:ring-red-500',
-                      priority === '2' &&
-                        'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
-                      priority === '3' &&
-                        'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-dashed border-blue-400 dark:border-blue-500',
+                      'inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold',
+                      priority === '1' && 'bg-red-500 text-white',
+                      priority === '2' && 'bg-yellow-500 text-white',
+                      priority === '3' && 'bg-blue-500 text-white',
                     )}
                   >
                     {PRIORITY_DISPLAY[priority]}
-                  </div>
+                  </span>
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={4}>
@@ -449,6 +450,20 @@ function SortableBlockInner({
               <Calendar size={14} className="flex-shrink-0" />
               {formatCompactDate(scheduledDate)}
             </span>
+          )}
+
+          {/* Custom property chips — up to 3 shown */}
+          {properties && properties.length > 0 && (
+            <>
+              {properties.slice(0, 3).map((p) => (
+                <PropertyChip key={p.key} propKey={p.key} value={p.value} />
+              ))}
+              {properties.length > 3 && (
+                <span className="mt-1 text-[10px] text-muted-foreground select-none">
+                  +{properties.length - 3}
+                </span>
+              )}
+            </>
           )}
         </div>
 
