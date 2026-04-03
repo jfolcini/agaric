@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 119 — 2026-04-03 — Completed Date Agenda Filter (#642 partial)
+
+### completedDate dimension with past-oriented presets
+
+1 build subagent.
+
+| File | Change |
+|------|--------|
+| `AgendaFilterBuilder.tsx` | #642: `completedDate` dimension — type, DIMENSION_OPTIONS (Today, This week, Last 7/30 days), ALL_DIMENSIONS. |
+| `JournalPage.tsx` | #642: `completedDate` filter execution — `queryByProperty({ key: 'completed_at', valueDate })` per day in range. |
+| `AgendaFilterBuilder.test.tsx` | 3 new tests (dimension visible, past-oriented choices, no future presets). |
+| `JournalPage.test.tsx` | 1 new test (Today filter queries completed_at). |
+| `i18n.ts` | 1 new key (agendaFilter.completedDate). |
+
+### Stats
+- Frontend: ~2525 tests pass (4 new)
+- Commit: `66d881b`
+
 ## Session 118 — 2026-04-03 — Configurable Task Cycle + Template Warning (#658, #649-T3)
 
 ### localStorage task cycle + duplicate journal template warning
