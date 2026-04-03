@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 105 — 2026-04-03 — Collapse Persistence + Search View UX (#652, #661)
+
+### Collapse state persisted + Search panel improvements
+
+1 orchestrator (collapse) + 1 build subagent (search). Non-overlapping files.
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | #652: Collapse state persisted in localStorage. Lazy init from stored JSON, write on toggle. Graceful fallback. |
+| `BlockTree.test.tsx` | #652: Added `localStorage.removeItem('collapsed_ids')` to beforeEach. |
+| `SearchPanel.tsx` | #661: Auto-focus input on mount (S-1), parent page breadcrumbs via batchResolve (S-2), 3-char minimum hint (S-4), root block error toast (S-10), line-clamp-2 truncation (S-9), role=list/listitem (S-13). |
+| `SearchPanel.test.tsx` | #661: 3 new tests (auto-focus, min-chars hint, role=list). |
+| `i18n.ts` | #661: 2 new keys (search.minCharsHint, search.parentPage). |
+
+### Stats
+- Frontend: 2463 tests pass (2460 + 3 new)
+- Commit: `bfb80fe`
+- REVIEW-LATER: 21 → 19 items (#652, #661 resolved)
+
 ## Session 104 — 2026-04-03 — Pages View A11y + Property Table Validation (#647, #648)
 
 ### Accessibility, feedback, and validation fixes
