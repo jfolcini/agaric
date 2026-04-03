@@ -329,6 +329,10 @@ const resources = {
       'duePanel.filterDue': 'Due',
       'duePanel.filterScheduled': 'Scheduled',
 
+      // Search
+      'search.minCharsHint': 'Search requires at least 3 characters',
+      'search.parentPage': 'in: {{title}}',
+
       // Property table
       'property.invalidNumber': 'Invalid number value',
       'property.deleteConfirm': 'Delete this property?',

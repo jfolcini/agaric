@@ -211,6 +211,11 @@ const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  try {
+    localStorage.removeItem('collapsed_ids')
+  } catch {
+    // jsdom localStorage may not be available
+  }
   capturedSearchTags = undefined
   capturedSearchPages = undefined
   capturedOnCreatePage = undefined

@@ -714,4 +714,33 @@ describe('SearchPanel', () => {
       expect(resultBtn).not.toBeDisabled()
     })
   })
+
+  it('search input is auto-focused on mount', () => {
+    render(<SearchPanel />)
+    const input = screen.getByPlaceholderText('Search blocks...')
+    expect(input).toHaveFocus()
+  })
+
+  it('shows minimum character hint for short queries', () => {
+    render(<SearchPanel />)
+    const input = screen.getByPlaceholderText('Search blocks...')
+    fireEvent.change(input, { target: { value: 'ab' } })
+    expect(screen.getByText('Search requires at least 3 characters')).toBeInTheDocument()
+  })
+
+  it('results container has role=list', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makeSearchResult()],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<SearchPanel />)
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'test')
+
+    await waitFor(() => {
+      expect(screen.getByRole('list')).toBeInTheDocument()
+    })
+  })
 })

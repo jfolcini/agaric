@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
-import { getBlock, searchBlocks } from '../lib/tauri'
+import { batchResolve, getBlock, searchBlocks } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
 
@@ -38,6 +38,7 @@ export function SearchPanel(): React.ReactElement {
   const [typing, setTyping] = useState(false)
   const [loadingResultId, setLoadingResultId] = useState<string | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
   const executeSearch = useCallback(async (q: string, cursor?: string) => {
@@ -52,6 +53,25 @@ export function SearchPanel(): React.ReactElement {
       setNextCursor(resp.next_cursor)
       setHasMore(resp.has_more)
       setSearched(true)
+      const parentIds = resp.items
+        .map((b) => b.parent_id)
+        .filter((id): id is string => id != null)
+      if (parentIds.length > 0) {
+        try {
+          const resolved = await batchResolve(parentIds)
+          if (Array.isArray(resolved)) {
+            setPageTitles((prev) => {
+              const next = new Map(prev)
+              for (const r of resolved) {
+                next.set(r.id, r.title ?? 'Untitled')
+              }
+              return next
+            })
+          }
+        } catch {
+          // breadcrumbs are non-critical
+        }
+      }
     } catch {
       toast.error('Failed to search')
     }
@@ -96,6 +116,12 @@ export function SearchPanel(): React.ReactElement {
     }
   }, [])
 
+  // Auto-focus search input on mount
+  useEffect(() => {
+    const input = document.querySelector<HTMLInputElement>('[aria-label="Search blocks"]')
+    input?.focus()
+  }, [])
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (debounceRef.current) {
@@ -123,6 +149,8 @@ export function SearchPanel(): React.ReactElement {
           } catch {
             toast.error('Failed to load search results')
           }
+        } else {
+          toast.error('This block has no parent page')
         }
       } finally {
         setLoadingResultId(null)
@@ -141,6 +169,7 @@ export function SearchPanel(): React.ReactElement {
           placeholder="Search blocks..."
           aria-label="Search blocks"
           className="flex-1"
+          autoFocus
         />
         <Button type="submit" variant="outline" disabled={!query.trim()}>
           Search
@@ -152,6 +181,12 @@ export function SearchPanel(): React.ReactElement {
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
           <span className="font-medium">Note:</span> CJK search is limited in v1. Some results may
           be incomplete.
+        </div>
+      )}
+
+      {query.trim().length > 0 && query.trim().length < 3 && (
+        <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
+          Search requires at least 3 characters
         </div>
       )}
 
@@ -171,17 +206,18 @@ export function SearchPanel(): React.ReactElement {
         )}
 
         {results.length > 0 && (
-          <div className="search-results space-y-3">
+          <div className="search-results space-y-3" role="list">
             {results.map((block) => (
               <button
                 key={block.id}
                 type="button"
+                role="listitem"
                 className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 onClick={() => handleResultClick(block)}
                 disabled={loadingResultId === block.id}
               >
                 <div className="flex items-center gap-2">
-                  <span className="flex-1 text-sm whitespace-pre-wrap">
+                  <span className="flex-1 text-sm line-clamp-2">
                     {block.content || '(empty)'}
                   </span>
                   {loadingResultId === block.id && (
@@ -191,6 +227,11 @@ export function SearchPanel(): React.ReactElement {
                     <Badge variant="secondary">{block.block_type}</Badge>
                   )}
                 </div>
+                {block.parent_id && pageTitles.get(block.parent_id) && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    in: {pageTitles.get(block.parent_id)}
+                  </p>
+                )}
               </button>
             ))}
           </div>

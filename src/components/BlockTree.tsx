@@ -271,8 +271,27 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const moveDown = useBlockStore((s) => s.moveDown)
   const createBelow = useBlockStore((s) => s.createBelow)
 
-  // ── Collapse state ─────────────────────────────────────────────────
-  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
+  // ── Collapse state (persisted in localStorage) ────────────────────
+  const [collapsedIds, setCollapsedIdsRaw] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('collapsed_ids')
+      if (stored) return new Set(JSON.parse(stored) as string[])
+    } catch {
+      // localStorage unavailable
+    }
+    return new Set()
+  })
+  const setCollapsedIds = useCallback((updater: (prev: Set<string>) => Set<string>) => {
+    setCollapsedIdsRaw((prev) => {
+      const next = updater(prev)
+      try {
+        localStorage.setItem('collapsed_ids', JSON.stringify([...next]))
+      } catch {
+        // localStorage unavailable
+      }
+      return next
+    })
+  }, [])
 
   // ── Zoom state ─────────────────────────────────────────────────────
   const [zoomedBlockId, setZoomedBlockId] = useState<string | null>(null)
