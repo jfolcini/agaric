@@ -12,6 +12,8 @@ Work through REVIEW-LATER.md in manageable batches. If it's empty, generate new 
 
 Read REVIEW-LATER.md. Group 2-4 related items into a batch (same domain: e.g., all sync items, all test gaps, all Android items). Leave the rest for future batches — don't try to clear everything at once.
 
+Use **FEATURE-MAP.md** for feature discovery: when picking items to work on, consult the feature map to understand how the feature fits into the broader system (related commands, stores, components, database tables). This avoids blind spots during planning.
+
 ### 2. BUILD (parallel by default)
 
 Split the batch into **parallel subagents by domain/file-boundary** — e.g., one Rust subagent, one frontend subagent, or one per non-overlapping feature. Launch them all as background subagents simultaneously. Don't wait for one to finish before launching the next.
@@ -46,12 +48,24 @@ This is non-negotiable — no code ships without tests.
 
 **Don't wait for all builds to finish.** As each build subagent completes, immediately launch its review subagent while remaining builds continue. If multiple builds finish close together, launch all their review subagents in parallel.
 
-No self-reviews — the reviewer must be a different subagent than the builder. Reviewers check:
+No self-reviews — the reviewer must be a different subagent than the builder.
 
-- **Correctness:** Does the fix actually address the REVIEW-LATER item?
-- **Test coverage:** Are all branches covered? Missing edge cases?
-- **UX impact:** If visual changes were made, use chrome-browser MCP to take a screenshot of http://localhost:5173 and verify. Start Vite with `npm run dev` if needed.
-- **Conventions:** Does the code follow patterns in AGENTS.md (architectural invariants, code style, testing conventions)?
+**Launch two review dimensions in parallel** when a change has both code and user-facing impact:
+
+- **Technical reviewer** checks:
+  - **Correctness:** Does the fix actually address the REVIEW-LATER item?
+  - **Test coverage:** Are all branches covered? Missing edge cases?
+  - **Conventions:** Does the code follow patterns in AGENTS.md (architectural invariants, code style, testing conventions)?
+  - **Architectural stability:** Does the change stay within existing abstractions? See AGENTS.md "Architectural Stability" section.
+
+- **UX reviewer** checks:
+  - **Discoverability:** Can the user find and use this feature without documentation?
+  - **Consistency:** Does the interaction pattern match existing similar features?
+  - **Mobile parity:** Does the feature work on touch devices?
+  - **Visual coherence:** If visual changes were made, use chrome-browser MCP to take a screenshot of http://localhost:5173 and verify. Start Vite with `npm run dev` if needed.
+  - **Edge cases:** Empty states, long values, truncation, keyboard navigation.
+
+For backend-only changes, the UX reviewer is unnecessary. For frontend changes with no user-facing impact (e.g., test-only), skip the UX reviewer too.
 
 If a reviewer makes fixes, they must run the relevant tests to verify.
 
@@ -69,6 +83,8 @@ Update SESSION-LOG.md with a summary of what was done (follow the existing forma
 
 In REVIEW-LATER.md: remove resolved items entirely — both the summary table row AND the detail section. Update the summary count at the top and the "Previously resolved" line. Never add "Resolved" sections.
 
+**Keep FEATURE-MAP.md in sync:** If the session added new commands, components, hooks, stores, database tables, or other user-facing features, update the relevant section of FEATURE-MAP.md. Also update the deferred features list (section 21) when REVIEW-LATER items are added or resolved.
+
 **Concurrent edits to REVIEW-LATER.md:** Other agents may be working on REVIEW-LATER.md at the same time (resolving items, adding new ones, updating counts). Before writing to the file, always re-read it first to get the latest content. Never cache or assume stale state. If you read the file, make edits in memory, and then write — re-read immediately before writing to avoid overwriting another agent's changes.
 
 ---
@@ -77,9 +93,12 @@ In REVIEW-LATER.md: remove resolved items entirely — both the summary table ro
 
 ### Step A: Deep review
 
-Pick one large feature area to review. Good candidates: sync (`sync_daemon.rs`, `sync_cert.rs`, `merge.rs`), materializer (`materializer.rs`, `cache.rs`, `fts.rs`), editor (`markdown-serializer.ts`, TipTap extensions, `BlockTree.tsx`), stores (`blocks.ts`, `navigation.ts`, `undo.ts`), or any area not recently reviewed in SESSION-LOG.md.
+Pick one large feature area to review using **FEATURE-MAP.md** for discovery. Good candidates: sync (section 6), materializer (section 4), editor (section 8), stores (section 7), property system (section 13), or any area not recently reviewed in SESSION-LOG.md. The properties system (#643, #645) is particularly worth reviewing — it's designed as the primary extension point and has many expandable surface areas.
 
-Launch 2-3 review subagents **in parallel**, each covering a different slice of the feature area (e.g., one for error handling, one for test gaps, one for performance). Don't assign the same files to multiple reviewers.
+Launch **parallel review subagents covering both technical and UX dimensions**:
+
+- **Technical subagents** (2-3): each covering a different slice of the feature area (e.g., error handling, test gaps, performance). Don't assign the same files to multiple reviewers.
+- **UX subagent** (1): reviews the user-facing surface of the feature — discoverability, interaction patterns, mobile parity, empty states, consistency with similar features. Looks at components, hooks, and user flows, not backend code.
 
 ### Step B: Cross-validate (pipelined with Step A)
 
