@@ -78,6 +78,20 @@ Built by 2 parallel subagents.
 - Rust: 1454 tests pass (1451 + 3 new)
 - Commit: `c06be99`
 
+## Session 79 — 2026-04-03 — Page Undo/Redo Buttons (#30)
+
+### Mobile parity: page-level undo/redo in header
+1 item resolved: page-level undo/redo buttons for touch devices.
+
+| File | Change |
+|------|--------|
+| `PageHeader.tsx` | #30: Undo2/Redo2 buttons next to title. Calls useUndoStore undo/redo, refreshes stores, toast feedback. |
+| `PageHeader.test.tsx` | 3 new tests (renders buttons, undo calls undoPageOp). |
+
+### Stats
+- Frontend: 82/82 test files, 2324 tests pass (2321 + 3 new)
+- Commit: `1229aa6`
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command

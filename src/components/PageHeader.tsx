@@ -5,7 +5,7 @@
  * and a tag badge row with an inline tag picker popover.
  */
 
-import { ArrowLeft, Plus, X } from 'lucide-react'
+import { ArrowLeft, Plus, Redo2, Undo2, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -14,7 +14,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useBlockTags } from '../hooks/useBlockTags'
-import { editBlock, getPageAliases, setPageAliases } from '../lib/tauri'
+import { editBlock, getBlock, getPageAliases, setPageAliases } from '../lib/tauri'
+import { useBlockStore } from '../stores/blocks'
 import { useNavigationStore } from '../stores/navigation'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
@@ -32,6 +33,56 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const [editableTitle, setEditableTitle] = useState(title)
   const [tagQuery, setTagQuery] = useState('')
   const [showTagPicker, setShowTagPicker] = useState(false)
+
+  // --- Page-level undo/redo ---
+  const canRedo = useUndoStore((state) => {
+    const pageState = state.pages.get(pageId)
+    return pageState != null && pageState.redoStack.length > 0
+  })
+
+  const handlePageUndo = useCallback(() => {
+    useUndoStore
+      .getState()
+      .undo(pageId)
+      .then(async (result) => {
+        if (result) {
+          toast('Undone', { duration: 1500 })
+          await useBlockStore.getState().load(pageId)
+          try {
+            const pageBlock = await getBlock(pageId)
+            if (pageBlock?.content) {
+              useNavigationStore.getState().replacePage(pageId, pageBlock.content)
+              useResolveStore.getState().set(pageId, pageBlock.content, false)
+            }
+          } catch {
+            // Page title refresh is best-effort
+          }
+        }
+      })
+      .catch(() => toast.error('Undo failed'))
+  }, [pageId])
+
+  const handlePageRedo = useCallback(() => {
+    useUndoStore
+      .getState()
+      .redo(pageId)
+      .then(async (result) => {
+        if (result) {
+          toast('Redone', { duration: 1500 })
+          await useBlockStore.getState().load(pageId)
+          try {
+            const pageBlock = await getBlock(pageId)
+            if (pageBlock?.content) {
+              useNavigationStore.getState().replacePage(pageId, pageBlock.content)
+              useResolveStore.getState().set(pageId, pageBlock.content, false)
+            }
+          } catch {
+            // Page title refresh is best-effort
+          }
+        }
+      })
+      .catch(() => toast.error('Redo failed'))
+  }, [pageId])
 
   // --- Alias state ---
   const [aliases, setAliases] = useState<string[]>([])
@@ -139,6 +190,26 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           onKeyDown={handleTitleKeyDown}
         >
           {title}
+        </div>
+        {/* Page-level undo / redo */}
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Undo last page action"
+            onClick={handlePageUndo}
+          >
+            <Undo2 size={14} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Redo last page action"
+            disabled={!canRedo}
+            onClick={handlePageRedo}
+          >
+            <Redo2 size={14} />
+          </Button>
         </div>
       </div>
 

@@ -32,6 +32,8 @@ vi.mock('lucide-react', () => ({
   ChevronDown: () => <svg data-testid="chevron-down" />,
   ChevronRight: () => <svg data-testid="chevron-right" />,
   Plus: () => <svg data-testid="plus-icon" />,
+  Redo2: () => <svg data-testid="redo2-icon" />,
+  Undo2: () => <svg data-testid="undo2-icon" />,
   X: () => <svg data-testid="x-icon" />,
 }))
 
@@ -597,6 +599,69 @@ describe('PageHeader alias display', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_page_aliases', {
         pageId: 'PAGE_1',
         aliases: ['alias-b'],
+      })
+    })
+  })
+})
+
+// ── Page-level undo / redo buttons ────────────────────────────────────────
+
+describe('PageHeader page-level undo/redo buttons', () => {
+  it('renders page undo button', () => {
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    const undoBtn = screen.getByRole('button', { name: /undo last page action/i })
+    expect(undoBtn).toBeInTheDocument()
+  })
+
+  it('renders page redo button', () => {
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    const redoBtn = screen.getByRole('button', { name: /redo last page action/i })
+    expect(redoBtn).toBeInTheDocument()
+  })
+
+  it('undo button calls undoPageOp', async () => {
+    const user = userEvent.setup()
+
+    // Set up invoke mock so undo_page_op returns a valid UndoResult
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'undo_page_op')
+        return {
+          reversed_op: { device_id: 'dev1', seq: 1 },
+          new_op_ref: { device_id: 'dev1', seq: 2 },
+          new_op_type: 'reverse',
+          is_redo: false,
+        }
+      if (cmd === 'get_block')
+        return {
+          id: 'PAGE_1',
+          block_type: 'page',
+          content: 'My Page',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+        }
+      return null
+    })
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    const undoBtn = screen.getByRole('button', { name: /undo last page action/i })
+    await user.click(undoBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('undo_page_op', {
+        pageId: 'PAGE_1',
+        undoDepth: 0,
       })
     })
   })
