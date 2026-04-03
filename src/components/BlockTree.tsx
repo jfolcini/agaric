@@ -186,6 +186,17 @@ function TemplatePicker({
         e.preventDefault()
         onClose()
       }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        const dialog = dialogRef.current
+        if (!dialog) return
+        const buttons = dialog.querySelectorAll<HTMLElement>('button')
+        if (buttons.length === 0) return
+        const current = document.activeElement as HTMLElement
+        const idx = Array.from(buttons).indexOf(current)
+        const next = e.key === 'ArrowDown' ? (idx + 1) % buttons.length : (idx - 1 + buttons.length) % buttons.length
+        buttons[next]?.focus()
+      }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)

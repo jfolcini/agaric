@@ -385,6 +385,10 @@ function SortableBlockInner({
                   </div>
                 ) : todoState === 'TODO' ? (
                   <div className="task-checkbox task-checkbox-todo h-4 w-4 rounded border-2 border-muted-foreground" />
+                ) : todoState ? (
+                  <div className="task-checkbox task-checkbox-custom h-4 w-4 rounded border-2 border-orange-500 bg-orange-500/20 flex items-center justify-center">
+                    <div className="h-1.5 w-1.5 rounded-full bg-orange-500" />
+                  </div>
                 ) : (
                   <div className="task-checkbox task-checkbox-empty h-4 w-4 rounded border-2 border-muted-foreground/40 transition-colors" />
                 )}

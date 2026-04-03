@@ -364,6 +364,8 @@ const resources = {
       'conflict.typeText': 'Text conflict — content edited on multiple devices',
       'conflict.typeProperty': 'Property conflict — property changed on multiple devices',
       'conflict.typeMove': 'Move conflict — block moved to different locations',
+      'conflict.expand': 'Expand conflict details',
+      'conflict.collapse': 'Collapse conflict details',
     },
   },
 }

@@ -257,6 +257,7 @@ export function ConflictList(): React.ReactElement {
                 className="conflict-item-content flex min-w-0 flex-col gap-1 text-left flex-1 cursor-pointer bg-transparent border-none p-0"
                 onClick={() => toggleExpanded(block.id)}
                 aria-expanded={isExpanded}
+                aria-label={isExpanded ? t('conflict.collapse') : t('conflict.expand')}
               >
                 <div className="flex items-center gap-2 flex-wrap">
                   <ChevronDown
