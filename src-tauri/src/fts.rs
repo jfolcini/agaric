@@ -43,11 +43,11 @@ static CODE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"`(.+?)`").expect("invalid code regex"));
 
 /// Matches tag references: `#[ULID]`
-static TAG_REF_RE: LazyLock<Regex> =
+pub(crate) static TAG_REF_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"#\[([0-9A-Z]{26})\]").expect("invalid tag ref regex"));
 
 /// Matches page links: `[[ULID]]`
-static PAGE_LINK_RE: LazyLock<Regex> =
+pub(crate) static PAGE_LINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[\[([0-9A-Z]{26})\]\]").expect("invalid page link regex"));
 
 // ---------------------------------------------------------------------------

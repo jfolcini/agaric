@@ -116,6 +116,8 @@ mod specta_tests {
             crate::commands::set_page_aliases,
             crate::commands::get_page_aliases,
             crate::commands::resolve_page_by_alias,
+            // Markdown export (#519)
+            crate::commands::export_page_markdown,
         ])
     }
 
@@ -276,6 +278,8 @@ pub fn run() {
         commands::set_page_aliases,
         commands::get_page_aliases,
         commands::resolve_page_by_alias,
+        // Markdown export (#519)
+        commands::export_page_markdown,
     ]);
 
     tauri::Builder::default()

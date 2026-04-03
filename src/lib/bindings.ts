@@ -622,6 +622,17 @@ async resolvePageByAlias(alias: string) : Promise<Result<[string, string | null]
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: export a page as Markdown. Delegates to [`export_page_markdown_inner`].
+ */
+async exportPageMarkdown(pageId: string) : Promise<Result<string, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_page_markdown", { pageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

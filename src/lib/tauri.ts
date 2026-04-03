@@ -614,3 +614,12 @@ export async function getPageAliases(pageId: string): Promise<string[]> {
 export async function resolvePageByAlias(alias: string): Promise<[string, string | null] | null> {
   return invoke('resolve_page_by_alias', { alias })
 }
+
+// ---------------------------------------------------------------------------
+// Markdown export (#519)
+// ---------------------------------------------------------------------------
+
+/** Export a page as Markdown with human-readable tag/page references. */
+export async function exportPageMarkdown(pageId: string): Promise<string> {
+  return invoke('export_page_markdown', { pageId })
+}

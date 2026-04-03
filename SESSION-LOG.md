@@ -106,6 +106,22 @@ Phase 2 store review with 2 parallel subagents (quality + test gaps). 3 S-cost f
 - Frontend: 82/82 test files, 2326 tests pass (2324 + 2 new)
 - Commit: `460d8be`
 
+## Session 82 — 2026-04-03 — Markdown Export Serializer (#519)
+
+### Core export function — ULID→human names + YAML frontmatter
+1 item resolved: markdown export backend serializer.
+
+| File | Change |
+|------|--------|
+| `fts.rs` | Made TAG_REF_RE + PAGE_LINK_RE regex pub(crate) for reuse. |
+| `commands.rs` | #519: `resolve_ulids_for_export` + `export_page_markdown_inner`. 3 tests. |
+| `lib.rs` | Registered command. |
+| `tauri.ts` | `exportPageMarkdown` wrapper. |
+
+### Stats
+- Rust: 1457 tests pass (1454 + 3 new)
+- Commit: `b12325c`
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command

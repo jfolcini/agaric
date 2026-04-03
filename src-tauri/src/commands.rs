@@ -3242,6 +3242,134 @@ pub async fn resolve_page_by_alias_inner(
 }
 
 // ---------------------------------------------------------------------------
+// Markdown export (#519)
+// ---------------------------------------------------------------------------
+
+/// Replace `#[ULID]` with `#tagname` and `[[ULID]]` with `[[Page Title]]`
+/// in content, preserving all other markdown formatting.
+fn resolve_ulids_for_export(
+    content: &str,
+    tag_names: &HashMap<String, String>,
+    page_titles: &HashMap<String, String>,
+) -> String {
+    use crate::fts::{PAGE_LINK_RE, TAG_REF_RE};
+
+    // Replace #[ULID] → #tagname
+    let result = TAG_REF_RE
+        .replace_all(content, |caps: &regex::Captures| {
+            let ulid = &caps[1];
+            if let Some(name) = tag_names.get(ulid) {
+                format!("#{name}")
+            } else {
+                format!("#[{ulid}]") // Keep original if not found
+            }
+        })
+        .into_owned();
+
+    // Replace [[ULID]] → [[Page Title]]
+    let result = PAGE_LINK_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let ulid = &caps[1];
+            if let Some(title) = page_titles.get(ulid) {
+                format!("[[{title}]]")
+            } else {
+                format!("[[{ulid}]]") // Keep original if not found
+            }
+        })
+        .into_owned();
+
+    result
+}
+
+/// Export a page and its child blocks as a Markdown string with
+/// human-readable tag/page references and optional YAML frontmatter.
+///
+/// 1. Emits `# Page Title`
+/// 2. If the page has properties, emits a `---` YAML frontmatter block
+/// 3. For each child block (ordered by position), resolves `#[ULID]` and
+///    `[[ULID]]` references to their human-readable names, preserving all
+///    markdown formatting.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — `page_id` does not refer to a `page` block
+/// - [`AppError::NotFound`] — block not found
+pub(crate) async fn export_page_markdown_inner(
+    pool: &SqlitePool,
+    page_id: &str,
+) -> Result<String, AppError> {
+    // 1. Get the page
+    let page = get_block_inner(pool, page_id.to_string()).await?;
+    if page.block_type != "page" {
+        return Err(AppError::Validation("not a page".into()));
+    }
+
+    // 2. Get all child blocks (ordered by position)
+    let children = pagination::list_children(
+        pool,
+        Some(page_id),
+        &pagination::PageRequest::new(None, Some(1000))?,
+    )
+    .await?;
+
+    // 3. Get all tag names and page titles for ULID replacement
+    let tag_rows = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT id, content FROM blocks WHERE block_type = 'tag' AND deleted_at IS NULL",
+    )
+    .fetch_all(pool)
+    .await?;
+    let tag_names: HashMap<String, String> = tag_rows
+        .into_iter()
+        .filter_map(|(id, content)| content.map(|c| (id, c)))
+        .collect();
+
+    let page_rows = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT id, content FROM blocks WHERE block_type = 'page' AND deleted_at IS NULL",
+    )
+    .fetch_all(pool)
+    .await?;
+    let page_titles: HashMap<String, String> = page_rows
+        .into_iter()
+        .map(|(id, content)| (id, content.unwrap_or_else(|| "Untitled".to_string())))
+        .collect();
+
+    // 4. Get page properties for frontmatter
+    let properties: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT key, value_text, value_date FROM block_properties WHERE block_id = ?1",
+    )
+    .bind(page_id)
+    .fetch_all(pool)
+    .await?;
+
+    // 5. Build markdown output
+    let mut output = String::new();
+
+    // Title
+    let title = page.content.unwrap_or_else(|| "Untitled".to_string());
+    output.push_str(&format!("# {title}\n\n"));
+
+    // Frontmatter (if properties exist)
+    if !properties.is_empty() {
+        output.push_str("---\n");
+        for (key, text, date) in &properties {
+            let value = date.as_deref().or(text.as_deref()).unwrap_or("");
+            output.push_str(&format!("{key}: {value}\n"));
+        }
+        output.push_str("---\n\n");
+    }
+
+    // Block content
+    for block in &children.items {
+        let content = block.content.as_deref().unwrap_or("");
+        let resolved = resolve_ulids_for_export(content, &tag_names, &page_titles);
+        output.push_str(&resolved);
+        output.push('\n');
+    }
+
+    Ok(output)
+}
+
+// ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
@@ -4157,6 +4285,19 @@ pub async fn resolve_page_by_alias(
     alias: String,
 ) -> Result<Option<(String, Option<String>)>, AppError> {
     resolve_page_by_alias_inner(&read_pool.0, &alias)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: export a page as Markdown. Delegates to [`export_page_markdown_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn export_page_markdown(
+    read_pool: State<'_, ReadPool>,
+    page_id: String,
+) -> Result<String, AppError> {
+    export_page_markdown_inner(&read_pool.0, &page_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -12520,5 +12661,158 @@ mod tests {
         );
 
         mat.shutdown();
+    }
+
+    // ======================================================================
+    // export_page_markdown (#519)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn export_page_markdown_basic() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create a page with two child content blocks
+        insert_block(
+            &pool,
+            "01AAAAAAAAAAAAAAAAAAAAPAGE",
+            "page",
+            "My Test Page",
+            None,
+            Some(1),
+        )
+        .await;
+        insert_block(
+            &pool,
+            "01AAAAAAAAAAAAAAAAAAAABLK1",
+            "content",
+            "First block",
+            Some("01AAAAAAAAAAAAAAAAAAAAPAGE"),
+            Some(1),
+        )
+        .await;
+        insert_block(
+            &pool,
+            "01AAAAAAAAAAAAAAAAAAAABLK2",
+            "content",
+            "Second block with **bold**",
+            Some("01AAAAAAAAAAAAAAAAAAAAPAGE"),
+            Some(2),
+        )
+        .await;
+
+        let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+            .await
+            .unwrap();
+
+        // Title as h1
+        assert!(
+            md.starts_with("# My Test Page\n\n"),
+            "should start with h1 title"
+        );
+        // Block content present
+        assert!(md.contains("First block\n"), "should contain first block");
+        // Markdown formatting preserved
+        assert!(
+            md.contains("Second block with **bold**\n"),
+            "should preserve markdown formatting"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn export_page_markdown_resolves_tag_ulids() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create a tag block
+        insert_block(
+            &pool,
+            "01TAG00000000000000000TAG1",
+            "tag",
+            "rust",
+            None,
+            Some(1),
+        )
+        .await;
+
+        // Create a page with a content block that references the tag
+        insert_block(
+            &pool,
+            "01AAAAAAAAAAAAAAAAAAAAPAGE",
+            "page",
+            "Tagged Page",
+            None,
+            Some(1),
+        )
+        .await;
+        insert_block(
+            &pool,
+            "01AAAAAAAAAAAAAAAAAAAABLK1",
+            "content",
+            "Learning #[01TAG00000000000000000TAG1] today",
+            Some("01AAAAAAAAAAAAAAAAAAAAPAGE"),
+            Some(1),
+        )
+        .await;
+
+        let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+            .await
+            .unwrap();
+
+        assert!(
+            md.contains("Learning #rust today"),
+            "tag ULID should be replaced with #tagname, got: {md}"
+        );
+        assert!(
+            !md.contains("01TAG00000000000000000TAG1"),
+            "raw ULID should not appear in output"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn export_page_markdown_resolves_page_link_ulids() {
+        let (pool, _dir) = test_pool().await;
+
+        // Create a target page
+        insert_block(
+            &pool,
+            "01LINKPAGE000000000000LNK1",
+            "page",
+            "Linked Page",
+            None,
+            Some(1),
+        )
+        .await;
+
+        // Create the main page with a content block that links to the target
+        insert_block(
+            &pool,
+            "01AAAAAAAAAAAAAAAAAAAAPAGE",
+            "page",
+            "Source Page",
+            None,
+            Some(2),
+        )
+        .await;
+        insert_block(
+            &pool,
+            "01AAAAAAAAAAAAAAAAAAAABLK1",
+            "content",
+            "See also [[01LINKPAGE000000000000LNK1]] for details",
+            Some("01AAAAAAAAAAAAAAAAAAAAPAGE"),
+            Some(1),
+        )
+        .await;
+
+        let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+            .await
+            .unwrap();
+
+        assert!(
+            md.contains("See also [[Linked Page]] for details"),
+            "page link ULID should be replaced with [[Page Title]], got: {md}"
+        );
+        assert!(
+            !md.contains("01LINKPAGE000000000000LNK1"),
+            "raw ULID should not appear in output"
+        );
     }
 }
