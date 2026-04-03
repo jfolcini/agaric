@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 115 — 2026-04-03 — Block Property Drawer + Triggers (#645 sub-tasks 8-11)
+
+### Full property CRUD drawer with 3 access methods
+
+1 build subagent (all 4 sub-tasks together).
+
+| File | Change |
+|------|--------|
+| `BlockPropertyDrawer.tsx` (new) | #645-8: Sheet component — loads properties + definitions, inline editing (Input, blur-to-save), delete per property, AddPropertySection with definitions popover. |
+| `BlockPropertyDrawer.test.tsx` (new) | 7 tests (title, loading, property list, empty state, delete, closed state, axe a11y). |
+| `BlockTree.tsx` | #645-8: `propertyDrawerBlockId` state + `handleShowProperties` callback + `<BlockPropertyDrawer>` render. #645-9: `open-block-properties` event listener. #645-11: `onShowProperties` wired to useBlockKeyboard. |
+| `FormattingToolbar.tsx` | #645-9: "Properties" button (Settings2 icon) dispatches `open-block-properties`. |
+| `BlockContextMenu.tsx` | #645-10: "Properties..." menu item with Ctrl+Shift+P hint. |
+| `SortableBlock.tsx` | #645-10: `onShowProperties` prop pass-through to BlockContextMenu. |
+| `use-block-keyboard.ts` | #645-11: `Ctrl+Shift+P` → `onShowProperties()` handler. |
+| `i18n.ts` | 11 new keys (property drawer + toolbar + context menu). |
+| `BlockTree.test.tsx` | 1 new test (keyboard shortcut wiring). |
+
+### Stats
+- Frontend: ~2511 tests pass (8 new)
+- Commit: `1dce132`
+- #645 sub-tasks 8-11 all resolved
+
 ## Session 114 — 2026-04-03 — Micro-fixes: Conflict A11y + Template Keys + Custom State Visual
 
 ### 3 orchestrator-applied S-cost slices
