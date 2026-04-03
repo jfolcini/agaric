@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 97 — 2026-04-03 — Zoom-in to Block with Breadcrumb (#637)
+
+### Block zoom-in with breadcrumb navigation
+
+1 build subagent + 1 review subagent. Orchestrator fixed Biome import ordering + formatting.
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | #637: `zoomedBlockId` state. `zoomedVisible` memo filters `collapsedVisible` to descendants with adjusted depths. `zoomBreadcrumb` memo walks parent chain. Breadcrumb nav with Home + clickable ancestors. `handleZoomIn` passed to SortableBlock (hasChildren guard). Zoom resets on page navigation. |
+| `BlockContextMenu.tsx` | #637: "Zoom in" menu item (ZoomIn icon) in Group 3. Only shown when `hasChildren && onZoomIn`. |
+| `SortableBlock.tsx` | #637: `onZoomIn` prop pass-through to BlockContextMenu. |
+| `i18n.ts` | #637: 3 new keys (`contextMenu.zoomIn`, `block.breadcrumb`, `block.untitled`). |
+| `BlockTree.test.tsx` | #637: 3 new tests (filter descendants, breadcrumb renders, home resets zoom). |
+
+### Stats
+- Frontend: 2420 tests pass (2417 + 3 new)
+- Commit: `83e4561`
+- REVIEW-LATER: 9 → 8 items (#637 resolved)
+
 ## Session 96 — 2026-04-03 — Agenda Date Filters (#634)
 
 ### All 6 dueDate filter presets now functional
