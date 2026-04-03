@@ -11,6 +11,7 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React +
 | **AGENTS.md** (this file) | Invariants, conventions, architecture overview |
 | **[BUILD.md](BUILD.md)** | Build guide: prerequisites, platforms, Android, CI, troubleshooting |
 | **ARCHITECTURE.md** | Deep-dive: data model, op log, materializer, editor, sync, search (~1160 lines) |
+| **[FEATURE-MAP.md](FEATURE-MAP.md)** | Complete feature inventory: schema, commands, sync, editor, stores, testing. Use for discovery and review. |
 | `src-tauri/tests/AGENTS.md` | Rust test patterns, fixtures, pitfalls |
 | `src/__tests__/AGENTS.md` | Frontend test patterns, mocking, a11y |
 | `REVIEW-LATER.md` | Deferred items, tech debt backlog, future features |
@@ -41,6 +42,14 @@ prek run --all-files         # Pre-commit hooks
 6. **sqlx compile-time queries** — `query!` / `query_as!` / `query_scalar!`. `.sqlx/` cache committed. Run `cargo sqlx prepare` after SQL changes.
 7. **PRAGMA foreign_keys = ON** — enforced on every connection (both pools)
 8. **ULID uppercase normalization** — Crockford base32 for blake3 hash determinism (ADR-07)
+
+## Architectural Stability
+
+The architecture is mature and robust. **Do not introduce significant architectural changes** (new tables, new op types, new stores, new materializer queues, new sync message types) without explicit user approval. Most features should be expressible within existing abstractions:
+
+- **Properties system is the primary extension point.** New per-block metadata (effort, assignee, repeat rules, end conditions, custom fields) should use `block_properties` + `property_definitions` — not new columns on `blocks` or new tables. The typed key-value model (text/number/date/ref) is deliberately flexible.
+- **New slash commands, filter dimensions, UI components** are additive and low-risk. Prefer these over structural changes.
+- **If a feature seems to require schema migration, a new op type, or a new Zustand store** — stop and discuss with the user first. There is almost always a way to achieve it within the existing model.
 
 ## Database
 
@@ -129,6 +138,7 @@ Every step is mandatory. No self-reviewed commits.
 |------|---------|---------------|
 | `SESSION-LOG.md` | Subagent activity log | After each subagent completes |
 | `REVIEW-LATER.md` | Deferred items, tech debt, future features | When a fix is deferred |
+| `FEATURE-MAP.md` | Complete feature inventory for discovery/review | When features are added/changed (keep in sync with SESSION-LOG updates) |
 | `AGENTS.md` | This file | Only with explicit user approval |
 
 When resolving REVIEW-LATER items: remove the item entirely (table row + detail section). Record the removal in the summary log.

@@ -1,4 +1,32 @@
 # Session Log
+## Session 101 — 2026-04-03 — Workflow Updates + Properties Deep Review
+
+### Workflow & documentation updates
+
+Updated AGENTS.md (with user approval), PROMPT.md, and FEATURE-MAP.md to integrate feature-map-driven discovery, dual technical+UX review subagents, and FEATURE-MAP.md sync in the LOG step.
+
+| File | Change |
+|------|--------|
+| `AGENTS.md` | Added FEATURE-MAP.md to documentation map. Added "Architectural Stability" section (properties as primary extension point, guard against unnecessary schema/store/op changes). Added FEATURE-MAP.md to state files table. |
+| `PROMPT.md` | Phase 1 PLAN: use FEATURE-MAP.md for feature discovery. Phase 1 REVIEW: split into technical + UX reviewer dimensions with separate checklists. Phase 2 Step A: use FEATURE-MAP.md, launch UX subagent alongside technical subagents. LOG step: keep FEATURE-MAP.md in sync when features added/changed. |
+| `FEATURE-MAP.md` | Updated deferred features (section 22): removed resolved #630, #632, #634, #637, #640; added #643, #644, #645, #646. Updated slash commands (TEMPLATE, REPEAT progressive disclosure). Updated editor behavior (zoom-in + breadcrumb). Updated journal section (auto-create keyboard shortcut, 6 dueDate presets, scheduledDate dimension). |
+
+### Properties system deep review (Phase 2)
+
+2 parallel review subagents (1 technical, 1 UX) + 1 cross-validation subagent. Reviewed property commands, materializer, reverse ops, cache, PagePropertyTable, SortableBlock, slash commands, hooks.
+
+**Technical review:** 10 findings. Cross-validation: 5 confirmed (type validation gap, reserved field mismatch, date format validation, test gap, def deletion no cascade), 1 confirmed-by-design (materializer), 1 rejected (reverse ops work correctly), 3 low/informational.
+
+**UX review:** 12 findings. Cross-validation: 3 confirmed (custom props invisible on blocks, no inline delete, no frontend validation), 2 rejected (slash commands for effort/assignee/location don't exist — false positive; priority badges DO include text labels). Most findings reinforce existing #643 and #645 items.
+
+**New REVIEW-LATER item:**
+- #646 (S, MEDIUM): Property type enforcement — `set_property_in_tx` lacks validation against property_definitions types, no date format validation on generic set_property, reserved key field type not checked, missing tests.
+
+### Stats
+- No code changes (review-only session)
+- REVIEW-LATER: 7 → 8 items (#646 added)
+- FEATURE-MAP.md: updated to reflect sessions 93-100 feature additions + #646
+
 
 ## Session 100 — 2026-04-03 — Journal Template Auto-Apply (#630)
 
