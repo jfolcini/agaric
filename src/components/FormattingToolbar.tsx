@@ -33,6 +33,7 @@ import {
 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { LinkEditPopover } from './LinkEditPopover'
 import { Button } from './ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'
@@ -63,6 +64,7 @@ function Tip({
 }
 
 export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): React.ReactElement {
+  const { t } = useTranslation()
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
   const [headingPopoverOpen, setHeadingPopoverOpen] = useState(false)
 
@@ -112,15 +114,15 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
     <TooltipProvider delayDuration={200}>
       <div
         role="toolbar"
-        aria-label="Formatting"
+        aria-label={t('toolbar.formatting')}
         aria-controls={blockId ? `editor-${blockId}` : undefined}
         className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px overflow-x-auto"
       >
-        <Tip label="Bold (Ctrl+B)">
+        <Tip label={t('toolbar.boldTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Bold"
+            aria-label={t('toolbar.bold')}
             aria-pressed={state.bold}
             className={state.bold ? 'bg-accent text-accent-foreground' : ''}
             onPointerDown={(e) => {
@@ -131,11 +133,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <Bold size={14} />
           </Button>
         </Tip>
-        <Tip label="Italic (Ctrl+I)">
+        <Tip label={t('toolbar.italicTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Italic"
+            aria-label={t('toolbar.italic')}
             aria-pressed={state.italic}
             className={state.italic ? 'bg-accent text-accent-foreground' : ''}
             onPointerDown={(e) => {
@@ -146,11 +148,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <Italic size={14} />
           </Button>
         </Tip>
-        <Tip label="Inline code (Ctrl+E)">
+        <Tip label={t('toolbar.codeTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Code"
+            aria-label={t('toolbar.code')}
             aria-pressed={state.code}
             className={state.code ? 'bg-accent text-accent-foreground' : ''}
             onPointerDown={(e) => {
@@ -165,12 +167,12 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
         <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
         <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
-          <Tip label="External link (Ctrl+K)">
+          <Tip label={t('toolbar.linkTip')}>
             <PopoverAnchor asChild>
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label="External link"
+                aria-label={t('toolbar.link')}
                 aria-pressed={state.link}
                 className={state.link ? 'bg-accent text-accent-foreground' : ''}
                 onPointerDown={(e) => {
@@ -192,11 +194,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
           </PopoverContent>
         </Popover>
 
-        <Tip label="Page link ([[)">
+        <Tip label={t('toolbar.pageLinkTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Internal link"
+            aria-label={t('toolbar.internalLink')}
             onPointerDown={(e) => {
               e.preventDefault()
               editor.chain().focus().insertContent('[[').run()
@@ -206,11 +208,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
           </Button>
         </Tip>
 
-        <Tip label="Tag (@)">
+        <Tip label={t('toolbar.tagTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Insert tag"
+            aria-label={t('toolbar.insertTag')}
             onPointerDown={(e) => {
               e.preventDefault()
               editor.chain().focus().insertContent('@').run()
@@ -220,11 +222,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
           </Button>
         </Tip>
 
-        <Tip label="Code block (Ctrl+Shift+C)">
+        <Tip label={t('toolbar.codeBlockTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Code block"
+            aria-label={t('toolbar.codeBlock')}
             aria-pressed={state.codeBlock}
             className={state.codeBlock ? 'bg-accent text-accent-foreground' : ''}
             onPointerDown={(e) => {
@@ -237,12 +239,12 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
         </Tip>
 
         <Popover open={headingPopoverOpen} onOpenChange={setHeadingPopoverOpen}>
-          <Tip label="Heading (Ctrl+1-6)">
+          <Tip label={t('toolbar.headingTip')}>
             <PopoverAnchor asChild>
               <Button
                 variant="ghost"
                 size="xs"
-                aria-label="Heading level"
+                aria-label={t('toolbar.headingLevel')}
                 aria-pressed={state.headingLevel > 0}
                 className={state.headingLevel > 0 ? 'bg-accent text-accent-foreground' : ''}
                 onPointerDown={(e) => {
@@ -290,7 +292,7 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
                   setHeadingPopoverOpen(false)
                 }}
               >
-                Paragraph
+                {t('toolbar.paragraph')}
               </Button>
             </div>
           </PopoverContent>
@@ -298,11 +300,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
 
         <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-        <Tip label="Priority 1 — high (Ctrl+Shift+1)">
+        <Tip label={t('toolbar.priority1Tip')}>
           <Button
             variant="ghost"
             size="xs"
-            aria-label="Priority 1 (high)"
+            aria-label={t('toolbar.priority1')}
             onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('set-priority-1'))
@@ -312,11 +314,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <span className="text-[10px] font-bold">1</span>
           </Button>
         </Tip>
-        <Tip label="Priority 2 — medium (Ctrl+Shift+2)">
+        <Tip label={t('toolbar.priority2Tip')}>
           <Button
             variant="ghost"
             size="xs"
-            aria-label="Priority 2 (medium)"
+            aria-label={t('toolbar.priority2')}
             onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('set-priority-2'))
@@ -326,11 +328,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <span className="text-[10px] font-bold">2</span>
           </Button>
         </Tip>
-        <Tip label="Priority 3 — low (Ctrl+Shift+3)">
+        <Tip label={t('toolbar.priority3Tip')}>
           <Button
             variant="ghost"
             size="xs"
-            aria-label="Priority 3 (low)"
+            aria-label={t('toolbar.priority3')}
             onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('set-priority-3'))
@@ -340,11 +342,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <span className="text-[10px] font-bold">3</span>
           </Button>
         </Tip>
-        <Tip label="Insert date (Ctrl+Shift+D)">
+        <Tip label={t('toolbar.insertDateTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Insert date"
+            aria-label={t('toolbar.insertDate')}
             onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('open-date-picker'))
@@ -353,11 +355,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <CalendarDays size={14} />
           </Button>
         </Tip>
-        <Tip label="Due date (/due)">
+        <Tip label={t('toolbar.dueDateTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Set due date"
+            aria-label={t('toolbar.setDueDate')}
             onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('open-due-date-picker'))
@@ -366,11 +368,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <CalendarClock size={14} />
           </Button>
         </Tip>
-        <Tip label="TODO cycle (Ctrl+Enter)">
+        <Tip label={t('toolbar.todoToggleTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Toggle TODO state"
+            aria-label={t('toolbar.todoToggle')}
             onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('toggle-todo-state'))
@@ -382,11 +384,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
 
         <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-        <Tip label="Undo (Ctrl+Z)">
+        <Tip label={t('toolbar.undoTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Undo"
+            aria-label={t('toolbar.undo')}
             disabled={!state.canUndo}
             onPointerDown={(e) => {
               e.preventDefault()
@@ -396,11 +398,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <Undo2 size={14} />
           </Button>
         </Tip>
-        <Tip label="Redo (Ctrl+Y)">
+        <Tip label={t('toolbar.redoTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Redo"
+            aria-label={t('toolbar.redo')}
             disabled={!state.canRedo}
             onPointerDown={(e) => {
               e.preventDefault()
@@ -410,11 +412,11 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <Redo2 size={14} />
           </Button>
         </Tip>
-        <Tip label="Discard changes (Esc)">
+        <Tip label={t('toolbar.discardTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label="Discard changes"
+            aria-label={t('toolbar.discard')}
             onPointerDown={(e) => {
               e.preventDefault()
               document.dispatchEvent(new CustomEvent('discard-block-edit'))

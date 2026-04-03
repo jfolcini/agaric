@@ -167,6 +167,24 @@ Phase 2 store review with 2 parallel subagents (quality + test gaps). 3 S-cost f
 - Frontend: 82/82 test files, 2332 tests pass (unchanged)
 - Commit: `6446a11`
 
+## Session 87 — 2026-04-03 — Materializer Review + i18n Extraction Batch
+
+### Materializer hardening + i18n extraction from 3 components
+Phase 2 materializer review (1 subagent) + 3 hardening fixes + i18n extraction batch.
+
+**Materializer fixes:**
+- apply_op failures now increment fg_errors counter
+- FTS optimize counter race fixed with compare_exchange
+- 5 new reserved property reversal tests (todo_state, priority, due_date)
+- Rust: 1462 tests pass. Commit: `ec1b2ce`
+
+**i18n extraction:**
+- ~70 new translation keys in i18n.ts
+- FormattingToolbar: 17 tooltips + 17 aria-labels
+- BlockContextMenu: 19 menu labels
+- SortableBlock: all aria-labels + tooltips with interpolation
+- Frontend: 82 test files, 2332 tests. Commit: `d4b1713`
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command

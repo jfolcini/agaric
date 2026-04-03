@@ -24,6 +24,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { cn } from '../lib/utils'
 import { BlockContextMenu } from './BlockContextMenu'
@@ -157,6 +158,7 @@ function SortableBlockInner({
   onMerge,
   onShowHistory,
 }: SortableBlockProps): React.ReactElement {
+  const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: blockId,
   })
@@ -276,7 +278,7 @@ function SortableBlockInner({
               <button
                 type="button"
                 className="drag-handle flex-shrink-0 cursor-grab p-0.5 mt-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
-                aria-label="Reorder block (drag or use keyboard)"
+                aria-label={t('block.reorder')}
                 {...attributes}
                 {...listeners}
               >
@@ -284,7 +286,7 @@ function SortableBlockInner({
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom" sideOffset={4}>
-              Reorder (drag or keyboard)
+              {t('block.reorderTip')}
             </TooltipContent>
           </Tooltip>
 
@@ -292,7 +294,7 @@ function SortableBlockInner({
           {onShowHistory && (
             <button
               type="button"
-              aria-label="Block history"
+              aria-label={t('block.history')}
               className="flex-shrink-0 p-0.5 mt-1 text-muted-foreground hover:text-foreground hover:bg-accent rounded-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
               onClick={() => onShowHistory(blockId)}
             >
@@ -307,14 +309,14 @@ function SortableBlockInner({
                 <button
                   type="button"
                   className="delete-handle flex-shrink-0 p-0.5 mt-1 text-muted-foreground hover:text-destructive rounded-sm hover:bg-destructive/10 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
-                  aria-label="Delete block"
+                  aria-label={t('block.delete')}
                   onClick={() => onDelete(blockId)}
                 >
                   <Trash2 size={16} />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={4}>
-                Delete block
+                {t('block.delete')}
               </TooltipContent>
             </Tooltip>
           )}
@@ -330,7 +332,7 @@ function SortableBlockInner({
                   type="button"
                   className="collapse-toggle flex-shrink-0 p-0.5 mt-1 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
                   onClick={() => onToggleCollapse?.(blockId)}
-                  aria-label={isCollapsed ? 'Expand children' : 'Collapse children'}
+                  aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
                   aria-expanded={!isCollapsed}
                 >
                   <ChevronRight
@@ -340,7 +342,7 @@ function SortableBlockInner({
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={4}>
-                {isCollapsed ? 'Expand (Ctrl+.)' : 'Collapse (Ctrl+.)'}
+                {isCollapsed ? t('block.expandTip') : t('block.collapseTip')}
               </TooltipContent>
             </Tooltip>
           ) : (
@@ -358,7 +360,9 @@ function SortableBlockInner({
                   e.stopPropagation()
                   onToggleTodo?.(blockId)
                 }}
-                aria-label={todoState ? `Task: ${todoState}. Click to cycle.` : 'Set as TODO'}
+                aria-label={
+                  todoState ? t('block.taskCycle', { state: todoState }) : t('block.setTodo')
+                }
               >
                 {todoState === 'DONE' ? (
                   <div className="task-checkbox task-checkbox-done h-4 w-4 rounded border-2 border-green-600 bg-green-600 flex items-center justify-center">
@@ -376,7 +380,7 @@ function SortableBlockInner({
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom" sideOffset={4}>
-              {todoState ? `${todoState} (Ctrl+Enter to cycle)` : 'Set as TODO (Ctrl+Enter)'}
+              {todoState ? t('block.todoCycleTip', { state: todoState }) : t('block.setTodoTip')}
             </TooltipContent>
           </Tooltip>
 
@@ -387,7 +391,7 @@ function SortableBlockInner({
                 <button
                   type="button"
                   className="priority-badge flex-shrink-0 p-0.5 mt-1 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
-                  aria-label={`Priority ${PRIORITY_DISPLAY[priority]}. Click to cycle.`}
+                  aria-label={t('block.priorityCycle', { level: PRIORITY_DISPLAY[priority] })}
                   onClick={(e) => {
                     e.stopPropagation()
                     onTogglePriority?.(blockId)
@@ -409,7 +413,7 @@ function SortableBlockInner({
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={4}>
-                {`Priority ${PRIORITY_DISPLAY[priority]} (click to cycle)`}
+                {t('block.priorityTip', { level: PRIORITY_DISPLAY[priority] })}
               </TooltipContent>
             </Tooltip>
           )}
@@ -422,7 +426,7 @@ function SortableBlockInner({
                 'due-date-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 mt-1 text-[10px] font-medium leading-none select-none',
                 dueDateColor(dueDate),
               )}
-              aria-label={`Due ${formatCompactDate(dueDate)}`}
+              aria-label={t('block.dueDate', { date: formatCompactDate(dueDate) })}
             >
               <CalendarDays size={14} className="flex-shrink-0" />
               {formatCompactDate(dueDate)}
@@ -437,7 +441,7 @@ function SortableBlockInner({
                 'scheduled-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 mt-1 text-[10px] font-medium leading-none select-none',
                 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
               )}
-              aria-label={`Scheduled ${formatCompactDate(scheduledDate)}`}
+              aria-label={t('block.scheduledDate', { date: formatCompactDate(scheduledDate) })}
             >
               <Calendar size={14} className="flex-shrink-0" />
               {formatCompactDate(scheduledDate)}

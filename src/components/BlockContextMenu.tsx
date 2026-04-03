@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../lib/utils'
 
 export interface BlockContextMenuProps {
@@ -61,29 +62,29 @@ interface MenuItem {
 
 // ── State-aware label helpers ─────────────────────────────────────────
 
-function getTodoLabel(todoState: string | null | undefined): string {
+function getTodoLabel(todoState: string | null | undefined, t: (key: string) => string): string {
   switch (todoState) {
     case 'TODO':
-      return 'TODO → DOING'
+      return t('contextMenu.todoToDoing')
     case 'DOING':
-      return 'DOING → DONE'
+      return t('contextMenu.doingToDone')
     case 'DONE':
-      return 'DONE → Clear'
+      return t('contextMenu.doneToClear')
     default:
-      return 'Set as TODO'
+      return t('contextMenu.setTodo')
   }
 }
 
-function getPriorityLabel(priority: string | null | undefined): string {
+function getPriorityLabel(priority: string | null | undefined, t: (key: string) => string): string {
   switch (priority) {
     case '1':
-      return 'Priority 1 → 2'
+      return t('contextMenu.priority1To2')
     case '2':
-      return 'Priority 2 → 3'
+      return t('contextMenu.priority2To3')
     case '3':
-      return 'Priority 3 → Clear'
+      return t('contextMenu.priority3ToClear')
     default:
-      return 'Set priority 1'
+      return t('contextMenu.setPriority1')
   }
 }
 
@@ -108,6 +109,7 @@ export function BlockContextMenu({
   dueDate: _dueDate,
   onShowHistory,
 }: BlockContextMenuProps): React.ReactElement {
+  const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
   const [focusedIndex, setFocusedIndex] = useState(0)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
@@ -167,7 +169,7 @@ export function BlockContextMenu({
   // Group 1: Delete
   const group1: MenuItem[] = [
     {
-      label: 'Delete',
+      label: t('contextMenu.delete'),
       icon: <Trash2 size={14} />,
       action: onDelete ? () => handleAction(onDelete) : undefined,
       className: 'text-destructive hover:bg-destructive/10',
@@ -177,25 +179,25 @@ export function BlockContextMenu({
   // Group 2: Indent, Dedent, Move Up, Move Down
   const group2: MenuItem[] = [
     {
-      label: 'Indent',
+      label: t('contextMenu.indent'),
       icon: <ArrowRightToLine size={14} />,
       action: onIndent ? () => handleAction(onIndent) : undefined,
       shortcut: 'Tab',
     },
     {
-      label: 'Dedent',
+      label: t('contextMenu.dedent'),
       icon: <ArrowLeftToLine size={14} />,
       action: onDedent ? () => handleAction(onDedent) : undefined,
       shortcut: 'Shift+Tab',
     },
     {
-      label: 'Move Up',
+      label: t('contextMenu.moveUp'),
       icon: <MoveUp size={14} />,
       action: onMoveUp ? () => handleAction(onMoveUp) : undefined,
       shortcut: 'Ctrl+Shift+↑',
     },
     {
-      label: 'Move Down',
+      label: t('contextMenu.moveDown'),
       icon: <MoveDown size={14} />,
       action: onMoveDown ? () => handleAction(onMoveDown) : undefined,
       shortcut: 'Ctrl+Shift+↓',
@@ -203,7 +205,7 @@ export function BlockContextMenu({
     ...(onMerge
       ? [
           {
-            label: 'Merge with previous',
+            label: t('contextMenu.merge'),
             icon: <Merge size={14} />,
             action: () => handleAction(onMerge),
           },
@@ -215,7 +217,7 @@ export function BlockContextMenu({
   const group3: MenuItem[] = hasChildren
     ? [
         {
-          label: isCollapsed ? 'Expand' : 'Collapse',
+          label: isCollapsed ? t('contextMenu.expand') : t('contextMenu.collapse'),
           icon: isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />,
           action: onToggleCollapse ? () => handleAction(onToggleCollapse) : undefined,
           shortcut: 'Ctrl+.',
@@ -226,13 +228,13 @@ export function BlockContextMenu({
   // Group 4: TODO cycle, Priority cycle
   const group4: MenuItem[] = [
     {
-      label: getTodoLabel(todoState),
+      label: getTodoLabel(todoState, t),
       icon: <CheckSquare size={14} />,
       action: onToggleTodo ? () => handleAction(onToggleTodo) : undefined,
       shortcut: 'Ctrl+Enter',
     },
     {
-      label: getPriorityLabel(priority),
+      label: getPriorityLabel(priority, t),
       icon: <Signal size={14} />,
       action: onTogglePriority ? () => handleAction(onTogglePriority) : undefined,
       shortcut: 'Ctrl+Shift+1-3',
@@ -243,7 +245,7 @@ export function BlockContextMenu({
   const group5: MenuItem[] = onShowHistory
     ? [
         {
-          label: 'History',
+          label: t('contextMenu.history'),
           icon: <Clock size={14} />,
           action: () => handleAction(onShowHistory),
         },
@@ -288,7 +290,7 @@ export function BlockContextMenu({
     <div
       ref={menuRef}
       role="menu"
-      aria-label="Block actions"
+      aria-label={t('contextMenu.blockActions')}
       className="fixed z-50 min-w-[160px] rounded-lg border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
       style={{ left: clampedPosition.x, top: clampedPosition.y }}
       onKeyDown={handleKeyDown}
@@ -326,7 +328,9 @@ export function BlockContextMenu({
         </div>
       ))}
       {visibleItems.length === 0 && (
-        <div className="px-2 py-1.5 text-sm text-muted-foreground">No actions available</div>
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">
+          {t('contextMenu.noActions')}
+        </div>
       )}
     </div>
   )
