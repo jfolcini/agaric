@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 137 — 2026-04-03 — Created date filter dimension (#642)
+
+### Direct edit: createdDate agenda filter
+
+No subagent needed — simple addition following existing completedDate pattern. Added `createdDate` to AgendaFilterDimension type, dimension options, ALL_DIMENSIONS array, JournalPage query processing, i18n key, and test assertion.
+
+| File | Change |
+|------|--------|
+| `AgendaFilterBuilder.tsx` | Added `createdDate` to type, DIMENSION_OPTIONS (4 presets), ALL_DIMENSIONS array. |
+| `JournalPage.tsx` | Added `createdDate` filter processing (queries `created_at` property, same pattern as `completedDate`). |
+| `i18n.ts` | Added `agendaFilter.createdDate: 'Created date'`. |
+| `AgendaFilterBuilder.test.tsx` | 1 new test (presets shown) + updated dimension list assertion. 33/33 pass. |
+
+### Stats
+- Frontend: 1 new test + 1 updated (33/33 AgendaFilterBuilder pass)
+- Commit: `cf53390`
+- REVIEW-LATER: #642 updated (createdDate done, custom props + date flexibility remain).
+
 ## Session 136 — 2026-04-03 — Batch operations toolbar (#657 completion)
 
 ### Batch: Delete + Set Todo State for selected blocks
