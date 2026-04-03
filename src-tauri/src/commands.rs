@@ -217,15 +217,22 @@ pub struct PairingState(pub Mutex<Option<PairingSession>>);
 /// single-user desktop app where the caller is always the local UI. If the
 /// app ever gains a network-facing API, rate limiting should be added at the
 /// transport layer.
-pub async fn create_block_inner(
-    pool: &SqlitePool,
+/// Create a new block inside an existing transaction.
+///
+/// This is the core implementation shared by [`create_block_inner`] (which
+/// wraps it in its own transaction) and the recurrence path in
+/// [`set_todo_state_inner`] (which batches multiple operations in one tx).
+///
+/// Returns the new [`BlockRow`] and the [`op_log::OpRecord`] so the caller
+/// can commit the transaction and dispatch background work afterward.
+async fn create_block_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
-    materializer: &Materializer,
     block_type: String,
     content: String,
     parent_id: Option<String>,
     position: Option<i64>,
-) -> Result<BlockRow, AppError> {
+) -> Result<(BlockRow, op_log::OpRecord), AppError> {
     // 1. Validate block_type
     match block_type.as_str() {
         "content" | "tag" | "page" => {}
@@ -256,12 +263,6 @@ pub async fn create_block_inner(
     // 2. Generate new BlockId
     let block_id = BlockId::new();
 
-    // 4. Begin IMMEDIATE transaction for atomic op_log + blocks write.
-    //    IMMEDIATE eagerly acquires the write lock, avoiding
-    //    SQLITE_BUSY_SNAPSHOT when a background cache rebuild commits
-    //    between our first read and first write.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-
     // F01: Validate parent_id inside the transaction to prevent TOCTOU race.
     // A concurrent purge_block could physically delete the parent between
     // our check and the INSERT, violating the FK constraint.
@@ -270,7 +271,7 @@ pub async fn create_block_inner(
             r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
             pid
         )
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
         if exists.is_none() {
             return Err(AppError::NotFound(format!("parent block '{pid}'")));
@@ -286,7 +287,7 @@ pub async fn create_block_inner(
                  WHERE parent_id IS ? AND deleted_at IS NULL",
                 parent_id
             )
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?;
             row.map(|r| r.next_pos).unwrap_or(1)
         }
@@ -302,8 +303,7 @@ pub async fn create_block_inner(
         content: content.clone(),
     });
 
-    let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+    let op_record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
 
     // 5. Insert into blocks table within same transaction
     sqlx::query(
@@ -315,30 +315,45 @@ pub async fn create_block_inner(
     .bind(&content)
     .bind(&parent_id)
     .bind(effective_position)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
+    // Return block + op record; caller is responsible for commit + dispatch.
+    Ok((
+        BlockRow {
+            id: block_id.into_string(),
+            block_type,
+            content: Some(content),
+            parent_id,
+            position: Some(effective_position),
+            deleted_at: None,
+            archived_at: None,
+            is_conflict: false,
+            conflict_type: None,
+            todo_state: None,
+            priority: None,
+            due_date: None,
+            scheduled_date: None,
+        },
+        op_record,
+    ))
+}
+
+pub async fn create_block_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_type: String,
+    content: String,
+    parent_id: Option<String>,
+    position: Option<i64>,
+) -> Result<BlockRow, AppError> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let (block, op_record) =
+        create_block_in_tx(&mut tx, device_id, block_type, content, parent_id, position).await?;
     tx.commit().await?;
-
-    // 6. Dispatch background cache tasks (fire-and-forget)
     let _ = materializer.dispatch_background(&op_record);
-
-    // 7. Return response
-    Ok(BlockRow {
-        id: block_id.into_string(),
-        block_type,
-        content: Some(content),
-        parent_id,
-        position: Some(effective_position),
-        deleted_at: None,
-        archived_at: None,
-        is_conflict: false,
-        conflict_type: None,
-        todo_state: None,
-        priority: None,
-        due_date: None,
-        scheduled_date: None,
-    })
+    Ok(block)
 }
 
 /// Edit a block's content.
@@ -1684,28 +1699,25 @@ pub async fn list_property_keys_inner(pool: &SqlitePool) -> Result<Vec<String>, 
     backlink_query::list_property_keys(pool).await
 }
 
-/// Set (upsert) a property on a block.
+/// Set (upsert) a property on a block inside an existing transaction.
 ///
-/// Validates the block exists and is not deleted, validates the property
-/// payload (exactly one non-null value field, valid key format), then
-/// appends a `SetProperty` op and materializes the change.
+/// This is the core implementation shared by [`set_property_inner`] (which
+/// wraps it in its own transaction) and the recurrence path in
+/// [`set_todo_state_inner`] (which batches multiple operations in one tx).
 ///
-/// # Errors
-///
-/// - [`AppError::Validation`] — invalid key format, non-finite number, or not exactly one value field set
-/// - [`AppError::NotFound`] — block does not exist or is soft-deleted
+/// Returns the updated [`BlockRow`] and the [`op_log::OpRecord`] so the
+/// caller can commit the transaction and dispatch background work afterward.
 #[allow(clippy::too_many_arguments)]
-pub async fn set_property_inner(
-    pool: &SqlitePool,
+async fn set_property_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
-    materializer: &Materializer,
     block_id: String,
     key: String,
     value_text: Option<String>,
     value_num: Option<f64>,
     value_date: Option<String>,
     value_ref: Option<String>,
-) -> Result<BlockRow, AppError> {
+) -> Result<(BlockRow, op_log::OpRecord), AppError> {
     // 1. Build and validate the payload before touching the DB
     let prop_payload = SetPropertyPayload {
         block_id: BlockId::from_trusted(&block_id),
@@ -1717,27 +1729,23 @@ pub async fn set_property_inner(
     };
     validate_set_property(&prop_payload)?;
 
-    // 2. Begin IMMEDIATE transaction for atomic validation + op_log + materialization
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-
-    // 3. Validate block exists and is not deleted (TOCTOU-safe inside tx)
+    // 2. Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
 
     let existing = existing
         .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
 
-    // 4. Append SetProperty op to the op_log
+    // 3. Append SetProperty op to the op_log
     let payload = OpPayload::SetProperty(prop_payload);
-    let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+    let op_record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
 
-    // 5. Materialize: route reserved keys to blocks columns, others to block_properties
+    // 4. Materialize: route reserved keys to blocks columns, others to block_properties
     if is_reserved_property_key(&key) {
         let col = match key.as_str() {
             "todo_state" => "todo_state",
@@ -1753,7 +1761,7 @@ pub async fn set_property_inner(
         sqlx::query(&format!("UPDATE blocks SET {col} = ? WHERE id = ?"))
             .bind(value)
             .bind(&block_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
     } else {
         sqlx::query(
@@ -1766,47 +1774,71 @@ pub async fn set_property_inner(
         .bind(value_num)
         .bind(&value_date)
         .bind(&value_ref)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     }
 
+    // Return block + op record; caller is responsible for commit + dispatch.
+    Ok((
+        BlockRow {
+            id: existing.id,
+            block_type: existing.block_type,
+            content: existing.content,
+            parent_id: existing.parent_id,
+            position: existing.position,
+            deleted_at: existing.deleted_at,
+            archived_at: existing.archived_at,
+            is_conflict: existing.is_conflict,
+            conflict_type: existing.conflict_type,
+            todo_state: if key == "todo_state" {
+                value_text.clone()
+            } else {
+                existing.todo_state
+            },
+            priority: if key == "priority" {
+                value_text.clone()
+            } else {
+                existing.priority
+            },
+            due_date: if key == "due_date" {
+                value_date.clone()
+            } else {
+                existing.due_date
+            },
+            scheduled_date: if key == "scheduled_date" {
+                value_date.clone()
+            } else {
+                existing.scheduled_date
+            },
+        },
+        op_record,
+    ))
+}
+
+/// Set (upsert) a property on a block.
+///
+/// Thin wrapper around [`set_property_in_tx`] that manages the transaction
+/// lifecycle and dispatches background work.
+#[allow(clippy::too_many_arguments)]
+pub async fn set_property_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    key: String,
+    value_text: Option<String>,
+    value_num: Option<f64>,
+    value_date: Option<String>,
+    value_ref: Option<String>,
+) -> Result<BlockRow, AppError> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let (block, op_record) = set_property_in_tx(
+        &mut tx, device_id, block_id, key, value_text, value_num, value_date, value_ref,
+    )
+    .await?;
     tx.commit().await?;
-
-    // 6. Dispatch background cache tasks (fire-and-forget)
     let _ = materializer.dispatch_background(&op_record);
-
-    // 7. Return the block
-    Ok(BlockRow {
-        id: existing.id,
-        block_type: existing.block_type,
-        content: existing.content,
-        parent_id: existing.parent_id,
-        position: existing.position,
-        deleted_at: existing.deleted_at,
-        archived_at: existing.archived_at,
-        is_conflict: existing.is_conflict,
-        conflict_type: existing.conflict_type,
-        todo_state: if key == "todo_state" {
-            value_text.clone()
-        } else {
-            existing.todo_state
-        },
-        priority: if key == "priority" {
-            value_text.clone()
-        } else {
-            existing.priority
-        },
-        due_date: if key == "due_date" {
-            value_date.clone()
-        } else {
-            existing.due_date
-        },
-        scheduled_date: if key == "scheduled_date" {
-            value_date.clone()
-        } else {
-            existing.scheduled_date
-        },
-    })
+    Ok(block)
 }
 
 /// Return the number of days in the given month of the given year.
@@ -2017,23 +2049,26 @@ pub async fn set_todo_state_inner(
             // Fetch the original block (with updated DONE state)
             let original = get_block_inner(pool, block_id.clone()).await?;
 
+            // Single transaction for entire recurrence sequence
+            let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+            let mut op_records: Vec<op_log::OpRecord> = Vec::new();
+
             // Create next occurrence as a sibling
-            let new_block = create_block_inner(
-                pool,
+            let (new_block, op) = create_block_in_tx(
+                &mut tx,
                 device_id,
-                materializer,
                 original.block_type.clone(),
                 original.content.unwrap_or_default(),
                 original.parent_id.clone(),
                 original.position.map(|p| p + 1),
             )
             .await?;
+            op_records.push(op);
 
             // Set TODO state on new block
-            set_property_inner(
-                pool,
+            let (_, op) = set_property_in_tx(
+                &mut tx,
                 device_id,
-                materializer,
                 new_block.id.clone(),
                 "todo_state".to_string(),
                 Some("TODO".to_string()),
@@ -2042,12 +2077,12 @@ pub async fn set_todo_state_inner(
                 None,
             )
             .await?;
+            op_records.push(op);
 
             // Copy repeat property to new block
-            set_property_inner(
-                pool,
+            let (_, op) = set_property_in_tx(
+                &mut tx,
                 device_id,
-                materializer,
                 new_block.id.clone(),
                 "repeat".to_string(),
                 Some(rule.clone()),
@@ -2056,20 +2091,33 @@ pub async fn set_todo_state_inner(
                 None,
             )
             .await?;
+            op_records.push(op);
 
             // Shift due_date if present
             if let Some(ref due) = original.due_date {
                 if let Some(shifted) = shift_date(due, &rule) {
-                    if let Err(e) = set_due_date_inner(
-                        pool,
-                        device_id,
-                        materializer,
-                        new_block.id.clone(),
-                        Some(shifted),
-                    )
-                    .await
-                    {
-                        tracing::warn!(error = %e, "failed to shift due_date for recurring block");
+                    if !is_valid_iso_date(&shifted) {
+                        tracing::warn!(
+                            "shifted due_date '{shifted}' is not valid YYYY-MM-DD, skipping"
+                        );
+                    } else {
+                        match set_property_in_tx(
+                            &mut tx,
+                            device_id,
+                            new_block.id.clone(),
+                            "due_date".to_string(),
+                            None,
+                            None,
+                            Some(shifted),
+                            None,
+                        )
+                        .await
+                        {
+                            Ok((_, op)) => op_records.push(op),
+                            Err(e) => {
+                                tracing::warn!(error = %e, "failed to shift due_date for recurring block")
+                            }
+                        }
                     }
                 }
             }
@@ -2077,18 +2125,37 @@ pub async fn set_todo_state_inner(
             // Shift scheduled_date if present
             if let Some(ref sched) = original.scheduled_date {
                 if let Some(shifted) = shift_date(sched, &rule) {
-                    if let Err(e) = set_scheduled_date_inner(
-                        pool,
-                        device_id,
-                        materializer,
-                        new_block.id.clone(),
-                        Some(shifted),
-                    )
-                    .await
-                    {
-                        tracing::warn!(error = %e, "failed to shift scheduled_date for recurring block");
+                    if !is_valid_iso_date(&shifted) {
+                        tracing::warn!(
+                            "shifted scheduled_date '{shifted}' is not valid YYYY-MM-DD, skipping"
+                        );
+                    } else {
+                        match set_property_in_tx(
+                            &mut tx,
+                            device_id,
+                            new_block.id.clone(),
+                            "scheduled_date".to_string(),
+                            None,
+                            None,
+                            Some(shifted),
+                            None,
+                        )
+                        .await
+                        {
+                            Ok((_, op)) => op_records.push(op),
+                            Err(e) => {
+                                tracing::warn!(error = %e, "failed to shift scheduled_date for recurring block")
+                            }
+                        }
                     }
                 }
+            }
+
+            tx.commit().await?;
+
+            // Dispatch all ops after commit
+            for op in &op_records {
+                let _ = materializer.dispatch_background(op);
             }
         }
     }
@@ -12664,6 +12731,72 @@ mod tests {
             todo_count, 0,
             "no new block should be created without repeat property"
         );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_set_todo_state_recurrence_is_atomic() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block with TODO + repeat rule
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "atomic recurrence test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+        mat.flush_background().await.unwrap();
+
+        // Transition to DONE — should atomically create the recurring block
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Find the new sibling block
+        let new_blocks: Vec<BlockRow> = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+                      is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+                      due_date, scheduled_date
+               FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
+            block.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(new_blocks.len(), 1, "should create exactly one new block");
+        let new_block = &new_blocks[0];
+
+        // Verify the new block has both todo_state=TODO and repeat property set
+        assert_eq!(new_block.todo_state.as_deref(), Some("TODO"));
+        assert_eq!(new_block.content.as_deref(), Some("atomic recurrence test"));
+
+        let props = get_properties_inner(&pool, new_block.id.clone())
+            .await
+            .unwrap();
+        let repeat_prop = props.iter().find(|p| p.key == "repeat");
+        assert!(
+            repeat_prop.is_some(),
+            "new block should have repeat property"
+        );
+        assert_eq!(repeat_prop.unwrap().value_text.as_deref(), Some("daily"));
 
         mat.shutdown();
     }

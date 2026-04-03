@@ -34,6 +34,22 @@ Phase 2 executed: 3 parallel review subagents (error handling, test coverage, co
 - Commit: `267bb4b`
 - REVIEW-LATER: 1 → 6 → 2 items (5 added, 4 resolved)
 
+### #623 Resolved — atomic recurrence block creation
+
+Extracted `create_block_in_tx` and `set_property_in_tx` transaction-aware variants.
+The recurrence path in `set_todo_state_inner` now wraps all operations in a single
+`BEGIN IMMEDIATE` transaction — all-or-nothing semantics. Existing `_inner` functions
+become thin wrappers. No public API change.
+
+| File | Change |
+|------|--------|
+| `commands.rs` | New `create_block_in_tx`, `set_property_in_tx`. Refactored `create_block_inner`, `set_property_inner` as wrappers. Recurrence path uses single tx. 1 new test. |
+| `REVIEW-LATER.md` | Resolved #623. 1 item remains (#522 iOS). |
+
+- Rust: 1471 tests pass (1470 + 1 new)
+- Commit: `58939b5`
+- REVIEW-LATER: 2 → 1 item (#623 resolved)
+
 ## Session 75 — 2026-04-03 — Phase 2: Sync Deep Review + New Findings
 
 ### Deep code review of sync subsystem generating 7 new REVIEW-LATER items
