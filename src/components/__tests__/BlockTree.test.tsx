@@ -2202,6 +2202,63 @@ describe('BlockTree repeat slash commands', () => {
 })
 
 // =========================================================================
+// Effort slash commands tests (#645)
+// =========================================================================
+
+describe('BlockTree effort slash commands', () => {
+  it('searchSlashCommands returns effort presets when query matches "effort"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('effort')
+
+    expect(results).toBeDefined()
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).toContain('effort-15m')
+    expect(ids).toContain('effort-30m')
+    expect(ids).toContain('effort-1h')
+    expect(ids).toContain('effort-2h')
+    expect(ids).toContain('effort-4h')
+    expect(ids).toContain('effort-1d')
+  })
+
+  it('effort-1h preset sets effort property to "1h"', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'effort-1h', label: 'EFFORT 1h — 1 hour' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'effort',
+        valueText: '1h',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+})
+
+// =========================================================================
 // Due date slash command tests
 // =========================================================================
 

@@ -21,23 +21,30 @@ export async function loadJournalTemplate(): Promise<BlockRow | null> {
 
 /**
  * Insert a template's children as new blocks under the given parent.
- * Copies content and ordering from the template page's direct children.
- * Returns the IDs of the created blocks.
+ * Recursively copies content, ordering, and nested structure from the
+ * template page's entire subtree.
+ * Returns the IDs of all created blocks.
  */
 export async function insertTemplateBlocks(
   templatePageId: string,
   parentId: string,
 ): Promise<string[]> {
-  const resp = await listBlocks({ parentId: templatePageId, limit: 500 })
-  const children = resp.items
   const ids: string[] = []
-  for (const child of children) {
-    const block = await createBlock({
-      blockType: 'content',
-      content: child.content ?? '',
-      parentId,
-    })
-    ids.push(block.id)
+
+  async function copyChildren(sourceParentId: string, destParentId: string): Promise<void> {
+    const resp = await listBlocks({ parentId: sourceParentId, limit: 500 })
+    for (const child of resp.items) {
+      const newBlock = await createBlock({
+        blockType: 'content',
+        content: child.content ?? '',
+        parentId: destParentId,
+      })
+      ids.push(newBlock.id)
+      // Recursively copy grandchildren
+      await copyChildren(child.id, newBlock.id)
+    }
   }
+
+  await copyChildren(templatePageId, parentId)
   return ids
 }

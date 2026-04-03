@@ -445,6 +445,19 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     [],
   )
 
+  /** Effort commands — shown only when query matches (progressive disclosure). */
+  const EFFORT_COMMANDS: PickerItem[] = useMemo(
+    () => [
+      { id: 'effort-15m', label: 'EFFORT 15m — 15 minutes' },
+      { id: 'effort-30m', label: 'EFFORT 30m — 30 minutes' },
+      { id: 'effort-1h', label: 'EFFORT 1h — 1 hour' },
+      { id: 'effort-2h', label: 'EFFORT 2h — 2 hours' },
+      { id: 'effort-4h', label: 'EFFORT 4h — 4 hours' },
+      { id: 'effort-1d', label: 'EFFORT 1d — 1 day' },
+    ],
+    [],
+  )
+
   const searchSlashCommands = useCallback(
     async (query: string): Promise<PickerItem[]> => {
       const q = query.toLowerCase()
@@ -453,9 +466,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       const priorityResults = PRIORITY_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       const headingResults = HEADING_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       const repeatResults = REPEAT_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-      return [...baseResults, ...priorityResults, ...headingResults, ...repeatResults]
+      const effortResults = EFFORT_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
+      return [...baseResults, ...priorityResults, ...headingResults, ...repeatResults, ...effortResults]
     },
-    [SLASH_COMMANDS, PRIORITY_COMMANDS, HEADING_COMMANDS, REPEAT_COMMANDS],
+    [SLASH_COMMANDS, PRIORITY_COMMANDS, HEADING_COMMANDS, REPEAT_COMMANDS, EFFORT_COMMANDS],
   )
 
   // ── Roving editor ──────────────────────────────────────────────────
@@ -791,13 +805,25 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         }
       }
 
-      if (item.id === 'effort' || item.id === 'assignee' || item.id === 'location') {
+      if (item.id === 'assignee' || item.id === 'location') {
         if (!focusedBlockId) return
         try {
           await setProperty({ blockId: focusedBlockId, key: item.id, valueText: '' })
           toast.success(`Added ${item.label.split(' — ')[0].toLowerCase()} property`)
         } catch {
           toast.error('Failed to add property')
+        }
+        return
+      }
+
+      if (item.id.startsWith('effort-')) {
+        if (!focusedBlockId) return
+        const value = item.id.replace('effort-', '')
+        try {
+          await setProperty({ blockId: focusedBlockId, key: 'effort', valueText: value })
+          toast.success(t('slash.effortSet', { value }))
+        } catch {
+          toast.error(t('slash.effortFailed'))
         }
         return
       }
