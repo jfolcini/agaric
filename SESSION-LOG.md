@@ -1,5 +1,21 @@
 # Session Log
 
+## Session 121 — 2026-04-03 — Namespaced Page Tree View (#656)
+
+### Pages with `/` render as collapsible tree hierarchy
+
+1 build subagent.
+
+| File | Change |
+|------|--------|
+| `PageBrowser.tsx` | #656: `buildPageTree()` groups pages by `/` segments. `PageTreeItem` renders recursive tree with collapsible namespace folders (ChevronRight). Flat list preserved when no namespaces. |
+| `PageBrowser.test.tsx` | #656: 4 new tests (flat fallback, tree structure, collapse, navigation with full path). |
+
+### Stats
+- Frontend: ~2534 tests pass (4 new)
+- Commit: `e9fb52e`
+- REVIEW-LATER: 13 → 12 items (#656 resolved)
+
 ## Session 120 — 2026-04-03 — Select Dropdown + Quick Reference (#645-7, #661)
 
 ### Click-to-edit select properties + syntax reference panel
