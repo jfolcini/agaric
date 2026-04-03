@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 122 — 2026-04-03 — Task Keywords Settings UI (#658 resolved)
+
+### Custom task state management in PropertiesView
+
+1 build subagent.
+
+| File | Change |
+|------|--------|
+| `PropertiesView.tsx` | #658: `TaskStatesSection` — keyword badges with add/remove, localStorage save, Enter support, uppercase normalization. Rendered above property definitions with Separator. |
+| `PropertiesView.test.tsx` | 2 new tests (section renders, default states shown). |
+| `i18n.ts` | 5 new keys (propertiesView.taskStates/Desc/addTaskState/add/Reload). |
+| `REVIEW-LATER.md` | Removed #645, #656, #661. Updated #654 to tables-only. #658 resolved. 12 → 11 items. |
+
+### Stats
+- Frontend: ~2536 tests pass (2 new)
+- Commit: `e3dbd15`
+- #658 fully resolved (backend + localStorage + visual fallback + settings UI)
+
 ## Session 121 — 2026-04-03 — Namespaced Page Tree View (#656)
 
 ### Pages with `/` render as collapsible tree hierarchy
