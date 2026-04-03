@@ -163,7 +163,7 @@
 | Scrollable past journals | Past days stacked below today | Daily: single day. Weekly: 7-day sections. Monthly: stacked sections (not grid). No "load older" / infinite scroll | Partial |
 | Journal templates | `default-templates > :journals` in config | Journal template auto-apply via `journal-template=true` property on template page. Applied on auto-create | Partial |
 | Configurable date format | `:journal/page-title-format` | Fixed `YYYY-MM-DD` | Gap |
-| Natural language dates | "next friday" in date picker | Not implemented (calendar UI only) | Gap |
+| Natural language dates | "next friday" in date picker | `parse-date.ts` (267 lines, 200+ tests): "today", "tomorrow", "yesterday", "next monday", "in 3 days", "end of month", "+3d"/"+1w"/"+2m", ISO/month-name/ambiguous formats. Missing: "last monday", "this week" | Partial |
 | "On this day" queries | Datalog for same date last year | Not implemented | Gap |
 
 **Planned improvements:**
@@ -354,19 +354,20 @@ These features are designed and scoped but not yet implemented. Each has bite-si
 | 643 | **Properties management view** — browse, create, rename, delete properties and types. Usage counts, batch rename propagation | HIGH | M | Properties |
 | 644 | **Repeating tasks** — `.+` (from completion) and `++` (catch-up) modes, end conditions (repeat-until, repeat-count), agenda projection of virtual future occurrences | HIGH | M | Tasks |
 | 645 | **Block property UX** — inline chips on blocks, click-to-edit popovers, block property drawer. Closes gap between reserved and custom property visibility | HIGH | M | Properties |
+| 652 | **Collapse state persistence** — localStorage, copy sidebar pattern | MED | S | Outlining |
+| 653 | **Editor formatting marks** — strikethrough (`~~`) + highlight (`==`) | MED | M | Editor |
+| 654 | **Editor block types** — blockquotes (`>`) + tables | MED | M | Editor |
+| 655 | **Inline query blocks** — `{{query ...}}` embedded live results | HIGH | M | Query |
+| 656 | **Namespaced pages** — `/` separator, page tree view in browser | MED | M | Pages |
+| 657 | **Block-level multi-selection** — static selection + batch operations | MED | M | Outlining |
+| 658 | **Custom task keywords** — configurable states beyond TODO/DOING/DONE | MED | M | Tasks |
+| 659 | **Full graph Markdown export** — bulk export all pages as ZIP | MED | S | Export |
+| 660 | **Logseq/Markdown import** — parse Logseq `.md` files into blocks | HIGH | L | Import |
 
-**Not in REVIEW-LATER (true gaps):**
-- Block references / embeds (deferred by design — not needed for target workflow)
-- Inline query blocks (no current plan)
-- Strikethrough / highlight formatting
-- Tables / blockquotes / math in editor
-- Namespaced pages
-- Block-level multi-selection
-- Import from Logseq/Roam/Notion
-- Full graph Markdown export
-- Natural language date parsing
-- Custom task keywords (CANCELLED, WAITING, etc.)
-- Collapse state persistence
+**Not in REVIEW-LATER (intentionally deferred):**
+- Block references / embeds (not needed for target workflow)
+- Math/LaTeX rendering (niche, no demand signal)
+- Graph view (out of scope per user)
 
 ---
 

@@ -670,13 +670,26 @@ trailing-whitespace, end-of-file-fixer, check-yaml/toml/json, check-merge-confli
 | ID | Feature | Phase |
 |----|---------|-------|
 | 522 | mDNS peer discovery on iOS (manual IP fallback) | iOS |
-| 639 | Templates system (comprehensive) | Journaling |
-| 641 | Scheduling semantics (due/scheduled drive agenda) | Journaling |
-| 642 | Agenda filter by creation/completion dates, custom properties | Journaling |
+| 639 | Templates system (dynamic variables, CRUD UI) | Journaling |
+| 641 | Scheduling semantics (due/scheduled drive agenda) | Tasks |
+| 642 | Agenda filter by creation/completion dates, custom properties | Tasks |
 | 643 | Properties management view (browse, create, rename, delete) | Properties |
 | 644 | Repeating tasks (modes, end conditions, agenda projection) | Tasks |
 | 645 | Block property UX (inline chips, click-to-edit, property drawer) | Properties |
-| 646 | Property type enforcement (type/date/field validation in set_property) | Properties |
+| 647 | Pages view — accessibility, feedback, safety gaps | Views |
+| 648 | PagePropertyTable — validation, confirmation, completion gaps | Properties |
+| 649 | Templates — insertion robustness and picker UX | Journaling |
+| 650 | Tags view — counts, error handling, hierarchy, validation gaps | Views |
+| 651 | Conflicts view — navigation, refresh, metadata, resolution gaps | Sync |
+| 652 | Collapse state persistence (localStorage) | Outlining |
+| 653 | Editor formatting marks (strikethrough + highlight) | Editor |
+| 654 | Editor block types (blockquotes + tables) | Editor |
+| 655 | Inline query blocks (`{{query ...}}` embedded results) | Query |
+| 656 | Namespaced pages (`/` separator, tree view) | Pages |
+| 657 | Block-level multi-selection (static + batch ops) | Outlining |
+| 658 | Custom task keywords (configurable states) | Tasks |
+| 659 | Full graph Markdown export (bulk ZIP) | Export |
+| 660 | Logseq/Markdown import | Import |
 
 ---
 
