@@ -183,7 +183,7 @@ const resources = {
       'slash.repeatFailed': 'Failed to set repeat',
       'slash.effortSet': 'Set effort to {{value}}',
       'slash.effortFailed': 'Failed to set effort',
-      'slash.noTemplates': 'No templates found. Create a page and set template property to true.',
+      'slash.noTemplates': 'No templates found. To create one: make a page, open its properties (click the page title area), and add a "template" property set to "true".',
       'slash.templateLoadFailed': 'Failed to load templates',
       'slash.templateInserted': 'Template inserted',
       'slash.templateInsertFailed': 'Failed to insert template',
@@ -359,6 +359,11 @@ const resources = {
       'tags.loadFailed': 'Failed to load tags',
       'tags.nameTooLong': 'Tag name must be under 100 characters',
       'tags.deleteWarning': 'Blocks using this tag will lose the reference.',
+
+      // Conflict type tooltips
+      'conflict.typeText': 'Text conflict — content edited on multiple devices',
+      'conflict.typeProperty': 'Property conflict — property changed on multiple devices',
+      'conflict.typeMove': 'Move conflict — block moved to different locations',
     },
   },
 }

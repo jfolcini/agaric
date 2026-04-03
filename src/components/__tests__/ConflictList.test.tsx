@@ -1190,4 +1190,48 @@ describe('ConflictList', () => {
     // Help text should NOT be visible
     expect(screen.queryByText(/replaces the current content/i)).not.toBeInTheDocument()
   })
+
+  // --- #651 C-1 "View original" passes block content as title, not empty string ---
+
+  it('navigates with block content as title (#651 C-1)', async () => {
+    // Reset navigation store to avoid state from prior tests
+    useNavigationStore.setState({ pageStack: [], currentView: 'pages', selectedBlockId: null })
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'my block content', 'ORIG001')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+
+    const viewOriginalBtn = await screen.findByRole('button', { name: /View original/i })
+    await user.click(viewOriginalBtn)
+
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('page-editor')
+    expect(navState.pageStack).toContainEqual(
+      expect.objectContaining({ pageId: 'ORIG001', title: 'my block content' }),
+    )
+  })
+
+  // --- #651 C-9 Conflict type badge has aria-label ---
+
+  it('conflict type badge has aria-label (#651 C-9)', async () => {
+    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+    })
+
+    const { container } = render(<ConflictList />)
+
+    await screen.findByText('conflict text')
+
+    const typeBadge = container.querySelector('.conflict-type-badge')
+    expect(typeBadge).toBeTruthy()
+    expect(typeBadge?.getAttribute('aria-label')).toBe(
+      'Text conflict — content edited on multiple devices',
+    )
+  })
 })

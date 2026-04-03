@@ -22,6 +22,7 @@
 import { Check, ChevronDown, ExternalLink, GitMerge, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -69,6 +70,7 @@ function conflictTypeBadgeClass(type: 'Text' | 'Property' | 'Move'): string {
 }
 
 export function ConflictList(): React.ReactElement {
+  const { t } = useTranslation()
   const queryFn = useCallback((cursor?: string) => getConflicts({ cursor, limit: 50 }), [])
   const {
     items: blocks,
@@ -232,6 +234,7 @@ export function ConflictList(): React.ReactElement {
                   <Badge
                     variant="outline"
                     className={`conflict-type-badge shrink-0 ${conflictTypeBadgeClass(conflictType)}`}
+                    aria-label={t(`conflict.type${conflictType}`)}
                   >
                     {conflictType}
                   </Badge>
@@ -243,12 +246,12 @@ export function ConflictList(): React.ReactElement {
                   <span className="conflict-timestamp">{getConflictTimestamp(block)}</span>
                 </div>
                 <div
-                  className={`conflict-original text-sm text-muted-foreground${isExpanded ? '' : ' truncate'}`}
+                  className={`conflict-original text-sm text-muted-foreground${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}
                 >
                   <span className="font-medium">Current:</span>{' '}
                   {original ? (original.content ?? '(empty)') : '(original not available)'}
                 </div>
-                <div className={`conflict-incoming text-sm${isExpanded ? '' : ' truncate'}`}>
+                <div className={`conflict-incoming text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}>
                   <span className="font-medium">Incoming:</span>{' '}
                   <span className="conflict-item-text">{block.content ?? '(empty)'}</span>
                 </div>
@@ -260,7 +263,7 @@ export function ConflictList(): React.ReactElement {
                     size="sm"
                     className="conflict-view-original-btn"
                     aria-label={`View original block for ${truncateId(block.id)}`}
-                    onClick={() => navigateToPage(block.parent_id as string, '')}
+                    onClick={() => navigateToPage(block.parent_id as string, block.content ?? 'Untitled')}
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                     View original

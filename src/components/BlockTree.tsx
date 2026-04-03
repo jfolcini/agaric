@@ -206,7 +206,7 @@ function TemplatePicker({
         role="dialog"
         aria-modal="true"
         aria-label={t('slash.templatePicker')}
-        className="fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 min-w-[200px] max-w-[300px]"
+        className="fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 min-w-[200px] max-w-[300px] max-h-[60vh] overflow-y-auto max-[479px]:left-2 max-[479px]:right-2 max-[479px]:translate-x-0"
       >
         <p className="px-2 py-1 text-xs font-medium text-muted-foreground">
           {t('slash.selectTemplate')}
