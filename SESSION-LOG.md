@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 139 — 2026-04-03 — Phase 2 review + fix projection mode bug (#664)
+
+### Phase 2: Review agenda projection + properties/repeat
+
+2 parallel review subagents. Found P1 bug: `.+`/`++` modes parsed but never used in `list_projected_agenda_inner` (all projections shifted from base date). Also found P2 issues in repeat recurrence (malformed values, test gaps). Created #664 (projection modes, immediately fixed) and #665 (repeat hardening, deferred).
+
+### Phase 1: Fix #664
+
+| File | Change |
+|------|--------|
+| `commands.rs` | Fixed `list_projected_agenda_inner`: `.+` starts from today, `++` catches up to first future cadence date (with pre-insertion). Renamed `_mode` to `mode`. New test for `++` mode (Monday cadence preservation). |
+| `DuePanel.tsx` | Deduplicate projected entries against real agenda blocks (filter by block ID). |
+| `DuePanel.test.tsx` | 1 new test (deduplication). 25/25 pass. |
+| `REVIEW-LATER.md` | Created #665 (repeat hardening). 7 → 8 open items. |
+
+### Stats
+- Backend: 1 new test (11/11 projection tests pass)
+- Frontend: 1 new test (25/25 DuePanel pass)
+- Commit: `8293d26`
+
 ## Session 138 — 2026-04-03 — Phase 2 review + fix selection bugs + query hardening (#662, #663)
 
 ### Phase 2: Deep review of #655 + #657
