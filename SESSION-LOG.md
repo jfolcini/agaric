@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 131 — 2026-04-03 — ConflictList type rendering + batch resolution (#651 C-2/C-8)
+
+### Batch: type-specific conflict rendering + multi-select batch actions
+
+1 build subagent. Technical reviewer found 4 missing test gaps (deselect, cleanup useEffect, partial failure, deselect-all) — partial failure test added post-review. #651 now has 1 remaining item (C-3: device info).
+
+| File | Change |
+|------|--------|
+| `ConflictList.tsx` | C-2: `renderConflictContent()` dispatches by conflict_type — Property shows field-by-field diffs (blue), Move shows parent/position changes (purple), Text unchanged. Falls back to text when Property has no diffs. Updated header comment. C-8: `selectedIds` state + checkboxes per item. Batch toolbar (count + Select all + Keep all + Discard all). Batch confirmation dialog calls editBlock/deleteBlock directly. Partial failure toast with retry. Cleanup useEffect removes stale IDs. |
+| `ConflictList.test.tsx` | 10 new tests: 3 C-2 (property diff, move diff, text fallback) + 7 C-8 (toolbar visibility, select all, batch keep, batch discard, hidden when empty, a11y, partial failure). 69/69 pass. |
+| `REVIEW-LATER.md` | Updated #651: C-2/C-8 resolved, 1 remaining (C-3). |
+| `FEATURE-MAP.md` | Updated conflicts view section with type-specific rendering and batch resolution. |
+
+### Stats
+- Frontend: 10 new tests (69/69 ConflictList pass)
+- Commit: `b80f415`
+- REVIEW-LATER: #651 down to 1 remaining item (C-3). 11 open items (unchanged count — items resolved within tracker).
+
 ## Session 130 — 2026-04-03 — Agenda projection for repeating tasks (#644 tasks 8+9)
 
 ### Batch: backend projection query + frontend DuePanel rendering

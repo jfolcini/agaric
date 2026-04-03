@@ -403,17 +403,18 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 
 ### 8.7 Conflicts (`conflicts`)
 
-**Component**: `ConflictList.tsx` (~364 lines)
+**Component**: `ConflictList.tsx` (~510 lines)
 **Sidebar icon**: GitMerge (with red dot when unresolved conflicts exist, polled every 30s)
 
 - Shows blocks where `is_conflict = 1` (sync merge conflict copies)
 - Cursor-based pagination
-- Conflict type badge (Text / Property / Move)
+- **Type-specific rendering**: Property conflicts show field-by-field diffs (state, priority, due_date, scheduled_date) with blue styling. Move conflicts show parent_id + position changes with purple styling. Text conflicts show Current:/Incoming: rich content. Falls back to text rendering when no diffs detected.
 - Metadata: conflict source block ID, created timestamp (ULID decoded)
 - Expandable content preview
 - Two actions (two-click confirmation each):
-  - **Keep**: edit original with conflict content + delete conflict copy
-  - **Discard**: delete conflict copy
+  - **Keep**: edit original with conflict content + delete conflict copy (with undo toast)
+  - **Discard**: delete conflict copy (with undo toast)
+- **Batch resolution**: Checkbox per conflict, batch toolbar with Select all/Deselect all, Keep all/Discard all. Batch confirmation dialog calls APIs directly (no per-item toasts). Partial failure toast with retry action.
 - Navigation link to original block
 
 ### 8.8 History (`history`)
