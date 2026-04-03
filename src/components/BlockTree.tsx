@@ -751,6 +751,38 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     }, 0)
   }, [focusedBlockId, collapsedVisible, rovingEditor, edit, remove, setFocused])
 
+  // ── Merge by block ID (context menu) ─────────────────────────────
+  const handleMergeById = useCallback(
+    async (blockId: string) => {
+      const idx = collapsedVisible.findIndex((b) => b.id === blockId)
+      if (idx <= 0) return // First block — nothing to merge with
+
+      const prevBlock = collapsedVisible[idx - 1]
+
+      // If the editor is mounted on this block, unmount to capture latest content
+      const editorContent = focusedBlockId === blockId ? rovingEditor.unmount() : null
+      const currentContent = editorContent ?? collapsedVisible[idx].content ?? ''
+      const prevContent = prevBlock.content ?? ''
+
+      const mergedContent = prevContent + currentContent
+
+      try {
+        await edit(prevBlock.id, mergedContent)
+        await remove(blockId)
+      } catch {
+        // Re-mount editor if it was unmounted
+        if (editorContent !== null) {
+          rovingEditor.mount(blockId, currentContent)
+        }
+        toast.error('Failed to merge blocks')
+        return
+      }
+
+      setFocused(prevBlock.id)
+    },
+    [collapsedVisible, focusedBlockId, rovingEditor, edit, remove, setFocused],
+  )
+
   // ── Enter: save content + close editor ───────────────────────────────
   const handleEnterSave = useCallback(() => {
     if (!focusedBlockId) return
@@ -784,6 +816,17 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     onToggleTodo: () => focusedBlockId && handleToggleTodo(focusedBlockId),
     onToggleCollapse: () => focusedBlockId && toggleCollapse(focusedBlockId),
   })
+
+  // ── Discard button custom event (from FormattingToolbar) ───────────
+  useEffect(() => {
+    const handler = () => {
+      if (focusedBlockId) {
+        handleEscapeCancel()
+      }
+    }
+    document.addEventListener('discard-block-edit', handler)
+    return () => document.removeEventListener('discard-block-edit', handler)
+  }, [focusedBlockId, handleEscapeCancel])
 
   // ── Keyboard shortcut for collapse toggle (Mod+.) ──────────────────
   useEffect(() => {
@@ -1002,6 +1045,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                       handleFlush()
                       moveDown(id)
                     }}
+                    onMerge={handleMergeById}
                     onShowHistory={handleShowHistory}
                   />
                 </div>

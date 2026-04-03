@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  Merge,
   MoveDown,
   MoveUp,
   Signal,
@@ -39,6 +40,7 @@ export interface BlockContextMenuProps {
   onToggleCollapse?: (blockId: string) => void
   onMoveUp?: (blockId: string) => void
   onMoveDown?: (blockId: string) => void
+  onMerge?: (blockId: string) => void
   hasChildren?: boolean
   isCollapsed?: boolean
   todoState?: string | null
@@ -98,6 +100,7 @@ export function BlockContextMenu({
   onToggleCollapse,
   onMoveUp,
   onMoveDown,
+  onMerge,
   hasChildren,
   isCollapsed,
   todoState,
@@ -197,6 +200,15 @@ export function BlockContextMenu({
       action: onMoveDown ? () => handleAction(onMoveDown) : undefined,
       shortcut: 'Ctrl+Shift+↓',
     },
+    ...(onMerge
+      ? [
+          {
+            label: 'Merge with previous',
+            icon: <Merge size={14} />,
+            action: () => handleAction(onMerge),
+          },
+        ]
+      : []),
   ]
 
   // Group 3: Collapse/Expand (only if hasChildren)

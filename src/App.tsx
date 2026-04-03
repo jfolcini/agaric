@@ -7,6 +7,7 @@ import {
   GitMerge,
   History,
   Keyboard,
+  Plus,
   RefreshCw,
   Search,
   Tag,
@@ -219,6 +220,17 @@ function App() {
     return () => window.removeEventListener('keydown', handleGlobalShortcuts)
   }, [])
 
+  const handleNewPage = useCallback(async () => {
+    try {
+      const resp = await createBlock({ blockType: 'page', content: 'Untitled' })
+      useResolveStore.getState().set(resp.id, 'Untitled', false)
+      navigateToPage(resp.id, 'Untitled')
+      announce('New page created')
+    } catch {
+      toast.error('Failed to create page')
+    }
+  }, [navigateToPage])
+
   const handlePageSelect = useCallback(
     (pageId: string, title?: string, blockId?: string) => {
       navigateToPage(pageId, title ?? 'Untitled', blockId)
@@ -276,6 +288,12 @@ function App() {
           </SidebarContent>
           <SidebarFooter>
             <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton tooltip="New Page (Ctrl+N)" onClick={handleNewPage}>
+                  <Plus />
+                  <span>New Page</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   tooltip={!isOnline ? 'Offline' : syncing ? 'Syncing...' : 'Sync all devices'}

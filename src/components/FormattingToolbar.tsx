@@ -29,6 +29,7 @@ import {
   Redo2,
   Signal,
   Undo2,
+  X,
 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
@@ -113,7 +114,7 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
         role="toolbar"
         aria-label="Formatting"
         aria-controls={blockId ? `editor-${blockId}` : undefined}
-        className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px"
+        className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px overflow-x-auto"
       >
         <Tip label="Bold (Ctrl+B)">
           <Button
@@ -407,6 +408,19 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             }}
           >
             <Redo2 size={14} />
+          </Button>
+        </Tip>
+        <Tip label="Discard changes (Esc)">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Discard changes"
+            onPointerDown={(e) => {
+              e.preventDefault()
+              document.dispatchEvent(new CustomEvent('discard-block-edit'))
+            }}
+          >
+            <X size={14} />
           </Button>
         </Tip>
       </div>

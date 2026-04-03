@@ -168,7 +168,7 @@ describe('FormattingToolbar', () => {
       expect(toolbar).toBeInTheDocument()
     })
 
-    it('renders all sixteen formatting buttons', () => {
+    it('renders all seventeen formatting buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
@@ -187,6 +187,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Toggle TODO state' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Redo' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Discard changes' })).toBeInTheDocument()
     })
 
     it('renders separators between button groups', () => {
@@ -553,6 +554,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Toggle TODO state' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Redo' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Discard changes' })).toBeInTheDocument()
     })
   })
 
@@ -632,6 +634,34 @@ describe('FormattingToolbar', () => {
         expect(headingPopover.textContent).toContain(`H${i}`)
       }
       expect(headingPopover.textContent).toContain('Paragraph')
+    })
+  })
+
+  // ── #590-A4: Discard button ───────────────────────────────────────────
+
+  describe('discard button', () => {
+    it('renders with aria-label "Discard changes"', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      expect(screen.getByRole('button', { name: 'Discard changes' })).toBeInTheDocument()
+    })
+
+    it('dispatches discard-block-edit custom event on pointerdown', () => {
+      const spy = vi.fn()
+      document.addEventListener('discard-block-edit', spy)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Discard changes' }))
+      expect(spy).toHaveBeenCalledOnce()
+      document.removeEventListener('discard-block-edit', spy)
+    })
+  })
+
+  // ── #590-B7: Toolbar overflow handling ────────────────────────────────
+
+  describe('toolbar overflow', () => {
+    it('has overflow-x-auto class for narrow screens', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const toolbar = screen.getByRole('toolbar', { name: 'Formatting' })
+      expect(toolbar.className).toContain('overflow-x-auto')
     })
   })
 })

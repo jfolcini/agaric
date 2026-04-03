@@ -123,6 +123,8 @@ interface SortableBlockProps {
   onMoveUp?: (blockId: string) => void
   /** Move block down among siblings. */
   onMoveDown?: (blockId: string) => void
+  /** Merge block with its previous sibling. */
+  onMerge?: (blockId: string) => void
   /** Show block history sheet */
   onShowHistory?: (blockId: string) => void
 }
@@ -152,6 +154,7 @@ function SortableBlockInner({
   scheduledDate,
   onMoveUp,
   onMoveDown,
+  onMerge,
   onShowHistory,
 }: SortableBlockProps): React.ReactElement {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -472,6 +475,7 @@ function SortableBlockInner({
             onToggleCollapse={onToggleCollapse}
             onMoveUp={onMoveUp}
             onMoveDown={onMoveDown}
+            onMerge={onMerge}
             onShowHistory={onShowHistory}
             hasChildren={hasChildren}
             isCollapsed={isCollapsed}

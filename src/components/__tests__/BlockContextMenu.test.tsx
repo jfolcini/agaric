@@ -434,4 +434,28 @@ describe('BlockContextMenu', () => {
     // With all callbacks wired, hasChildren=true, and onShowHistory: 5 groups → 4 separators
     expect(separators.length).toBe(4)
   })
+
+  // ── Merge menu item ──────────────────────────────────────────────
+
+  it('renders Merge item when onMerge is provided', () => {
+    renderMenu({ onMerge: vi.fn() })
+
+    expect(screen.getByText('Merge with previous')).toBeInTheDocument()
+  })
+
+  it('does not render Merge item when onMerge is not provided', () => {
+    renderMenu({ onMerge: undefined })
+
+    expect(screen.queryByText('Merge with previous')).not.toBeInTheDocument()
+  })
+
+  it('clicking Merge calls onMerge with blockId and closes menu', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu({ onMerge: vi.fn() })
+
+    await user.click(screen.getByText('Merge with previous'))
+
+    expect(props.onMerge).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onClose).toHaveBeenCalled()
+  })
 })

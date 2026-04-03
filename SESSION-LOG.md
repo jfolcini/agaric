@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 68 — 2026-04-03 — Mobile Parity Quick Wins (#590)
+
+### Four mobile-accessibility fixes for Android readiness
+1 item resolved (partial — 4 of 7 sub-items implemented, 3 deferred).
+
+Built by 2 parallel subagents (A: discard button + overflow CSS; B: merge context menu + new page sidebar button). No separate review — all additive, well-tested.
+
+| File | Change |
+|------|--------|
+| `FormattingToolbar.tsx` | #590-A4: X discard button (dispatches `discard-block-edit`). #590-B7: `overflow-x-auto` on toolbar. |
+| `BlockTree.tsx` | #590-A4: `discard-block-edit` listener → calls handleEscapeCancel. |
+| `BlockContextMenu.tsx` | #590-A5: "Merge with previous" menu item (Merge icon, group 2). |
+| `SortableBlock.tsx` | #590-A5: Pass `onMerge` through to BlockContextMenu. |
+| `BlockTree.tsx` | #590-A5: `handleMergeById` — concat content + remove + refocus. |
+| `App.tsx` | #590-A2: "New Page" button in sidebar footer (Plus icon). |
+| `FormattingToolbar.test.tsx` | 3 new tests (discard renders + dispatches, overflow class). |
+| `BlockContextMenu.test.tsx` | 3 new tests (merge renders, hidden, callback). |
+| `App.test.tsx` | Fixed 3 tests for duplicate "New Page" button selectors. |
+
+### Stats
+- Frontend: 79/79 test files, 2248 tests pass (2242 + 6 new)
+- Commit: `a236bb3`
+- Deferred: #590-A1 (page undo/redo buttons), A3 (edit link bubble), A6 (kebab button)
+
 ## Session 67 — 2026-04-03 — Toolbar Discoverability (#611-#613)
 
 ### Three toolbar buttons for discoverability

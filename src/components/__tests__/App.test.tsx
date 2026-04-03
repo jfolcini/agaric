@@ -124,9 +124,9 @@ describe('App', () => {
     const sidebar = getSidebar()
     await user.click(sidebar.getByText('Pages'))
 
-    // PageBrowser should render with its New Page button
+    // PageBrowser should render with its new-page input
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
+      expect(screen.getByPlaceholderText('New page name...')).toBeInTheDocument()
     })
   })
 
@@ -236,7 +236,7 @@ describe('App', () => {
     // Go to Pages
     await user.click(sidebar.getByText('Pages'))
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
+      expect(screen.getByPlaceholderText('New page name...')).toBeInTheDocument()
     })
 
     // Go back to Journal
@@ -270,7 +270,7 @@ describe('App', () => {
     expect(pagesBtn).toHaveAttribute('data-active', 'false')
     await user.click(sidebar.getByText('Pages'))
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
+      expect(screen.getByPlaceholderText('New page name...')).toBeInTheDocument()
     })
     const journalBtnAfter = sidebar.getByText('Journal').closest('[data-sidebar="menu-button"]')
     const pagesBtnAfter = sidebar.getByText('Pages').closest('[data-sidebar="menu-button"]')
