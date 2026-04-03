@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 106 — 2026-04-03 — Tags View Fixes + Template Placeholder (#650, #662)
+
+### Tags error handling + template discoverability
+
+1 build subagent (tags) + orchestrator (placeholder). Non-overlapping files.
+
+| File | Change |
+|------|--------|
+| `TagFilterPanel.tsx` | #650: 3 silent catch blocks → error toasts. Tag badge truncation + title attr. |
+| `TagList.tsx` | #650: Tag name length validation (100 char max). Delete dialog block impact warning. Name truncation. |
+| `TagFilterPanel.test.tsx` | #650: 1 new test (error toast on load failure). |
+| `TagList.test.tsx` | #650: 2 new tests (truncation, length validation). |
+| `BlockTree.tsx` | #662: Context-aware placeholder for first empty block — suggests `/template`. |
+| `i18n.ts` | 4 new keys (tags.loadFailed, tags.nameTooLong, tags.deleteWarning, editor.templatePlaceholder). |
+
+### Stats
+- Frontend: 2466 tests pass (2463 + 3 new)
+- Commit: `68114bb`
+- REVIEW-LATER: 19 → 17 items (#650, #662 resolved)
+
 ## Session 105 — 2026-04-03 — Collapse Persistence + Search View UX (#652, #661)
 
 ### Collapse state persisted + Search panel improvements
