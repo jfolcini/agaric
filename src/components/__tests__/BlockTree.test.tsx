@@ -1310,7 +1310,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(15)
+    expect(results).toHaveLength(16)
     expect(results?.map((r) => r.id)).toEqual([
       'todo',
       'doing',
@@ -1327,6 +1327,7 @@ describe('BlockTree slash command wiring', () => {
       'repeat',
       'template',
       'quote',
+      'query',
     ])
   })
 
@@ -1470,6 +1471,20 @@ describe('BlockTree slash command wiring', () => {
     const results = await capturedSearchSlashCommands?.('repeat')
 
     expect(results?.some((r) => r.id === 'repeat')).toBe(true)
+  })
+
+  it('searchSlashCommands returns /query command when query matches "query"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('query')
+
+    expect(results?.some((r) => r.id === 'query')).toBe(true)
   })
 })
 
@@ -3782,6 +3797,26 @@ describe('BlockTree link/tag/code slash commands', () => {
     })
 
     expect(mockToggleCodeBlock).toHaveBeenCalled()
+  })
+
+  it('onSlashCommand for /query inserts query template via editor chain', async () => {
+    useMockEditor = true
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'query', label: 'QUERY — Insert embedded query block' })
+    })
+
+    expect(mockInsertContent).toHaveBeenCalledWith('{{query type:tag expr:}}')
   })
 })
 

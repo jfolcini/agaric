@@ -443,6 +443,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       { id: 'repeat', label: 'REPEAT — Set recurrence (daily/weekly/monthly/+Nd)' },
       { id: 'template', label: 'TEMPLATE — Insert block template' },
       { id: 'quote', label: 'QUOTE — Insert blockquote' },
+      { id: 'query', label: 'QUERY — Insert embedded query block' },
     ],
     [],
   )
@@ -854,6 +855,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
       if (item.id === 'quote') {
         rovingEditor.editor?.chain().focus().toggleBlockquote().run()
+        return
+      }
+
+      if (item.id === 'query') {
+        rovingEditor.editor?.chain().focus().insertContent('{{query type:tag expr:}}').run()
         return
       }
 

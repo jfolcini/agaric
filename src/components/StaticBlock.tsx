@@ -16,6 +16,7 @@ import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
 import { openUrl } from '../lib/open-url'
 import { cn } from '../lib/utils'
+import { QueryResult } from './QueryResult'
 
 const lowlight = createLowlight(common)
 
@@ -261,6 +262,24 @@ function StaticBlockInner({
   isSelected,
   onSelect,
 }: StaticBlockProps): React.ReactElement {
+  // Detect {{query ...}} blocks and render QueryResult instead of the text
+  if (content?.startsWith('{{query ') && content.endsWith('}}')) {
+    const expression = content.slice(8, -2).trim()
+    return (
+      <div
+        className="block-static w-full min-h-[1.75rem] rounded-md text-left text-sm"
+        data-block-id={blockId}
+        onClick={() => onFocus(blockId)}
+      >
+        <QueryResult
+          expression={expression}
+          onNavigate={onNavigate ? (pageId) => onNavigate(pageId) : undefined}
+          resolveBlockTitle={resolveBlockTitle}
+        />
+      </div>
+    )
+  }
+
   const richContent = useMemo(
     () =>
       content
