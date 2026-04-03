@@ -58,6 +58,31 @@ vi.mock('../LinkedReferences', () => ({
   ),
 }))
 
+// ── Mock AgendaFilterBuilder ────────────────────────────────────────
+vi.mock('../AgendaFilterBuilder', () => ({
+  AgendaFilterBuilder: (props: { filters: unknown[]; onFiltersChange: unknown }) => (
+    <div
+      data-testid="agenda-filter-builder"
+      data-filter-count={Array.isArray(props.filters) ? props.filters.length : 0}
+    >
+      AgendaFilterBuilder
+    </div>
+  ),
+}))
+
+// ── Mock AgendaResults ──────────────────────────────────────────────
+vi.mock('../AgendaResults', () => ({
+  AgendaResults: (props: { blocks: unknown[]; loading: boolean; hasActiveFilters: boolean }) => (
+    <div
+      data-testid="agenda-results"
+      data-block-count={Array.isArray(props.blocks) ? props.blocks.length : 0}
+      data-loading={props.loading}
+    >
+      AgendaResults
+    </div>
+  ),
+}))
+
 import { useBlockStore } from '../../stores/blocks'
 import { useJournalStore } from '../../stores/journal'
 import { JournalControls, JournalPage, MAX_JOURNAL_DATE, MIN_JOURNAL_DATE } from '../JournalPage'
@@ -1126,10 +1151,10 @@ describe('JournalPage', () => {
     })
   })
 
-  // ── Agenda Mode ─────────────────────────────────────────────────────
+  // ── Agenda Mode (#608 — AgendaFilterBuilder + AgendaResults) ──────
 
   describe('agenda mode', () => {
-    it('renders three task sections (To Do, In Progress, Completed)', async () => {
+    it('renders AgendaFilterBuilder in agenda mode', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValue(emptyPage)
 
@@ -1142,9 +1167,85 @@ describe('JournalPage', () => {
       const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
       await user.click(agendaTab)
 
-      expect(screen.getByRole('button', { name: /to do tasks/i })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /in progress tasks/i })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /completed tasks/i })).toBeInTheDocument()
+      await waitFor(() => {
+        expect(screen.getByTestId('agenda-filter-builder')).toBeInTheDocument()
+      })
+    })
+
+    it('renders AgendaResults in agenda mode', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
+      await user.click(agendaTab)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('agenda-results')).toBeInTheDocument()
+      })
+    })
+
+    it('default agenda loads all tasks via queryByProperty with key=todo_state', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'query_by_property') {
+          const params = args as { key?: string }
+          if (params?.key === 'todo_state') {
+            return {
+              items: [
+                {
+                  id: 'TASK-1',
+                  block_type: 'content',
+                  content: 'Buy groceries',
+                  parent_id: 'PAGE-1',
+                  position: 0,
+                  deleted_at: null,
+                  archived_at: null,
+                  is_conflict: false,
+                  todo_state: 'TODO',
+                },
+              ],
+              next_cursor: null,
+              has_more: false,
+            }
+          }
+          return emptyPage
+        }
+        if (cmd === 'batch_resolve') {
+          return [{ id: 'PAGE-1', title: 'My Project', block_type: 'page', deleted: false }]
+        }
+        return emptyPage
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
+      await user.click(agendaTab)
+
+      // Wait for the filter execution effect to fire and update blocks
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'query_by_property',
+          expect.objectContaining({
+            key: 'todo_state',
+          }),
+        )
+      })
+
+      // AgendaResults should have received blocks
+      await waitFor(() => {
+        const results = screen.getByTestId('agenda-results')
+        expect(results).toHaveAttribute('data-block-count', '1')
+      })
     })
 
     it('hides date navigation in agenda mode', async () => {
@@ -1182,268 +1283,11 @@ describe('JournalPage', () => {
       expect(screen.getByTestId('date-display')).toHaveTextContent('Tasks')
     })
 
-    it('expanding a task section loads and shows tasks', async () => {
-      const user = userEvent.setup()
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'query_by_property') {
-          const params = args as { valueText?: string }
-          if (params?.valueText === 'TODO') {
-            return {
-              items: [
-                {
-                  id: 'TASK-1',
-                  block_type: 'content',
-                  content: 'Buy groceries',
-                  parent_id: 'PAGE-1',
-                  position: 0,
-                  deleted_at: null,
-                  archived_at: null,
-                  is_conflict: false,
-                },
-              ],
-              next_cursor: null,
-              has_more: false,
-            }
-          }
-          return emptyPage
-        }
-        return emptyPage
-      })
-
-      renderJournal()
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-      })
-
-      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
-      await user.click(agendaTab)
-
-      // Expand the "To Do" section
-      const todoBtn = screen.getByRole('button', { name: /to do tasks/i })
-      await user.click(todoBtn)
-
-      await waitFor(() => {
-        expect(screen.getByText('Buy groceries')).toBeInTheDocument()
-      })
-    })
-
-    it('shows "No tasks" when a section is expanded but empty', async () => {
-      const user = userEvent.setup()
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'query_by_property') {
-          return emptyPage
-        }
-        return emptyPage
-      })
-
-      renderJournal()
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-      })
-
-      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
-      await user.click(agendaTab)
-
-      // Expand the "To Do" section
-      const todoBtn = screen.getByRole('button', { name: /to do tasks/i })
-      await user.click(todoBtn)
-
-      await waitFor(() => {
-        expect(screen.getByText('No tasks')).toBeInTheDocument()
-      })
-    })
-
-    it('collapsing a section hides its content', async () => {
-      const user = userEvent.setup()
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'query_by_property') {
-          const params = args as { valueText?: string }
-          if (params?.valueText === 'TODO') {
-            return {
-              items: [
-                {
-                  id: 'TASK-1',
-                  block_type: 'content',
-                  content: 'Buy groceries',
-                  parent_id: 'PAGE-1',
-                  position: 0,
-                  deleted_at: null,
-                  archived_at: null,
-                  is_conflict: false,
-                },
-              ],
-              next_cursor: null,
-              has_more: false,
-            }
-          }
-          return emptyPage
-        }
-        return emptyPage
-      })
-
-      renderJournal()
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-      })
-
-      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
-      await user.click(agendaTab)
-
-      const todoBtn = screen.getByRole('button', { name: /to do tasks/i })
-
-      // Expand
-      await user.click(todoBtn)
-      await waitFor(() => {
-        expect(screen.getByText('Buy groceries')).toBeInTheDocument()
-      })
-
-      // Collapse
-      await user.click(todoBtn)
-      expect(screen.queryByText('Buy groceries')).not.toBeInTheDocument()
-    })
-
-    it('shows badge count after loading tasks', async () => {
-      const user = userEvent.setup()
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'query_by_property') {
-          const params = args as { valueText?: string }
-          if (params?.valueText === 'TODO') {
-            return {
-              items: [
-                {
-                  id: 'TASK-1',
-                  block_type: 'content',
-                  content: 'Task one',
-                  parent_id: 'PAGE-1',
-                  position: 0,
-                  deleted_at: null,
-                  archived_at: null,
-                  is_conflict: false,
-                },
-                {
-                  id: 'TASK-2',
-                  block_type: 'content',
-                  content: 'Task two',
-                  parent_id: 'PAGE-1',
-                  position: 1,
-                  deleted_at: null,
-                  archived_at: null,
-                  is_conflict: false,
-                },
-              ],
-              next_cursor: null,
-              has_more: false,
-            }
-          }
-          return emptyPage
-        }
-        return emptyPage
-      })
-
-      renderJournal()
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-      })
-
-      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
-      await user.click(agendaTab)
-
-      const todoBtn = screen.getByRole('button', { name: /to do tasks/i })
-      await user.click(todoBtn)
-
-      await waitFor(() => {
-        expect(screen.getByText('2')).toBeInTheDocument()
-      })
-    })
-
-    it('shows "Load more" when has_more is true and loads next page', async () => {
-      const user = userEvent.setup()
-      let callCount = 0
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'query_by_property') {
-          const params = args as { valueText?: string; cursor?: string }
-          if (params?.valueText === 'TODO') {
-            callCount++
-            if (callCount === 1) {
-              return {
-                items: [
-                  {
-                    id: 'TASK-1',
-                    block_type: 'content',
-                    content: 'First batch',
-                    parent_id: 'PAGE-1',
-                    position: 0,
-                    deleted_at: null,
-                    archived_at: null,
-                    is_conflict: false,
-                  },
-                ],
-                next_cursor: 'cursor-2',
-                has_more: true,
-              }
-            }
-            // Second call (load more)
-            return {
-              items: [
-                {
-                  id: 'TASK-2',
-                  block_type: 'content',
-                  content: 'Second batch',
-                  parent_id: 'PAGE-1',
-                  position: 1,
-                  deleted_at: null,
-                  archived_at: null,
-                  is_conflict: false,
-                },
-              ],
-              next_cursor: null,
-              has_more: false,
-            }
-          }
-          return emptyPage
-        }
-        return emptyPage
-      })
-
-      renderJournal()
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-      })
-
-      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
-      await user.click(agendaTab)
-
-      const todoBtn = screen.getByRole('button', { name: /to do tasks/i })
-      await user.click(todoBtn)
-
-      await waitFor(() => {
-        expect(screen.getByText('First batch')).toBeInTheDocument()
-      })
-
-      // Badge should show "1+" (has_more = true)
-      expect(screen.getByText('1+')).toBeInTheDocument()
-
-      // Click "Load more"
-      const loadMoreBtn = screen.getByRole('button', { name: /load more/i })
-      await user.click(loadMoreBtn)
-
-      await waitFor(() => {
-        expect(screen.getByText('Second batch')).toBeInTheDocument()
-      })
-      // Both tasks should be visible
-      expect(screen.getByText('First batch')).toBeInTheDocument()
-    })
-
-    it('task section aria-expanded reflects expand/collapse state', async () => {
+    it('agenda view passes axe a11y check', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValue(emptyPage)
 
-      renderJournal()
+      const { container } = renderJournal()
 
       await waitFor(() => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
@@ -1452,139 +1296,10 @@ describe('JournalPage', () => {
       const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
       await user.click(agendaTab)
 
-      const todoBtn = screen.getByRole('button', { name: /to do tasks/i })
-      expect(todoBtn).toHaveAttribute('aria-expanded', 'false')
-
-      await user.click(todoBtn)
-      expect(todoBtn).toHaveAttribute('aria-expanded', 'true')
-
-      await user.click(todoBtn)
-      expect(todoBtn).toHaveAttribute('aria-expanded', 'false')
-    })
-  })
-
-  // ── onNavigateToPage from agenda tasks ──────────────────────────────
-
-  describe('onNavigateToPage from agenda', () => {
-    it('clicking a task item calls onNavigateToPage with parent page', async () => {
-      const user = userEvent.setup()
-      const onNavigateToPage = vi.fn()
-
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'query_by_property') {
-          const params = args as { valueText?: string }
-          if (params?.valueText === 'TODO') {
-            return {
-              items: [
-                {
-                  id: 'TASK-1',
-                  block_type: 'content',
-                  content: 'Buy groceries',
-                  parent_id: 'PAGE-1',
-                  position: 0,
-                  deleted_at: null,
-                  archived_at: null,
-                  is_conflict: false,
-                },
-              ],
-              next_cursor: null,
-              has_more: false,
-            }
-          }
-          return emptyPage
-        }
-        if (cmd === 'get_block') {
-          return {
-            id: 'PAGE-1',
-            block_type: 'page',
-            content: 'My Project',
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-            archived_at: null,
-            is_conflict: false,
-          }
-        }
-        return emptyPage
-      })
-
-      renderJournal({ onNavigateToPage })
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-      })
-
-      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
-      await user.click(agendaTab)
-
-      const todoBtn = screen.getByRole('button', { name: /to do tasks/i })
-      await user.click(todoBtn)
-
-      await waitFor(() => {
-        expect(screen.getByText('Buy groceries')).toBeInTheDocument()
-      })
-
-      // Click the task item
-      await user.click(screen.getByText('Buy groceries'))
-
-      await waitFor(() => {
-        expect(onNavigateToPage).toHaveBeenCalledWith('PAGE-1', 'My Project')
-      })
-    })
-
-    it('clicking a task item falls back to "Untitled" if getBlock fails', async () => {
-      const user = userEvent.setup()
-      const onNavigateToPage = vi.fn()
-
-      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-        if (cmd === 'query_by_property') {
-          const params = args as { valueText?: string }
-          if (params?.valueText === 'TODO') {
-            return {
-              items: [
-                {
-                  id: 'TASK-1',
-                  block_type: 'content',
-                  content: 'Buy groceries',
-                  parent_id: 'PAGE-1',
-                  position: 0,
-                  deleted_at: null,
-                  archived_at: null,
-                  is_conflict: false,
-                },
-              ],
-              next_cursor: null,
-              has_more: false,
-            }
-          }
-          return emptyPage
-        }
-        if (cmd === 'get_block') {
-          throw new Error('Block not found')
-        }
-        return emptyPage
-      })
-
-      renderJournal({ onNavigateToPage })
-
-      await waitFor(() => {
-        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
-      })
-
-      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
-      await user.click(agendaTab)
-
-      const todoBtn = screen.getByRole('button', { name: /to do tasks/i })
-      await user.click(todoBtn)
-
-      await waitFor(() => {
-        expect(screen.getByText('Buy groceries')).toBeInTheDocument()
-      })
-
-      await user.click(screen.getByText('Buy groceries'))
-
-      await waitFor(() => {
-        expect(onNavigateToPage).toHaveBeenCalledWith('PAGE-1', 'Untitled')
+      await waitFor(async () => {
+        expect(screen.getByTestId('agenda-filter-builder')).toBeInTheDocument()
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
       })
     })
   })

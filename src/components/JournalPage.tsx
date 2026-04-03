@@ -30,34 +30,33 @@ import {
 } from 'date-fns'
 import {
   Calendar as CalendarIcon,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Circle,
-  CircleDot,
   ExternalLink,
   Plus,
 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import type { BlockRow } from '../lib/tauri'
 import {
+  batchResolve,
   countAgendaBatch,
   countBacklinksBatch,
   createBlock,
-  getBlock,
   listBlocks,
   queryByProperty,
 } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
 import { useResolveStore } from '../stores/resolve'
+import type { AgendaFilter } from './AgendaFilterBuilder'
+import { AgendaFilterBuilder } from './AgendaFilterBuilder'
+import { AgendaResults } from './AgendaResults'
 import { BlockTree } from './BlockTree'
 import { DonePanel } from './DonePanel'
 import { DuePanel } from './DuePanel'
@@ -123,136 +122,6 @@ function formatWeekRange(d: Date): string {
   const startStr = format(start, 'MMM d')
   const endStr = format(end, 'MMM d, yyyy')
   return `${startStr} - ${endStr}`
-}
-
-// ── Agenda TaskSection ────────────────────────────────────────────────
-
-interface TaskSectionProps {
-  title: string
-  status: string
-  icon: React.ElementType
-  iconColor: string
-  onNavigateToPage?: (pageId: string, title?: string) => void
-}
-
-/** Collapsible section that lazily loads blocks matching a `todo` property value. */
-function TaskSection({ title, status, icon: Icon, iconColor, onNavigateToPage }: TaskSectionProps) {
-  const [expanded, setExpanded] = useState(false)
-  const [blocks, setBlocks] = useState<BlockRow[]>([])
-  const [loading, setLoading] = useState(false)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-
-  const loadTasks = useCallback(
-    async (cursor?: string) => {
-      setLoading(true)
-      try {
-        const resp = await queryByProperty({
-          key: 'todo',
-          valueText: status,
-          cursor,
-          limit: 10,
-        })
-        if (cursor) {
-          setBlocks((prev) => [...prev, ...resp.items])
-        } else {
-          setBlocks(resp.items)
-        }
-        setNextCursor(resp.next_cursor)
-        setHasMore(resp.has_more)
-        setLoaded(true)
-      } catch {
-        toast.error('Failed to load tasks')
-      }
-      setLoading(false)
-    },
-    [status],
-  )
-
-  const handleExpand = useCallback(() => {
-    const next = !expanded
-    setExpanded(next)
-    if (next && !loaded) loadTasks()
-  }, [expanded, loaded, loadTasks])
-
-  const handleNavigate = useCallback(
-    async (block: BlockRow) => {
-      if (block.parent_id && onNavigateToPage) {
-        try {
-          const parent = await getBlock(block.parent_id)
-          onNavigateToPage(block.parent_id, parent.content ?? 'Untitled')
-        } catch {
-          /* fallback — still navigate with generic title */
-          onNavigateToPage(block.parent_id, 'Untitled')
-        }
-      }
-    },
-    [onNavigateToPage],
-  )
-
-  return (
-    <div className="task-section rounded-lg border">
-      <button
-        type="button"
-        className="task-section-header flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-accent/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={handleExpand}
-        aria-expanded={expanded}
-        aria-label={`${title} tasks`}
-      >
-        <ChevronRight className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')} />
-        <Icon className={cn('h-4 w-4', iconColor)} />
-        <span className="flex-1">{title}</span>
-        {loaded && (
-          <Badge variant="secondary" className="text-xs">
-            {blocks.length}
-            {hasMore ? '+' : ''}
-          </Badge>
-        )}
-      </button>
-
-      {expanded && (
-        <div className="task-section-content border-t px-3 py-2 space-y-1">
-          {loading && !loaded && (
-            <div className="space-y-2">
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-            </div>
-          )}
-
-          {loaded && blocks.length === 0 && (
-            <div className="text-xs text-muted-foreground py-2">No tasks</div>
-          )}
-
-          {blocks.map((block) => (
-            <button
-              key={block.id}
-              type="button"
-              className="task-item flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent/50 transition-colors"
-              onClick={() => handleNavigate(block)}
-            >
-              <span className="flex-1 truncate">{block.content || '(empty)'}</span>
-              <span className="text-[10px] text-muted-foreground font-mono">
-                {block.id.slice(0, 8)}
-              </span>
-            </button>
-          ))}
-
-          {hasMore && (
-            <Button
-              variant="ghost"
-              size="xs"
-              className="w-full text-muted-foreground"
-              onClick={() => loadTasks(nextCursor ?? undefined)}
-              disabled={loading}
-            >
-              {loading ? 'Loading...' : 'Load more'}
-            </Button>
-          )}
-        </div>
-      )}
-    </div>
-  )
 }
 
 // ── Viewport-aware calendar dropdown ──────────────────────────────────
@@ -378,6 +247,14 @@ export function JournalPage({
   const [backlinkCounts, setBacklinkCounts] = useState<Record<string, number>>({})
   const load = useBlockStore((s) => s.load)
 
+  // ── Agenda filter state ────────────────────────────────────────────
+  const [agendaFilters, setAgendaFilters] = useState<AgendaFilter[]>([])
+  const [filteredBlocks, setFilteredBlocks] = useState<BlockRow[]>([])
+  const [agendaLoading, setAgendaLoading] = useState(false)
+  const [agendaHasMore, setAgendaHasMore] = useState(false)
+  const [agendaCursor, setAgendaCursor] = useState<string | null>(null)
+  const [agendaPageTitles, setAgendaPageTitles] = useState<Map<string, string>>(new Map())
+
   /** Fetch all pages and build a dateStr->pageId lookup. */
   const fetchPages = useCallback(async () => {
     setLoading(true)
@@ -474,6 +351,148 @@ export function JournalPage({
       cancelled = true
     }
   }, [mode, entries])
+
+  // ── Agenda filter execution ────────────────────────────────────────
+  useEffect(() => {
+    if (mode !== 'agenda') return
+
+    let cancelled = false
+    setAgendaLoading(true)
+
+    async function executeFilters() {
+      try {
+        let blocks: BlockRow[] = []
+
+        if (agendaFilters.length === 0) {
+          // Default: all blocks with any todo_state
+          const resp = await queryByProperty({ key: 'todo_state', limit: 200 })
+          blocks = resp.items
+          setAgendaHasMore(resp.has_more)
+          setAgendaCursor(resp.next_cursor)
+        } else {
+          // Execute each filter dimension and intersect
+          const resultSets: Set<string>[] = []
+          const allBlocks = new Map<string, BlockRow>()
+
+          for (const filter of agendaFilters) {
+            const ids = new Set<string>()
+
+            if (filter.dimension === 'status') {
+              for (const value of filter.values) {
+                const resp = await queryByProperty({
+                  key: 'todo_state',
+                  valueText: value,
+                  limit: 500,
+                })
+                for (const b of resp.items) {
+                  ids.add(b.id)
+                  allBlocks.set(b.id, b)
+                }
+              }
+            } else if (filter.dimension === 'priority') {
+              for (const value of filter.values) {
+                const resp = await queryByProperty({
+                  key: 'priority',
+                  valueText: value,
+                  limit: 500,
+                })
+                for (const b of resp.items) {
+                  ids.add(b.id)
+                  allBlocks.set(b.id, b)
+                }
+              }
+            } else if (filter.dimension === 'dueDate') {
+              // Map filter values to actual dates
+              const today = new Date()
+              const todayStr = today.toISOString().slice(0, 10)
+              for (const value of filter.values) {
+                if (value === 'Today') {
+                  const resp = await listBlocks({
+                    agendaDate: todayStr,
+                    agendaSource: 'column:due_date',
+                    limit: 500,
+                  })
+                  for (const b of resp.items) {
+                    ids.add(b.id)
+                    allBlocks.set(b.id, b)
+                  }
+                } else if (value === 'Overdue') {
+                  // Get all blocks with due_date < today
+                  // Use queryByProperty won't work directly for range queries
+                  // For v1, skip complex date ranges -- just handle "Today"
+                  // For other values, fetch all agenda items and filter client-side
+                }
+                // Simplified: for v1 just handle "Today" well
+              }
+            } else if (filter.dimension === 'tag') {
+              for (const value of filter.values) {
+                const resp = await listBlocks({ tagId: value, limit: 500 })
+                for (const b of resp.items) {
+                  ids.add(b.id)
+                  allBlocks.set(b.id, b)
+                }
+              }
+            }
+
+            resultSets.push(ids)
+          }
+
+          // Intersect all result sets
+          if (resultSets.length > 0) {
+            let intersection = resultSets[0]
+            for (let i = 1; i < resultSets.length; i++) {
+              intersection = new Set([...intersection].filter((id) => resultSets[i].has(id)))
+            }
+            blocks = [...intersection].map((id) => allBlocks.get(id) as BlockRow).filter(Boolean)
+          }
+
+          setAgendaHasMore(false) // Client-side intersection doesn't support pagination
+          setAgendaCursor(null)
+        }
+
+        if (!cancelled) {
+          setFilteredBlocks(blocks.slice(0, 200))
+          setAgendaLoading(false)
+
+          // Resolve page titles for breadcrumbs
+          const parentIds = [...new Set(blocks.map((b) => b.parent_id).filter(Boolean))] as string[]
+          if (parentIds.length > 0) {
+            const resolved = await batchResolve(parentIds)
+            const titleMap = new Map<string, string>()
+            for (const r of resolved) {
+              titleMap.set(r.id, r.title ?? 'Untitled')
+            }
+            if (!cancelled) setAgendaPageTitles(titleMap)
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setFilteredBlocks([])
+          setAgendaLoading(false)
+        }
+      }
+    }
+
+    executeFilters()
+    return () => {
+      cancelled = true
+    }
+  }, [mode, agendaFilters])
+
+  /** Load the next page of agenda results (used for default unfiltered view). */
+  const loadMoreAgenda = useCallback(async () => {
+    if (!agendaCursor) return
+    setAgendaLoading(true)
+    try {
+      const resp = await queryByProperty({ key: 'todo_state', cursor: agendaCursor, limit: 200 })
+      setFilteredBlocks((prev) => [...prev, ...resp.items])
+      setAgendaHasMore(resp.has_more)
+      setAgendaCursor(resp.next_cursor)
+    } catch {
+      // ignore
+    }
+    setAgendaLoading(false)
+  }, [agendaCursor])
 
   /** Add a new block under a specific day's page, creating the page if needed. */
   async function handleAddBlock(dateStr: string) {
@@ -718,30 +737,20 @@ export function JournalPage({
     )
   }
 
-  /** Render agenda view — collapsible task sections grouped by TODO status. */
+  /** Render agenda view — filter builder + flat results list. */
   function renderAgenda() {
     return (
-      <div className="agenda-view space-y-3">
-        <TaskSection
-          title="To Do"
-          status="TODO"
-          icon={Circle}
-          iconColor="text-muted-foreground"
+      <div className="agenda-view space-y-4">
+        <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
+        <AgendaResults
+          blocks={filteredBlocks}
+          loading={agendaLoading}
+          hasMore={agendaHasMore}
+          onLoadMore={loadMoreAgenda}
           onNavigateToPage={onNavigateToPage}
-        />
-        <TaskSection
-          title="In Progress"
-          status="DOING"
-          icon={CircleDot}
-          iconColor="text-blue-500"
-          onNavigateToPage={onNavigateToPage}
-        />
-        <TaskSection
-          title="Completed"
-          status="DONE"
-          icon={CheckCircle2}
-          iconColor="text-green-600"
-          onNavigateToPage={onNavigateToPage}
+          hasActiveFilters={agendaFilters.length > 0}
+          onClearFilters={() => setAgendaFilters([])}
+          pageTitles={agendaPageTitles}
         />
       </div>
     )

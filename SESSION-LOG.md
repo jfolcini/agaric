@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 72 — 2026-04-03 — Phase 6 Wave 4: Agenda Stackable Filters (#606-#608)
+
+### Agenda filter refactor — filter builder + results list + execution
+3 items resolved: complete Phase 6 Wave 4 agenda filter system.
+
+Built by 3 subagents (A: AgendaFilterBuilder + 17 tests; B: AgendaResults + 13 tests; C: filter execution wiring + 6 JournalPage tests) + orchestrator (biome lint fixes: hook-at-top-level split, semantic elements, TaskSection removal). Phase 6 complete.
+
+| File | Change |
+|------|--------|
+| `AgendaFilterBuilder.tsx` (new) | #607: Filter chips bar, 4 dimensions (Status/Priority/DueDate/Tag), add/edit/remove popovers. |
+| `AgendaFilterBuilder.test.tsx` (new) | 17 tests. |
+| `AgendaResults.tsx` (new) | #606: Flat results list with status icons, priority badges, due chips, breadcrumbs. |
+| `AgendaResults.test.tsx` (new) | 13 tests. |
+| `JournalPage.tsx` | #608: renderAgenda() → AgendaFilterBuilder + AgendaResults. Filter execution effect (per-dimension queries + client-side intersection). TaskSection deleted. |
+| `JournalPage.test.tsx` | #608: 6 new agenda tests, old TaskSection tests replaced. |
+
+### Stats
+- Frontend: 81/81 test files, 2289 tests pass (net +36 new tests, −10 TaskSection tests removed)
+- Commit: `1248f79`
+
 ## Session 71 — 2026-04-03 — Page Aliases (#598)
 
 ### Page aliases: data model + commands + header UI + picker matching

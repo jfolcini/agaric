@@ -1,0 +1,272 @@
+/**
+ * Tests for AgendaResults component (#606).
+ *
+ * Validates:
+ *  1. Renders block items with status icons, priority badges, content
+ *  2. Shows due date chip when block has due_date
+ *  3. Shows source page breadcrumb from pageTitles
+ *  4. Click on item calls onNavigateToPage
+ *  5. Empty state without filters shows "No tasks found"
+ *  6. Empty state with filters shows "No blocks match" + clear button
+ *  7. Load more button appears when hasMore=true
+ *  8. A11y audit passes (axe)
+ */
+
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
+
+vi.mock('lucide-react', () => ({
+  Circle: (props: Record<string, unknown>) => <svg data-testid="icon-todo" {...props} />,
+  Clock: (props: Record<string, unknown>) => <svg data-testid="icon-doing" {...props} />,
+  CheckCircle2: (props: Record<string, unknown>) => <svg data-testid="icon-done" {...props} />,
+  Loader2: (props: Record<string, unknown>) => <svg data-testid="loader-spinner" {...props} />,
+}))
+
+vi.mock('@/components/ui/button', () => ({
+  Button: ({
+    children,
+    ...props
+  }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string; size?: string }) => (
+    <button type="button" {...props}>
+      {children}
+    </button>
+  ),
+}))
+
+import type { BlockRow } from '../../lib/tauri'
+import { AgendaResults, type AgendaResultsProps } from '../AgendaResults'
+
+function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
+  return {
+    id: 'B1',
+    block_type: 'block',
+    content: 'test block',
+    parent_id: 'PAGE1',
+    position: 0,
+    deleted_at: null,
+    archived_at: null,
+    is_conflict: false,
+    conflict_type: null,
+    todo_state: 'TODO',
+    priority: null,
+    due_date: null,
+    scheduled_date: null,
+    ...overrides,
+  }
+}
+
+const noopFn = () => {}
+
+function defaultProps(overrides: Partial<AgendaResultsProps> = {}): AgendaResultsProps {
+  return {
+    blocks: [],
+    loading: false,
+    hasMore: false,
+    onLoadMore: noopFn,
+    onNavigateToPage: undefined,
+    hasActiveFilters: false,
+    onClearFilters: noopFn,
+    pageTitles: new Map(),
+    ...overrides,
+  }
+}
+
+describe('AgendaResults', () => {
+  // 1. Renders block items with status icons, priority badges, content
+  it('renders block items with status icons, priority badges, and content', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', todo_state: 'TODO', priority: '1', content: 'Buy groceries' }),
+      makeBlock({ id: 'B2', todo_state: 'DOING', priority: '2', content: 'Write report' }),
+      makeBlock({ id: 'B3', todo_state: 'DONE', priority: '3', content: 'Ship feature' }),
+    ]
+
+    render(<AgendaResults {...defaultProps({ blocks })} />)
+
+    // All three items are rendered
+    expect(screen.getByText('Buy groceries')).toBeInTheDocument()
+    expect(screen.getByText('Write report')).toBeInTheDocument()
+    expect(screen.getByText('Ship feature')).toBeInTheDocument()
+
+    // Status icons
+    expect(screen.getAllByTestId('icon-todo').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByTestId('icon-doing')).toBeInTheDocument()
+    expect(screen.getByTestId('icon-done')).toBeInTheDocument()
+
+    // Priority badges
+    expect(screen.getByText('P1')).toBeInTheDocument()
+    expect(screen.getByText('P2')).toBeInTheDocument()
+    expect(screen.getByText('P3')).toBeInTheDocument()
+  })
+
+  // 2. Shows due date chip when block has due_date
+  it('shows due date chip when block has due_date', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', content: 'Deadline task', due_date: '2025-04-15' }),
+      makeBlock({ id: 'B2', content: 'No deadline' }),
+    ]
+
+    render(<AgendaResults {...defaultProps({ blocks })} />)
+
+    // The due date should be formatted compactly ("Apr 15" same year, or "Apr 15, 2025")
+    expect(screen.getByText(/Apr 15/)).toBeInTheDocument()
+
+    // The no-deadline block should NOT have a date chip
+    const noDueDateItem = screen.getByText('No deadline').closest('li')
+    expect(noDueDateItem).not.toBeNull()
+    expect(noDueDateItem?.querySelector('.agenda-results-due')).toBeNull()
+  })
+
+  // 3. Shows source page breadcrumb from pageTitles
+  it('shows source page breadcrumb from pageTitles', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'Task A' }),
+      makeBlock({ id: 'B2', parent_id: 'PAGE2', content: 'Task B' }),
+    ]
+    const pageTitles = new Map([
+      ['PAGE1', 'Daily Notes'],
+      ['PAGE2', 'Work Projects'],
+    ])
+
+    render(<AgendaResults {...defaultProps({ blocks, pageTitles })} />)
+
+    expect(screen.getByText(/Daily Notes/)).toBeInTheDocument()
+    expect(screen.getByText(/Work Projects/)).toBeInTheDocument()
+  })
+
+  // 3b. Shows "Untitled" when pageTitles has no entry
+  it('shows "Untitled" breadcrumb when page title is not resolved', () => {
+    const blocks = [makeBlock({ id: 'B1', parent_id: 'UNKNOWN', content: 'Orphan' })]
+
+    render(<AgendaResults {...defaultProps({ blocks, pageTitles: new Map() })} />)
+
+    expect(screen.getByText(/Untitled/)).toBeInTheDocument()
+  })
+
+  // 4. Click on item calls onNavigateToPage
+  it('calls onNavigateToPage when an item is clicked', async () => {
+    const user = userEvent.setup()
+    const onNavigateToPage = vi.fn()
+    const blocks = [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'Clickable task' })]
+    const pageTitles = new Map([['PAGE1', 'My Page']])
+
+    render(<AgendaResults {...defaultProps({ blocks, pageTitles, onNavigateToPage })} />)
+
+    await user.click(screen.getByText('Clickable task'))
+
+    expect(onNavigateToPage).toHaveBeenCalledWith('PAGE1', 'My Page', 'B1')
+  })
+
+  // 4b. Keyboard navigation (Enter)
+  it('calls onNavigateToPage on Enter key', async () => {
+    const user = userEvent.setup()
+    const onNavigateToPage = vi.fn()
+    const blocks = [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'Keyboard task' })]
+    const pageTitles = new Map([['PAGE1', 'Page Title']])
+
+    render(<AgendaResults {...defaultProps({ blocks, pageTitles, onNavigateToPage })} />)
+
+    const item = screen.getByText('Keyboard task').closest('li')
+    expect(item).not.toBeNull()
+    item?.focus()
+    await user.keyboard('{Enter}')
+
+    expect(onNavigateToPage).toHaveBeenCalledWith('PAGE1', 'Page Title', 'B1')
+  })
+
+  // 5. Empty state without filters shows "No tasks found"
+  it('shows "No tasks found" empty state when no filters active', () => {
+    render(<AgendaResults {...defaultProps({ blocks: [], hasActiveFilters: false })} />)
+
+    expect(
+      screen.getByText(/No tasks found\. Create blocks with TODO\/DOING\/DONE status\./),
+    ).toBeInTheDocument()
+  })
+
+  // 6. Empty state with filters shows "No blocks match" + clear button
+  it('shows "No blocks match" + clear button when filters are active', async () => {
+    const user = userEvent.setup()
+    const onClearFilters = vi.fn()
+
+    render(
+      <AgendaResults {...defaultProps({ blocks: [], hasActiveFilters: true, onClearFilters })} />,
+    )
+
+    expect(screen.getByText(/No blocks match your filters\./)).toBeInTheDocument()
+
+    const clearBtn = screen.getByRole('button', { name: /clear all filters/i })
+    expect(clearBtn).toBeInTheDocument()
+
+    await user.click(clearBtn)
+    expect(onClearFilters).toHaveBeenCalledOnce()
+  })
+
+  // 7. Load more button appears when hasMore=true
+  it('shows load more button when hasMore is true', async () => {
+    const user = userEvent.setup()
+    const onLoadMore = vi.fn()
+    const blocks = [makeBlock({ id: 'B1', content: 'First batch' })]
+
+    render(<AgendaResults {...defaultProps({ blocks, hasMore: true, onLoadMore })} />)
+
+    const loadMoreBtn = screen.getByRole('button', { name: /load more tasks/i })
+    expect(loadMoreBtn).toBeInTheDocument()
+
+    await user.click(loadMoreBtn)
+    expect(onLoadMore).toHaveBeenCalledOnce()
+  })
+
+  // 7b. Hides load more when hasMore=false
+  it('hides load more button when hasMore is false', () => {
+    const blocks = [makeBlock({ id: 'B1', content: 'Only batch' })]
+
+    render(<AgendaResults {...defaultProps({ blocks, hasMore: false })} />)
+
+    expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument()
+  })
+
+  // 7c. Loading spinner on initial load
+  it('shows loading spinner during initial load', () => {
+    render(<AgendaResults {...defaultProps({ blocks: [], loading: true })} />)
+
+    expect(screen.getByTestId('loader-spinner')).toBeInTheDocument()
+    expect(screen.getByText('Loading tasks...')).toBeInTheDocument()
+  })
+
+  // 7d. Screen reader announces result count
+  it('announces result count via role="status"', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', content: 'Task 1' }),
+      makeBlock({ id: 'B2', content: 'Task 2' }),
+    ]
+
+    render(<AgendaResults {...defaultProps({ blocks })} />)
+
+    const statusRegion = screen.getByRole('status')
+    expect(statusRegion).toHaveTextContent('2 results')
+  })
+
+  // 8. A11y audit passes (axe)
+  it('a11y: no violations', async () => {
+    const blocks = [
+      makeBlock({
+        id: 'B1',
+        todo_state: 'TODO',
+        priority: '1',
+        content: 'accessible task',
+        due_date: '2025-06-15',
+      }),
+      makeBlock({ id: 'B2', todo_state: 'DOING', content: 'in-progress task' }),
+      makeBlock({ id: 'B3', todo_state: 'DONE', content: 'done task' }),
+    ]
+    const pageTitles = new Map([['PAGE1', 'Page Title']])
+
+    const { container } = render(
+      <AgendaResults {...defaultProps({ blocks, pageTitles, hasMore: true })} />,
+    )
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
