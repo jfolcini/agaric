@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 75 — 2026-04-03 — Phase 2: Sync Deep Review + New Findings
+
+### Deep code review of sync subsystem generating 7 new REVIEW-LATER items
+Phase 2 executed: 3 parallel review subagents (error handling, test gaps, architecture) + 1 validator subagent. Cross-validation downgraded 4 P1s to P2/P3, rejected 2 as non-issues.
+
+**New items added (#614-#620):**
+- #614 (S, MEDIUM): Validate peer device_id matches TLS cert CN
+- #615 (M, MEDIUM): Implement responder-mode sync (TODO #382)
+- #616 (S, MEDIUM): Validate op payload before insertion
+- #617 (S, MEDIUM): Timeout on handle_message DB ops
+- #618 (S, LOW): is_complete() should include terminal states
+- #619 (S, LOW): Log warnings on silent error paths
+- #620 (M, LOW): OpBatch streaming for large op logs
+
+**Rejected findings:** Materializer enqueue after commit (design is correct), mutex poisoning recovery (intentional pattern).
+
+**Downgraded findings:** is_complete() infinite loop → P3 (loop has indirect exit), timestamp LWW → P3 (documented F05, mitigated), daemon untested → P3 (core logic tested, orchestration hard to unit test).
+
+REVIEW-LATER: 7 → 14 items (7 existing + 7 new sync findings).
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command
