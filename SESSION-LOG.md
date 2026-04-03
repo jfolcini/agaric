@@ -1,5 +1,20 @@
 # Session Log
 
+## Session 141 — 2026-04-03 — "This month" date presets + #665 repeat hardening (#642)
+
+### Direct edits: AgendaFilterBuilder + JournalPage
+
+Added "This month" preset to all 4 date filter dimensions (dueDate, scheduledDate, completedDate, createdDate). Queries all days of current month.
+
+| File | Change |
+|------|--------|
+| `AgendaFilterBuilder.tsx` | Added "This month" to choices for dueDate, scheduledDate, completedDate, createdDate. |
+| `JournalPage.tsx` | 4 new "This month" query branches (one per date dimension). |
+
+### Stats
+- Commit: `7d17d24`
+- REVIEW-LATER: #642 updated (This month done, only custom property filters remain). #665 resolved in prior commit (`831c727`).
+
 ## Session 140 — 2026-04-03 — Repeat recurrence hardening (#665)
 
 ### Batch: 4 hardening tests for set_todo_state_inner recurrence
