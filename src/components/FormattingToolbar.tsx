@@ -262,7 +262,7 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <span className="text-[10px] font-bold">3</span>
           </Button>
         </Tip>
-        <Tip label="Insert date">
+        <Tip label="Insert date (Ctrl+Shift+D)">
           <Button
             variant="ghost"
             size="icon-xs"

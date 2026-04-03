@@ -27,6 +27,29 @@ let capturedSearchSlashCommands:
   | undefined
 let capturedOnSlashCommand: ((item: PickerItem) => void) | undefined
 
+// Mock editor that tracks chain calls for slash command handler tests
+const mockInsertContent = vi.fn()
+const mockToggleCodeBlock = vi.fn()
+const mockRun = vi.fn()
+const mockChain = {
+  focus: vi.fn(() => mockChain),
+  insertContent: vi.fn((content: string) => {
+    mockInsertContent(content)
+    return mockChain
+  }),
+  toggleCodeBlock: vi.fn(() => {
+    mockToggleCodeBlock()
+    return mockChain
+  }),
+  run: mockRun,
+}
+/** Set to true to provide a mock editor to useRovingEditor; false returns editor: null. */
+let useMockEditor = false
+const mockEditor = {
+  chain: vi.fn(() => mockChain),
+  state: { selection: { $anchor: { pos: 0 } } },
+}
+
 vi.mock('../../editor/use-roving-editor', () => ({
   useRovingEditor: (opts: {
     searchTags?: (query: string) => PickerItem[] | Promise<PickerItem[]>
@@ -43,7 +66,7 @@ vi.mock('../../editor/use-roving-editor', () => ({
     capturedSearchSlashCommands = opts.searchSlashCommands
     capturedOnSlashCommand = opts.onSlashCommand
     return {
-      editor: null,
+      editor: useMockEditor ? mockEditor : null,
       mount: vi.fn(),
       unmount: vi.fn(() => null),
       activeBlockId: null,
@@ -186,6 +209,7 @@ beforeEach(() => {
   capturedOnSlashCommand = undefined
   capturedBlockKeyboardOpts = undefined
   mockCalendarOnSelect = undefined
+  useMockEditor = false
   useBlockStore.setState({
     blocks: [],
     rootParentId: null,
@@ -1258,8 +1282,18 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(6)
-    expect(results?.map((r) => r.id)).toEqual(['todo', 'doing', 'done', 'date', 'due', 'schedule'])
+    expect(results).toHaveLength(9)
+    expect(results?.map((r) => r.id)).toEqual([
+      'todo',
+      'doing',
+      'done',
+      'date',
+      'due',
+      'schedule',
+      'link',
+      'tag',
+      'code',
+    ])
   })
 
   it('searchSlashCommands filters commands by query', async () => {
@@ -1304,6 +1338,48 @@ describe('BlockTree slash command wiring', () => {
 
     expect(results).toHaveLength(1)
     expect(results?.[0].id).toBe('done')
+  })
+
+  it('searchSlashCommands returns /link command when query matches "link"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('link')
+
+    expect(results?.some((r) => r.id === 'link')).toBe(true)
+  })
+
+  it('searchSlashCommands returns /tag command when query matches "tag"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('tag')
+
+    expect(results?.some((r) => r.id === 'tag')).toBe(true)
+  })
+
+  it('searchSlashCommands returns /code command when query matches "code"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('code')
+
+    expect(results?.some((r) => r.id === 'code')).toBe(true)
   })
 })
 
@@ -3023,5 +3099,71 @@ describe('BlockTree handleDatePick date format', () => {
       'create_block',
       expect.objectContaining({ content: '2025-03-15' }),
     )
+  })
+})
+
+// =========================================================================
+// Link / Tag / Code slash command handler tests (#589)
+// =========================================================================
+
+describe('BlockTree link/tag/code slash commands', () => {
+  it('onSlashCommand for /link inserts [[ via editor chain', async () => {
+    useMockEditor = true
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'link', label: 'LINK — Insert page link' })
+    })
+
+    expect(mockInsertContent).toHaveBeenCalledWith('[[')
+  })
+
+  it('onSlashCommand for /tag inserts @ via editor chain', async () => {
+    useMockEditor = true
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'tag', label: 'TAG — Insert tag reference' })
+    })
+
+    expect(mockInsertContent).toHaveBeenCalledWith('@')
+  })
+
+  it('onSlashCommand for /code calls toggleCodeBlock via editor chain', async () => {
+    useMockEditor = true
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'code', label: 'CODE — Insert code block' })
+    })
+
+    expect(mockToggleCodeBlock).toHaveBeenCalled()
   })
 })

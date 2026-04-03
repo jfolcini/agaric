@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 66 — 2026-04-03 — Interaction Parity Quick Wins (#589)
+
+### Slash commands + keyboard shortcuts + tooltip
+1 item resolved (partial — quick wins implemented, toolbar button items deferred to new entries).
+
+Built by 1 subagent (slash commands + shortcuts + 6 tests) + orchestrator (formatting fix). No separate review — all additive, well-scoped.
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | #589: Added `/link`, `/tag`, `/code` slash commands + handlers. Ctrl+Shift+D for date picker. Ctrl+1-6 for headings (reuses /h1-h6 handler). |
+| `FormattingToolbar.tsx` | #589: Updated Insert Date tooltip to show "Ctrl+Shift+D" hint. |
+| `BlockTree.test.tsx` | #589: Updated slash command count 6→9, added 6 new tests (3 search + 3 handler). |
+
+### Stats
+- Frontend: 79/79 test files, 2236 tests pass (2230 + 6 new)
+- Commit: `3d400f6`
+- Deferred: #589 toolbar button items (B4-B6) added as #611-#613
+
 ## Session 65 — 2026-04-03 — Editor UX fixes: save on blur + picker positioning (#581, #584)
 
 ### Two S-cost editor interaction fixes

@@ -222,6 +222,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       { id: 'date', label: 'DATE — Link to a date page' },
       { id: 'due', label: 'DUE — Set due date on block' },
       { id: 'schedule', label: 'SCHEDULED — Set scheduled date on block' },
+      { id: 'link', label: 'LINK — Insert page link' },
+      { id: 'tag', label: 'TAG — Insert tag reference' },
+      { id: 'code', label: 'CODE — Insert code block' },
     ],
     [],
   )
@@ -478,6 +481,21 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
         setDatePickerMode('schedule')
         setDatePickerOpen(true)
+        return
+      }
+
+      if (item.id === 'link') {
+        rovingEditor.editor?.chain().focus().insertContent('[[').run()
+        return
+      }
+
+      if (item.id === 'tag') {
+        rovingEditor.editor?.chain().focus().insertContent('@').run()
+        return
+      }
+
+      if (item.id === 'code') {
+        rovingEditor.editor?.chain().focus().toggleCodeBlock().run()
         return
       }
 
@@ -832,6 +850,35 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     document.addEventListener('open-date-picker', handleDateEvent)
     return () => document.removeEventListener('open-date-picker', handleDateEvent)
   }, [focusedBlockId, rovingEditor.editor])
+
+  // ── Keyboard shortcut: Ctrl+Shift+D → open date picker ─────────────
+  useEffect(() => {
+    const handleDateShortcut = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'D') {
+        e.preventDefault()
+        if (!focusedBlockId) return
+        datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos ?? undefined
+        setDatePickerMode('date')
+        setDatePickerOpen(true)
+      }
+    }
+    document.addEventListener('keydown', handleDateShortcut)
+    return () => document.removeEventListener('keydown', handleDateShortcut)
+  }, [focusedBlockId, rovingEditor.editor])
+
+  // ── Keyboard shortcut: Ctrl+1‑6 → toggle heading level ─────────────
+  useEffect(() => {
+    const handleHeadingShortcut = async (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
+      if (e.key < '1' || e.key > '6') return
+      if (!focusedBlockId) return
+      e.preventDefault()
+      const level = Number.parseInt(e.key, 10)
+      handleSlashCommand({ id: `h${level}`, label: `Heading ${level}` })
+    }
+    document.addEventListener('keydown', handleHeadingShortcut)
+    return () => document.removeEventListener('keydown', handleHeadingShortcut)
+  }, [focusedBlockId, handleSlashCommand])
 
   // ── Active item for DragOverlay ────────────────────────────────────
   const activeBlock = dnd.activeId ? blocks.find((b) => b.id === dnd.activeId) : null
