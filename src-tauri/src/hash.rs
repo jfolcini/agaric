@@ -1,4 +1,4 @@
-//! Blake3 hash computation for op log entries (ADR-07).
+//! Blake3 hash computation for op log entries.
 //!
 //! Each op log row stores a content-addressable hash of its fields so that
 //! replicas can detect corruption or tampering during sync.

@@ -1,4 +1,4 @@
-//! DAG traversal primitives for the op log (ADR-07, Phase 4).
+//! DAG traversal primitives for the op log.
 //!
 //! Building blocks for the merge system (Wave 1B). Provides:
 //! - Remote op insertion with hash verification
@@ -44,7 +44,7 @@ fn extract_prev_edit(record: &OpRecord) -> Result<Option<(String, i64)>, AppErro
 /// Insert an op received from a remote device into the op_log.
 ///
 /// Uses `INSERT OR IGNORE` on the composite PK `(device_id, seq)` so that
-/// duplicate delivery is idempotent (ADR-09). Rejects ops whose hash does
+/// duplicate delivery is idempotent. Rejects ops whose hash does
 /// not match the recomputed hash of the record fields.
 pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bool, AppError> {
     // Verify the hash matches the record contents

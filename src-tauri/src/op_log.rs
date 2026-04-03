@@ -1,4 +1,4 @@
-//! Op log writer — appends local operations to the `op_log` table (ADR-07).
+//! Op log writer — appends local operations to the `op_log` table.
 //!
 //! Phase 1 implementation: single-device, linear chain. Each new op references
 //! the immediately preceding op from the same device as its sole parent.
@@ -95,7 +95,7 @@ pub async fn append_local_op_in_tx(
     // Normalize all ULID fields to uppercase Crockford base32 before
     // serialization.  This ensures deterministic blake3 hashes regardless of
     // the casing supplied by the caller (critical for Phase 4 cross-device
-    // sync — see ADR-07, ULID case normalization rule).
+    // sync — see ULID case normalization rule).
     op_payload.normalize_block_ids();
 
     let op_type = op_payload.op_type_str().to_owned();

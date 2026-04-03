@@ -291,10 +291,10 @@ pub fn run() {
             std::fs::create_dir_all(&app_data_dir)?;
             let db_path = app_data_dir.join("notes.db");
 
-            // Initialize separated read/write pools (ADR-04: pool separation)
+            // Initialize separated read/write pools
             let pools = tauri::async_runtime::block_on(db::init_pools(&db_path))?;
 
-            // Read or generate a persistent device UUID (ADR-07)
+            // Read or generate a persistent device UUID
             let device_id_path = app_data_dir.join("device-id");
             let device_id = device::get_or_create_device_id(&device_id_path)?;
 
@@ -303,7 +303,7 @@ pub fn run() {
             let sync_cert = sync_cert::get_or_create_sync_cert(&cert_path, &device_id)?;
             tracing::info!(cert_hash = %sync_cert.cert_hash, "TLS cert loaded");
 
-            // Run crash recovery before anything else (ADR-07)
+            // Run crash recovery before anything else
             // Recovery needs write access
             let report = tauri::async_runtime::block_on(recovery::recover_at_boot(
                 &pools.write,

@@ -1,4 +1,4 @@
-//! Snapshot encoding, crash-safe write, RESET apply, and 90-day compaction (ADR-07).
+//! Snapshot encoding, crash-safe write, RESET apply, and 90-day compaction.
 //!
 //! Snapshots capture the full state of all core tables (blocks, block_tags,
 //! block_properties, block_links, attachments) as zstd-compressed CBOR blobs

@@ -1,4 +1,4 @@
-//! Three-way merge using diffy (ADR-10, Phase 4).
+//! Three-way merge using diffy.
 //!
 //! Provides:
 //! - `merge_text()` — three-way text merge for a block's content
@@ -195,7 +195,7 @@ pub async fn create_conflict_copy(
     // 2. Generate a new block ID
     let new_block_id = BlockId::new();
     // NOTE (F08 \u2014 known limitation): `position + 1` may collide with an
-    // existing sibling.  We do NOT shift siblings here; ADR-06 specifies
+    // existing sibling.  We do NOT shift siblings here; the cascade-delete design specifies
     // that the materializer compacts positions to contiguous 1..n on sync,
     // which resolves the duplicate.  Between creation and the next
     // materializer run, two blocks may share the same position.

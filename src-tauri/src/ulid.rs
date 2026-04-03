@@ -10,7 +10,7 @@ use std::str::FromStr;
 ///
 /// **Deserialization normalizes to uppercase Crockford base32** — any valid
 /// ULID string (lowercase, mixed-case) is accepted and stored in canonical
-/// uppercase form. This is critical for blake3 hash determinism (ADR-07).
+/// uppercase form. This is critical for blake3 hash determinism.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct BlockId(String);

@@ -6,7 +6,7 @@ use std::path::Path;
 /// WAL mode allows concurrent readers plus one writer.
 const MAX_POOL_CONNECTIONS: u32 = 5;
 
-/// Separated read/write connection pools for SQLite (ADR-04).
+/// Separated read/write connection pools for SQLite.
 ///
 /// WAL mode allows concurrent readers alongside a single writer.
 /// Splitting into two pools enforces this at the connection level:

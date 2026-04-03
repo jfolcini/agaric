@@ -1,4 +1,4 @@
-//! Materializer coordination — foreground and background priority queues (ADR-08).
+//! Materializer coordination — foreground and background priority queues.
 //!
 //! The materializer is responsible for applying op-log effects to the
 //! materialized tables (blocks, caches, indexes). It runs two async task

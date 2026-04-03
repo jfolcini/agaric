@@ -1,4 +1,4 @@
-//! Cache materializer functions (ADR-08).
+//! Cache materializer functions.
 //!
 //! Full-recompute rebuilds for the two read-path caches (`tags_cache`,
 //! `pages_cache`), an incremental diff-based rebuild for `agenda_cache`,

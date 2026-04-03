@@ -57,7 +57,7 @@ fn unexpected_create_error(e: std::io::Error) -> crate::error::AppError {
 /// launch concurrently.
 /// On subsequent launches, the existing UUID is read and validated.
 /// The UUID is never regenerated — it is the device's permanent identity
-/// in the op log (ADR-07).
+/// in the op log.
 pub fn get_or_create_device_id(config_path: &Path) -> Result<String, crate::error::AppError> {
     // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {

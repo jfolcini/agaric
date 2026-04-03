@@ -1,4 +1,4 @@
-//! Sync protocol orchestrator (ADR-09).
+//! Sync protocol orchestrator.
 //!
 //! Implements the core sync logic: head exchange, op streaming, remote-op
 //! application, block-level merge, and peer-ref bookkeeping.  The transport

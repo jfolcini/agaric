@@ -460,7 +460,7 @@ pub async fn edit_block_inner(
     })
 }
 
-/// Soft-delete a block and all its descendants (ADR-06 cascade).
+/// Soft-delete a block and all its descendants (cascade).
 ///
 /// Validates the block exists and is not already deleted, appends a
 /// `DeleteBlock` op, sets `deleted_at` on the block and all descendants
@@ -1740,10 +1740,8 @@ async fn set_property_in_tx(
     }
 
     // 1c. Reserved key field validation (skip for clear operations where all values are None)
-    let is_clear = value_text.is_none()
-        && value_num.is_none()
-        && value_date.is_none()
-        && value_ref.is_none();
+    let is_clear =
+        value_text.is_none() && value_num.is_none() && value_date.is_none() && value_ref.is_none();
     if !is_clear {
         match key.as_str() {
             "due_date" | "scheduled_date" => {
@@ -1768,12 +1766,11 @@ async fn set_property_in_tx(
 
     // 1d. Type validation against property_definitions (non-reserved keys only)
     if !is_clear && !is_reserved_property_key(&key) {
-        let def_type: Option<String> = sqlx::query_scalar(
-            "SELECT value_type FROM property_definitions WHERE key = ?",
-        )
-        .bind(&key)
-        .fetch_optional(&mut **tx)
-        .await?;
+        let def_type: Option<String> =
+            sqlx::query_scalar("SELECT value_type FROM property_definitions WHERE key = ?")
+                .bind(&key)
+                .fetch_optional(&mut **tx)
+                .await?;
 
         if let Some(expected_type) = def_type {
             let type_matches = match expected_type.as_str() {
@@ -2437,7 +2434,7 @@ pub async fn get_properties_inner(
 }
 
 // ---------------------------------------------------------------------------
-// Property-definition CRUD (ADR-22, #548-#550, #557)
+// Property-definition CRUD (#548-#550, #557)
 // ---------------------------------------------------------------------------
 
 /// Create a property definition. Uses INSERT OR IGNORE for idempotency —

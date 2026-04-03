@@ -1,4 +1,4 @@
-//! Op payload types for the CRDT op log (ADR-07).
+//! Op payload types for the CRDT op log.
 //!
 //! Each operation in the log has a typed payload. The [`OpType`] enum identifies
 //! the operation kind, and [`OpPayload`] is an internally-tagged enum that wraps
@@ -128,7 +128,7 @@ pub struct EditBlockPayload {
     pub prev_edit: Option<(String, i64)>,
 }
 
-/// Delete always cascades to all descendants (ADR-06). The `cascade` field
+/// Delete always cascades to all descendants. The `cascade` field
 /// was removed — it was always `true` and never read by any code path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteBlockPayload {

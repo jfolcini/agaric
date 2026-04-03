@@ -1,4 +1,4 @@
-//! Cross-module integration tests for the sync infrastructure (ADR-09).
+//! Cross-module integration tests for the sync infrastructure.
 //!
 //! These tests exercise the full sync pipeline between simulated devices:
 //! op creation → head exchange → op transfer → remote apply → merge →

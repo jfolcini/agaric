@@ -1,4 +1,4 @@
-//! Crash recovery at boot — runs before any user-visible UI (ADR-07).
+//! Crash recovery at boot — runs before any user-visible UI.
 //!
 //! # Recovery contract
 //!
@@ -189,7 +189,7 @@ pub async fn recover_at_boot(
 /// (see `lib.rs`), so we cannot dispatch background cache-rebuild tasks
 /// here. Caches (tags, pages, FTS, block_links) will be rebuilt on the
 /// first materializer dispatch after boot. This is by design — the
-/// materializer's stale-while-revalidate pattern (ADR-08) handles it.
+/// materializer's stale-while-revalidate pattern handles it.
 async fn recover_single_draft(
     pool: &SqlitePool,
     device_id: &str,

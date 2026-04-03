@@ -1,4 +1,4 @@
-//! Block draft writer — autosave buffer for in-progress edits (ADR-07).
+//! Block draft writer — autosave buffer for in-progress edits.
 //!
 //! Every ~2 seconds during active typing the frontend calls [`save_draft`] to
 //! persist the current editor content into the `block_drafts` table. On
