@@ -9,6 +9,9 @@
 import { create } from 'zustand'
 import { listBlocks, listTagsByPrefix } from '../lib/tauri'
 
+const MAX_CACHE_SIZE = 10_000
+const MAX_PAGES_LIST_SIZE = 5_000
+
 interface ResolveEntry {
   title: string
   deleted: boolean
@@ -87,10 +90,22 @@ export const useResolveStore = create<ResolveStore>((set, get) => ({
     set((state) => {
       const cache = new Map(state.cache)
       cache.set(id, { title, deleted })
+      if (cache.size > MAX_CACHE_SIZE) {
+        // Delete oldest entries (first N entries in Map iteration order)
+        const excess = cache.size - MAX_CACHE_SIZE
+        const keys = cache.keys()
+        for (let i = 0; i < excess; i++) {
+          const { value } = keys.next()
+          if (value) cache.delete(value)
+        }
+      }
       // Also update pagesList if it's a new non-deleted entry
       // (pages created via onCreatePage should appear in picker)
       const existsInPagesList = state.pagesList.some((p) => p.id === id)
-      const pagesList = existsInPagesList ? state.pagesList : [...state.pagesList, { id, title }]
+      let pagesList = existsInPagesList ? state.pagesList : [...state.pagesList, { id, title }]
+      if (pagesList.length > MAX_PAGES_LIST_SIZE) {
+        pagesList = pagesList.slice(-MAX_PAGES_LIST_SIZE)
+      }
       return { cache, pagesList, version: state.version + 1 }
     })
   },
@@ -104,6 +119,15 @@ export const useResolveStore = create<ResolveStore>((set, get) => ({
           title: e.title,
           deleted: e.deleted,
         })
+      }
+      if (cache.size > MAX_CACHE_SIZE) {
+        // Delete oldest entries (first N entries in Map iteration order)
+        const excess = cache.size - MAX_CACHE_SIZE
+        const keys = cache.keys()
+        for (let i = 0; i < excess; i++) {
+          const { value } = keys.next()
+          if (value) cache.delete(value)
+        }
       }
       return { cache, version: state.version + 1 }
     })

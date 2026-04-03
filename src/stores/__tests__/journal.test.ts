@@ -14,6 +14,7 @@ beforeEach(() => {
     mode: 'daily',
     currentDate: new Date(2026, 0, 1),
     scrollToDate: null,
+    scrollToPanel: null,
   })
 })
 
@@ -101,5 +102,24 @@ describe('journal store', () => {
     useJournalStore.getState().goToDateAndScroll(target, '2026-03-31')
 
     expect(useJournalStore.getState().mode).toBe('weekly')
+  })
+
+  it('goToDateAndPanel sets currentDate, mode=daily, and scrollToPanel', () => {
+    const target = new Date(2026, 5, 10)
+    useJournalStore.getState().goToDateAndPanel(target, 'due')
+
+    const state = useJournalStore.getState()
+    expect(state.currentDate).toEqual(target)
+    expect(state.mode).toBe('daily')
+    expect(state.scrollToPanel).toBe('due')
+  })
+
+  it('clearScrollTarget clears both scrollToDate and scrollToPanel', () => {
+    useJournalStore.setState({ scrollToDate: '2026-06-10', scrollToPanel: 'references' })
+    useJournalStore.getState().clearScrollTarget()
+
+    const state = useJournalStore.getState()
+    expect(state.scrollToDate).toBeNull()
+    expect(state.scrollToPanel).toBeNull()
   })
 })

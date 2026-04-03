@@ -92,6 +92,20 @@ Built by 2 parallel subagents.
 - Frontend: 82/82 test files, 2324 tests pass (2321 + 3 new)
 - Commit: `1229aa6`
 
+## Session 80 — 2026-04-03 — Phase 2: Store Deep Review + Hardening Fixes
+
+### Store quality review + 3 hardening fixes
+Phase 2 store review with 2 parallel subagents (quality + test gaps). 3 S-cost fixes applied immediately.
+
+**Fixes applied:**
+- `resolve.ts`: Cache eviction — MAX_CACHE_SIZE=10K, MAX_PAGES_LIST_SIZE=5K with oldest-first eviction
+- `blocks.ts`: Undo cleanup — `load()` calls `clearPage(prevRoot)` on page navigation
+- `journal.test.ts`: 2 missing tests for `goToDateAndPanel` + `clearScrollTarget`
+
+### Stats
+- Frontend: 82/82 test files, 2326 tests pass (2324 + 2 new)
+- Commit: `460d8be`
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command

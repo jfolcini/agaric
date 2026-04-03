@@ -107,6 +107,10 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   load: async (parentId?: string) => {
     const newRoot = parentId ?? null
     const prevRoot = get().rootParentId
+    // Clear undo state for the previous page when navigating away
+    if (prevRoot && prevRoot !== newRoot) {
+      useUndoStore.getState().clearPage(prevRoot)
+    }
     // When switching to a different parent, clear stale blocks immediately
     // so components never see data from a previous view.
     // When reloading the same parent, keep blocks to avoid a flash of empty content.

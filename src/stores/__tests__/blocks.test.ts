@@ -11,10 +11,12 @@ const mockedInvoke = vi.mocked(invoke)
 
 // --- Mock for undo store (used by notifyUndoNewAction in blocks.ts) ---
 const mockOnNewAction = vi.fn()
+const mockClearPage = vi.fn()
 vi.mock('@/stores/undo', () => ({
   useUndoStore: {
     getState: () => ({
       onNewAction: mockOnNewAction,
+      clearPage: mockClearPage,
     }),
   },
 }))
