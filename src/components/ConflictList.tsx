@@ -42,9 +42,10 @@ import { formatTimestamp, truncateId, ulidToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import type { BlockRow } from '../lib/tauri'
-import { deleteBlock, editBlock, getBlock, getConflicts } from '../lib/tauri'
+import { deleteBlock, editBlock, getBlock, getConflicts, restoreBlock } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
+import { renderRichContent } from './StaticBlock'
 
 /**
  * Determine the conflict type from backend metadata.
@@ -162,40 +163,96 @@ export function ConflictList(): React.ReactElement {
   const handleKeep = useCallback(
     async (block: BlockRow) => {
       try {
+        const originalContent = originals.get(block.parent_id!)?.content ?? null
         // Apply conflict content to the original block (parent_id is the original)
         if (block.parent_id && block.content != null) {
           await editBlock(block.parent_id, block.content)
         }
         // Delete the conflict block
+        let deleteResp
         try {
-          await deleteBlock(block.id)
+          deleteResp = await deleteBlock(block.id)
         } catch (_deleteErr: unknown) {
           // editBlock succeeded but deleteBlock failed — partial success
           toast.success(
-            'Updated original but failed to remove conflict copy — please delete it manually.',
+            'Updated original but failed to remove conflict copy.',
+            {
+              duration: 5000,
+              action: {
+                label: 'Retry delete',
+                onClick: () => {
+                  deleteBlock(block.id)
+                    .then(() => {
+                      setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+                      toast.success('Conflict copy removed')
+                    })
+                    .catch(() => {
+                      toast.error('Retry failed — please delete the conflict manually.')
+                    })
+                },
+              },
+            },
           )
           setConfirmKeepBlock(null)
           return
         }
         setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         setConfirmKeepBlock(null)
-        toast.success('Kept selected version')
+        toast.success('Kept selected version', {
+          duration: 6000,
+          action: {
+            label: 'Undo',
+            onClick: () => {
+              // Restore deleted conflict block, then revert edit on original
+              restoreBlock(deleteResp.block_id, deleteResp.deleted_at)
+                .then(() => {
+                  // Revert original content if we had it
+                  if (block.parent_id && originalContent !== null) {
+                    return editBlock(block.parent_id, originalContent)
+                  }
+                })
+                .then(() => {
+                  // Re-add conflict to list
+                  setBlocks((prev) => [block, ...prev])
+                  toast.success('Resolution undone')
+                })
+                .catch(() => {
+                  toast.error('Failed to undo — check the original page.')
+                })
+            },
+          },
+        })
       } catch (err: unknown) {
         toast.error(
           `Failed to resolve conflict: ${err instanceof Error ? err.message : String(err)}`,
         )
       }
     },
-    [setBlocks],
+    [setBlocks, originals],
   )
 
   const handleDiscard = useCallback(
-    async (blockId: string) => {
+    async (block: BlockRow) => {
       try {
-        await deleteBlock(blockId)
-        setBlocks((prev) => prev.filter((b) => b.id !== blockId))
+        const deleteResp = await deleteBlock(block.id)
+        setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         setConfirmDiscardId(null)
-        toast.success('Conflict discarded')
+        toast.success('Conflict discarded', {
+          duration: 6000,
+          action: {
+            label: 'Undo',
+            onClick: () => {
+              restoreBlock(deleteResp.block_id, deleteResp.deleted_at)
+                .then(() => {
+                  setBlocks((prev) => [block, ...prev])
+                  toast.success('Discard undone')
+                })
+                .catch(() => {
+                  toast.error('Failed to undo discard.')
+                })
+            },
+          },
+        })
       } catch (err: unknown) {
         toast.error(
           `Failed to discard conflict: ${err instanceof Error ? err.message : String(err)}`,
@@ -289,14 +346,22 @@ export function ConflictList(): React.ReactElement {
                   <span className="conflict-timestamp">{getConflictTimestamp(block)}</span>
                 </div>
                 <div
-                  className={`conflict-original text-sm text-muted-foreground${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}
+                  className={`conflict-original text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}
                 >
-                  <span className="font-medium">Current:</span>{' '}
-                  {original ? (original.content ?? '(empty)') : '(original not available)'}
+                  <span className="font-medium text-muted-foreground">Current:</span>{' '}
+                  {original
+                    ? (original.content
+                      ? <span>{renderRichContent(original.content, { interactive: false })}</span>
+                      : '(empty)')
+                    : '(original not available)'}
                 </div>
                 <div className={`conflict-incoming text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}>
                   <span className="font-medium">Incoming:</span>{' '}
-                  <span className="conflict-item-text">{block.content ?? '(empty)'}</span>
+                  <span className="conflict-item-text">
+                    {block.content
+                      ? renderRichContent(block.content, { interactive: false })
+                      : '(empty)'}
+                  </span>
                 </div>
               </button>
               <div className="conflict-item-actions flex items-center gap-2 ml-2 shrink-0">
@@ -429,7 +494,10 @@ export function ConflictList(): React.ReactElement {
             <AlertDialogAction
               className="conflict-discard-yes"
               onClick={() => {
-                if (confirmDiscardId) handleDiscard(confirmDiscardId)
+                if (confirmDiscardId) {
+                  const discardBlock = blocks.find((b) => b.id === confirmDiscardId)
+                  if (discardBlock) handleDiscard(discardBlock)
+                }
               }}
             >
               Yes, discard

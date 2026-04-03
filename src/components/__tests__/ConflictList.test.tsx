@@ -31,6 +31,11 @@ import { axe } from 'vitest-axe'
 import { ulidToDate } from '@/lib/format'
 import { useNavigationStore } from '../../stores/navigation'
 import { ConflictList } from '../ConflictList'
+import { renderRichContent } from '../StaticBlock'
+
+vi.mock('../StaticBlock', () => ({
+  renderRichContent: vi.fn((markdown: string) => markdown),
+}))
 
 vi.mock('sonner', () => ({
   toast: {
@@ -507,7 +512,12 @@ describe('ConflictList', () => {
     await user.click(yesKeepBtn)
 
     await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Kept selected version')
+      expect(toast.success).toHaveBeenCalledWith(
+        'Kept selected version',
+        expect.objectContaining({
+          action: expect.objectContaining({ label: 'Undo' }),
+        }),
+      )
     })
   })
 
@@ -533,7 +543,12 @@ describe('ConflictList', () => {
     await user.click(yesBtn)
 
     await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Conflict discarded')
+      expect(toast.success).toHaveBeenCalledWith(
+        'Conflict discarded',
+        expect.objectContaining({
+          action: expect.objectContaining({ label: 'Undo' }),
+        }),
+      )
     })
   })
 
@@ -744,7 +759,12 @@ describe('ConflictList', () => {
     })
 
     // Success toast
-    expect(toast.success).toHaveBeenCalledWith('Kept selected version')
+    expect(toast.success).toHaveBeenCalledWith(
+      'Kept selected version',
+      expect.objectContaining({
+        action: expect.objectContaining({ label: 'Undo' }),
+      }),
+    )
   })
 
   it('Keep confirmation dialog can be cancelled', async () => {
@@ -1059,7 +1079,10 @@ describe('ConflictList', () => {
     // Should show the partial-success toast
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith(
-        'Updated original but failed to remove conflict copy — please delete it manually.',
+        'Updated original but failed to remove conflict copy.',
+        expect.objectContaining({
+          action: expect.objectContaining({ label: 'Retry delete' }),
+        }),
       )
     })
 
@@ -1416,5 +1439,197 @@ describe('ConflictList', () => {
     expect(dialogText).toContain('A'.repeat(120))
     expect(dialogText).toContain('\u2026')
     expect(dialogText).not.toContain('A'.repeat(200))
+  })
+
+  // --- C-12 Rich content rendering ---
+
+  it('renders conflict content as rich text (C-12)', async () => {
+    const mockedRender = vi.mocked(renderRichContent)
+    mockedRender.mockClear()
+
+    const conflict = makeConflict('C1', '**bold** text', 'ORIG001')
+    const origWithMarkdown = {
+      ...originalBlock,
+      content: '*italic* content',
+    }
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: origWithMarkdown,
+    })
+
+    render(<ConflictList />)
+
+    await waitFor(() => {
+      expect(mockedRender).toHaveBeenCalledWith('**bold** text', { interactive: false })
+      expect(mockedRender).toHaveBeenCalledWith('*italic* content', { interactive: false })
+    })
+  })
+
+  // --- C-16 Partial failure retry ---
+
+  it('partial failure toast includes retry action (C-16)', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'incoming changes', 'ORIG001')
+    let deleteCallCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_conflicts')
+        return { items: [conflict], next_cursor: null, has_more: false }
+      if (cmd === 'get_block') return originalBlock
+      if (cmd === 'edit_block')
+        return { id: 'ORIG001', block_type: 'content', content: 'incoming changes' }
+      if (cmd === 'delete_block') {
+        deleteCallCount++
+        if (deleteCallCount === 1) throw new Error('storage full')
+        return {
+          block_id: 'C1',
+          deleted_at: '2025-01-15T00:00:00Z',
+          descendants_affected: 0,
+        }
+      }
+      return undefined
+    })
+
+    render(<ConflictList />)
+
+    const keepBtn = await screen.findByRole('button', { name: /Keep/i })
+    await user.click(keepBtn)
+
+    const yesKeepBtn = screen.getByRole('button', { name: /Yes, keep/i })
+    await user.click(yesKeepBtn)
+
+    // Verify partial failure toast with retry action
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith(
+        'Updated original but failed to remove conflict copy.',
+        expect.objectContaining({
+          action: expect.objectContaining({ label: 'Retry delete' }),
+        }),
+      )
+    })
+
+    // Extract and invoke the retry action
+    const successCalls = vi.mocked(toast.success).mock.calls
+    const retryCall = successCalls.find(
+      ([msg]) => msg === 'Updated original but failed to remove conflict copy.',
+    )
+    expect(retryCall).toBeTruthy()
+    // biome-ignore lint/suspicious/noExplicitAny: test mock extraction
+    const retryAction = (retryCall![1] as any).action
+    retryAction.onClick()
+
+    // Verify deleteBlock was called again
+    await waitFor(() => {
+      expect(deleteCallCount).toBe(2)
+    })
+  })
+
+  // --- C-4 Undo support ---
+
+  it('Keep toast includes undo action (C-4)', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+      edit_block: { id: 'ORIG001', block_type: 'content', content: 'conflict text' },
+      delete_block: {
+        block_id: 'C1',
+        deleted_at: '2026-01-01T00:00:00Z',
+        descendants_affected: 0,
+      },
+      restore_block: { block_id: 'C1', restored_at: '2026-01-01T00:00:01Z' },
+    })
+
+    render(<ConflictList />)
+
+    const keepBtn = await screen.findByRole('button', { name: /Keep/i })
+    await user.click(keepBtn)
+
+    const yesKeepBtn = screen.getByRole('button', { name: /Yes, keep/i })
+    await user.click(yesKeepBtn)
+
+    // Verify toast has Undo action
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith(
+        'Kept selected version',
+        expect.objectContaining({
+          action: expect.objectContaining({ label: 'Undo' }),
+        }),
+      )
+    })
+
+    // Extract and invoke the undo action
+    const successCalls = vi.mocked(toast.success).mock.calls
+    const undoCall = successCalls.find(([msg]) => msg === 'Kept selected version')
+    expect(undoCall).toBeTruthy()
+    // biome-ignore lint/suspicious/noExplicitAny: test mock extraction
+    const undoAction = (undoCall![1] as any).action
+    undoAction.onClick()
+
+    // Verify restoreBlock and editBlock were called to reverse
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_block', {
+        blockId: 'C1',
+        deletedAtRef: '2026-01-01T00:00:00Z',
+      })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'ORIG001',
+        toText: 'original content',
+      })
+    })
+  })
+
+  it('Discard toast includes undo action (C-4)', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'conflict to discard', 'ORIG001')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+      delete_block: {
+        block_id: 'C1',
+        deleted_at: '2026-01-01T00:00:00Z',
+        descendants_affected: 0,
+      },
+      restore_block: { block_id: 'C1', restored_at: '2026-01-01T00:00:01Z' },
+    })
+
+    render(<ConflictList />)
+
+    const discardBtn = await screen.findByRole('button', {
+      name: /Discard conflict for block/i,
+    })
+    await user.click(discardBtn)
+
+    const yesBtn = screen.getByRole('button', { name: /Yes, discard/i })
+    await user.click(yesBtn)
+
+    // Verify toast has Undo action
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith(
+        'Conflict discarded',
+        expect.objectContaining({
+          action: expect.objectContaining({ label: 'Undo' }),
+        }),
+      )
+    })
+
+    // Extract and invoke the undo action
+    const successCalls = vi.mocked(toast.success).mock.calls
+    const undoCall = successCalls.find(([msg]) => msg === 'Conflict discarded')
+    expect(undoCall).toBeTruthy()
+    // biome-ignore lint/suspicious/noExplicitAny: test mock extraction
+    const undoAction = (undoCall![1] as any).action
+    undoAction.onClick()
+
+    // Verify restoreBlock was called with the right args
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_block', {
+        blockId: 'C1',
+        deletedAtRef: '2026-01-01T00:00:00Z',
+      })
+    })
   })
 })
