@@ -380,6 +380,12 @@ const resources = {
       'propertiesView.deleted': 'Property definition deleted',
       'propertiesView.created': 'Property definition created',
       'propertiesView.editOptions': 'Edit options',
+      'propertiesView.taskStates': 'Task States',
+      'propertiesView.taskStatesDesc':
+        'Customize the task state cycle. Click a block checkbox to cycle through these states.',
+      'propertiesView.addTaskState': 'New state (e.g., CANCELLED)',
+      'propertiesView.add': 'Add',
+      'propertiesView.taskStatesReload': 'Reload the page to apply changes.',
 
       // Tags
       'tags.loadFailed': 'Failed to load tags',

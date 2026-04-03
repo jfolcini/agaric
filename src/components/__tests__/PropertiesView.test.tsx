@@ -40,6 +40,7 @@ function makePropDef(key: string, valueType = 'text', options: string | null = n
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.removeItem('task_cycle')
 })
 
 describe('PropertiesView', () => {
@@ -233,5 +234,24 @@ describe('PropertiesView', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+
+  it('renders Task States section', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    render(<PropertiesView />)
+
+    expect(screen.getByText('Task States')).toBeInTheDocument()
+  })
+
+  it('shows default task states', async () => {
+    mockedInvoke.mockResolvedValueOnce([])
+
+    render(<PropertiesView />)
+
+    expect(screen.getByText('TODO')).toBeInTheDocument()
+    expect(screen.getByText('DOING')).toBeInTheDocument()
+    expect(screen.getByText('DONE')).toBeInTheDocument()
+    expect(screen.getByText('none')).toBeInTheDocument()
   })
 })

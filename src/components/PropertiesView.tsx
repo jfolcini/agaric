@@ -5,7 +5,7 @@
  * delete with confirmation, and edit options for select-type properties.
  */
 
-import { Plus, Settings2, Trash2 } from 'lucide-react'
+import { Plus, Settings2, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { PropertyDefinition } from '../lib/tauri'
 import {
@@ -34,6 +35,79 @@ import {
 } from '../lib/tauri'
 
 const VALUE_TYPES = ['text', 'number', 'date', 'select'] as const
+
+function TaskStatesSection(): React.ReactElement {
+  const { t } = useTranslation()
+  const [states, setStates] = useState<(string | null)[]>(() => {
+    try {
+      const stored = localStorage.getItem('task_cycle')
+      if (stored) return JSON.parse(stored)
+    } catch {}
+    return [null, 'TODO', 'DOING', 'DONE']
+  })
+  const [newState, setNewState] = useState('')
+
+  const save = useCallback((updated: (string | null)[]) => {
+    setStates(updated)
+    try {
+      localStorage.setItem('task_cycle', JSON.stringify(updated))
+    } catch {}
+  }, [])
+
+  const handleAdd = useCallback(() => {
+    const trimmed = newState.trim().toUpperCase()
+    if (!trimmed || states.includes(trimmed)) return
+    save([...states, trimmed])
+    setNewState('')
+  }, [newState, states, save])
+
+  const handleRemove = useCallback(
+    (state: string) => {
+      save(states.filter((s) => s !== state))
+    },
+    [states, save],
+  )
+
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-medium">{t('propertiesView.taskStates')}</h3>
+      <p className="text-xs text-muted-foreground">{t('propertiesView.taskStatesDesc')}</p>
+      <div className="flex flex-wrap gap-1">
+        <Badge variant="outline" className="text-xs">
+          none
+        </Badge>
+        {states.filter(Boolean).map((s) => (
+          <Badge key={s} variant="secondary" className="text-xs flex items-center gap-1">
+            {s}
+            <button
+              type="button"
+              className="ml-0.5 hover:text-destructive"
+              aria-label={`Remove state ${s}`}
+              onClick={() => handleRemove(s!)}
+            >
+              <X size={10} />
+            </button>
+          </Badge>
+        ))}
+      </div>
+      <div className="flex gap-1">
+        <Input
+          className="h-7 text-sm flex-1"
+          placeholder={t('propertiesView.addTaskState')}
+          value={newState}
+          onChange={(e) => setNewState(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleAdd()
+          }}
+        />
+        <Button size="sm" variant="outline" onClick={handleAdd} disabled={!newState.trim()}>
+          {t('propertiesView.add')}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">{t('propertiesView.taskStatesReload')}</p>
+    </div>
+  )
+}
 
 export function PropertiesView(): React.ReactElement {
   const { t } = useTranslation()
@@ -123,6 +197,8 @@ export function PropertiesView(): React.ReactElement {
 
   return (
     <div className="space-y-4">
+      <TaskStatesSection />
+      <Separator />
       <h2 className="text-lg font-semibold">{t('propertiesView.title')}</h2>
 
       {/* Search input */}
