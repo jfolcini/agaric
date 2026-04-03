@@ -206,6 +206,20 @@ Phase 2 materializer review (1 subagent) + 3 hardening fixes + i18n extraction b
 
 **#520 resolved (Session 89):** ~253 i18n keys, 15 components. Commit: `ff87e36`.
 
+## Session 91 — 2026-04-03 — Parallel Materializer (#374 resolved)
+
+### Independent block_id groups now processed concurrently
+1 item fully resolved: foreground consumer parallelized.
+
+| File | Change |
+|------|--------|
+| `materializer.rs` | #374: JoinSet-based parallel group execution. Single group: sequential. Multiple: concurrent. Barrier boundaries preserved. 1 new test. |
+
+### Stats
+- Rust: 1465 tests pass (1464 + 1 new)
+- Commit: `e724283`
+- REVIEW-LATER: 2 → 1 item (#522 iOS mDNS only)
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command

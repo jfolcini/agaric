@@ -340,18 +340,46 @@ impl Materializer {
     /// Process a segment of foreground tasks grouped by `block_id`.
     ///
     /// Tasks without a block_id go into a catch-all group processed last.
+    /// Independent groups (different `block_id`) run in parallel via
+    /// [`tokio::task::JoinSet`]; ops within each group stay sequential
+    /// to preserve causal ordering (#374).
     async fn process_foreground_segment(
         pool: &SqlitePool,
         tasks: Vec<MaterializeTask>,
         metrics: &Arc<QueueMetrics>,
     ) {
         let groups = group_tasks_by_block_id(tasks);
-        // TODO(#374): Replace this sequential loop with join_all for
-        // independent groups. Each group's ops must stay sequential,
-        // but groups targeting different block_ids can run in parallel.
+
+        if groups.len() <= 1 {
+            // Single group — process sequentially (no spawn overhead).
+            for (_block_id, group_tasks) in groups {
+                for task in group_tasks {
+                    Self::process_single_foreground_task(pool, task, metrics).await;
+                }
+            }
+            return;
+        }
+
+        // Multiple independent groups — process in parallel via JoinSet.
+        // Each group's tasks stay sequential (preserving op ordering within
+        // a block_id), but groups targeting different block_ids run concurrently.
+        let mut join_set = tokio::task::JoinSet::new();
+
         for (_block_id, group_tasks) in groups {
-            for task in group_tasks {
-                Self::process_single_foreground_task(pool, task, metrics).await;
+            let pool = pool.clone();
+            let metrics = Arc::clone(metrics);
+
+            join_set.spawn(async move {
+                for task in group_tasks {
+                    Materializer::process_single_foreground_task(&pool, task, &metrics).await;
+                }
+            });
+        }
+
+        // Await all groups.
+        while let Some(result) = join_set.join_next().await {
+            if let Err(e) = result {
+                tracing::error!("foreground group task panicked: {e}");
             }
         }
     }
@@ -2640,6 +2668,83 @@ mod tests {
                 other => panic!("expected ApplyOp, got {other:?}"),
             }
         }
+    }
+
+    // ======================================================================
+    // Parallel group execution (#374)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn parallel_groups_complete_independently() {
+        // Two groups targeting different block_ids both complete when
+        // processed through the parallel foreground segment path.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Pre-create two distinct blocks so the edits have something to update.
+        insert_block_direct(&pool, "PAR_A", "content", "original-A").await;
+        insert_block_direct(&pool, "PAR_B", "content", "original-B").await;
+
+        // Enqueue edits targeting two different block_ids — the consumer
+        // groups these into two independent groups that run in parallel.
+        let record_a = make_op_record(
+            &pool,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id("PAR_A"),
+                to_text: "updated-A".into(),
+                prev_edit: None,
+            }),
+        )
+        .await;
+        let record_b = make_op_record(
+            &pool,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id("PAR_B"),
+                to_text: "updated-B".into(),
+                prev_edit: None,
+            }),
+        )
+        .await;
+
+        mat.enqueue_foreground(MaterializeTask::ApplyOp(record_a))
+            .await
+            .unwrap();
+        mat.enqueue_foreground(MaterializeTask::ApplyOp(record_b))
+            .await
+            .unwrap();
+
+        mat.flush_foreground().await.unwrap();
+
+        // Both blocks should have been updated — proving both groups
+        // completed independently.
+        let content_a: Option<String> =
+            sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'PAR_A'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            content_a.as_deref(),
+            Some("updated-A"),
+            "block PAR_A should be updated by its group"
+        );
+
+        let content_b: Option<String> =
+            sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'PAR_B'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            content_b.as_deref(),
+            Some("updated-B"),
+            "block PAR_B should be updated by its group"
+        );
+
+        // Verify metrics: at least 2 fg tasks processed (one per group).
+        let processed = mat.metrics().fg_processed.load(AtomicOrdering::Relaxed);
+        assert!(
+            processed >= 2,
+            "expected at least 2 fg tasks processed (one per group), got {processed}"
+        );
     }
 
     // ======================================================================
