@@ -252,7 +252,7 @@ HeadExchange, OpBatch (1000 ops/chunk), ResetRequired, SnapshotOffer/Accept/Reje
 | Store | Key State | Purpose |
 |-------|-----------|---------|
 | `useBootStore` | state: booting/recovering/ready/error | App startup |
-| `useBlockStore` | blocks[], focusedBlockId, rootParentId | Block tree CRUD |
+| `useBlockStore` | blocks[], focusedBlockId, selectedBlockIds[], rootParentId | Block tree CRUD + selection |
 | `useNavigationStore` | currentView, pageStack[], selectedBlockId | Page routing (9 views) |
 | `useJournalStore` | mode (daily/weekly/monthly/agenda), currentDate | Journal view state |
 | `useResolveStore` | cache Map\<ULID, {title, deleted}\> | Global title resolution |
@@ -691,7 +691,7 @@ trailing-whitespace, end-of-file-fixer, check-yaml/toml/json, check-merge-confli
 | 654 | Editor block types (tables) | Editor |
 | 655 | Inline query blocks (`{{query ...}}` embedded results) | Query |
 | 656 | Namespaced pages (`/` separator, tree view) | Pages |
-| 657 | Block-level multi-selection (static + batch ops) | Outlining |
+| 657 | Block-level multi-selection (core done, batch toolbar pending) | Outlining |
 | 658 | Custom task keywords (configurable states) | Tasks |
 | 660 | Logseq/Markdown import | Import |
 

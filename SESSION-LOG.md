@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 133 — 2026-04-03 — Block multi-selection core mechanism (#657)
+
+### Batch: selection state + visual highlight + keyboard shortcuts
+
+1 build subagent. Core selection mechanism implemented without batch toolbar (deferred). Selection is orthogonal to the roving editor — does not break single-focus invariant.
+
+| File | Change |
+|------|--------|
+| `blocks.ts` | Added `selectedBlockIds: string[]` + 5 actions (toggleSelected, rangeSelect, selectAll, clearSelected, setSelected). `setFocused` now clears selection. |
+| `StaticBlock.tsx` | `isSelected` prop: ring-2 ring-primary/50 bg-primary/5. Ctrl+Click → toggle, Shift+Click → range, plain click → edit. |
+| `EditableBlock.tsx` | Pass-through `isSelected` + `onSelect` to StaticBlock. |
+| `SortableBlock.tsx` | Pass-through `isSelected` + `onSelect` to EditableBlock. |
+| `BlockTree.tsx` | Wire store selectors + `handleSelect` callback. Keyboard useEffect: Ctrl+A select all (not editing), Escape clear selection (not editing). |
+| `blocks.test.ts` | 7 new tests (toggle, range, range-empty, selectAll, clear, setSelected, setFocused clears). 80/80 pass. |
+| `BlockTree.test.tsx` | 5 new tests (toggle via onSelect, isSelected true/false, Escape clears, setFocused clears). Mock extended with data-selected + Select button. 160/160 pass. |
+
+### Stats
+- Frontend: 12 new tests (80/80 store, 160/160 BlockTree)
+- Commit: `a9d2ac9`
+- REVIEW-LATER: #657 updated (core done, batch toolbar pending). 11 open items (unchanged count).
+
 ## Session 132 — 2026-04-03 — Namespaced pages breadcrumbs + create-under (#656)
 
 ### Batch: PageHeader breadcrumbs + PageBrowser create-under namespace
