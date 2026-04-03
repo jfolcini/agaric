@@ -1,22 +1,21 @@
 //! Cache materializer functions (ADR-08).
 //!
-//! Full-recompute rebuilds for the three read-path caches (`tags_cache`,
-//! `pages_cache`, `agenda_cache`) and incremental diff-based reindexing of
-//! `block_links`.
+//! Full-recompute rebuilds for the two read-path caches (`tags_cache`,
+//! `pages_cache`), an incremental diff-based rebuild for `agenda_cache`,
+//! and incremental diff-based reindexing of `block_links`.
 //!
-//! Every function takes a shared `&SqlitePool` reference and wraps its
-//! DELETE + INSERT cycle in a transaction for atomicity.
+//! `rebuild_agenda_cache` computes the desired state, reads the current DB
+//! state, then inserts only missing rows and deletes only stale rows —
+//! reducing write amplification for large datasets.
 //!
-//! **Phase 2 optimisation (not yet implemented):** the three `rebuild_*`
-//! functions currently do a full DELETE + INSERT on every call.  For large
-//! datasets an incremental diff approach (similar to `reindex_block_links`)
-//! would reduce write amplification.
+//! `rebuild_tags_cache` and `rebuild_pages_cache` still use a full
+//! DELETE + INSERT cycle wrapped in a transaction for atomicity.
 
 #![allow(dead_code)]
 
 use regex::Regex;
 use sqlx::SqlitePool;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use crate::error::AppError;
@@ -116,60 +115,132 @@ pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
 // rebuild_agenda_cache (p1-t20)
 // ---------------------------------------------------------------------------
 
-/// Full recompute of `agenda_cache`.
+/// Incremental rebuild of `agenda_cache`.
+///
+/// Instead of a full DELETE + INSERT, this function:
+/// 1. Computes the desired state from the same 4 UNION ALL sources.
+/// 2. Reads the current DB state.
+/// 3. Diffs by PK `(date, block_id)`: inserts missing, deletes stale, updates
+///    rows whose `source` value changed.
 ///
 /// Two data sources:
 /// 1. `block_properties` rows with a non-null `value_date` -> source = `property:<key>`
 /// 2. `block_tags` referencing tag blocks whose name matches `date/YYYY-MM-DD`
 ///    (exactly 15 chars) -> source = `tag:<tag_id>`
+/// 3. `blocks.due_date` column -> source = `column:due_date`
+/// 4. `blocks.scheduled_date` column -> source = `column:scheduled_date`
 pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
 
-    sqlx::query!("DELETE FROM agenda_cache")
+    // Step 1: Compute desired state from the same 4 UNION ALL sources.
+    // Properties appear first so they win on PK deduplication (first-wins,
+    // replicating INSERT OR IGNORE semantics).
+    let desired_rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT date, block_id, source FROM (
+            SELECT bp.value_date AS date, bp.block_id, 'property:' || bp.key AS source
+            FROM block_properties bp
+            JOIN blocks b ON b.id = bp.block_id
+            WHERE bp.value_date IS NOT NULL AND b.deleted_at IS NULL
+              AND b.is_conflict = 0
+            UNION ALL
+            SELECT SUBSTR(t.content, 6) AS date, bt.block_id, 'tag:' || bt.tag_id AS source
+            FROM block_tags bt
+            JOIN blocks t ON t.id = bt.tag_id
+            JOIN blocks b ON b.id = bt.block_id
+            WHERE t.block_type = 'tag'
+              AND t.content LIKE 'date/%'
+              AND LENGTH(t.content) = 15
+              AND SUBSTR(t.content, 6, 4) GLOB '[0-9][0-9][0-9][0-9]'
+              AND SUBSTR(t.content, 10, 1) = '-'
+              AND SUBSTR(t.content, 11, 2) GLOB '[0-9][0-9]'
+              AND SUBSTR(t.content, 13, 1) = '-'
+              AND SUBSTR(t.content, 14, 2) GLOB '[0-9][0-9]'
+              AND b.deleted_at IS NULL
+              AND t.deleted_at IS NULL
+              AND b.is_conflict = 0
+            UNION ALL
+            SELECT b.due_date AS date, b.id AS block_id, 'column:due_date' AS source
+            FROM blocks b
+            WHERE b.due_date IS NOT NULL
+              AND b.deleted_at IS NULL
+              AND b.is_conflict = 0
+            UNION ALL
+            SELECT b.scheduled_date AS date, b.id AS block_id, 'column:scheduled_date' AS source
+            FROM blocks b
+            WHERE b.scheduled_date IS NOT NULL
+              AND b.deleted_at IS NULL
+              AND b.is_conflict = 0
+        )",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+
+    // Deduplicate by PK (date, block_id), keeping first occurrence.
+    let mut desired: HashMap<(String, String), String> = HashMap::with_capacity(desired_rows.len());
+    for (date, block_id, source) in desired_rows {
+        desired.entry((date, block_id)).or_insert(source);
+    }
+
+    // Step 2: Read current cache state.
+    let current_rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT date, block_id, source FROM agenda_cache")
+            .fetch_all(&mut *tx)
+            .await?;
+
+    let current: HashMap<(String, String), String> = current_rows
+        .into_iter()
+        .map(|(d, b, s)| ((d, b), s))
+        .collect();
+
+    // Step 3: Compute diff.
+    let to_delete: Vec<&(String, String)> = current
+        .keys()
+        .filter(|k| !desired.contains_key(k))
+        .collect();
+
+    let to_insert: Vec<(&(String, String), &String)> = desired
+        .iter()
+        .filter(|(k, _)| !current.contains_key(k))
+        .collect();
+
+    let to_update: Vec<(&(String, String), &String)> = desired
+        .iter()
+        .filter(|(k, v)| current.get(k).is_some_and(|cv| cv != *v))
+        .collect();
+
+    if to_delete.is_empty() && to_insert.is_empty() && to_update.is_empty() {
+        // No changes — transaction is rolled back on drop.
+        return Ok(());
+    }
+
+    // Step 4: Apply diff.
+    for (date, block_id) in &to_delete {
+        sqlx::query("DELETE FROM agenda_cache WHERE date = ?1 AND block_id = ?2")
+            .bind(date)
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    for ((date, block_id), source) in &to_update {
+        sqlx::query("UPDATE agenda_cache SET source = ?1 WHERE date = ?2 AND block_id = ?3")
+            .bind(source)
+            .bind(date)
+            .bind(block_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    for ((date, block_id), source) in &to_insert {
+        sqlx::query(
+            "INSERT OR IGNORE INTO agenda_cache (date, block_id, source) VALUES (?1, ?2, ?3)",
+        )
+        .bind(date)
+        .bind(block_id)
+        .bind(source)
         .execute(&mut *tx)
         .await?;
-
-    // Both sources combined in a single INSERT via UNION ALL to reduce
-    // round-trips.  Properties appear first so they win on PK conflicts
-    // (INSERT OR IGNORE keeps the first row for a given (date, block_id)).
-    sqlx::query!(
-        "INSERT OR IGNORE INTO agenda_cache (date, block_id, source)
-         SELECT bp.value_date, bp.block_id, 'property:' || bp.key
-         FROM block_properties bp
-         JOIN blocks b ON b.id = bp.block_id
-         WHERE bp.value_date IS NOT NULL AND b.deleted_at IS NULL
-           AND b.is_conflict = 0
-         UNION ALL
-         SELECT SUBSTR(t.content, 6), bt.block_id, 'tag:' || bt.tag_id
-         FROM block_tags bt
-         JOIN blocks t ON t.id = bt.tag_id
-         JOIN blocks b ON b.id = bt.block_id
-         WHERE t.block_type = 'tag'
-           AND t.content LIKE 'date/%'
-           AND LENGTH(t.content) = 15
-           AND SUBSTR(t.content, 6, 4) GLOB '[0-9][0-9][0-9][0-9]'
-           AND SUBSTR(t.content, 10, 1) = '-'
-           AND SUBSTR(t.content, 11, 2) GLOB '[0-9][0-9]'
-           AND SUBSTR(t.content, 13, 1) = '-'
-           AND SUBSTR(t.content, 14, 2) GLOB '[0-9][0-9]'
-           AND b.deleted_at IS NULL
-           AND t.deleted_at IS NULL
-           AND b.is_conflict = 0
-         UNION ALL
-         SELECT b.due_date, b.id, 'column:due_date'
-         FROM blocks b
-         WHERE b.due_date IS NOT NULL
-           AND b.deleted_at IS NULL
-           AND b.is_conflict = 0
-         UNION ALL
-         SELECT b.scheduled_date, b.id, 'column:scheduled_date'
-         FROM blocks b
-         WHERE b.scheduled_date IS NOT NULL
-           AND b.deleted_at IS NULL
-           AND b.is_conflict = 0",
-    )
-    .execute(&mut *tx)
-    .await?;
+    }
 
     tx.commit().await?;
     Ok(())
@@ -927,6 +998,116 @@ mod tests {
             count_rows(&pool, "agenda_cache").await,
             0,
             "date tag with bad separators must be excluded"
+        );
+    }
+
+    // ====================================================================
+    // agenda_cache — incremental rebuild behaviour
+    // ====================================================================
+
+    #[tokio::test]
+    async fn rebuild_agenda_incremental_inserts_new_entries() {
+        let (pool, _dir) = test_pool().await;
+
+        // Establish baseline with one entry.
+        insert_block(&pool, "BLK01", "content", "first task").await;
+        sqlx::query("UPDATE blocks SET due_date = '2025-08-01' WHERE id = 'BLK01'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+        assert_eq!(count_rows(&pool, "agenda_cache").await, 1, "baseline");
+
+        // Add a second block with a due_date.
+        insert_block(&pool, "BLK02", "content", "second task").await;
+        sqlx::query("UPDATE blocks SET due_date = '2025-09-15' WHERE id = 'BLK02'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            2,
+            "incremental rebuild must insert the new entry"
+        );
+
+        // Verify both entries are present.
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT date, block_id FROM agenda_cache ORDER BY date")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(rows[0], ("2025-08-01".to_string(), "BLK01".to_string()));
+        assert_eq!(rows[1], ("2025-09-15".to_string(), "BLK02".to_string()));
+    }
+
+    #[tokio::test]
+    async fn rebuild_agenda_incremental_removes_stale_entries() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLK01", "content", "will be deleted").await;
+        sqlx::query("UPDATE blocks SET due_date = '2025-08-01' WHERE id = 'BLK01'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+        assert_eq!(count_rows(&pool, "agenda_cache").await, 1, "baseline");
+
+        // Soft-delete the block — its cache entry becomes stale.
+        soft_delete_block(&pool, "BLK01").await;
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            0,
+            "incremental rebuild must delete the stale entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn rebuild_agenda_incremental_preserves_unchanged() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "BLK01", "content", "stable task").await;
+        sqlx::query("UPDATE blocks SET due_date = '2025-08-01' WHERE id = 'BLK01'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        // Record the rowid of the cached entry. A DELETE + re-INSERT would
+        // allocate a new rowid; the incremental approach must keep it.
+        let (original_rowid,): (i64,) = sqlx::query_as(
+            "SELECT rowid FROM agenda_cache WHERE date = '2025-08-01' AND block_id = 'BLK01'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Rebuild again with no changes to source data.
+        rebuild_agenda_cache(&pool).await.unwrap();
+
+        let (rowid_after,): (i64,) = sqlx::query_as(
+            "SELECT rowid FROM agenda_cache WHERE date = '2025-08-01' AND block_id = 'BLK01'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            original_rowid, rowid_after,
+            "unchanged entry must preserve its rowid (not deleted + re-inserted)"
+        );
+        assert_eq!(
+            count_rows(&pool, "agenda_cache").await,
+            1,
+            "entry count must remain the same"
         );
     }
 

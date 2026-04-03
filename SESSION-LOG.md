@@ -65,6 +65,19 @@ Built by 2 parallel subagents.
 - Rust: 1451 tests pass (1448 + 3 new)
 - Commit: `24542e0`
 
+## Session 78 — 2026-04-03 — Incremental Cache Rebuilds (#20)
+
+### Agenda cache now uses HashSet-based diff instead of full DELETE+INSERT
+1 item resolved: `rebuild_agenda_cache` refactored to incremental updates.
+
+| File | Change |
+|------|--------|
+| `cache.rs` | #20: Compute desired state → diff with current → apply only changes in transaction. Early return if unchanged. 3 new tests (insert, remove, rowid stability). |
+
+### Stats
+- Rust: 1454 tests pass (1451 + 3 new)
+- Commit: `c06be99`
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command
