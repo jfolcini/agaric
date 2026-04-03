@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 125 — 2026-04-03 — Ref Property Picker + Agenda Sort/Group Toolbar (#645-7b, #662-4)
+
+### Batch: ref property click-to-edit + sort/group toolbar controls
+
+2 parallel build subagents (property UX, agenda toolbar). Reviewer caught `res.data` → `res.items` bug in ref picker (PageResponse uses `.items`). Also discovered #651-C1 already fixed in prior session — removed from REVIEW-LATER.
+
+| File | Change |
+|------|--------|
+| `SortableBlock.tsx` | #645-7b: Ref-type detection in useEffect (`value_type === 'ref'`). Page picker popover with search input, scrollable list, setProperty with `valueRef`. Resolved ref display via `resolveBlockTitle`. |
+| `SortableBlock.test.tsx` | 5 new tests (ref picker appears, search filters, selection calls setProperty, Escape closes, no-results state). |
+| `i18n.ts` | 12 new keys (3 block.* for ref picker, 9 agenda.* for sort/group controls). |
+| `agenda-sort.ts` | #662-4: `sortByPriority()`, `sortByState()`, `sortAgendaBlocksBy()` dispatcher. |
+| `agenda-sort.test.ts` | 9 new tests (sort order, null handling, dispatch, immutability). |
+| `AgendaFilterBuilder.tsx` | #662-4: `AgendaSortGroupControls` component — Group By + Sort By popover dropdowns with pill-style buttons. |
+| `AgendaFilterBuilder.test.tsx` | 5 new tests (renders controls, selection callbacks, a11y). |
+| `AgendaResults.tsx` | #662-4: `sortBy` prop, uses `sortAgendaBlocksBy()` instead of hardcoded sort. |
+| `AgendaResults.test.tsx` | 2 new tests (sortBy priority, sortBy state). |
+| `JournalPage.tsx` | #662-4: `agendaGroupBy`/`agendaSortBy` state with localStorage persistence. Passes dynamic values to AgendaResults. |
+| `JournalPage.test.tsx` | Added AgendaSortGroupControls to mock. |
+
+### Stats
+- Frontend: 21 new tests (5 SortableBlock + 9 agenda-sort + 5 AgendaFilterBuilder + 2 AgendaResults)
+- Commit: `10484e3`
+- REVIEW-LATER: #645-7b done (last #645 property type interaction), #662-4 done (last #662 task). #651-C1 removed (already fixed).
+
 ## Session 124 — 2026-04-03 — Property UX + Agenda Group Modes (#645, #662)
 
 ### Batch: date chip click-to-edit + key rename + slash presets + group by priority/state
