@@ -2,7 +2,7 @@
  * Tests for FormattingToolbar component.
  *
  * Validates:
- *  - Renders all thirteen buttons (Bold, Italic, Code, External link, Internal link, Tag, Code block, Priority 1/2/3, Date, Undo, Redo)
+ *  - Renders all sixteen buttons (Bold, Italic, Code, External link, Internal link, Tag, Code block, Heading, Priority 1/2/3, Date, Due Date, TODO, Undo, Redo)
  *  - Active marks get aria-pressed=true + bg-accent
  *  - Undo/Redo disabled state reflects editor.can()
  *  - Clicking buttons calls the correct editor chain commands
@@ -28,6 +28,7 @@ const mockEditorState = {
   code: false,
   link: false,
   codeBlock: false,
+  headingLevel: 0,
   canUndo: false,
   canRedo: false,
 }
@@ -46,6 +47,7 @@ vi.mock('../ui/separator', () => ({
 }))
 
 // Mock Popover components — render children inline for testing
+let popoverIdx = 0
 vi.mock('../ui/popover', () => ({
   Popover: ({
     children,
@@ -54,11 +56,14 @@ vi.mock('../ui/popover', () => ({
     children: React.ReactNode
     open?: boolean
     onOpenChange?: (open: boolean) => void
-  }) => (
-    <div data-testid="link-popover" data-open={String(!!open)}>
-      {children}
-    </div>
-  ),
+  }) => {
+    const id = `popover-${popoverIdx++}`
+    return (
+      <div data-testid={id} data-popover data-open={String(!!open)}>
+        {children}
+      </div>
+    )
+  },
   PopoverAnchor: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   PopoverContent: ({
     children,
@@ -100,6 +105,7 @@ const mockToggleBold = vi.fn(() => ({ run: mockRun }))
 const mockToggleItalic = vi.fn(() => ({ run: mockRun }))
 const mockToggleCode = vi.fn(() => ({ run: mockRun }))
 const mockToggleCodeBlock = vi.fn(() => ({ run: mockRun }))
+const mockToggleHeading = vi.fn(() => ({ run: mockRun }))
 const mockSetLink = vi.fn(() => ({ run: mockRun }))
 const mockUnsetLink = vi.fn(() => ({ run: mockRun }))
 const mockInsertContent = vi.fn(() => ({ run: mockRun }))
@@ -110,6 +116,7 @@ const mockFocus = vi.fn(() => ({
   toggleItalic: mockToggleItalic,
   toggleCode: mockToggleCode,
   toggleCodeBlock: mockToggleCodeBlock,
+  toggleHeading: mockToggleHeading,
   setLink: mockSetLink,
   unsetLink: mockUnsetLink,
   insertContent: mockInsertContent,
@@ -135,11 +142,13 @@ function makeEditor() {
 describe('FormattingToolbar', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    popoverIdx = 0
     mockEditorState.bold = false
     mockEditorState.italic = false
     mockEditorState.code = false
     mockEditorState.link = false
     mockEditorState.codeBlock = false
+    mockEditorState.headingLevel = 0
     mockEditorState.canUndo = false
     mockEditorState.canRedo = false
     mockGetAttributes.mockReturnValue({})
@@ -159,7 +168,7 @@ describe('FormattingToolbar', () => {
       expect(toolbar).toBeInTheDocument()
     })
 
-    it('renders all thirteen formatting buttons', () => {
+    it('renders all sixteen formatting buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
@@ -169,10 +178,13 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert tag' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Heading level' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 1 (high)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 2 (medium)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 3 (low)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert date' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Set due date' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Toggle TODO state' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Redo' })).toBeInTheDocument()
     })
@@ -317,12 +329,17 @@ describe('FormattingToolbar', () => {
     it('opens link popover when clicking External link button', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      const popover = screen.getByTestId('link-popover')
+      const linkBtn = screen.getByRole('button', { name: 'External link' })
+      const popover = linkBtn.closest('[data-popover]') as HTMLElement
       expect(popover).toHaveAttribute('data-open', 'false')
 
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'External link' }))
+      fireEvent.pointerDown(linkBtn)
 
-      expect(popover).toHaveAttribute('data-open', 'true')
+      // After re-render, find the popover wrapping the link button again
+      const popoverAfter = screen
+        .getByRole('button', { name: 'External link' })
+        .closest('[data-popover]') as HTMLElement
+      expect(popoverAfter).toHaveAttribute('data-open', 'true')
     })
 
     it('passes isEditing=false and empty initialUrl when no link is active', () => {
@@ -348,18 +365,24 @@ describe('FormattingToolbar', () => {
 
       // Open the popover first
       fireEvent.pointerDown(screen.getByRole('button', { name: 'External link' }))
-      const popover = screen.getByTestId('link-popover')
+      // After re-render the popover index changes; find the popover that wraps the close button
+      const closeBtn = screen.getByTestId('close-popover')
+      const popover = closeBtn.closest('[data-popover]') as HTMLElement
       expect(popover).toHaveAttribute('data-open', 'true')
 
       // Click the close button in the mocked LinkEditPopover
-      fireEvent.click(screen.getByTestId('close-popover'))
-      expect(popover).toHaveAttribute('data-open', 'false')
+      fireEvent.click(closeBtn)
+      // After another re-render, find the popover again
+      const linkEditMock = screen.getByTestId('link-edit-popover-mock')
+      const popoverAfter = linkEditMock.closest('[data-popover]') as HTMLElement
+      expect(popoverAfter).toHaveAttribute('data-open', 'false')
     })
 
     it('opens popover on Ctrl+K custom event from editor DOM', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      const popover = screen.getByTestId('link-popover')
+      const linkBtn = screen.getByRole('button', { name: 'External link' })
+      const popover = linkBtn.closest('[data-popover]') as HTMLElement
       expect(popover).toHaveAttribute('data-open', 'false')
 
       // Simulate the custom event dispatched by the ExternalLink extension
@@ -367,7 +390,10 @@ describe('FormattingToolbar', () => {
         mockEditorDom.dispatchEvent(new CustomEvent('open-link-popover'))
       })
 
-      expect(popover).toHaveAttribute('data-open', 'true')
+      const popoverAfter = screen
+        .getByRole('button', { name: 'External link' })
+        .closest('[data-popover]') as HTMLElement
+      expect(popoverAfter).toHaveAttribute('data-open', 'true')
     })
 
     it('shows External link as pressed when link is active', () => {
@@ -518,10 +544,13 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert tag' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Heading level' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 1 (high)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 2 (medium)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 3 (low)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert date' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Set due date' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Toggle TODO state' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Redo' })).toBeInTheDocument()
     })
@@ -540,6 +569,69 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const toolbar = screen.getByRole('toolbar', { name: 'Formatting' })
       expect(toolbar).not.toHaveAttribute('aria-controls')
+    })
+  })
+
+  // ── #611: Due Date button ─────────────────────────────────────────────
+
+  describe('due date button', () => {
+    it('renders with aria-label "Set due date"', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      expect(screen.getByRole('button', { name: 'Set due date' })).toBeInTheDocument()
+    })
+
+    it('dispatches open-due-date-picker custom event on pointerdown', () => {
+      const spy = vi.fn()
+      document.addEventListener('open-due-date-picker', spy)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Set due date' }))
+      expect(spy).toHaveBeenCalledOnce()
+      document.removeEventListener('open-due-date-picker', spy)
+    })
+  })
+
+  // ── #612: TODO cycle button ───────────────────────────────────────────
+
+  describe('TODO cycle button', () => {
+    it('renders with aria-label "Toggle TODO state"', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      expect(screen.getByRole('button', { name: 'Toggle TODO state' })).toBeInTheDocument()
+    })
+
+    it('dispatches toggle-todo-state custom event on pointerdown', () => {
+      const spy = vi.fn()
+      document.addEventListener('toggle-todo-state', spy)
+      render(<FormattingToolbar editor={makeEditor()} />)
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Toggle TODO state' }))
+      expect(spy).toHaveBeenCalledOnce()
+      document.removeEventListener('toggle-todo-state', spy)
+    })
+  })
+
+  // ── #613: Heading dropdown ────────────────────────────────────────────
+
+  describe('heading dropdown', () => {
+    it('renders heading button and shows level when heading is active', () => {
+      mockEditorState.headingLevel = 2
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Heading level' })
+      expect(btn).toBeInTheDocument()
+      expect(btn).toHaveAttribute('aria-pressed', 'true')
+      expect(btn.className).toContain('bg-accent')
+      expect(btn.textContent).toContain('2')
+    })
+
+    it('shows H1-H6 and Paragraph options in popover content', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      // The popover content is always rendered in our mock
+      const popoverContents = screen.getAllByTestId('popover-content')
+      // The heading popover is the second popover-content (after the link popover)
+      const headingPopover = popoverContents[1]
+      expect(headingPopover).toBeInTheDocument()
+      for (let i = 1; i <= 6; i++) {
+        expect(headingPopover.textContent).toContain(`H${i}`)
+      }
+      expect(headingPopover.textContent).toContain('Paragraph')
     })
   })
 })

@@ -1,5 +1,22 @@
 # Session Log
 
+## Session 67 — 2026-04-03 — Toolbar Discoverability (#611-#613)
+
+### Three toolbar buttons for discoverability
+3 items resolved: Due Date button, TODO cycle button, heading-level dropdown.
+
+Built by 1 subagent (toolbar + BlockTree listeners + 6 tests). No separate review — follows established toolbar button pattern.
+
+| File | Change |
+|------|--------|
+| `FormattingToolbar.tsx` | #611: CalendarClock Due Date button (dispatches `open-due-date-picker`). #612: CheckSquare TODO button (dispatches `toggle-todo-state`). #613: Heading dropdown (Popover with H1-H6 + Paragraph, shows active level indicator). |
+| `BlockTree.tsx` | #611: `open-due-date-picker` listener → opens date picker in 'due' mode. #612: `toggle-todo-state` listener → calls handleToggleTodo. |
+| `FormattingToolbar.test.tsx` | 6 new tests (renders + dispatches for Due Date and TODO; heading renders + dropdown options). |
+
+### Stats
+- Frontend: 79/79 test files, 2242 tests pass (2236 + 6 new)
+- Commit: `0fdf4ed`
+
 ## Session 66 — 2026-04-03 — Interaction Parity Quick Wins (#589)
 
 ### Slash commands + keyboard shortcuts + tooltip

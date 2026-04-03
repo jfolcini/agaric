@@ -1,7 +1,7 @@
 /**
  * FormattingToolbar — always-visible toolbar rendered above the active editor.
  *
- * Buttons: Bold, Italic, Code | External Link, Code Block | Priority 1/2/3, Date | Undo, Redo.
+ * Buttons: Bold, Italic, Code | External Link, Code Block, Heading | Priority 1/2/3, Date, Due Date, TODO | Undo, Redo.
  * Uses onPointerDown + preventDefault so clicks never steal focus from TipTap.
  * Active marks are highlighted via aria-pressed + bg-accent.
  *
@@ -17,10 +17,13 @@ import { useEditorState } from '@tiptap/react'
 import {
   AtSign,
   Bold,
+  CalendarClock,
   CalendarDays,
+  CheckSquare,
   Code,
   FileCode2,
   FileSymlink,
+  Heading,
   Italic,
   Link2,
   Redo2,
@@ -60,6 +63,7 @@ function Tip({
 
 export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): React.ReactElement {
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
+  const [headingPopoverOpen, setHeadingPopoverOpen] = useState(false)
 
   const state = useEditorState({
     editor,
@@ -69,6 +73,19 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
       code: ctx.editor.isActive('code'),
       link: ctx.editor.isActive('link'),
       codeBlock: ctx.editor.isActive('codeBlock'),
+      headingLevel: ctx.editor.isActive('heading', { level: 1 })
+        ? 1
+        : ctx.editor.isActive('heading', { level: 2 })
+          ? 2
+          : ctx.editor.isActive('heading', { level: 3 })
+            ? 3
+            : ctx.editor.isActive('heading', { level: 4 })
+              ? 4
+              : ctx.editor.isActive('heading', { level: 5 })
+                ? 5
+                : ctx.editor.isActive('heading', { level: 6 })
+                  ? 6
+                  : 0,
       canUndo: ctx.editor.can().undo(),
       canRedo: ctx.editor.can().redo(),
     }),
@@ -218,6 +235,66 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
           </Button>
         </Tip>
 
+        <Popover open={headingPopoverOpen} onOpenChange={setHeadingPopoverOpen}>
+          <Tip label="Heading (Ctrl+1-6)">
+            <PopoverAnchor asChild>
+              <Button
+                variant="ghost"
+                size="xs"
+                aria-label="Heading level"
+                aria-pressed={state.headingLevel > 0}
+                className={state.headingLevel > 0 ? 'bg-accent text-accent-foreground' : ''}
+                onPointerDown={(e) => {
+                  e.preventDefault()
+                  setHeadingPopoverOpen((prev) => !prev)
+                }}
+              >
+                <Heading size={14} />
+                {state.headingLevel > 0 && (
+                  <span className="text-[10px] font-bold">{state.headingLevel}</span>
+                )}
+              </Button>
+            </PopoverAnchor>
+          </Tip>
+          <PopoverContent align="start" className="w-auto p-1">
+            <div className="flex flex-col gap-0.5">
+              {([1, 2, 3, 4, 5, 6] as const).map((level) => (
+                <Button
+                  key={level}
+                  variant="ghost"
+                  size="sm"
+                  className={`justify-start text-sm ${state.headingLevel === level ? 'bg-accent' : ''}`}
+                  onPointerDown={(e) => {
+                    e.preventDefault()
+                    editor.chain().focus().toggleHeading({ level }).run()
+                    setHeadingPopoverOpen(false)
+                  }}
+                >
+                  H{level}
+                </Button>
+              ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                className={`justify-start text-sm ${state.headingLevel === 0 ? 'bg-accent' : ''}`}
+                onPointerDown={(e) => {
+                  e.preventDefault()
+                  if (state.headingLevel > 0) {
+                    editor
+                      .chain()
+                      .focus()
+                      .toggleHeading({ level: state.headingLevel as 1 | 2 | 3 | 4 | 5 | 6 })
+                      .run()
+                  }
+                  setHeadingPopoverOpen(false)
+                }}
+              >
+                Paragraph
+              </Button>
+            </div>
+          </PopoverContent>
+        </Popover>
+
         <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
         <Tip label="Priority 1 — high (Ctrl+Shift+1)">
@@ -273,6 +350,32 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             }}
           >
             <CalendarDays size={14} />
+          </Button>
+        </Tip>
+        <Tip label="Due date (/due)">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Set due date"
+            onPointerDown={(e) => {
+              e.preventDefault()
+              document.dispatchEvent(new CustomEvent('open-due-date-picker'))
+            }}
+          >
+            <CalendarClock size={14} />
+          </Button>
+        </Tip>
+        <Tip label="TODO cycle (Ctrl+Enter)">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Toggle TODO state"
+            onPointerDown={(e) => {
+              e.preventDefault()
+              document.dispatchEvent(new CustomEvent('toggle-todo-state'))
+            }}
+          >
+            <CheckSquare size={14} />
           </Button>
         </Tip>
 

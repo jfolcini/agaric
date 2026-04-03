@@ -851,6 +851,27 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     return () => document.removeEventListener('open-date-picker', handleDateEvent)
   }, [focusedBlockId, rovingEditor.editor])
 
+  // ── Listen for toolbar due-date picker event ─────────────────────────
+  useEffect(() => {
+    const handler = () => {
+      if (!focusedBlockId) return
+      datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos ?? undefined
+      setDatePickerMode('due')
+      setDatePickerOpen(true)
+    }
+    document.addEventListener('open-due-date-picker', handler)
+    return () => document.removeEventListener('open-due-date-picker', handler)
+  }, [focusedBlockId, rovingEditor])
+
+  // ── Listen for toolbar toggle-todo-state event ──────────────────────
+  useEffect(() => {
+    const handler = () => {
+      if (focusedBlockId) handleToggleTodo(focusedBlockId)
+    }
+    document.addEventListener('toggle-todo-state', handler)
+    return () => document.removeEventListener('toggle-todo-state', handler)
+  }, [focusedBlockId, handleToggleTodo])
+
   // ── Keyboard shortcut: Ctrl+Shift+D → open date picker ─────────────
   useEffect(() => {
     const handleDateShortcut = (e: KeyboardEvent) => {
