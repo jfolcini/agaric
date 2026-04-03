@@ -75,9 +75,9 @@ async moveBlock(blockId: string, newParentId: string | null, newPosition: number
 /**
  * Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
  */
-async listBlocks(parentId: string | null, blockType: string | null, tagId: string | null, showDeleted: boolean | null, agendaDate: string | null, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
+async listBlocks(parentId: string | null, blockType: string | null, tagId: string | null, showDeleted: boolean | null, agendaDate: string | null, agendaSource: string | null, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agendaDate, cursor, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agendaDate, agendaSource, cursor, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

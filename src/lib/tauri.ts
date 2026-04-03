@@ -91,6 +91,7 @@ export async function listBlocks(params?: {
   tagId?: string
   showDeleted?: boolean
   agendaDate?: string
+  agendaSource?: string
   cursor?: string
   limit?: number
 }): Promise<PageResponse<BlockRow>> {
@@ -100,6 +101,7 @@ export async function listBlocks(params?: {
     tagId: params?.tagId ?? null,
     showDeleted: params?.showDeleted ?? null,
     agendaDate: params?.agendaDate ?? null,
+    agendaSource: params?.agendaSource ?? null,
     cursor: params?.cursor ?? null,
     limit: params?.limit ?? null,
   })

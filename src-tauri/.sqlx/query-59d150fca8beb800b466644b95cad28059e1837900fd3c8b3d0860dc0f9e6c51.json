@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id, b.block_type, b.content, b.parent_id, b.position,\n                b.deleted_at, b.archived_at, b.is_conflict as \"is_conflict: bool\",\n                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR b.id > ?3)\n         ORDER BY b.id ASC\n         LIMIT ?4",
+  "query": "SELECT b.id, b.block_type, b.content, b.parent_id, b.position,\n                b.deleted_at, b.archived_at, b.is_conflict as \"is_conflict: bool\",\n                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR ac.source = ?2)\n           AND (?3 IS NULL OR b.id > ?4)\n         ORDER BY b.id ASC\n         LIMIT ?5",
   "describe": {
     "columns": [
       {
@@ -70,7 +70,7 @@
       }
     ],
     "parameters": {
-      "Right": 4
+      "Right": 5
     },
     "nullable": [
       false,
@@ -88,5 +88,5 @@
       true
     ]
   },
-  "hash": "bb2837d7ac93db94665372b4093ca37e88edd2ecb88f53aed78fb8a228b5af70"
+  "hash": "59d150fca8beb800b466644b95cad28059e1837900fd3c8b3d0860dc0f9e6c51"
 }

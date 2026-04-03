@@ -480,6 +480,7 @@ pub async fn query_by_property(
 pub async fn list_agenda(
     pool: &SqlitePool,
     date: &str,
+    source: Option<&str>,
     page: &PageRequest,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
@@ -497,13 +498,15 @@ pub async fn list_agenda(
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
          WHERE ac.date = ?1 AND b.deleted_at IS NULL
-           AND (?2 IS NULL OR b.id > ?3)
+           AND (?2 IS NULL OR ac.source = ?2)
+           AND (?3 IS NULL OR b.id > ?4)
          ORDER BY b.id ASC
-         LIMIT ?4"#,
+         LIMIT ?5"#,
         date,        // ?1
-        cursor_flag, // ?2
-        cursor_id,   // ?3
-        fetch_limit, // ?4
+        source,      // ?2
+        cursor_flag, // ?3
+        cursor_id,   // ?4
+        fetch_limit, // ?5
     )
     .fetch_all(pool)
     .await?;
@@ -1778,12 +1781,12 @@ mod tests {
 
         let page = PageRequest::new(None, Some(10)).unwrap();
 
-        let resp = list_agenda(&pool, "2025-01-15", &page).await.unwrap();
+        let resp = list_agenda(&pool, "2025-01-15", None, &page).await.unwrap();
         assert_eq!(resp.items.len(), 2, "only blocks for Jan 15");
         assert_eq!(resp.items[0].id, "BLOCK001");
         assert_eq!(resp.items[1].id, "BLOCK002");
 
-        let resp2 = list_agenda(&pool, "2025-01-16", &page).await.unwrap();
+        let resp2 = list_agenda(&pool, "2025-01-16", None, &page).await.unwrap();
         assert_eq!(resp2.items.len(), 1, "only blocks for Jan 16");
         assert_eq!(resp2.items[0].id, "BLOCK003");
     }
@@ -1793,7 +1796,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = list_agenda(&pool, "2025-12-31", &page).await.unwrap();
+        let resp = list_agenda(&pool, "2025-12-31", None, &page).await.unwrap();
 
         assert!(
             resp.items.is_empty(),
@@ -1815,6 +1818,7 @@ mod tests {
         let r1 = list_agenda(
             &pool,
             "2025-01-15",
+            None,
             &PageRequest::new(None, Some(2)).unwrap(),
         )
         .await
@@ -1827,6 +1831,7 @@ mod tests {
         let r2 = list_agenda(
             &pool,
             "2025-01-15",
+            None,
             &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
         )
         .await
@@ -1839,6 +1844,7 @@ mod tests {
         let r3 = list_agenda(
             &pool,
             "2025-01-15",
+            None,
             &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
         )
         .await
@@ -1864,7 +1870,7 @@ mod tests {
         soft_delete_block(&pool, "BLOCK002", FIXED_DELETED_AT).await;
 
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = list_agenda(&pool, "2025-01-15", &page).await.unwrap();
+        let resp = list_agenda(&pool, "2025-01-15", None, &page).await.unwrap();
 
         assert_eq!(
             resp.items.len(),

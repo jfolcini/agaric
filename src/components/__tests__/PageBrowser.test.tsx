@@ -66,6 +66,7 @@ describe('PageBrowser', () => {
         tagId: null,
         showDeleted: null,
         agendaDate: null,
+        agendaSource: null,
         cursor: null,
         limit: 50,
       })
@@ -152,6 +153,7 @@ describe('PageBrowser', () => {
         tagId: null,
         showDeleted: null,
         agendaDate: null,
+        agendaSource: null,
         cursor: 'cursor_abc',
         limit: 50,
       })

@@ -1172,6 +1172,7 @@ pub async fn list_blocks_inner(
     tag_id: Option<String>,
     show_deleted: Option<bool>,
     agenda_date: Option<String>,
+    agenda_source: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
@@ -1204,7 +1205,7 @@ pub async fn list_blocks_inner(
         pagination::list_trash(pool, &page).await
     } else if let Some(ref d) = agenda_date {
         validate_date_format(d)?;
-        pagination::list_agenda(pool, d, &page).await
+        pagination::list_agenda(pool, d, agenda_source.as_deref(), &page).await
     } else if let Some(ref t) = tag_id {
         pagination::list_by_tag(pool, t, &page).await
     } else if let Some(ref bt) = block_type {
@@ -3159,6 +3160,7 @@ pub async fn list_blocks(
     tag_id: Option<String>,
     show_deleted: Option<bool>,
     agenda_date: Option<String>,
+    agenda_source: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
@@ -3169,6 +3171,7 @@ pub async fn list_blocks(
         tag_id,
         show_deleted,
         agenda_date,
+        agenda_source,
         cursor,
         limit,
     )
@@ -4886,7 +4889,7 @@ mod tests {
         insert_block(&pool, "TOP2", "content", "b", None, Some(2)).await;
         insert_block(&pool, "CHILD1", "content", "c", Some("TOP1"), Some(1)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None)
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None)
             .await
             .unwrap();
 
@@ -4917,6 +4920,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -4937,6 +4941,7 @@ mod tests {
         let resp = list_blocks_inner(
             &pool,
             Some("PAR".into()),
+            None,
             None,
             None,
             None,
@@ -4976,6 +4981,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -5001,7 +5007,7 @@ mod tests {
             .await
             .unwrap();
 
-        let resp = list_blocks_inner(&pool, None, None, None, Some(true), None, None, None)
+        let resp = list_blocks_inner(&pool, None, None, None, Some(true), None, None, None, None)
             .await
             .unwrap();
 
@@ -5027,6 +5033,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await;
         assert!(
@@ -5041,6 +5048,7 @@ mod tests {
             None,
             Some("T1".into()),
             Some(true),
+            None,
             None,
             None,
             None,
@@ -5061,6 +5069,7 @@ mod tests {
             Some("2025-01-15".into()),
             None,
             None,
+            None,
         )
         .await;
         assert!(
@@ -5074,6 +5083,7 @@ mod tests {
             Some("P1".into()),
             Some("page".into()),
             Some("T1".into()),
+            None,
             None,
             None,
             None,
@@ -5092,9 +5102,19 @@ mod tests {
 
         // Each single filter should succeed (may return empty results — that's fine).
         assert!(
-            list_blocks_inner(&pool, Some("P1".into()), None, None, None, None, None, None)
-                .await
-                .is_ok(),
+            list_blocks_inner(
+                &pool,
+                Some("P1".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None
+            )
+            .await
+            .is_ok(),
             "parent_id alone should be accepted"
         );
         assert!(
@@ -5106,6 +5126,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 None
             )
             .await
@@ -5113,7 +5134,7 @@ mod tests {
             "block_type alone should be accepted"
         );
         assert!(
-            list_blocks_inner(&pool, None, None, None, Some(true), None, None, None)
+            list_blocks_inner(&pool, None, None, None, Some(true), None, None, None, None)
                 .await
                 .is_ok(),
             "show_deleted alone should be accepted"
@@ -5128,6 +5149,7 @@ mod tests {
                 Some(false),
                 None,
                 None,
+                None,
                 None
             )
             .await
@@ -5140,7 +5162,7 @@ mod tests {
     async fn list_blocks_empty_db_returns_empty_page() {
         let (pool, _dir) = test_pool().await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None)
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None)
             .await
             .unwrap();
 
@@ -6066,7 +6088,7 @@ mod tests {
         insert_block(&pool, "SNAP_BLK1", "content", "first", None, Some(1)).await;
         insert_block(&pool, "SNAP_BLK2", "page", "second", None, Some(2)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, Some(10))
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(10))
             .await
             .unwrap();
 
@@ -6774,7 +6796,7 @@ mod tests {
         insert_block(&pool, "PS_BLK1", "content", "a", None, Some(1)).await;
         insert_block(&pool, "PS_BLK2", "content", "b", None, Some(2)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, Some(0))
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(0))
             .await
             .unwrap();
 
@@ -6793,7 +6815,7 @@ mod tests {
         insert_block(&pool, "PS_N1", "content", "a", None, Some(1)).await;
         insert_block(&pool, "PS_N2", "content", "b", None, Some(2)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, Some(-1))
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(-1))
             .await
             .unwrap();
 
@@ -6813,7 +6835,7 @@ mod tests {
         insert_block(&pool, "PS_L2", "content", "b", None, Some(2)).await;
         insert_block(&pool, "PS_L3", "content", "c", None, Some(3)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, Some(1000))
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(1000))
             .await
             .unwrap();
 
@@ -6828,7 +6850,7 @@ mod tests {
 
         insert_block(&pool, "PS_D1", "content", "a", None, Some(1)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None)
+        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None)
             .await
             .unwrap();
 
@@ -10977,6 +10999,158 @@ mod tests {
         );
 
         mat.shutdown();
+    }
+
+    // ======================================================================
+    // list_blocks with agenda_source filter
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_blocks_with_agenda_source_filter_due_date() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert blocks
+        insert_block(&pool, "AG_DUE1", "content", "due task", None, None).await;
+        insert_block(&pool, "AG_SCHED1", "content", "scheduled task", None, None).await;
+
+        // Insert agenda_cache entries with different sources on the same date
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-08-01")
+            .bind("AG_DUE1")
+            .bind("column:due_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-08-01")
+            .bind("AG_SCHED1")
+            .bind("column:scheduled_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Filter by column:due_date — should only return AG_DUE1
+        let resp = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            Some("2025-08-01".into()),
+            Some("column:due_date".into()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.items.len(), 1, "should return only due_date items");
+        assert_eq!(resp.items[0].id, "AG_DUE1");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_blocks_with_agenda_source_filter_scheduled_date() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert blocks
+        insert_block(&pool, "AG_DUE2", "content", "due task", None, None).await;
+        insert_block(&pool, "AG_SCHED2", "content", "scheduled task", None, None).await;
+
+        // Insert agenda_cache entries with different sources on the same date
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-08-02")
+            .bind("AG_DUE2")
+            .bind("column:due_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-08-02")
+            .bind("AG_SCHED2")
+            .bind("column:scheduled_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Filter by column:scheduled_date — should only return AG_SCHED2
+        let resp = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            Some("2025-08-02".into()),
+            Some("column:scheduled_date".into()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resp.items.len(),
+            1,
+            "should return only scheduled_date items"
+        );
+        assert_eq!(resp.items[0].id, "AG_SCHED2");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_blocks_with_agenda_no_source_returns_all() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert blocks
+        insert_block(&pool, "AG_ALL1", "content", "due task", None, None).await;
+        insert_block(&pool, "AG_ALL2", "content", "scheduled task", None, None).await;
+        insert_block(&pool, "AG_ALL3", "content", "property task", None, None).await;
+
+        // Insert agenda_cache entries with different sources on the same date
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-08-03")
+            .bind("AG_ALL1")
+            .bind("column:due_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-08-03")
+            .bind("AG_ALL2")
+            .bind("column:scheduled_date")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)")
+            .bind("2025-08-03")
+            .bind("AG_ALL3")
+            .bind("property:created_at")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // No source filter — should return all 3 items (backward compatible)
+        let resp = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            Some("2025-08-03".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resp.items.len(),
+            3,
+            "no source filter should return all agenda items"
+        );
+        let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+        assert!(ids.contains(&"AG_ALL1"));
+        assert!(ids.contains(&"AG_ALL2"));
+        assert!(ids.contains(&"AG_ALL3"));
     }
 
     // ======================================================================

@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 70 — 2026-04-03 — Agenda Source Filter (#597)
+
+### Multi-date agenda queries with source filter
+1 item resolved: agenda queries now support filtering by date source (due/scheduled/all).
+
+Built by 2 parallel subagents (Rust: source filter on list_agenda + 3 tests; Frontend: DuePanel filter chips + 3 tests) + orchestrator (test fixes for agendaSource param + property_def key collision).
+
+| File | Change |
+|------|--------|
+| `pagination.rs` | #597: Added `source` param to `list_agenda`, filters `agenda_cache.source`. |
+| `commands.rs` | #597: Added `agenda_source` to `list_blocks_inner` + Tauri command. 3 new tests. |
+| `command_integration_tests.rs` | Updated ~29 `list_blocks_inner` calls + fixed property_def test key collision. |
+| `integration_tests.rs` | Updated ~9 `list_blocks_inner` calls. |
+| `bindings.ts` | Auto-regenerated with `agendaSource` param. |
+| `tauri.ts` | Added `agendaSource` to `listBlocks` wrapper. |
+| `DuePanel.tsx` | #597: Source filter chips (All/Due/Scheduled) with aria-pressed. Refetch on filter change. |
+| `DuePanel.test.tsx` | 3 new tests (default All, click Due, click All clears). |
+| 3 test files | Fixed 6 assertions for new `agendaSource: null` in invoke calls. |
+
+### Stats
+- Rust: 1432 tests pass (1429 + 3 new)
+- Frontend: 79/79 test files, 2254 tests pass (2251 + 3 new)
+- Commit: `ac708b6`
+
 ## Session 69 — 2026-04-03 — Property Definitions + Slash Commands (#591, #594, #596)
 
 ### Seed built-in property definitions + effort/assignee/location slash commands

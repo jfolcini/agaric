@@ -11,6 +11,7 @@ import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, listBlocks } from '../lib/tauri'
 
@@ -56,6 +57,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   const [hasMore, setHasMore] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
+  const [sourceFilter, setSourceFilter] = useState<string | null>(null)
 
   // Fetch blocks due on the given date
   const fetchBlocks = useCallback(
@@ -64,6 +66,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
       try {
         const resp = await listBlocks({
           agendaDate: date,
+          agendaSource: sourceFilter ?? undefined,
           cursor,
           limit: 50,
         })
@@ -92,10 +95,10 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
         setLoading(false)
       }
     },
-    [date, blocks, totalCount, pageTitles],
+    [date, blocks, totalCount, pageTitles, sourceFilter],
   )
 
-  // Fetch on mount and when date changes
+  // Fetch on mount and when date or sourceFilter changes
   useEffect(() => {
     setBlocks([])
     setNextCursor(null)
@@ -110,6 +113,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
       try {
         const resp = await listBlocks({
           agendaDate: date,
+          agendaSource: sourceFilter ?? undefined,
           limit: 50,
         })
         if (cancelled) return
@@ -141,7 +145,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     return () => {
       cancelled = true
     }
-  }, [date])
+  }, [date, sourceFilter])
 
   const loadMore = useCallback(() => {
     if (nextCursor) {
@@ -205,6 +209,33 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
         )}
         {headerLabel}
       </button>
+
+      {!collapsed && (
+        <div className="due-panel-filters flex items-center gap-1 px-2 py-1">
+          {[
+            { label: 'All', value: null },
+            { label: 'Due', value: 'column:due_date' },
+            { label: 'Scheduled', value: 'column:scheduled_date' },
+          ].map((opt) => (
+            <button
+              key={opt.label}
+              type="button"
+              className={cn(
+                'rounded-full px-2 py-0.5 text-xs font-medium transition-colors',
+                sourceFilter === opt.value
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80',
+              )}
+              onClick={() => {
+                setSourceFilter(opt.value)
+              }}
+              aria-pressed={sourceFilter === opt.value}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {!collapsed && (
         <div className="due-panel-content mt-1 space-y-2">

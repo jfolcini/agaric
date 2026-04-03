@@ -418,4 +418,100 @@ describe('DuePanel', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // 13. "All" filter is selected by default
+  it('shows "All" filter selected by default', async () => {
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', content: 'filter test block' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<DuePanel date="2025-06-15" />)
+
+    await screen.findByText('filter test block')
+
+    const allBtn = screen.getByRole('button', { name: 'All' })
+    const dueBtn = screen.getByRole('button', { name: 'Due' })
+    const scheduledBtn = screen.getByRole('button', { name: 'Scheduled' })
+
+    expect(allBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(dueBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(scheduledBtn).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  // 14. Clicking "Due" filter refetches with agendaSource
+  it('clicking "Due" filter refetches with agendaSource', async () => {
+    const user = userEvent.setup()
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', content: 'due filter block' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<DuePanel date="2025-06-15" />)
+
+    await screen.findByText('due filter block')
+
+    mockedListBlocks.mockClear()
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'B2', content: 'filtered due block' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const dueBtn = screen.getByRole('button', { name: 'Due' })
+    await user.click(dueBtn)
+
+    await waitFor(() => {
+      expect(mockedListBlocks).toHaveBeenCalledWith(
+        expect.objectContaining({ agendaSource: 'column:due_date' }),
+      )
+    })
+
+    expect(dueBtn).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  // 15. Clicking "All" clears source filter
+  it('clicking "All" clears source filter', async () => {
+    const user = userEvent.setup()
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', content: 'all filter block' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<DuePanel date="2025-06-15" />)
+
+    await screen.findByText('all filter block')
+
+    // First click "Due" to set a filter
+    const dueBtn = screen.getByRole('button', { name: 'Due' })
+    await user.click(dueBtn)
+
+    await waitFor(() => {
+      expect(mockedListBlocks).toHaveBeenCalledWith(
+        expect.objectContaining({ agendaSource: 'column:due_date' }),
+      )
+    })
+
+    mockedListBlocks.mockClear()
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'B3', content: 'all blocks again' })],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    // Now click "All" to clear the filter
+    const allBtn = screen.getByRole('button', { name: 'All' })
+    await user.click(allBtn)
+
+    await waitFor(() => {
+      expect(mockedListBlocks).toHaveBeenCalledWith(
+        expect.not.objectContaining({ agendaSource: expect.any(String) }),
+      )
+    })
+
+    expect(allBtn).toHaveAttribute('aria-pressed', 'true')
+  })
 })

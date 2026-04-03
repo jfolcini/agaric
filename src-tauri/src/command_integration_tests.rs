@@ -743,7 +743,7 @@ async fn deleted_blocks_excluded_from_list_blocks() {
         .await
         .unwrap();
 
-    let live = list_blocks_inner(&pool, None, None, None, None, None, None, None)
+    let live = list_blocks_inner(&pool, None, None, None, None, None, None, None, None)
         .await
         .unwrap();
 
@@ -783,7 +783,7 @@ async fn deleted_blocks_visible_in_list_blocks_show_deleted() {
         .await
         .unwrap();
 
-    let trash = list_blocks_inner(&pool, None, None, None, Some(true), None, None, None)
+    let trash = list_blocks_inner(&pool, None, None, None, Some(true), None, None, None, None)
         .await
         .unwrap();
 
@@ -1244,7 +1244,7 @@ async fn list_blocks_top_level_returns_root_blocks() {
     insert_block(&pool, "ROOT2", "content", "b", None, Some(2)).await;
     insert_block(&pool, "CHILD1", "content", "c", Some("ROOT1"), Some(1)).await;
 
-    let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None)
+    let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None)
         .await
         .unwrap();
 
@@ -1274,6 +1274,7 @@ async fn list_blocks_with_parent_id_returns_children_only() {
     let resp = list_blocks_inner(
         &pool,
         Some("LP01".into()),
+        None,
         None,
         None,
         None,
@@ -1311,6 +1312,7 @@ async fn list_blocks_with_block_type_filter_returns_matching_type() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1323,7 +1325,7 @@ async fn list_blocks_with_block_type_filter_returns_matching_type() {
 async fn list_blocks_empty_db_returns_empty_page_no_more() {
     let (pool, _dir) = test_pool().await;
 
-    let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None)
+    let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None)
         .await
         .unwrap();
 
@@ -1352,7 +1354,7 @@ async fn list_blocks_show_deleted_returns_only_deleted() {
         .await
         .unwrap();
 
-    let trash = list_blocks_inner(&pool, None, None, None, Some(true), None, None, None)
+    let trash = list_blocks_inner(&pool, None, None, None, Some(true), None, None, None, None)
         .await
         .unwrap();
 
@@ -1398,7 +1400,7 @@ async fn pagination_walk_all_pages_no_duplicates() {
     let mut cursor: Option<String> = None;
     let mut pages = 0;
     loop {
-        let page = list_blocks_inner(&pool, None, None, None, None, None, cursor, Some(4))
+        let page = list_blocks_inner(&pool, None, None, None, None, None, None, cursor, Some(4))
             .await
             .unwrap();
         for item in &page.items {
@@ -1435,7 +1437,7 @@ async fn pagination_limit_1_produces_single_item_pages() {
     let mut pages = 0;
 
     loop {
-        let page = list_blocks_inner(&pool, None, None, None, None, None, cursor, Some(1))
+        let page = list_blocks_inner(&pool, None, None, None, None, None, None, cursor, Some(1))
             .await
             .unwrap();
         assert!(
@@ -1677,9 +1679,19 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
     let mut pages = 0;
 
     loop {
-        let page = list_blocks_inner(&pool, None, None, None, None, None, cursor, Some(PAGE_SIZE))
-            .await
-            .unwrap();
+        let page = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            cursor,
+            Some(PAGE_SIZE),
+        )
+        .await
+        .unwrap();
         for item in &page.items {
             all_ids.push(item.id.clone());
         }
@@ -2253,6 +2265,7 @@ async fn list_blocks_with_agenda_date_returns_matching_blocks() {
         Some("2025-06-15".into()),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -2284,6 +2297,7 @@ async fn list_blocks_with_agenda_date_no_matches_returns_empty() {
         None,
         None,
         Some("2099-12-31".into()),
+        None,
         None,
         None,
     )
@@ -2360,6 +2374,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -2385,6 +2400,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         None,
         None,
         Some(tag.id.clone()),
+        None,
         None,
         None,
         None,
@@ -2559,6 +2575,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         Some("2025-1-1".into()),
         None,
         None,
+        None,
     )
     .await;
     assert!(
@@ -2574,6 +2591,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         Some("abcd-ef-gh".into()),
+        None,
         None,
         None,
     )
@@ -2593,6 +2611,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         Some("2025-13-01".into()),
         None,
         None,
+        None,
     )
     .await;
     assert!(
@@ -2608,6 +2627,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         Some("2025-01-00".into()),
+        None,
         None,
         None,
     )
@@ -2627,6 +2647,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         Some("2024-01-32".into()),
         None,
         None,
+        None,
     )
     .await;
     assert!(
@@ -2644,6 +2665,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         Some("not-a-date".into()),
         None,
         None,
+        None,
     )
     .await;
     assert!(
@@ -2659,6 +2681,7 @@ async fn test_list_blocks_rejects_invalid_date() {
         None,
         None,
         Some("2025/01/15".into()),
+        None,
         None,
         None,
     )
@@ -2684,6 +2707,7 @@ async fn test_list_blocks_accepts_valid_date() {
         Some("2025-06-15".into()),
         None,
         None,
+        None,
     )
     .await;
     assert!(
@@ -2701,6 +2725,7 @@ async fn test_list_blocks_accepts_valid_date() {
         Some("2025-01-01".into()),
         None,
         None,
+        None,
     )
     .await;
     assert!(
@@ -2716,6 +2741,7 @@ async fn test_list_blocks_accepts_valid_date() {
         None,
         None,
         Some("2025-12-31".into()),
+        None,
         None,
         None,
     )
@@ -3209,6 +3235,7 @@ async fn date_validation_invalid_month_13_returns_validation() {
         Some("2025-13-01".into()),
         None,
         None,
+        None,
     )
     .await;
     assert!(
@@ -3228,6 +3255,7 @@ async fn date_validation_short_format_returns_validation() {
         None,
         None,
         Some("2025-01".into()),
+        None,
         None,
         None,
     )
@@ -3251,6 +3279,7 @@ async fn date_validation_two_digit_year_returns_validation() {
         Some("25-1-1".into()),
         None,
         None,
+        None,
     )
     .await;
     assert!(
@@ -3272,6 +3301,7 @@ async fn date_validation_day_32_returns_validation() {
         Some("2025-01-32".into()),
         None,
         None,
+        None,
     )
     .await;
     assert!(
@@ -3291,6 +3321,7 @@ async fn date_validation_non_date_string_returns_validation() {
         None,
         None,
         Some("not-a-date".into()),
+        None,
         None,
         None,
     )
@@ -6528,10 +6559,10 @@ async fn grouped_backlinks_with_contains_filter() {
 #[tokio::test]
 async fn create_property_def_returns_correct_fields() {
     let (pool, _dir) = test_pool().await;
-    let def = create_property_def_inner(&pool, "priority".into(), "text".into(), None)
+    let def = create_property_def_inner(&pool, "custom_field".into(), "text".into(), None)
         .await
         .unwrap();
-    assert_eq!(def.key, "priority");
+    assert_eq!(def.key, "custom_field");
     assert_eq!(def.value_type, "text");
     assert!(def.options.is_none(), "text-type must have no options");
     assert!(!def.created_at.is_empty(), "created_at must be set");

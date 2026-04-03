@@ -62,6 +62,7 @@ describe('TrashView', () => {
         tagId: null,
         showDeleted: true,
         agendaDate: null,
+        agendaSource: null,
         cursor: null,
         limit: 50,
       })
@@ -241,6 +242,7 @@ describe('TrashView', () => {
         tagId: null,
         showDeleted: true,
         agendaDate: null,
+        agendaSource: null,
         cursor: 'cursor_page2',
         limit: 50,
       })

@@ -226,6 +226,7 @@ describe('listBlocks', () => {
       tagId: null,
       showDeleted: null,
       agendaDate: null,
+      agendaSource: null,
       cursor: null,
       limit: null,
     })
@@ -267,6 +268,7 @@ describe('listBlocks', () => {
       tagId: 'TAG01',
       showDeleted: true,
       agendaDate: '2025-01-15',
+      agendaSource: null,
       cursor: 'cursor123',
       limit: 25,
     })
