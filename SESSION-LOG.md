@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 104 — 2026-04-03 — Pages View A11y + Property Table Validation (#647, #648)
+
+### Accessibility, feedback, and validation fixes
+
+2 parallel build subagents. No worktrees (different files).
+
+| File | Change |
+|------|--------|
+| `PageBrowser.tsx` | #647: focus-visible ring on page items (P-1), delete loading/disabled state (P-2/P-4), cascade warning in delete dialog (P-10), title attr on truncated names (P-3), disable create when empty (P-5), success toast on delete (P-9). |
+| `PageBrowser.test.tsx` | #647: 4 new tests + 3 existing updated for empty-input disable. |
+| `PagePropertyTable.tsx` | #648: Error toast for invalid numbers (PR-1), delete confirmation dialog (PR-3), surface backend errors in create def (PR-6), TODO for select option editing (PR-16). |
+| `PagePropertyTable.test.tsx` | #648: 3 new tests + 1 existing updated for confirmation dialog. |
+| `i18n.ts` | 5 new keys (pageBrowser.deleteSuccess, property.invalidNumber, property.deleteConfirm, etc.) + updated deleteDescription. |
+
+### Stats
+- Frontend: 2460 tests pass (2453 + 7 new)
+- Commit: `9ec7d05`
+- REVIEW-LATER: 22 → 20 items (#647, #648 resolved)
+
 ## Session 103 — 2026-04-03 — Priority Badge Unify + Inline Property Chips (#645 sub-tasks 0-3)
 
 ### Unified priority badges + custom property chips on blocks
