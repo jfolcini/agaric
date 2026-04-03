@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use std::collections::VecDeque;
 
 use crate::dag;
 use crate::error::AppError;
@@ -16,6 +17,17 @@ use crate::materializer::{MaterializeTask, Materializer};
 use crate::merge;
 use crate::op_log::{self, OpRecord};
 use crate::peer_refs;
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/// Maximum number of [`OpTransfer`]s sent in a single [`SyncMessage::OpBatch`].
+///
+/// Large op logs are streamed in chunks of this size so that no single message
+/// becomes excessively large.  Intermediate batches carry `is_last: false`;
+/// the final (or only) batch carries `is_last: true`.
+const OP_BATCH_SIZE: usize = 1000;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -623,6 +635,11 @@ pub struct SyncOrchestrator {
     state: SyncState,
     session: SyncSession,
     pending_ops_to_send: Vec<OpRecord>,
+    /// Pending [`OpTransfer`]s queued for chunked streaming.
+    ///
+    /// Populated when entering [`SyncState::StreamingOps`]; drained in
+    /// batches of [`OP_BATCH_SIZE`] via [`next_message`](Self::next_message).
+    pending_op_transfers: VecDeque<OpTransfer>,
     received_ops: Vec<OpTransfer>,
     remote_device_id: Option<String>,
     /// When set, the orchestrator validates that the remote device_id
@@ -646,6 +663,7 @@ impl SyncOrchestrator {
             materializer,
             state: SyncState::Idle,
             pending_ops_to_send: Vec::new(),
+            pending_op_transfers: VecDeque::new(),
             received_ops: Vec::new(),
             remote_device_id: None,
             expected_remote_id: None,
@@ -804,10 +822,20 @@ impl SyncOrchestrator {
 
                 // Compute and send ops the remote is missing
                 let ops = compute_ops_to_send(&self.pool, &heads).await?;
-                let transfers: Vec<OpTransfer> =
+                let all_transfers: VecDeque<OpTransfer> =
                     ops.iter().cloned().map(OpTransfer::from).collect();
-                self.session.ops_sent = transfers.len();
+                self.session.ops_sent = all_transfers.len();
                 self.pending_ops_to_send = ops;
+
+                // Chunk into batches of OP_BATCH_SIZE.  The first batch is
+                // returned directly; remaining ops are stored in
+                // pending_op_transfers for retrieval via next_message().
+                let mut remaining = all_transfers;
+                let chunk_end = remaining.len().min(OP_BATCH_SIZE);
+                let first_batch: Vec<OpTransfer> = remaining.drain(..chunk_end).collect();
+                let is_last = remaining.is_empty();
+                self.pending_op_transfers = remaining;
+
                 self.state = SyncState::StreamingOps;
                 self.session.state = SyncState::StreamingOps;
                 self.emit(crate::sync_events::SyncEvent::Progress {
@@ -818,8 +846,8 @@ impl SyncOrchestrator {
                 });
 
                 Ok(Some(SyncMessage::OpBatch {
-                    ops: transfers,
-                    is_last: true,
+                    ops: first_batch,
+                    is_last,
                 }))
             }
 
@@ -963,6 +991,30 @@ impl SyncOrchestrator {
             self.state,
             SyncState::Complete | SyncState::Failed(_) | SyncState::ResetRequired
         )
+    }
+
+    /// Return the next queued [`SyncMessage::OpBatch`], if any.
+    ///
+    /// After [`handle_message`](Self::handle_message) returns the first
+    /// batch (possibly with `is_last: false`), the transport layer should
+    /// call this method in a loop to drain remaining chunks:
+    ///
+    /// ```ignore
+    /// while let Some(batch) = orchestrator.next_message() {
+    ///     send(batch).await;
+    /// }
+    /// ```
+    pub fn next_message(&mut self) -> Option<SyncMessage> {
+        if self.pending_op_transfers.is_empty() {
+            return None;
+        }
+        let chunk_end = self.pending_op_transfers.len().min(OP_BATCH_SIZE);
+        let batch: Vec<OpTransfer> = self.pending_op_transfers.drain(..chunk_end).collect();
+        let is_last = self.pending_op_transfers.is_empty();
+        Some(SyncMessage::OpBatch {
+            ops: batch,
+            is_last,
+        })
     }
 
     /// Borrow the session counters.
@@ -2436,6 +2488,194 @@ mod tests {
 
         assert!(orch.is_complete());
         assert!(orch.is_terminal());
+
+        materializer.shutdown();
+    }
+
+    // ======================================================================
+    // #620 — OpBatch streaming for large op logs
+    // ======================================================================
+
+    /// 2500 ops → 3 batches (1000, 1000, 500) with correct is_last flags.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn opbatch_streaming_sends_in_chunks() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        // Insert 2500 ops on "sender-dev"
+        for i in 1..=2500 {
+            append_local_op_at(
+                &pool,
+                "sender-dev",
+                test_create_payload(&format!("BLK{i}")),
+                FIXED_TS.into(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let mut orch = SyncOrchestrator::new(pool, "sender-dev".into(), materializer.clone());
+
+        // Remote peer has no heads → should send all 2500 ops
+        let first_msg = orch
+            .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+            .await
+            .unwrap();
+
+        // First batch: 1000 ops, is_last = false
+        let (batch1_ops, batch1_last) = match first_msg {
+            Some(SyncMessage::OpBatch { ops, is_last }) => (ops, is_last),
+            other => panic!("expected OpBatch, got {other:?}"),
+        };
+        assert_eq!(batch1_ops.len(), 1000, "first batch should have 1000 ops");
+        assert!(!batch1_last, "first batch should NOT be last");
+
+        // Second batch: 1000 ops, is_last = false
+        let second_msg = orch.next_message();
+        let (batch2_ops, batch2_last) = match second_msg {
+            Some(SyncMessage::OpBatch { ops, is_last }) => (ops, is_last),
+            other => panic!("expected OpBatch, got {other:?}"),
+        };
+        assert_eq!(batch2_ops.len(), 1000, "second batch should have 1000 ops");
+        assert!(!batch2_last, "second batch should NOT be last");
+
+        // Third batch: 500 ops, is_last = true
+        let third_msg = orch.next_message();
+        let (batch3_ops, batch3_last) = match third_msg {
+            Some(SyncMessage::OpBatch { ops, is_last }) => (ops, is_last),
+            other => panic!("expected OpBatch, got {other:?}"),
+        };
+        assert_eq!(batch3_ops.len(), 500, "third batch should have 500 ops");
+        assert!(batch3_last, "third batch SHOULD be last");
+
+        // No more batches
+        assert!(
+            orch.next_message().is_none(),
+            "no more batches after final chunk"
+        );
+
+        // Total ops sent should be 2500
+        assert_eq!(orch.session().ops_sent, 2500);
+
+        materializer.shutdown();
+    }
+
+    /// 500 ops → 1 batch with is_last = true (no chunking needed).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn opbatch_streaming_single_batch_for_small_logs() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        // Insert 500 ops
+        for i in 1..=500 {
+            append_local_op_at(
+                &pool,
+                "sender-dev",
+                test_create_payload(&format!("BLK{i}")),
+                FIXED_TS.into(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let mut orch = SyncOrchestrator::new(pool, "sender-dev".into(), materializer.clone());
+
+        let first_msg = orch
+            .handle_message(SyncMessage::HeadExchange { heads: vec![] })
+            .await
+            .unwrap();
+
+        match first_msg {
+            Some(SyncMessage::OpBatch { ops, is_last }) => {
+                assert_eq!(ops.len(), 500, "single batch should have all 500 ops");
+                assert!(is_last, "single batch should be marked last");
+            }
+            other => panic!("expected OpBatch, got {other:?}"),
+        }
+
+        // No pending batches
+        assert!(
+            orch.next_message().is_none(),
+            "no more batches for small log"
+        );
+
+        assert_eq!(orch.session().ops_sent, 500);
+
+        materializer.shutdown();
+    }
+
+    /// Receiver accumulates ops from multiple batches then applies all at once.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn receiver_accumulates_multi_batch_ops() {
+        // Create ops on a "remote" database so they have valid hashes
+        let (remote_pool, _remote_dir) = test_pool().await;
+        let mut all_transfers = Vec::new();
+        for i in 1..=5 {
+            let record = append_local_op_at(
+                &remote_pool,
+                "remote-dev",
+                test_create_payload(&format!("BLK{i}")),
+                FIXED_TS.into(),
+            )
+            .await
+            .unwrap();
+            all_transfers.push(OpTransfer::from(record));
+        }
+
+        // Set up a receiver orchestrator
+        let (local_pool, _local_dir) = test_pool().await;
+        let materializer = Materializer::new(local_pool.clone());
+        let mut orch =
+            SyncOrchestrator::new(local_pool.clone(), "local-dev".into(), materializer.clone());
+
+        // Drive to ExchangingHeads state
+        let _start = orch.start().await.unwrap();
+
+        // Send first batch (3 ops) with is_last = false
+        let batch1: Vec<OpTransfer> = all_transfers[..3].to_vec();
+        let resp1 = orch
+            .handle_message(SyncMessage::OpBatch {
+                ops: batch1,
+                is_last: false,
+            })
+            .await
+            .unwrap();
+        assert!(
+            resp1.is_none(),
+            "intermediate batch should not produce a response"
+        );
+
+        // Send second batch (2 ops) with is_last = true
+        let batch2: Vec<OpTransfer> = all_transfers[3..].to_vec();
+        let resp2 = orch
+            .handle_message(SyncMessage::OpBatch {
+                ops: batch2,
+                is_last: true,
+            })
+            .await
+            .unwrap();
+
+        // Should produce SyncComplete after applying all 5 ops
+        assert!(
+            matches!(resp2, Some(SyncMessage::SyncComplete { .. })),
+            "final batch should trigger apply + merge + SyncComplete"
+        );
+        assert_eq!(
+            orch.session().ops_received,
+            5,
+            "all 5 ops should be counted as received"
+        );
+        assert!(orch.is_complete());
+
+        // Verify ops were actually inserted into the local database
+        let local_ops = op_log::get_ops_since(&local_pool, "remote-dev", 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            local_ops.len(),
+            5,
+            "all 5 remote ops should be in local op log"
+        );
 
         materializer.shutdown();
     }

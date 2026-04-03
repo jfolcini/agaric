@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::error::AppError;
@@ -57,6 +58,7 @@ impl SyncEventSink for SharedEventSink {
 /// exiting.
 pub struct SyncDaemon {
     shutdown: Arc<AtomicBool>,
+    shutdown_notify: Arc<Notify>,
     cancel: Arc<AtomicBool>,
     #[allow(dead_code)]
     handle: Option<JoinHandle<()>>,
@@ -81,7 +83,8 @@ impl SyncDaemon {
         cancel: Arc<AtomicBool>,
     ) -> Result<Self, AppError> {
         let shutdown = Arc::new(AtomicBool::new(false));
-        let shutdown_flag = shutdown.clone();
+        let shutdown_notify = Arc::new(Notify::new());
+        let shutdown_notify_flag = shutdown_notify.clone();
         let cancel_flag = cancel.clone();
 
         let handle = tokio::spawn(async move {
@@ -92,7 +95,7 @@ impl SyncDaemon {
                 scheduler,
                 cert,
                 event_sink,
-                shutdown_flag,
+                shutdown_notify_flag,
                 cancel_flag,
             )
             .await
@@ -103,6 +106,7 @@ impl SyncDaemon {
 
         Ok(Self {
             shutdown,
+            shutdown_notify,
             cancel,
             handle: Some(handle),
         })
@@ -111,6 +115,7 @@ impl SyncDaemon {
     /// Signal the daemon to shut down gracefully.
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
+        self.shutdown_notify.notify_one();
     }
 
     /// Signal the active sync session to cancel.
@@ -127,11 +132,11 @@ impl SyncDaemon {
 // daemon_loop — the core async select! loop
 // ---------------------------------------------------------------------------
 
-/// Main loop for the sync daemon.
+/// Main event-driven loop for the sync daemon.
 ///
-/// Alternates between polling mDNS discovery events and waiting for
-/// debounced local-change notifications.  On every iteration it also
-/// checks whether any peers are due for a periodic resync.
+/// Uses `tokio::select!` to react to mDNS peer-discovery events,
+/// debounced local-change notifications, periodic resync checks, and
+/// shutdown signals — without polling.
 #[allow(clippy::too_many_arguments)]
 async fn daemon_loop(
     pool: SqlitePool,
@@ -140,7 +145,7 @@ async fn daemon_loop(
     scheduler: Arc<SyncScheduler>,
     cert: SyncCert,
     event_sink: Arc<dyn SyncEventSink>,
-    shutdown: Arc<AtomicBool>,
+    shutdown_notify: Arc<Notify>,
     cancel: Arc<AtomicBool>,
 ) -> Result<(), AppError> {
     // 1. Start mDNS service
@@ -174,52 +179,58 @@ async fn daemon_loop(
     // 4. Start mDNS browse
     let browse_rx = mdns.browse()?;
 
+    // Bridge mDNS browse events to a tokio mpsc channel so we can use
+    // them inside `tokio::select!` without polling.  flume's blocking
+    // `recv()` runs on a dedicated thread via `spawn_blocking`.
+    let (mdns_tx, mut mdns_rx) = tokio::sync::mpsc::channel::<mdns_sd::ServiceEvent>(32);
+    tokio::task::spawn_blocking(move || {
+        while let Ok(event) = browse_rx.recv() {
+            if mdns_tx.blocking_send(event).is_err() {
+                break; // Channel closed, daemon shutting down
+            }
+        }
+    });
+
     // 5. Maintain discovered peers (device_id → DiscoveredPeer)
     let mut discovered: HashMap<String, DiscoveredPeer> = HashMap::new();
 
-    // 6. Main loop
-    loop {
-        if shutdown.load(Ordering::Acquire) {
-            break;
-        }
+    // 6. Periodic resync interval (replaces the former 500ms poll cadence)
+    let mut resync_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    resync_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    // 7. Main event-driven loop
+    loop {
         tokio::select! {
-            // Branch A: poll mDNS discovery events (~500ms tick)
-            //
-            // `browse_rx` is a `mdns_sd::Receiver` (backed by flume) which
-            // does not expose an async `.recv()` that works natively in
-            // tokio::select!.  Instead we tick and drain via `try_recv()`.
-            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
-                while let Ok(event) = browse_rx.try_recv() {
-                    if let Some(peer) = sync_net::parse_service_event(event) {
-                        if peer.device_id != device_id {
-                            let is_new = !discovered.contains_key(&peer.device_id);
-                            discovered.insert(peer.device_id.clone(), peer.clone());
-                            if is_new {
-                                tracing::info!(
-                                    peer_id = %peer.device_id,
-                                    "discovered new peer via mDNS"
-                                );
-                                // If this peer is already paired, sync immediately
-                                let refs = peer_refs::list_peer_refs(&pool)
-                                    .await
-                                    .unwrap_or_else(|e| {
-                                        tracing::warn!("list_peer_refs failed: {e}");
-                                        vec![]
-                                    });
-                                if refs.iter().any(|p| p.peer_id == peer.device_id) {
-                                    try_sync_with_peer(
-                                        &pool,
-                                        &device_id,
-                                        &materializer,
-                                        &scheduler,
-                                        &event_sink,
-                                        &peer,
-                                        &refs,
-                                        &cancel,
-                                    )
-                                    .await;
-                                }
+            // Branch A: mDNS peer-discovery event (event-driven, no polling)
+            Some(event) = mdns_rx.recv() => {
+                if let Some(peer) = sync_net::parse_service_event(event) {
+                    if peer.device_id != device_id {
+                        let is_new = !discovered.contains_key(&peer.device_id);
+                        discovered.insert(peer.device_id.clone(), peer.clone());
+                        if is_new {
+                            tracing::info!(
+                                peer_id = %peer.device_id,
+                                "discovered new peer via mDNS"
+                            );
+                            // If this peer is already paired, sync immediately
+                            let refs = peer_refs::list_peer_refs(&pool)
+                                .await
+                                .unwrap_or_else(|e| {
+                                    tracing::warn!("list_peer_refs failed: {e}");
+                                    vec![]
+                                });
+                            if refs.iter().any(|p| p.peer_id == peer.device_id) {
+                                try_sync_with_peer(
+                                    &pool,
+                                    &device_id,
+                                    &materializer,
+                                    &scheduler,
+                                    &event_sink,
+                                    &peer,
+                                    &refs,
+                                    &cancel,
+                                )
+                                .await;
                             }
                         }
                     }
@@ -248,31 +259,38 @@ async fn daemon_loop(
                     }
                 }
             }
-        }
 
-        // Periodic resync check (runs every loop iteration, ~500ms cadence)
-        let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_else(|e| {
-            tracing::warn!("list_peer_refs failed: {e}");
-            vec![]
-        });
-        let peer_tuples: Vec<(String, Option<String>)> = refs
-            .iter()
-            .map(|p| (p.peer_id.clone(), p.synced_at.clone()))
-            .collect();
-        let due = scheduler.peers_due_for_resync(&peer_tuples);
-        for pid in due {
-            if let Some(dp) = discovered.get(&pid) {
-                try_sync_with_peer(
-                    &pool,
-                    &device_id,
-                    &materializer,
-                    &scheduler,
-                    &event_sink,
-                    dp,
-                    &refs,
-                    &cancel,
-                )
-                .await;
+            // Branch C: periodic resync check (30s interval)
+            _ = resync_interval.tick() => {
+                let refs = peer_refs::list_peer_refs(&pool).await.unwrap_or_else(|e| {
+                    tracing::warn!("list_peer_refs failed: {e}");
+                    vec![]
+                });
+                let peer_tuples: Vec<(String, Option<String>)> = refs
+                    .iter()
+                    .map(|p| (p.peer_id.clone(), p.synced_at.clone()))
+                    .collect();
+                let due = scheduler.peers_due_for_resync(&peer_tuples);
+                for pid in due {
+                    if let Some(dp) = discovered.get(&pid) {
+                        try_sync_with_peer(
+                            &pool,
+                            &device_id,
+                            &materializer,
+                            &scheduler,
+                            &event_sink,
+                            dp,
+                            &refs,
+                            &cancel,
+                        )
+                        .await;
+                    }
+                }
+            }
+
+            // Branch D: shutdown signal
+            _ = shutdown_notify.notified() => {
+                break;
             }
         }
     }
@@ -594,6 +612,7 @@ mod tests {
         let shutdown = Arc::new(AtomicBool::new(false));
         let daemon = SyncDaemon {
             shutdown: shutdown.clone(),
+            shutdown_notify: Arc::new(Notify::new()),
             cancel: Arc::new(AtomicBool::new(false)),
             handle: None,
         };
@@ -610,6 +629,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let daemon = SyncDaemon {
             shutdown: Arc::new(AtomicBool::new(false)),
+            shutdown_notify: Arc::new(Notify::new()),
             cancel: cancel.clone(),
             handle: None,
         };
@@ -630,6 +650,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let daemon = SyncDaemon {
             shutdown: shutdown.clone(),
+            shutdown_notify: Arc::new(Notify::new()),
             cancel: cancel.clone(),
             handle: None,
         };
@@ -650,6 +671,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let daemon = SyncDaemon {
             shutdown: Arc::new(AtomicBool::new(false)),
+            shutdown_notify: Arc::new(Notify::new()),
             cancel: cancel.clone(),
             handle: None,
         };
@@ -695,6 +717,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let daemon = SyncDaemon {
             shutdown: Arc::new(AtomicBool::new(false)),
+            shutdown_notify: Arc::new(Notify::new()),
             cancel: cancel.clone(),
             handle: None,
         };

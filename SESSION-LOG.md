@@ -49,6 +49,22 @@ Built by 1 subagent. Orchestrator already handled HeadExchange in Idle state —
 - Rust: 1448 tests pass (1446 + 2 new)
 - Commit: `1b98ddd`
 
+## Session 77 — 2026-04-03 — Sync Performance: Event-Driven mDNS + OpBatch Streaming (#523, #620)
+
+### Two sync performance improvements
+2 items resolved: event-driven mDNS replacing 500ms poll, chunked OpBatch streaming.
+
+Built by 2 parallel subagents.
+
+| File | Change |
+|------|--------|
+| `sync_daemon.rs` | #523: spawn_blocking mDNS bridge → mpsc → tokio::select! (4 branches). 30s resync interval. Notify-based shutdown. |
+| `sync_protocol.rs` | #620: `pending_op_transfers` VecDeque + `next_message()` for chunked sending. OP_BATCH_SIZE=1000. 3 tests. |
+
+### Stats
+- Rust: 1451 tests pass (1448 + 3 new)
+- Commit: `24542e0`
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command
