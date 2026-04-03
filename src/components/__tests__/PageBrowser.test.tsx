@@ -672,4 +672,98 @@ describe('PageBrowser', () => {
     expect(exportBtn).toBeInTheDocument()
     expect(exportBtn).toBeEnabled()
   })
+
+  describe('namespaced pages tree view', () => {
+    it('renders flat list when no pages have namespaces', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage('P1', 'First page'), makePage('P2', 'Second page')],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      expect(await screen.findByText('First page')).toBeInTheDocument()
+      expect(screen.getByText('Second page')).toBeInTheDocument()
+      // Should use flat list items (listitem role)
+      const listItems = screen.getAllByRole('listitem')
+      expect(listItems).toHaveLength(2)
+    })
+
+    it('renders tree structure for namespaced pages', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage('P1', 'work/project-a'),
+          makePage('P2', 'work/project-b'),
+          makePage('P3', 'personal/journal'),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      // Namespace folders should appear
+      expect(await screen.findByText('work')).toBeInTheDocument()
+      expect(screen.getByText('personal')).toBeInTheDocument()
+
+      // Leaf page names should appear (just the segment, not full path)
+      expect(screen.getByText('project-a')).toBeInTheDocument()
+      expect(screen.getByText('project-b')).toBeInTheDocument()
+      expect(screen.getByText('journal')).toBeInTheDocument()
+    })
+
+    it('namespace folders are collapsible', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage('P1', 'work/project-a'),
+          makePage('P2', 'work/project-b'),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      // Wait for tree to render — children should be visible (expanded by default)
+      expect(await screen.findByText('project-a')).toBeInTheDocument()
+      expect(screen.getByText('project-b')).toBeInTheDocument()
+
+      // Click the "work" folder button to collapse it
+      const workFolder = screen.getByText('work')
+      await user.click(workFolder)
+
+      // Children should be hidden
+      expect(screen.queryByText('project-a')).not.toBeInTheDocument()
+      expect(screen.queryByText('project-b')).not.toBeInTheDocument()
+
+      // Folder label still visible
+      expect(screen.getByText('work')).toBeInTheDocument()
+
+      // Click again to expand
+      await user.click(workFolder)
+
+      // Children should reappear
+      expect(screen.getByText('project-a')).toBeInTheDocument()
+      expect(screen.getByText('project-b')).toBeInTheDocument()
+    })
+
+    it('fires onPageSelect with full path when a tree leaf is clicked', async () => {
+      const user = userEvent.setup()
+      const onPageSelect = vi.fn()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage('P1', 'work/project-a')],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser onPageSelect={onPageSelect} />)
+
+      const leaf = await screen.findByText('project-a')
+      await user.click(leaf)
+
+      expect(onPageSelect).toHaveBeenCalledWith('P1', 'work/project-a')
+    })
+  })
 })

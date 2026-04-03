@@ -6,7 +6,7 @@
  * Includes delete with confirmation dialog and toast error feedback.
  */
 
-import { Download, FileText, Loader2, Plus, Trash2 } from 'lucide-react'
+import { ChevronRight, Download, FileText, Loader2, Plus, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -24,6 +24,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/utils'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
 import type { BlockRow } from '../lib/tauri'
@@ -33,6 +34,95 @@ import { useResolveStore } from '../stores/resolve'
 interface PageBrowserProps {
   /** Called when a page is selected. */
   onPageSelect?: (pageId: string, title?: string) => void
+}
+
+interface PageTreeNode {
+  name: string // segment name (e.g., "work" or "project-alpha")
+  fullPath: string // full page name (e.g., "work/project-alpha")
+  pageId?: string // only set for leaf pages that exist
+  children: PageTreeNode[]
+}
+
+function buildPageTree(pages: Array<{ id: string; content: string | null }>): PageTreeNode[] {
+  const root: PageTreeNode[] = []
+
+  for (const page of pages) {
+    const path = page.content ?? 'Untitled'
+    const segments = path.split('/')
+    let current = root
+
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i]
+      const fullPath = segments.slice(0, i + 1).join('/')
+      let node = current.find((n) => n.name === segment)
+
+      if (!node) {
+        node = { name: segment, fullPath, children: [] }
+        current.push(node)
+      }
+
+      if (i === segments.length - 1) {
+        node.pageId = page.id
+      }
+
+      current = node.children
+    }
+  }
+
+  return root
+}
+
+function PageTreeItem({
+  node,
+  depth,
+  onNavigate,
+}: {
+  node: PageTreeNode
+  depth: number
+  onNavigate: (pageId: string, title: string) => void
+}) {
+  const [expanded, setExpanded] = useState(true) // namespaces start expanded
+
+  if (node.pageId) {
+    // Leaf page — clickable
+    return (
+      <button
+        type="button"
+        style={{ paddingLeft: `${depth * 16}px` }}
+        onClick={() => onNavigate(node.pageId!, node.fullPath)}
+        className="w-full text-left px-2 py-1 text-sm hover:bg-accent rounded truncate"
+        title={node.fullPath}
+      >
+        {node.name}
+      </button>
+    )
+  }
+
+  // Namespace folder — collapsible
+  return (
+    <div>
+      <button
+        type="button"
+        style={{ paddingLeft: `${depth * 16}px` }}
+        onClick={() => setExpanded(!expanded)}
+        className="w-full text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 rounded flex items-center gap-1"
+      >
+        <ChevronRight
+          className={cn('h-3 w-3 transition-transform', expanded && 'rotate-90')}
+        />
+        {node.name}
+      </button>
+      {expanded &&
+        node.children.map((child) => (
+          <PageTreeItem
+            key={child.fullPath}
+            node={child}
+            depth={depth + 1}
+            onNavigate={onNavigate}
+          />
+        ))}
+    </div>
+  )
 }
 
 export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElement {
@@ -190,38 +280,47 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
       {/* biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn */}
       <div className="page-browser-list space-y-1" role="list">
-        {pages.map((page) => (
-          // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
-          <div
-            key={page.id}
-            role="listitem"
-            className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50"
-          >
-            <button
-              type="button"
-              className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
-              onClick={() => onPageSelect?.(page.id, page.content ?? t('pageBrowser.untitled'))}
-            >
-              <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="page-browser-item-title truncate" title={page.content ?? t('pageBrowser.untitled')}>
-                {page.content ?? t('pageBrowser.untitled')}
-              </span>
-            </button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={t('pageBrowser.deleteButton')}
-              className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-              disabled={deletingId === page.id}
-              onClick={(e) => {
-                e.stopPropagation()
-                setDeleteTarget({ id: page.id, name: page.content ?? t('pageBrowser.untitled') })
-              }}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        ))}
+        {pages.some((p) => p.content?.includes('/'))
+          ? buildPageTree(pages).map((node) => (
+              <PageTreeItem
+                key={node.fullPath}
+                node={node}
+                depth={0}
+                onNavigate={(pageId, title) => onPageSelect?.(pageId, title)}
+              />
+            ))
+          : pages.map((page) => (
+              // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
+              <div
+                key={page.id}
+                role="listitem"
+                className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50"
+              >
+                <button
+                  type="button"
+                  className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+                  onClick={() => onPageSelect?.(page.id, page.content ?? t('pageBrowser.untitled'))}
+                >
+                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span className="page-browser-item-title truncate" title={page.content ?? t('pageBrowser.untitled')}>
+                    {page.content ?? t('pageBrowser.untitled')}
+                  </span>
+                </button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t('pageBrowser.deleteButton')}
+                  className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                  disabled={deletingId === page.id}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setDeleteTarget({ id: page.id, name: page.content ?? t('pageBrowser.untitled') })
+                  }}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))}
       </div>
 
       {hasMore && (
