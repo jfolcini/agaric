@@ -1,5 +1,5 @@
 /**
- * BlockTree — renders the block list with the roving editor (ADR-01).
+ * BlockTree — renders the block list with the roving editor.
  *
  * Each block is either a StaticBlock (div) or the active TipTap editor.
  * Enter creates a new block below. Backspace on empty deletes.
@@ -51,7 +51,6 @@ import { useBlockStore } from '../stores/blocks'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 import { HistorySheet } from './HistorySheet'
-import { PropertyChip } from './PropertyChip'
 import { SortableBlock } from './SortableBlock'
 import { Calendar } from './ui/calendar'
 import { Skeleton } from './ui/skeleton'
@@ -294,9 +293,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   // ── History sheet state ────────────────────────────────────────────
   const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
 
-  const [blockProperties, setBlockProperties] = useState<Record<string, Array<{ key: string; value: string }>>>(
-    {},
-  )
+  const [blockProperties, setBlockProperties] = useState<
+    Record<string, Array<{ key: string; value: string }>>
+  >({})
 
   const handleShowHistory = useCallback((blockId: string) => {
     setHistoryBlockId(blockId)
@@ -517,10 +516,16 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         const mapped: Record<string, Array<{ key: string; value: string }>> = {}
         for (const [blockId, props] of Object.entries(result)) {
           mapped[blockId] = props
-            .filter((p) => !['todo_state', 'priority', 'due_date', 'scheduled_date'].includes(p.key))
+            .filter(
+              (p) => !['todo_state', 'priority', 'due_date', 'scheduled_date'].includes(p.key),
+            )
             .map((p) => ({
               key: p.key,
-              value: p.value_text ?? p.value_date ?? (p.value_num != null ? String(p.value_num) : '') ?? '',
+              value:
+                p.value_text ??
+                p.value_date ??
+                (p.value_num != null ? String(p.value_num) : '') ??
+                '',
             }))
             .filter((p) => p.value !== '')
         }
