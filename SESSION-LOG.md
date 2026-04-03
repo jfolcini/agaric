@@ -1,5 +1,39 @@
 # Session Log
 
+## Session 92 — 2026-04-03 — Phase 2: Commands/Reverse Deep Review + Fixes
+
+### Deep code review of commands.rs + reverse.rs generating 5 new REVIEW-LATER items
+Phase 2 executed: 3 parallel review subagents (error handling, test coverage, correctness/performance) + 2 parallel validator subagents.
+
+**Review findings:** 10 raw findings from error-handling reviewer, 12 from test-coverage reviewer, 8 from correctness reviewer.
+
+**Cross-validation results:**
+- REJECTED (5): days_in_month unwrap (safe/unreachable), FTS race condition (FIFO preserved), flush consistency (design correct), orphaned ops (FK enforced), parallel cross-block deps (no deps)
+- DOWNGRADED (0)
+- CONFIRMED (5): #621-#625
+
+**New items added (#621-#625):**
+- #621 (S, MEDIUM): `compute_edit_diff_inner` lacks tests
+- #622 (S, MEDIUM): `restore_block_inner` unwrap → safe pattern match
+- #623 (M, LOW): Recurrence block creation missing wrapping transaction
+- #624 (S, LOW): Date shift errors silently swallowed — add `tracing::warn`
+- #625 (S, LOW): Missing `scheduled_date` undo test in `reverse.rs`
+
+### Batch fix: #621, #622, #624, #625 (4 S-cost items)
+
+2 parallel build subagents + 2 parallel review subagents. Reviewer caught #624 not applied by build subagent — fixed by orchestrator.
+
+| File | Change |
+|------|--------|
+| `commands.rs` | #622: `if let Some` replaces `unwrap()` in `restore_block_inner`. #624: `tracing::warn` replaces `.ok()` on date shift errors. #621: 3 new tests for `compute_edit_diff_inner` (happy path, same-text equal spans, NotFound). |
+| `reverse.rs` | #625: New test `reverse_set_reserved_property_scheduled_date_with_prior`. |
+| `REVIEW-LATER.md` | Added #621-#625, resolved #621, #622, #624, #625. 2 items remain (#522 iOS, #623 M-cost). |
+
+### Stats
+- Rust: 1470 tests pass (1466 + 4 new)
+- Commit: `267bb4b`
+- REVIEW-LATER: 1 → 6 → 2 items (5 added, 4 resolved)
+
 ## Session 75 — 2026-04-03 — Phase 2: Sync Deep Review + New Findings
 
 ### Deep code review of sync subsystem generating 7 new REVIEW-LATER items

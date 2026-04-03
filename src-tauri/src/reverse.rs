@@ -1805,4 +1805,50 @@ mod tests {
             ),
         }
     }
+
+    /// Reversing a set_property for `scheduled_date` (reserved key using value_date)
+    /// should restore the prior date value.
+    #[tokio::test]
+    async fn reverse_set_reserved_property_scheduled_date_with_prior() {
+        let (pool, _dir) = test_pool().await;
+
+        // First set_property: scheduled_date with value_text = "2025-06-15"
+        let set1 = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_SD1"),
+            key: "scheduled_date".into(),
+            value_text: Some("2025-06-15".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        append_op(&pool, set1, "2025-01-15T12:00:00+00:00").await;
+
+        // Second set_property: scheduled_date with value_text = "2025-12-31"
+        let set2 = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_SD1"),
+            key: "scheduled_date".into(),
+            value_text: Some("2025-12-31".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        let rec = append_op(&pool, set2, "2025-01-15T12:01:00+00:00").await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::SetProperty(ref p) => {
+                assert_eq!(p.block_id, "BLK_SD1", "block_id mismatch");
+                assert_eq!(p.key, "scheduled_date", "key should be scheduled_date");
+                assert_eq!(
+                    p.value_text,
+                    Some("2025-06-15".into()),
+                    "reverse should restore prior scheduled_date value"
+                );
+            }
+            _ => panic!(
+                "reverse of set_property(scheduled_date) with prior should be SetProperty, got: {reverse:?}"
+            ),
+        }
+    }
 }
