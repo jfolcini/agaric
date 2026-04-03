@@ -3398,3 +3398,198 @@ describe('DatePickerOverlay text input', () => {
     })
   })
 })
+
+// =========================================================================
+// Enter creates new sibling block + empty-block cleanup (#636)
+// =========================================================================
+
+describe('BlockTree Enter creates new sibling block', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('Enter creates a new sibling block below and focuses it', async () => {
+    const tree = [makeBlock('A', null, 0, 'First block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    // Mock create_block to return a new block
+    // Default return [] causes load() to fail silently, preserving pre-set store
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'create_block') {
+        return {
+          id: 'NEW_BLOCK_01',
+          block_type: 'content',
+          content: '',
+          parent_id: (args?.parentId as string) ?? null,
+          position: 1,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+        }
+      }
+      return []
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onEnterSave).toBeDefined()
+    })
+
+    await act(async () => {
+      ;(capturedBlockKeyboardOpts as { onEnterSave: () => void }).onEnterSave()
+    })
+
+    // Verify create_block was called
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+        blockType: 'content',
+        content: '',
+        parentId: null,
+        position: 1,
+      })
+    })
+
+    // Verify focus moved to the new block
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('NEW_BLOCK_01')
+    })
+
+    // Verify the new block exists in the store
+    const newBlock = useBlockStore.getState().blocks.find((b) => b.id === 'NEW_BLOCK_01')
+    expect(newBlock).toBeDefined()
+  })
+
+  it('empty just-created block is deleted when focus changes', async () => {
+    const tree = [makeBlock('A', null, 0, 'First block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'create_block') {
+        return {
+          id: 'NEW_EMPTY',
+          block_type: 'content',
+          content: '',
+          parent_id: (args?.parentId as string) ?? null,
+          position: 1,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+        }
+      }
+      if (cmd === 'delete_block') {
+        return { deleted_count: 1 }
+      }
+      return []
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onEnterSave).toBeDefined()
+    })
+
+    // Create new block via Enter
+    await act(async () => {
+      ;(capturedBlockKeyboardOpts as { onEnterSave: () => void }).onEnterSave()
+    })
+
+    // Verify the new block was created and focused
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('NEW_EMPTY')
+    })
+
+    // Now change focus away from the empty just-created block
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'A' })
+    })
+
+    // Verify delete_block was called to clean up the empty block
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'NEW_EMPTY' })
+    })
+  })
+
+  it('non-empty just-created block is NOT deleted when focus changes', async () => {
+    const tree = [makeBlock('A', null, 0, 'First block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
+      if (cmd === 'create_block') {
+        return {
+          id: 'NEW_WITH_CONTENT',
+          block_type: 'content',
+          content: '',
+          parent_id: (args?.parentId as string) ?? null,
+          position: 1,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+        }
+      }
+      if (cmd === 'edit_block') {
+        return args
+      }
+      if (cmd === 'delete_block') {
+        return { deleted_count: 1 }
+      }
+      return []
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onEnterSave).toBeDefined()
+    })
+
+    // Create new block via Enter
+    await act(async () => {
+      ;(capturedBlockKeyboardOpts as { onEnterSave: () => void }).onEnterSave()
+    })
+
+    // Verify the new block was created and focused
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('NEW_WITH_CONTENT')
+    })
+
+    // Simulate the user typing content into the new block (update store state)
+    act(() => {
+      useBlockStore.setState((s) => ({
+        blocks: s.blocks.map((b) =>
+          b.id === 'NEW_WITH_CONTENT' ? { ...b, content: 'User typed something' } : b,
+        ),
+      }))
+    })
+
+    // Clear the mock to track only future calls
+    mockedInvoke.mockClear()
+
+    // Now change focus away from the non-empty just-created block
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'A' })
+    })
+
+    // Wait a tick to ensure the cleanup effect has run
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Verify delete_block was NOT called (block has content)
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', {
+      blockId: 'NEW_WITH_CONTENT',
+    })
+  })
+})

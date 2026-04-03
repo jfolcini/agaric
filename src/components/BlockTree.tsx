@@ -205,6 +205,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const moveToParent = useBlockStore((s) => s.moveToParent)
   const moveUp = useBlockStore((s) => s.moveUp)
   const moveDown = useBlockStore((s) => s.moveDown)
+  const createBelow = useBlockStore((s) => s.createBelow)
 
   // ── Collapse state ─────────────────────────────────────────────────
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
@@ -213,6 +214,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const [datePickerOpen, setDatePickerOpen] = useState(false)
   const [datePickerMode, setDatePickerMode] = useState<'date' | 'due' | 'schedule'>('date')
   const datePickerCursorPos = useRef<number | undefined>(undefined)
+
+  // ── Enter-creates-block refs ───────────────────────────────────────
+  const justCreatedBlockIds = useRef(new Set<string>())
+  const prevFocusedRef = useRef<string | null>(null)
 
   // ── History sheet state ────────────────────────────────────────────
   const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
@@ -867,12 +872,16 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     [collapsedVisible, focusedBlockId, rovingEditor, edit, remove, setFocused],
   )
 
-  // ── Enter: save content + close editor ───────────────────────────────
-  const handleEnterSave = useCallback(() => {
+  // ── Enter: save content + create new sibling below ───────────────────
+  const handleEnterSave = useCallback(async () => {
     if (!focusedBlockId) return
     handleFlush()
-    setFocused(null)
-  }, [focusedBlockId, handleFlush, setFocused])
+    const newBlockId = await createBelow(focusedBlockId)
+    if (newBlockId) {
+      justCreatedBlockIds.current.add(newBlockId)
+      setFocused(newBlockId)
+    }
+  }, [focusedBlockId, handleFlush, createBelow, setFocused])
 
   // ── Escape: discard changes, unfocus ───────────────────────────────
   const handleEscapeCancel = useCallback(() => {
@@ -911,6 +920,20 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     document.addEventListener('discard-block-edit', handler)
     return () => document.removeEventListener('discard-block-edit', handler)
   }, [focusedBlockId, handleEscapeCancel])
+
+  // ── Empty-block cleanup: delete just-created blocks left empty ─────
+  useEffect(() => {
+    const prevId = prevFocusedRef.current
+    prevFocusedRef.current = focusedBlockId
+
+    if (prevId && prevId !== focusedBlockId && justCreatedBlockIds.current.has(prevId)) {
+      justCreatedBlockIds.current.delete(prevId)
+      const block = useBlockStore.getState().blocks.find((b) => b.id === prevId)
+      if (block && (!block.content || block.content.trim() === '')) {
+        remove(prevId)
+      }
+    }
+  }, [focusedBlockId, remove])
 
   // ── Keyboard shortcut for collapse toggle (Mod+.) ──────────────────
   useEffect(() => {
