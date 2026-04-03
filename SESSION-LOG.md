@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 134 — 2026-04-03 — Agenda custom keywords + page search hierarchy (#658, #656)
+
+### Batch: two S-cost completions
+
+1 build subagent. During exploration discovered both #658 and #654 were already mostly implemented — updated REVIEW-LATER to reflect. Built the remaining pieces for both.
+
+| File | Change |
+|------|--------|
+| `AgendaFilterBuilder.tsx` | #658: `getTaskStates()` reads custom states from localStorage. Status choices use lazy function reference instead of hardcoded array. |
+| `AgendaFilterBuilder.test.tsx` | 5 new tests: getTaskStates default/custom/invalid/non-array + integration showing custom WAITING checkbox. |
+| `PageBrowser.tsx` | #656: Search input filters pages by substring. Tree mode: `forceExpand` prop auto-expands matching ancestors. `HighlightMatch` component wraps matches in `<mark>`. "No matching pages" empty state. |
+| `PageBrowser.test.tsx` | 5 new tests: flat filter, tree expansion, empty state, case-insensitive, clear restores all. |
+| `i18n.ts` | 2 new keys: searchPlaceholder, noMatches. |
+| `REVIEW-LATER.md` | Removed #656 and #658 entirely. 11 → 9 open items. |
+
+### Stats
+- Frontend: 10 new tests (32/32 AgendaFilterBuilder, 39/39 PageBrowser)
+- Commit: `b59c5ff`
+- REVIEW-LATER: #656 + #658 fully resolved and removed. 9 open items (was 11).
+
 ## Session 133 — 2026-04-03 — Block multi-selection core mechanism (#657)
 
 ### Batch: selection state + visual highlight + keyboard shortcuts

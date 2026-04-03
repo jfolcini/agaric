@@ -690,9 +690,7 @@ trailing-whitespace, end-of-file-fixer, check-yaml/toml/json, check-merge-confli
 | 651 | Conflicts view — metadata, resolution, rendering gaps | Sync |
 | 654 | Editor block types (tables) | Editor |
 | 655 | Inline query blocks (`{{query ...}}` embedded results) | Query |
-| 656 | Namespaced pages (`/` separator, tree view) | Pages |
 | 657 | Block-level multi-selection (core done, batch toolbar pending) | Outlining |
-| 658 | Custom task keywords (configurable states) | Tasks |
 | 660 | Logseq/Markdown import | Import |
 
 ---
