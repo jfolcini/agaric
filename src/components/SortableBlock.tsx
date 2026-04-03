@@ -140,6 +140,10 @@ interface SortableBlockProps {
   onShowProperties?: (blockId: string) => void
   /** Zoom in to show only this block's children */
   onZoomIn?: (blockId: string) => void
+  /** Whether this block is part of a multi-selection. */
+  isSelected?: boolean
+  /** Ctrl+Click / Shift+Click selection callback. */
+  onSelect?: (blockId: string, mode: 'toggle' | 'range') => void
 }
 
 function SortableBlockInner({
@@ -172,6 +176,8 @@ function SortableBlockInner({
   onShowHistory,
   onShowProperties,
   onZoomIn,
+  isSelected,
+  onSelect,
 }: SortableBlockProps): React.ReactElement {
   const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -730,6 +736,8 @@ function SortableBlockInner({
             resolveTagName={resolveTagName}
             resolveBlockStatus={resolveBlockStatus}
             resolveTagStatus={resolveTagStatus}
+            isSelected={isSelected}
+            onSelect={onSelect}
           />
         </div>
 

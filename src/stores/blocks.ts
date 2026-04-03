@@ -28,11 +28,24 @@ interface BlockStore {
   focusedBlockId: string | null
   /** Loading state. */
   loading: boolean
+  /** IDs of currently selected blocks (multi-select). */
+  selectedBlockIds: string[]
 
   /** Load the full block subtree from the backend. */
   load: (parentId?: string) => Promise<void>
   /** Set which block is focused. */
   setFocused: (blockId: string | null) => void
+
+  /** Toggle a block in/out of the selection (Ctrl+Click). */
+  toggleSelected: (blockId: string) => void
+  /** Extend selection from the last selected to the given block (Shift+Click). */
+  rangeSelect: (blockId: string) => void
+  /** Select all blocks (Ctrl+A when not editing). */
+  selectAll: () => void
+  /** Clear the selection. */
+  clearSelected: () => void
+  /** Replace the selection with the given IDs. */
+  setSelected: (ids: string[]) => void
 
   /** Create a new block below the given block. Returns the new block ID. */
   createBelow: (afterBlockId: string, content?: string) => Promise<string | null>
@@ -103,6 +116,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   rootParentId: null,
   focusedBlockId: null,
   loading: false,
+  selectedBlockIds: [],
 
   load: async (parentId?: string) => {
     const newRoot = parentId ?? null
@@ -134,7 +148,53 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   },
 
   setFocused: (blockId: string | null) => {
-    set({ focusedBlockId: blockId })
+    set({ focusedBlockId: blockId, selectedBlockIds: [] })
+  },
+
+  toggleSelected: (blockId) => {
+    set((state) => {
+      const ids = state.selectedBlockIds
+      const idx = ids.indexOf(blockId)
+      if (idx >= 0) {
+        return { selectedBlockIds: ids.filter((id) => id !== blockId) }
+      }
+      return { selectedBlockIds: [...ids, blockId] }
+    })
+  },
+
+  rangeSelect: (blockId) => {
+    set((state) => {
+      const { blocks, selectedBlockIds } = state
+      if (selectedBlockIds.length === 0) {
+        return { selectedBlockIds: [blockId] }
+      }
+      const visibleIds = blocks.map((b) => b.id)
+      const lastSelected = selectedBlockIds[selectedBlockIds.length - 1]
+      const lastIdx = visibleIds.indexOf(lastSelected)
+      const targetIdx = visibleIds.indexOf(blockId)
+      if (lastIdx < 0 || targetIdx < 0) {
+        return { selectedBlockIds: [blockId] }
+      }
+      const start = Math.min(lastIdx, targetIdx)
+      const end = Math.max(lastIdx, targetIdx)
+      const rangeIds = visibleIds.slice(start, end + 1)
+      const merged = [...new Set([...selectedBlockIds, ...rangeIds])]
+      return { selectedBlockIds: merged }
+    })
+  },
+
+  selectAll: () => {
+    set((state) => ({
+      selectedBlockIds: state.blocks.map((b) => b.id),
+    }))
+  },
+
+  clearSelected: () => {
+    set({ selectedBlockIds: [] })
+  },
+
+  setSelected: (ids) => {
+    set({ selectedBlockIds: ids })
   },
 
   createBelow: async (afterBlockId: string, content = '') => {

@@ -61,6 +61,7 @@ describe('useBlockStore', () => {
       rootParentId: null,
       focusedBlockId: null,
       loading: false,
+      selectedBlockIds: [],
     })
     vi.clearAllMocks()
   })
@@ -1374,6 +1375,65 @@ describe('useBlockStore', () => {
       await useBlockStore.getState().edit('A', 'new')
 
       expect(mockOnNewAction).not.toHaveBeenCalled()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // block selection (#657)
+  // ---------------------------------------------------------------------------
+  describe('block selection', () => {
+    beforeEach(() => {
+      useBlockStore.setState({
+        blocks: [
+          makeBlock({ id: 'A', content: 'alpha', position: 0 }),
+          makeBlock({ id: 'B', content: 'beta', position: 1 }),
+          makeBlock({ id: 'C', content: 'gamma', position: 2 }),
+        ],
+        selectedBlockIds: [],
+        focusedBlockId: null,
+      })
+    })
+
+    it('toggleSelected adds and removes block IDs', () => {
+      useBlockStore.getState().toggleSelected('A')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A'])
+      useBlockStore.getState().toggleSelected('B')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B'])
+      useBlockStore.getState().toggleSelected('A')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B'])
+    })
+
+    it('rangeSelect selects contiguous blocks', () => {
+      useBlockStore.getState().toggleSelected('A')
+      useBlockStore.getState().rangeSelect('C')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'C'])
+    })
+
+    it('rangeSelect with empty selection starts from clicked block', () => {
+      useBlockStore.getState().rangeSelect('B')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B'])
+    })
+
+    it('selectAll selects all blocks', () => {
+      useBlockStore.getState().selectAll()
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'C'])
+    })
+
+    it('clearSelected empties selection', () => {
+      useBlockStore.getState().selectAll()
+      useBlockStore.getState().clearSelected()
+      expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+    })
+
+    it('setSelected replaces current selection', () => {
+      useBlockStore.getState().setSelected(['B', 'C'])
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B', 'C'])
+    })
+
+    it('setFocused clears selection', () => {
+      useBlockStore.getState().selectAll()
+      useBlockStore.getState().setFocused('A')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual([])
     })
   })
 })

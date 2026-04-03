@@ -290,6 +290,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const moveUp = useBlockStore((s) => s.moveUp)
   const moveDown = useBlockStore((s) => s.moveDown)
   const createBelow = useBlockStore((s) => s.createBelow)
+  const selectedBlockIds = useBlockStore((s) => s.selectedBlockIds)
+  const toggleSelected = useBlockStore((s) => s.toggleSelected)
+  const rangeSelect = useBlockStore((s) => s.rangeSelect)
+  const selectAll = useBlockStore((s) => s.selectAll)
+  const clearSelected = useBlockStore((s) => s.clearSelected)
 
   // ── Collapse state (persisted in localStorage) ────────────────────
   const [collapsedIds, setCollapsedIdsRaw] = useState<Set<string>>(() => {
@@ -1331,6 +1336,18 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     }
   }, [focusedBlockId, handleFlush, createBelow, setFocused])
 
+  // ── Multi-selection handler (Ctrl+Click / Shift+Click) ──────────────
+  const handleSelect = useCallback(
+    (blockId: string, mode: 'toggle' | 'range') => {
+      if (mode === 'toggle') {
+        toggleSelected(blockId)
+      } else {
+        rangeSelect(blockId)
+      }
+    },
+    [toggleSelected, rangeSelect],
+  )
+
   // ── Escape: discard changes, unfocus ───────────────────────────────
   const handleEscapeCancel = useCallback(() => {
     if (!focusedBlockId) return
@@ -1397,6 +1414,24 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     document.addEventListener('keydown', handleCollapseKey)
     return () => document.removeEventListener('keydown', handleCollapseKey)
   }, [focusedBlockId, hasChildrenSet, toggleCollapse])
+
+  // ── Keyboard shortcuts for multi-selection (Ctrl+A, Escape) ─────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Ctrl+A / Cmd+A — select all blocks (only when not editing)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a' && !focusedBlockId) {
+        e.preventDefault()
+        selectAll()
+      }
+      // Escape — clear selection (when not editing and there's an active selection)
+      if (e.key === 'Escape' && !focusedBlockId && selectedBlockIds.length > 0) {
+        e.preventDefault()
+        clearSelected()
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [focusedBlockId, selectedBlockIds.length, selectAll, clearSelected])
 
   // ── Keyboard shortcut for task cycling (Ctrl+Enter / Cmd+Enter) ────
   useEffect(() => {
@@ -1658,6 +1693,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                     onShowHistory={handleShowHistory}
                     onShowProperties={handleShowProperties}
                     onZoomIn={hasChildrenSet.has(block.id) ? handleZoomIn : undefined}
+                    isSelected={selectedBlockIds.includes(block.id)}
+                    onSelect={handleSelect}
                   />
                 </div>
               )

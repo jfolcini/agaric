@@ -122,6 +122,8 @@ vi.mock('../SortableBlock', () => ({
     priority?: string | null
     onTogglePriority?: (id: string) => void
     onZoomIn?: (id: string) => void
+    isSelected?: boolean
+    onSelect?: (blockId: string, mode: 'toggle' | 'range') => void
   }) => (
     <div
       data-testid={`sortable-block-${props.blockId}`}
@@ -129,6 +131,7 @@ vi.mock('../SortableBlock', () => ({
       data-is-collapsed={props.isCollapsed ?? false}
       data-todo-state={props.todoState ?? ''}
       data-priority={props.priority ?? ''}
+      data-selected={props.isSelected ? 'true' : 'false'}
     >
       {props.hasChildren && props.onToggleCollapse && (
         <button
@@ -164,6 +167,15 @@ vi.mock('../SortableBlock', () => ({
           type="button"
         >
           Zoom In
+        </button>
+      )}
+      {props.onSelect && (
+        <button
+          data-testid={`select-${props.blockId}`}
+          onClick={() => props.onSelect?.(props.blockId, 'toggle')}
+          type="button"
+        >
+          Select
         </button>
       )}
       SortableBlock
@@ -230,6 +242,7 @@ beforeEach(() => {
     rootParentId: null,
     focusedBlockId: null,
     loading: false,
+    selectedBlockIds: [],
   })
 })
 
@@ -4475,5 +4488,91 @@ describe('BlockTree location slash command presets', () => {
         valueRef: null,
       })
     })
+  })
+})
+
+// =========================================================================
+// Multi-selection tests (#657)
+// =========================================================================
+
+describe('BlockTree multi-selection (#657)', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('Ctrl+Click toggles block selection via onSelect', async () => {
+    const tree = [makeBlock('A', null, 0, 'Alpha'), makeBlock('B', null, 1, 'Beta')]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: [],
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    const selectA = screen.getByTestId('select-A')
+    await userEvent.setup().click(selectA)
+
+    expect(useBlockStore.getState().selectedBlockIds).toContain('A')
+  })
+
+  it('isSelected prop is passed to SortableBlock', async () => {
+    const tree = [makeBlock('A', null, 0, 'Alpha')]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: ['A'],
+    })
+
+    render(<BlockTree />)
+    const block = await screen.findByTestId('sortable-block-A')
+    expect(block.dataset.selected).toBe('true')
+  })
+
+  it('unselected block has data-selected=false', async () => {
+    const tree = [makeBlock('A', null, 0, 'Alpha')]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: [],
+    })
+
+    render(<BlockTree />)
+    const block = await screen.findByTestId('sortable-block-A')
+    expect(block.dataset.selected).toBe('false')
+  })
+
+  it('Escape clears selection when not editing', async () => {
+    const tree = [makeBlock('A', null, 0, 'Alpha')]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: ['A'],
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    await userEvent.setup().keyboard('{Escape}')
+
+    expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+  })
+
+  it('selection is cleared when entering edit mode (setFocused)', () => {
+    const tree = [makeBlock('A', null, 0, 'Alpha')]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: ['A'],
+    })
+
+    useBlockStore.getState().setFocused('A')
+    expect(useBlockStore.getState().selectedBlockIds).toEqual([])
   })
 })

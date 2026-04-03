@@ -42,6 +42,10 @@ interface EditableBlockProps {
   resolveBlockStatus?: (id: string) => 'active' | 'deleted'
   /** Check whether a referenced tag is active or deleted. */
   resolveTagStatus?: (id: string) => 'active' | 'deleted'
+  /** Whether this block is part of a multi-selection. */
+  isSelected?: boolean
+  /** Ctrl+Click / Shift+Click selection callback. */
+  onSelect?: (blockId: string, mode: 'toggle' | 'range') => void
 }
 
 function EditableBlockInner({
@@ -54,6 +58,8 @@ function EditableBlockInner({
   resolveTagName,
   resolveBlockStatus,
   resolveTagStatus,
+  isSelected,
+  onSelect,
 }: EditableBlockProps): React.ReactElement {
   const setFocused = useBlockStore((s) => s.setFocused)
   const edit = useBlockStore((s) => s.edit)
@@ -152,6 +158,8 @@ function EditableBlockInner({
         resolveTagName={resolveTagName}
         resolveBlockStatus={resolveBlockStatus}
         resolveTagStatus={resolveTagStatus}
+        isSelected={isSelected}
+        onSelect={onSelect}
       />
     )
   }

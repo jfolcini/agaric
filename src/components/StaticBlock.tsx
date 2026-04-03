@@ -15,6 +15,7 @@ import { memo, useMemo } from 'react'
 import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
 import { openUrl } from '../lib/open-url'
+import { cn } from '../lib/utils'
 
 const lowlight = createLowlight(common)
 
@@ -32,6 +33,10 @@ export interface StaticBlockProps {
   resolveBlockStatus?: (id: string) => 'active' | 'deleted'
   /** Check whether a referenced tag is active or deleted. */
   resolveTagStatus?: (id: string) => 'active' | 'deleted'
+  /** Whether this block is part of a multi-selection. */
+  isSelected?: boolean
+  /** Ctrl+Click / Shift+Click selection callback. */
+  onSelect?: (blockId: string, mode: 'toggle' | 'range') => void
 }
 
 /**
@@ -253,6 +258,8 @@ function StaticBlockInner({
   resolveTagName,
   resolveBlockStatus,
   resolveTagStatus,
+  isSelected,
+  onSelect,
 }: StaticBlockProps): React.ReactElement {
   const richContent = useMemo(
     () =>
@@ -271,10 +278,23 @@ function StaticBlockInner({
   return (
     <button
       type="button"
-      className="block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left text-sm transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 [@media(pointer:coarse)]:min-h-[2.75rem]"
+      className={cn(
+        'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left text-sm transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 [@media(pointer:coarse)]:min-h-[2.75rem]',
+        isSelected && 'ring-2 ring-primary/50 bg-primary/5',
+      )}
       data-block-id={blockId}
       aria-label="Edit block"
-      onClick={() => onFocus(blockId)}
+      onClick={(e) => {
+        if ((e.ctrlKey || e.metaKey) && onSelect) {
+          e.preventDefault()
+          onSelect(blockId, 'toggle')
+        } else if (e.shiftKey && onSelect) {
+          e.preventDefault()
+          onSelect(blockId, 'range')
+        } else {
+          onFocus(blockId)
+        }
+      }}
     >
       {richContent ?? (
         <span className="block-placeholder text-muted-foreground italic">Empty block</span>
