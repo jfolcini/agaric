@@ -50,6 +50,26 @@ become thin wrappers. No public API change.
 - Commit: `58939b5`
 - REVIEW-LATER: 2 → 1 item (#623 resolved)
 
+### Phase 2: Database layer deep review + #626-#627 fixes
+
+Deep review of db.rs, op_log.rs, pagination.rs, soft_delete.rs, backlink_query.rs, word_diff.rs.
+2 parallel reviewers (robustness + test/perf) + 1 validator.
+
+**Review results:** 7 findings from robustness reviewer, ~20 from test/perf reviewer. Validator downgraded all to LOW or REJECTED — database layer is solid. One false positive (migration 0013 already had IF NOT EXISTS).
+
+**Bug found:** Test for #627 caught a real bug — `query_by_property` reserved-key path bound `value_text` for all columns, ignoring `value_date` for `due_date`/`scheduled_date`. Date filtering silently returned all rows instead of filtered results.
+
+| File | Change |
+|------|--------|
+| `pagination.rs` | #627: Fix `value_date` binding for reserved date columns — select filter value based on column type. |
+| `commands.rs` | #627: New test `query_by_property_reserved_date_key_filters_by_value_date`. |
+| `migrations/0012_block_fixed_fields.sql` | #626: Add `IF NOT EXISTS` to CREATE INDEX statements. |
+| `.sqlx/` | Updated sqlx cache for migration + query changes. |
+
+- Rust: 1472 tests pass (1471 + 1 new)
+- Commit: `ec6669b`
+- REVIEW-LATER: 1 item (#522 iOS) — #626, #627 added and resolved in same session
+
 ## Session 75 — 2026-04-03 — Phase 2: Sync Deep Review + New Findings
 
 ### Deep code review of sync subsystem generating 7 new REVIEW-LATER items

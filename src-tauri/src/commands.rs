@@ -7052,6 +7052,65 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn query_by_property_reserved_date_key_filters_by_value_date() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create blocks with due_date set via set_due_date_inner
+        let b1 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "task jun".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        set_due_date_inner(&pool, DEV, &mat, b1.id.clone(), Some("2025-06-15".into()))
+            .await
+            .unwrap();
+
+        let b2 = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "task dec".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        set_due_date_inner(&pool, DEV, &mat, b2.id.clone(), Some("2025-12-31".into()))
+            .await
+            .unwrap();
+
+        // Query all blocks with due_date (no value filter)
+        let all = query_by_property_inner(&pool, "due_date".into(), None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(all.items.len(), 2, "both blocks have due_date");
+
+        // Query with specific date value
+        let filtered = query_by_property_inner(
+            &pool,
+            "due_date".into(),
+            None,
+            Some("2025-06-15".into()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(filtered.items.len(), 1, "only one block matches 2025-06-15");
+        assert_eq!(filtered.items[0].id, b1.id);
+
+        mat.shutdown();
+    }
+
     // ======================================================================
     // list_tags_by_prefix_inner
     // ======================================================================

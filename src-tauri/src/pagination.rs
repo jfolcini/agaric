@@ -428,8 +428,13 @@ pub async fn query_by_property(
              ORDER BY id ASC \
              LIMIT ?4"
         );
+        // For date columns, use value_date; for text columns, use value_text.
+        let filter_value: Option<&str> = match col {
+            "due_date" | "scheduled_date" => value_date.or(value_text),
+            _ => value_text.or(value_date),
+        };
         sqlx::query_as::<_, BlockRow>(&sql)
-            .bind(value_text)
+            .bind(filter_value)
             .bind(cursor_flag)
             .bind(&cursor_id)
             .bind(fetch_limit)

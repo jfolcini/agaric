@@ -6,8 +6,8 @@ ALTER TABLE blocks ADD COLUMN todo_state TEXT;
 ALTER TABLE blocks ADD COLUMN priority TEXT;
 ALTER TABLE blocks ADD COLUMN due_date TEXT;
 
-CREATE INDEX idx_blocks_todo ON blocks(todo_state) WHERE todo_state IS NOT NULL;
-CREATE INDEX idx_blocks_due ON blocks(due_date) WHERE due_date IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_blocks_todo ON blocks(todo_state) WHERE todo_state IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_blocks_due ON blocks(due_date) WHERE due_date IS NOT NULL;
 
 -- Backfill from block_properties for non-page blocks.
 -- The app uses key='todo' (not 'todo_state'), 'priority', and 'due' for dates.
