@@ -122,6 +122,22 @@ Phase 2 store review with 2 parallel subagents (quality + test gaps). 3 S-cost f
 - Rust: 1457 tests pass (1454 + 3 new)
 - Commit: `b12325c`
 
+## Session 83 — 2026-04-03 — Auto-Updates Infrastructure (#521)
+
+### Tauri updater plugin + CI release workflow
+1 item resolved: auto-update infrastructure configured.
+
+| File | Change |
+|------|--------|
+| `Cargo.toml` | Added `tauri-plugin-updater` v2 dependency. |
+| `tauri.conf.json` | Updater config: GitHub Releases endpoint, empty pubkey (TODO). |
+| `lib.rs` | Plugin init via `Builder::new().build()`. |
+| `release.yml` (new) | CI workflow: 4-platform matrix, draft releases, signing TODO. |
+
+### Stats
+- Rust: 1457 tests pass (unchanged)
+- Commit: `7763637`
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command
