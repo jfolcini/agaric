@@ -22,7 +22,7 @@ import i18n from '../lib/i18n'
 // Types
 // ---------------------------------------------------------------------------
 
-export type AgendaFilterDimension = 'status' | 'priority' | 'dueDate' | 'scheduledDate' | 'completedDate' | 'tag'
+export type AgendaFilterDimension = 'status' | 'priority' | 'dueDate' | 'scheduledDate' | 'completedDate' | 'createdDate' | 'tag'
 
 export interface AgendaFilter {
   dimension: AgendaFilterDimension
@@ -70,6 +70,10 @@ const DIMENSION_OPTIONS: Record<
     labelKey: 'agendaFilter.completedDate',
     choices: ['Today', 'This week', 'Last 7 days', 'Last 30 days'],
   },
+  createdDate: {
+    labelKey: 'agendaFilter.createdDate',
+    choices: ['Today', 'This week', 'Last 7 days', 'Last 30 days'],
+  },
   tag: { labelKey: 'agendaFilter.tag', choices: null }, // free-text
 }
 
@@ -79,6 +83,7 @@ const ALL_DIMENSIONS: AgendaFilterDimension[] = [
   'dueDate',
   'scheduledDate',
   'completedDate',
+  'createdDate',
   'tag',
 ]
 

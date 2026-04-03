@@ -123,6 +123,7 @@ describe('AgendaFilterBuilder', () => {
     expect(within(list).getByText('Status')).toBeInTheDocument()
     expect(within(list).getByText('Priority')).toBeInTheDocument()
     expect(within(list).getByText('Due date')).toBeInTheDocument()
+    expect(within(list).getByText('Created date')).toBeInTheDocument()
     expect(within(list).getByText('Tag')).toBeInTheDocument()
   })
 
@@ -348,6 +349,23 @@ describe('AgendaFilterBuilder', () => {
     expect(within(group).queryByLabelText('Next 7 days')).not.toBeInTheDocument()
     expect(within(group).queryByLabelText('Next 14 days')).not.toBeInTheDocument()
     expect(within(group).queryByLabelText('Next 30 days')).not.toBeInTheDocument()
+  })
+
+  // -----------------------------------------------------------------------
+  // Created date dimension shows last-N presets (#642)
+  // -----------------------------------------------------------------------
+  it('selecting Created date dimension shows Last 7/30 days checkboxes', async () => {
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+    await user.click(screen.getByText('Created date'))
+
+    const group = screen.getByRole('group', { name: /Created date options/i })
+    expect(within(group).getByLabelText('Today')).toBeInTheDocument()
+    expect(within(group).getByLabelText('This week')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Last 7 days')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Last 30 days')).toBeInTheDocument()
   })
 
   // -----------------------------------------------------------------------
