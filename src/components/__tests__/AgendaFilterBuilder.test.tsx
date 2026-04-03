@@ -289,4 +289,23 @@ describe('AgendaFilterBuilder', () => {
     expect(within(group).getByLabelText('Next 14 days')).toBeInTheDocument()
     expect(within(group).getByLabelText('Next 30 days')).toBeInTheDocument()
   })
+
+  // -----------------------------------------------------------------------
+  // 17. scheduledDate dimension shows same 6 choices as dueDate
+  // -----------------------------------------------------------------------
+  it('scheduledDate dimension shows same 6 choices as dueDate', async () => {
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+    await user.click(screen.getByText('Scheduled date'))
+
+    const group = screen.getByRole('group', { name: /Scheduled date options/i })
+    expect(within(group).getByLabelText('Today')).toBeInTheDocument()
+    expect(within(group).getByLabelText('This week')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Overdue')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Next 7 days')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Next 14 days')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Next 30 days')).toBeInTheDocument()
+  })
 })

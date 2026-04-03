@@ -1468,6 +1468,71 @@ describe('JournalPage', () => {
         expect([...uniqueDates].sort()).toEqual(expectedDates.sort())
       })
     })
+
+    it("scheduledDate 'Today' filter queries with column:scheduled_date source", async () => {
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_blocks') {
+          const params = args as { agendaSource?: string; agendaDate?: string }
+          if (params?.agendaSource === 'column:scheduled_date' && params?.agendaDate === todayStr) {
+            return {
+              items: [
+                {
+                  id: 'SCHED-1',
+                  block_type: 'content',
+                  content: 'Scheduled task',
+                  parent_id: 'PAGE-1',
+                  position: 0,
+                  deleted_at: null,
+                  archived_at: null,
+                  is_conflict: false,
+                  conflict_type: null,
+                  todo_state: 'TODO',
+                  due_date: null,
+                  priority: null,
+                  scheduled_date: todayStr,
+                },
+              ],
+              next_cursor: null,
+              has_more: false,
+            }
+          }
+          return emptyPage
+        }
+        if (cmd === 'query_by_property') {
+          return emptyPage
+        }
+        if (cmd === 'batch_resolve') {
+          return [{ id: 'PAGE-1', title: 'My Project', block_type: 'page', deleted: false }]
+        }
+        return emptyPage
+      })
+
+      useJournalStore.setState({ mode: 'agenda' })
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByTestId('agenda-filter-builder')).toBeInTheDocument()
+      })
+
+      act(() => {
+        filterChangeRef.current?.([{ dimension: 'scheduledDate', values: ['Today'] }])
+      })
+
+      await waitFor(() => {
+        const results = screen.getByTestId('agenda-results')
+        expect(results).toHaveAttribute('data-block-count', '1')
+      })
+
+      const listBlockCalls = mockedInvoke.mock.calls.filter(
+        ([cmd, callArgs]) =>
+          cmd === 'list_blocks' &&
+          (callArgs as { agendaSource?: string })?.agendaSource === 'column:scheduled_date',
+      )
+      expect(listBlockCalls.length).toBeGreaterThanOrEqual(1)
+      expect((listBlockCalls[0][1] as { agendaDate: string }).agendaDate).toBe(todayStr)
+    })
   })
 
   // ── DuePanel & LinkedReferences in daily mode ─────────────────────

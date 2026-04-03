@@ -466,6 +466,71 @@ export function JournalPage({
                   }
                 }
               }
+            } else if (filter.dimension === 'scheduledDate') {
+              const today = new Date()
+              const todayStr = formatDate(today)
+              for (const value of filter.values) {
+                if (value === 'Today') {
+                  const resp = await listBlocks({
+                    agendaDate: todayStr,
+                    agendaSource: 'column:scheduled_date',
+                    limit: 500,
+                  })
+                  for (const b of resp.items) {
+                    ids.add(b.id)
+                    allBlocks.set(b.id, b)
+                  }
+                } else if (value === 'This week') {
+                  const day = today.getDay()
+                  const mondayOffset = day === 0 ? -6 : 1 - day
+                  for (let d = 0; d < 7; d++) {
+                    const date = new Date(today)
+                    date.setDate(today.getDate() + mondayOffset + d)
+                    const dateStr = formatDate(date)
+                    const resp = await listBlocks({
+                      agendaDate: dateStr,
+                      agendaSource: 'column:scheduled_date',
+                      limit: 500,
+                    })
+                    for (const b of resp.items) {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
+                } else if (value === 'Overdue') {
+                  const resp = await queryByProperty({ key: 'scheduled_date', limit: 500 })
+                  for (const b of resp.items) {
+                    if (
+                      b.scheduled_date &&
+                      b.scheduled_date < todayStr &&
+                      b.todo_state !== 'DONE'
+                    ) {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
+                } else if (
+                  value === 'Next 7 days' ||
+                  value === 'Next 14 days' ||
+                  value === 'Next 30 days'
+                ) {
+                  const numDays = value === 'Next 7 days' ? 7 : value === 'Next 14 days' ? 14 : 30
+                  for (let d = 0; d < numDays; d++) {
+                    const date = new Date(today)
+                    date.setDate(today.getDate() + d)
+                    const dateStr = formatDate(date)
+                    const resp = await listBlocks({
+                      agendaDate: dateStr,
+                      agendaSource: 'column:scheduled_date',
+                      limit: 500,
+                    })
+                    for (const b of resp.items) {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
+                }
+              }
             } else if (filter.dimension === 'tag') {
               for (const value of filter.values) {
                 const resp = await listBlocks({ tagId: value, limit: 500 })

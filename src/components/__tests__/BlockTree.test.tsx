@@ -98,7 +98,7 @@ vi.mock('../../editor/use-block-keyboard', () => ({
 }))
 
 vi.mock('sonner', () => {
-  const toast = Object.assign(vi.fn(), { error: vi.fn() })
+  const toast = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() })
   return { toast }
 })
 
@@ -2009,6 +2009,187 @@ describe('BlockTree priority slash commands', () => {
     // State should update to 1
     await waitFor(() => {
       expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-priority', '1')
+    })
+  })
+})
+
+// =========================================================================
+// Repeat slash commands tests (#640)
+// =========================================================================
+
+describe('BlockTree repeat slash commands', () => {
+  it('searchSlashCommands returns repeat preset commands when query matches "repeat"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('repeat')
+
+    expect(results).toBeDefined()
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).toContain('repeat-daily')
+    expect(ids).toContain('repeat-weekly')
+    expect(ids).toContain('repeat-monthly')
+    expect(ids).toContain('repeat-yearly')
+  })
+
+  it('repeat preset commands have correct labels', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('repeat')
+
+    const labels = results?.map((r) => r.label) ?? []
+    expect(labels).toContain('REPEAT DAILY — Every day')
+    expect(labels).toContain('REPEAT WEEKLY — Every week')
+    expect(labels).toContain('REPEAT MONTHLY — Every month')
+    expect(labels).toContain('REPEAT YEARLY — Every year')
+  })
+
+  it('repeat preset commands are not shown for empty query', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('')
+
+    const ids = results?.map((r) => r.id) ?? []
+    expect(ids).not.toContain('repeat-daily')
+    expect(ids).not.toContain('repeat-weekly')
+    expect(ids).not.toContain('repeat-monthly')
+    expect(ids).not.toContain('repeat-yearly')
+  })
+
+  it('onSlashCommand sets repeat property to weekly for repeat-weekly', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'repeat-weekly', label: 'REPEAT WEEKLY — Every week' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'repeat',
+        valueText: 'weekly',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('onSlashCommand sets repeat property to daily for repeat-daily', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'repeat-daily', label: 'REPEAT DAILY — Every day' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'repeat',
+        valueText: 'daily',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('onSlashCommand sets repeat property to monthly for repeat-monthly', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'repeat-monthly', label: 'REPEAT MONTHLY — Every month' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'repeat',
+        valueText: 'monthly',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('onSlashCommand sets repeat property to yearly for repeat-yearly', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke.mockResolvedValue(null)
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'repeat-yearly', label: 'REPEAT YEARLY — Every year' })
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'A',
+        key: 'repeat',
+        valueText: 'yearly',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
     })
   })
 })

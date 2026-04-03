@@ -171,6 +171,10 @@ const resources = {
       'error.saveFailed': 'Failed to save',
       'error.createBlockFailed': 'Failed to create block',
 
+      // Slash commands
+      'slash.repeatSet': 'Set repeat to {{value}}',
+      'slash.repeatFailed': 'Failed to set repeat',
+
       // Linked References
       'references.headerOne': '1 Reference',
       'references.header': '{{count}} References',
@@ -232,6 +236,7 @@ const resources = {
       'agendaFilter.status': 'Status',
       'agendaFilter.priority': 'Priority',
       'agendaFilter.dueDate': 'Due date',
+      'agendaFilter.scheduledDate': 'Scheduled date',
       'agendaFilter.tag': 'Tag',
       'agendaFilter.tagPlaceholder': 'Tag name prefix...',
       'agendaFilter.tagName': 'Tag name',

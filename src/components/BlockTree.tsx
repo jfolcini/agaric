@@ -345,6 +345,17 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     [],
   )
 
+  /** Repeat commands — shown only when query matches (progressive disclosure). */
+  const REPEAT_COMMANDS: PickerItem[] = useMemo(
+    () => [
+      { id: 'repeat-daily', label: 'REPEAT DAILY — Every day' },
+      { id: 'repeat-weekly', label: 'REPEAT WEEKLY — Every week' },
+      { id: 'repeat-monthly', label: 'REPEAT MONTHLY — Every month' },
+      { id: 'repeat-yearly', label: 'REPEAT YEARLY — Every year' },
+    ],
+    [],
+  )
+
   const searchSlashCommands = useCallback(
     async (query: string): Promise<PickerItem[]> => {
       const q = query.toLowerCase()
@@ -352,9 +363,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       if (!q) return baseResults
       const priorityResults = PRIORITY_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       const headingResults = HEADING_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-      return [...baseResults, ...priorityResults, ...headingResults]
+      const repeatResults = REPEAT_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
+      return [...baseResults, ...priorityResults, ...headingResults, ...repeatResults]
     },
-    [SLASH_COMMANDS, PRIORITY_COMMANDS, HEADING_COMMANDS],
+    [SLASH_COMMANDS, PRIORITY_COMMANDS, HEADING_COMMANDS, REPEAT_COMMANDS],
   )
 
   // ── Roving editor ──────────────────────────────────────────────────
@@ -643,18 +655,25 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         }
       }
 
-      if (
-        item.id === 'effort' ||
-        item.id === 'assignee' ||
-        item.id === 'location' ||
-        item.id === 'repeat'
-      ) {
+      if (item.id === 'effort' || item.id === 'assignee' || item.id === 'location') {
         if (!focusedBlockId) return
         try {
           await setProperty({ blockId: focusedBlockId, key: item.id, valueText: '' })
           toast.success(`Added ${item.label.split(' — ')[0].toLowerCase()} property`)
         } catch {
           toast.error('Failed to add property')
+        }
+        return
+      }
+
+      if (item.id.startsWith('repeat-')) {
+        if (!focusedBlockId) return
+        const value = item.id.replace('repeat-', '')
+        try {
+          await setProperty({ blockId: focusedBlockId, key: 'repeat', valueText: value })
+          toast.success(t('slash.repeatSet', { value }))
+        } catch {
+          toast.error(t('slash.repeatFailed'))
         }
         return
       }

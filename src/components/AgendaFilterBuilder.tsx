@@ -21,7 +21,7 @@ import i18n from '../lib/i18n'
 // Types
 // ---------------------------------------------------------------------------
 
-export type AgendaFilterDimension = 'status' | 'priority' | 'dueDate' | 'tag'
+export type AgendaFilterDimension = 'status' | 'priority' | 'dueDate' | 'scheduledDate' | 'tag'
 
 export interface AgendaFilter {
   dimension: AgendaFilterDimension
@@ -47,10 +47,20 @@ const DIMENSION_OPTIONS: Record<
     labelKey: 'agendaFilter.dueDate',
     choices: ['Today', 'This week', 'Overdue', 'Next 7 days', 'Next 14 days', 'Next 30 days'],
   },
+  scheduledDate: {
+    labelKey: 'agendaFilter.scheduledDate',
+    choices: ['Today', 'This week', 'Overdue', 'Next 7 days', 'Next 14 days', 'Next 30 days'],
+  },
   tag: { labelKey: 'agendaFilter.tag', choices: null }, // free-text
 }
 
-const ALL_DIMENSIONS: AgendaFilterDimension[] = ['status', 'priority', 'dueDate', 'tag']
+const ALL_DIMENSIONS: AgendaFilterDimension[] = [
+  'status',
+  'priority',
+  'dueDate',
+  'scheduledDate',
+  'tag',
+]
 
 export function dimensionLabel(dim: AgendaFilterDimension): string {
   return i18n.t(DIMENSION_OPTIONS[dim].labelKey)
