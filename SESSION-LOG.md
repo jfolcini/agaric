@@ -1,5 +1,21 @@
 # Session Log
 
+## Session 140 — 2026-04-03 — Repeat recurrence hardening (#665)
+
+### Batch: 4 hardening tests for set_todo_state_inner recurrence
+
+1 Rust build subagent. Tests validate .+ mode (shift from today), ++ mode (catch-up to cadence), malformed values (graceful degradation), repeat-until without dates (check skipped).
+
+| File | Change |
+|------|--------|
+| `commands.rs` | 4 new tests: .+ shifts from today, ++ catches up to Monday cadence, malformed rule degrades gracefully, repeat-until without dates creates sibling. 1502/1502 pass. |
+| `REVIEW-LATER.md` | Removed #665. 8 → 7 open items. |
+
+### Stats
+- Backend: 4 new tests (1502/1502 pass)
+- Commit: `831c727`
+- REVIEW-LATER: #665 fully resolved. 7 open items.
+
 ## Session 139 — 2026-04-03 — Phase 2 review + fix projection mode bug (#664)
 
 ### Phase 2: Review agenda projection + properties/repeat
