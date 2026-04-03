@@ -690,7 +690,6 @@ trailing-whitespace, end-of-file-fixer, check-yaml/toml/json, check-merge-confli
 | 644 | Repeating tasks (modes, end conditions, agenda projection) | Tasks |
 | 651 | Conflicts view — metadata, resolution, rendering gaps | Sync |
 | 654 | Editor block types (tables) | Editor |
-| 657 | Block-level multi-selection (core done, batch toolbar pending) | Outlining |
 | 660 | Logseq/Markdown import | Import |
 
 ---

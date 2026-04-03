@@ -1,5 +1,22 @@
 # Session Log
 
+## Session 136 — 2026-04-03 — Batch operations toolbar (#657 completion)
+
+### Batch: Delete + Set Todo State for selected blocks
+
+1 build subagent. Completes #657 (core selection from session 133 + batch toolbar). Floating toolbar with count, todo state buttons, delete with confirmation, clear selection.
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | Batch toolbar (sticky, shows when selectedBlockIds > 0): "{N} selected" + Clear/TODO/DOING/DONE buttons + Delete (with AlertDialog) + X clear. `handleBatchSetTodo` iterates selected, calls setTodoStateCmd, optimistic store update. `handleBatchDelete` iterates selected, calls deleteBlock, removes from store. Partial failure toasts. |
+| `BlockTree.test.tsx` | 6 new tests: toolbar visible/hidden, delete dialog, batch delete calls, batch set todo calls, clear selection. 168/168 pass. |
+| `REVIEW-LATER.md` | Removed #657 entirely. 8 → 7 open items. |
+
+### Stats
+- Frontend: 6 new tests (168/168 BlockTree pass)
+- Commit: `1bc9a02`
+- REVIEW-LATER: #657 fully resolved and removed. 7 open items (was 8).
+
 ## Session 135 — 2026-04-03 — Inline query blocks MVP (#655) + #642 update
 
 ### Batch: QueryResult component + StaticBlock detection + /query slash command
