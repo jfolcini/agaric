@@ -1922,27 +1922,16 @@ fn days_in_month(year: i32, month: u32) -> u32 {
     .unwrap_or(28)
 }
 
-/// Shift a `YYYY-MM-DD` date string by a recurrence interval.
+/// Shift a `YYYY-MM-DD` date string by a recurrence interval once from
+/// the given base date.
 ///
-/// Supported rules:
-/// - `daily`  — every day
-/// - `weekly` — every 7 days
-/// - `monthly` — every month (same day-of-month, clamped)
-/// - `+Nd` — every N days
-/// - `+Nw` — every N weeks
-/// - `+Nm` — every N months
-fn shift_date(date: &str, rule: &str) -> Option<String> {
-    let parts: Vec<&str> = date.split('-').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let year: i32 = parts[0].parse().ok()?;
-    let month: u32 = parts[1].parse().ok()?;
-    let day: u32 = parts[2].parse().ok()?;
+/// Returns the shifted date or `None` if parsing fails.
+fn shift_date_once(base: chrono::NaiveDate, interval: &str) -> Option<chrono::NaiveDate> {
+    let year = base.year();
+    let month = base.month();
+    let day = base.day();
 
-    let base = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
-
-    let shifted = match rule.trim().to_lowercase().as_str() {
+    let shifted = match interval {
         "daily" => base + chrono::Duration::days(1),
         "weekly" => base + chrono::Duration::days(7),
         "monthly" => {
@@ -1952,9 +1941,14 @@ fn shift_date(date: &str, rule: &str) -> Option<String> {
             chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))?
         }
         _ => {
-            // Parse +Nd, +Nw, +Nm patterns
-            let re_match = rule.trim().strip_prefix('+')?;
-            let (num_str, unit) = re_match.split_at(re_match.len() - 1);
+            // Parse +Nd, +Nw, +Nm patterns (the leading '+' is already stripped
+            // by the caller for `.+` and `++` modes, but may still be present
+            // for the default `+` mode).
+            let num_unit = interval.strip_prefix('+').unwrap_or(interval);
+            if num_unit.len() < 2 {
+                return None;
+            }
+            let (num_str, unit) = num_unit.split_at(num_unit.len() - 1);
             let n: i64 = num_str.parse().ok()?;
             match unit {
                 "d" => base + chrono::Duration::days(n),
@@ -1968,6 +1962,70 @@ fn shift_date(date: &str, rule: &str) -> Option<String> {
                 }
                 _ => return None,
             }
+        }
+    };
+
+    Some(shifted)
+}
+
+/// Shift a `YYYY-MM-DD` date string by a recurrence interval.
+///
+/// Supported mode prefixes:
+/// - (none) or `+` — shift from the original date once (default)
+/// - `.+` — shift from today's date (completion-based recurrence)
+/// - `++` — shift from the original date repeatedly until result > today
+///
+/// Supported intervals (after prefix):
+/// - `daily`  — every day
+/// - `weekly` — every 7 days
+/// - `monthly` — every month (same day-of-month, clamped)
+/// - `+Nd` / `Nd` — every N days
+/// - `+Nw` / `Nw` — every N weeks
+/// - `+Nm` / `Nm` — every N months
+fn shift_date(date: &str, rule: &str) -> Option<String> {
+    let parts: Vec<&str> = date.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let year: i32 = parts[0].parse().ok()?;
+    let month: u32 = parts[1].parse().ok()?;
+    let day: u32 = parts[2].parse().ok()?;
+
+    let original = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+    let today = chrono::Local::now().date_naive();
+
+    let trimmed = rule.trim().to_lowercase();
+
+    // Determine mode and strip prefix
+    let (mode, interval) = if let Some(rest) = trimmed.strip_prefix(".+") {
+        ("dot_plus", rest)
+    } else if let Some(rest) = trimmed.strip_prefix("++") {
+        ("plus_plus", rest)
+    } else {
+        // Default mode: `+` prefix or bare keyword
+        ("default", trimmed.as_str())
+    };
+
+    let shifted = match mode {
+        "dot_plus" => {
+            // Shift from today, not from the original date
+            shift_date_once(today, interval)?
+        }
+        "plus_plus" => {
+            // Keep shifting from original until result > today
+            let mut current = original;
+            // Safety limit to avoid infinite loops on bad data
+            for _ in 0..10_000 {
+                current = shift_date_once(current, interval)?;
+                if current > today {
+                    break;
+                }
+            }
+            current
+        }
+        _ => {
+            // Default: shift from original date once
+            shift_date_once(original, interval)?
         }
     };
 
@@ -2119,6 +2177,65 @@ pub async fn set_todo_state_inner(
             // Fetch the original block (with updated DONE state)
             let original = get_block_inner(pool, block_id.clone()).await?;
 
+            // Pre-compute shifted dates for end-condition checks
+            let shifted_due = original
+                .due_date
+                .as_ref()
+                .and_then(|d| shift_date(d, &rule));
+            let shifted_sched = original
+                .scheduled_date
+                .as_ref()
+                .and_then(|d| shift_date(d, &rule));
+
+            // The "reference" shifted date used for end-condition comparison:
+            // prefer due_date, fall back to scheduled_date.
+            let reference_date = shifted_due
+                .as_deref()
+                .or(shifted_sched.as_deref());
+
+            // --- End condition: repeat-until ---
+            let repeat_until: Option<String> = sqlx::query_scalar(
+                "SELECT value_text FROM block_properties WHERE block_id = ?1 AND key = 'repeat-until'",
+            )
+            .bind(&block_id)
+            .fetch_optional(pool)
+            .await?;
+
+            if let Some(ref until_str) = repeat_until {
+                if let Some(ref ref_date) = reference_date {
+                    // Simple lexicographic comparison works for YYYY-MM-DD strings
+                    if *ref_date > until_str.as_str() {
+                        // Shifted date is past the repeat-until deadline — stop recurring
+                        return Ok(result);
+                    }
+                }
+            }
+
+            // --- End condition: repeat-count / repeat-seq ---
+            let repeat_count: Option<f64> = sqlx::query_scalar(
+                "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-count'",
+            )
+            .bind(&block_id)
+            .fetch_optional(pool)
+            .await?;
+
+            let repeat_seq: Option<f64> = sqlx::query_scalar(
+                "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-seq'",
+            )
+            .bind(&block_id)
+            .fetch_optional(pool)
+            .await?;
+
+            if let Some(count) = repeat_count {
+                let current_seq = repeat_seq.unwrap_or(0.0) as i64;
+                let max_count = count as i64;
+                if current_seq >= max_count {
+                    // Already exhausted the repeat count — stop recurring
+                    return Ok(result);
+                }
+            }
+
+            // --- Create the recurrence sibling ---
             // Single transaction for entire recurrence sequence
             let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
             let mut op_records: Vec<op_log::OpRecord> = Vec::new();
@@ -2164,59 +2281,120 @@ pub async fn set_todo_state_inner(
             op_records.push(op);
 
             // Shift due_date if present
-            if let Some(ref due) = original.due_date {
-                if let Some(shifted) = shift_date(due, &rule) {
-                    if !is_valid_iso_date(&shifted) {
-                        tracing::warn!(
-                            "shifted due_date '{shifted}' is not valid YYYY-MM-DD, skipping"
-                        );
-                    } else {
-                        match set_property_in_tx(
-                            &mut tx,
-                            device_id,
-                            new_block.id.clone(),
-                            "due_date".to_string(),
-                            None,
-                            None,
-                            Some(shifted),
-                            None,
-                        )
-                        .await
-                        {
-                            Ok((_, op)) => op_records.push(op),
-                            Err(e) => {
-                                tracing::warn!(error = %e, "failed to shift due_date for recurring block")
-                            }
+            if let Some(shifted) = shifted_due {
+                if !is_valid_iso_date(&shifted) {
+                    tracing::warn!(
+                        "shifted due_date '{shifted}' is not valid YYYY-MM-DD, skipping"
+                    );
+                } else {
+                    match set_property_in_tx(
+                        &mut tx,
+                        device_id,
+                        new_block.id.clone(),
+                        "due_date".to_string(),
+                        None,
+                        None,
+                        Some(shifted),
+                        None,
+                    )
+                    .await
+                    {
+                        Ok((_, op)) => op_records.push(op),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "failed to shift due_date for recurring block")
                         }
                     }
                 }
             }
 
             // Shift scheduled_date if present
-            if let Some(ref sched) = original.scheduled_date {
-                if let Some(shifted) = shift_date(sched, &rule) {
-                    if !is_valid_iso_date(&shifted) {
-                        tracing::warn!(
-                            "shifted scheduled_date '{shifted}' is not valid YYYY-MM-DD, skipping"
-                        );
-                    } else {
-                        match set_property_in_tx(
-                            &mut tx,
-                            device_id,
-                            new_block.id.clone(),
-                            "scheduled_date".to_string(),
-                            None,
-                            None,
-                            Some(shifted),
-                            None,
-                        )
-                        .await
-                        {
-                            Ok((_, op)) => op_records.push(op),
-                            Err(e) => {
-                                tracing::warn!(error = %e, "failed to shift scheduled_date for recurring block")
-                            }
+            if let Some(shifted) = shifted_sched {
+                if !is_valid_iso_date(&shifted) {
+                    tracing::warn!(
+                        "shifted scheduled_date '{shifted}' is not valid YYYY-MM-DD, skipping"
+                    );
+                } else {
+                    match set_property_in_tx(
+                        &mut tx,
+                        device_id,
+                        new_block.id.clone(),
+                        "scheduled_date".to_string(),
+                        None,
+                        None,
+                        Some(shifted),
+                        None,
+                    )
+                    .await
+                    {
+                        Ok((_, op)) => op_records.push(op),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "failed to shift scheduled_date for recurring block")
                         }
+                    }
+                }
+            }
+
+            // Copy repeat-until to new block if present
+            if let Some(ref until_str) = repeat_until {
+                match set_property_in_tx(
+                    &mut tx,
+                    device_id,
+                    new_block.id.clone(),
+                    "repeat-until".to_string(),
+                    Some(until_str.clone()),
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                {
+                    Ok((_, op)) => op_records.push(op),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to copy repeat-until to recurring block")
+                    }
+                }
+            }
+
+            // Copy repeat-count and increment repeat-seq on new block
+            if let Some(count) = repeat_count {
+                let current_seq = repeat_seq.unwrap_or(0.0) as i64;
+                let next_seq = current_seq + 1;
+
+                // Copy repeat-count
+                match set_property_in_tx(
+                    &mut tx,
+                    device_id,
+                    new_block.id.clone(),
+                    "repeat-count".to_string(),
+                    None,
+                    Some(count),
+                    None,
+                    None,
+                )
+                .await
+                {
+                    Ok((_, op)) => op_records.push(op),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to copy repeat-count to recurring block")
+                    }
+                }
+
+                // Set incremented repeat-seq
+                match set_property_in_tx(
+                    &mut tx,
+                    device_id,
+                    new_block.id.clone(),
+                    "repeat-seq".to_string(),
+                    None,
+                    Some(next_seq as f64),
+                    None,
+                    None,
+                )
+                .await
+                {
+                    Ok((_, op)) => op_records.push(op),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to set repeat-seq on recurring block")
                     }
                 }
             }
@@ -13198,6 +13376,376 @@ mod tests {
             "new block should have repeat property"
         );
         assert_eq!(repeat_prop.unwrap().value_text.as_deref(), Some("daily"));
+
+        mat.shutdown();
+    }
+
+    // ======================================================================
+    // shift_date mode prefixes (#644)
+    // ======================================================================
+
+    #[test]
+    fn shift_date_default_mode_shifts_from_original() {
+        // Default (+) mode: shift from the original date
+        assert_eq!(
+            shift_date("2025-06-15", "daily"),
+            Some("2025-06-16".into())
+        );
+        assert_eq!(
+            shift_date("2025-06-15", "weekly"),
+            Some("2025-06-22".into())
+        );
+        assert_eq!(
+            shift_date("2025-06-15", "+3d"),
+            Some("2025-06-18".into())
+        );
+    }
+
+    #[test]
+    fn shift_date_dot_plus_prefix_uses_today_as_base() {
+        // .+ mode: shift from today, not from the original date
+        let today = chrono::Local::now().date_naive();
+        let expected = today + chrono::Duration::days(7);
+        let expected_str = expected.format("%Y-%m-%d").to_string();
+
+        // Use a date far in the past — with .+ the result should be based on today
+        let result = shift_date("2020-01-01", ".+weekly").unwrap();
+        assert_eq!(
+            result, expected_str,
+            ".+weekly should shift from today, not from 2020-01-01"
+        );
+
+        // Also test with .+daily
+        let expected_daily = (today + chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let result_daily = shift_date("2020-01-01", ".+daily").unwrap();
+        assert_eq!(
+            result_daily, expected_daily,
+            ".+daily should shift from today"
+        );
+
+        // .+3d
+        let expected_3d = (today + chrono::Duration::days(3))
+            .format("%Y-%m-%d")
+            .to_string();
+        let result_3d = shift_date("2020-01-01", ".+3d").unwrap();
+        assert_eq!(result_3d, expected_3d, ".+3d should shift from today");
+    }
+
+    #[test]
+    fn shift_date_plus_plus_prefix_advances_to_future() {
+        // ++ mode: keep shifting from original until result > today
+        let today = chrono::Local::now().date_naive();
+
+        // Use a date that's ~3 weeks in the past
+        let past = today - chrono::Duration::days(21);
+        let past_str = past.format("%Y-%m-%d").to_string();
+
+        let result = shift_date(&past_str, "++weekly").unwrap();
+        let result_date =
+            chrono::NaiveDate::parse_from_str(&result, "%Y-%m-%d").unwrap();
+
+        assert!(
+            result_date > today,
+            "++weekly should advance past today, got {result} (today = {})",
+            today.format("%Y-%m-%d")
+        );
+
+        // The result should be within 7 days after today (since we're stepping weekly)
+        let max_expected = today + chrono::Duration::days(7);
+        assert!(
+            result_date <= max_expected,
+            "++weekly result should be at most 7 days after today, got {result}"
+        );
+    }
+
+    #[test]
+    fn shift_date_plus_plus_daily_advances_to_future() {
+        let today = chrono::Local::now().date_naive();
+
+        // 10 days in the past
+        let past = today - chrono::Duration::days(10);
+        let past_str = past.format("%Y-%m-%d").to_string();
+
+        let result = shift_date(&past_str, "++daily").unwrap();
+        let result_date =
+            chrono::NaiveDate::parse_from_str(&result, "%Y-%m-%d").unwrap();
+
+        assert!(
+            result_date > today,
+            "++daily should advance past today, got {result}"
+        );
+        // Should be exactly tomorrow (today + 1) since we step by 1 day
+        let expected = today + chrono::Duration::days(1);
+        assert_eq!(
+            result_date, expected,
+            "++daily from 10 days ago should land on tomorrow"
+        );
+    }
+
+    // ======================================================================
+    // Recurrence end conditions (#644)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recurrence_stops_when_repeat_until_is_reached() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block with TODO + due_date + repeat + repeat-until
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "until task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set due_date to 2025-06-14 (shifting daily → 2025-06-15)
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-06-14".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+        mat.flush_background().await.unwrap();
+
+        // Set repeat-until to 2025-06-14 — shifted date (2025-06-15) > until
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "repeat-until".to_string(),
+            Some("2025-06-14".to_string()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Transition to DONE
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Should NOT create any new TODO blocks
+        let todo_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE todo_state = 'TODO' AND deleted_at IS NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            todo_count, 0,
+            "no new block should be created when shifted date exceeds repeat-until"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recurrence_stops_when_repeat_count_is_exhausted() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block with TODO + repeat + repeat-count=2, repeat-seq=2
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "count task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+        mat.flush_background().await.unwrap();
+
+        // Set repeat-count=2
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "repeat-count".to_string(),
+            None,
+            Some(2.0),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set repeat-seq=2 (already at the limit)
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "repeat-seq".to_string(),
+            None,
+            Some(2.0),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Transition to DONE
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Should NOT create any new TODO blocks
+        let todo_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE todo_state = 'TODO' AND deleted_at IS NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            todo_count, 0,
+            "no new block should be created when repeat-seq >= repeat-count"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recurrence_continues_when_repeat_count_not_exhausted() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block with TODO + repeat + repeat-count=3, repeat-seq=1
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "count task ok".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+        mat.flush_background().await.unwrap();
+
+        // Set repeat-count=3
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "repeat-count".to_string(),
+            None,
+            Some(3.0),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set repeat-seq=1 (still under the limit)
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "repeat-seq".to_string(),
+            None,
+            Some(1.0),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Transition to DONE
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Should create a new TODO block
+        let new_blocks: Vec<BlockRow> = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+                      is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+                      due_date, scheduled_date
+               FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
+            block.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(new_blocks.len(), 1, "should create one new block");
+
+        // Check that repeat-seq was incremented to 2
+        let props = get_properties_inner(&pool, new_blocks[0].id.clone())
+            .await
+            .unwrap();
+        let seq_prop = props.iter().find(|p| p.key == "repeat-seq");
+        assert!(seq_prop.is_some(), "new block should have repeat-seq");
+        assert_eq!(
+            seq_prop.unwrap().value_num,
+            Some(2.0),
+            "repeat-seq should be incremented to 2"
+        );
+
+        // Check that repeat-count was copied
+        let count_prop = props.iter().find(|p| p.key == "repeat-count");
+        assert!(count_prop.is_some(), "new block should have repeat-count");
+        assert_eq!(
+            count_prop.unwrap().value_num,
+            Some(3.0),
+            "repeat-count should remain 3"
+        );
 
         mat.shutdown();
     }
