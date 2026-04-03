@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 109 — 2026-04-03 — Blockquotes + Repeat Icon (#654 partial, #645-4)
+
+### Blockquote editor support + repeat property icon
+
+1 build subagent (blockquotes) + orchestrator (repeat icon). Non-overlapping files.
+
+| File | Change |
+|------|--------|
+| `types.ts` | #654: `BlockquoteNode` type + builder helper. |
+| `markdown-serializer.ts` | #654: Parse/serialize `> ` prefix for blockquotes. Recursive inner content. |
+| `markdown-serializer.test.ts` | #654: 11 new tests (serialize, parse, round-trip for blockquotes). |
+| `use-roving-editor.ts` | #654: `Blockquote` TipTap extension added. |
+| `BlockTree.tsx` | #654: `/quote` slash command → `toggleBlockquote()`. |
+| `FormattingToolbar.tsx` | #654: Blockquote toolbar button (Quote icon) with active state. |
+| `SortableBlock.tsx` | #645-4: Repeat property rendered as indigo Repeat icon chip. Non-repeat properties use PropertyChip. Overflow adjusted. |
+| `SortableBlock.test.tsx` | #645-4: Repeat mock added, overflow tests updated for repeat exclusion. |
+| `i18n.ts` | 3 new keys (toolbar.blockquote/Tip, block.repeats). |
+
+### Stats
+- Frontend: ~2485 tests pass
+- Commit: `2f6e9af`
+- REVIEW-LATER: #654 blockquotes resolved (tables remain), #645-4 resolved
+
 ## Session 108 — 2026-04-03 — Strikethrough + Highlight Marks (#653)
 
 ### Editor formatting: ~~strikethrough~~ and ==highlight==
