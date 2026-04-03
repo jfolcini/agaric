@@ -115,6 +115,8 @@ const resources = {
       'toolbar.pageLinkTip': 'Page link ([[)',
       'toolbar.tagTip': 'Tag (@)',
       'toolbar.codeBlockTip': 'Code block (Ctrl+Shift+C)',
+      'toolbar.blockquote': 'Blockquote',
+      'toolbar.blockquoteTip': 'Blockquote (Ctrl+Shift+B)',
       'toolbar.headingTip': 'Heading (Ctrl+1-6)',
       'toolbar.priority1Tip': 'Priority 1 — high (Ctrl+Shift+1)',
       'toolbar.priority2Tip': 'Priority 2 — medium (Ctrl+Shift+2)',
@@ -166,6 +168,7 @@ const resources = {
       'block.priorityTip': 'Priority {{level}} (click to cycle)',
       'block.dueDate': 'Due {{date}}',
       'block.scheduledDate': 'Scheduled {{date}}',
+      'block.repeats': 'Repeats {{value}}',
       'block.breadcrumb': 'Block breadcrumb',
       'block.untitled': 'Untitled',
 

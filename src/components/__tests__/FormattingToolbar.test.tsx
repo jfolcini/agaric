@@ -30,6 +30,7 @@ const mockEditorState = {
   highlight: false,
   link: false,
   codeBlock: false,
+  blockquote: false,
   headingLevel: 0,
   canUndo: false,
   canRedo: false,
@@ -109,6 +110,7 @@ const mockToggleCode = vi.fn(() => ({ run: mockRun }))
 const mockToggleStrike = vi.fn(() => ({ run: mockRun }))
 const mockToggleHighlight = vi.fn(() => ({ run: mockRun }))
 const mockToggleCodeBlock = vi.fn(() => ({ run: mockRun }))
+const mockToggleBlockquote = vi.fn(() => ({ run: mockRun }))
 const mockToggleHeading = vi.fn(() => ({ run: mockRun }))
 const mockSetLink = vi.fn(() => ({ run: mockRun }))
 const mockUnsetLink = vi.fn(() => ({ run: mockRun }))
@@ -122,6 +124,7 @@ const mockFocus = vi.fn(() => ({
   toggleStrike: mockToggleStrike,
   toggleHighlight: mockToggleHighlight,
   toggleCodeBlock: mockToggleCodeBlock,
+  toggleBlockquote: mockToggleBlockquote,
   toggleHeading: mockToggleHeading,
   setLink: mockSetLink,
   unsetLink: mockUnsetLink,
@@ -156,6 +159,7 @@ describe('FormattingToolbar', () => {
     mockEditorState.highlight = false
     mockEditorState.link = false
     mockEditorState.codeBlock = false
+    mockEditorState.blockquote = false
     mockEditorState.headingLevel = 0
     mockEditorState.canUndo = false
     mockEditorState.canRedo = false
@@ -176,7 +180,7 @@ describe('FormattingToolbar', () => {
       expect(toolbar).toBeInTheDocument()
     })
 
-    it('renders all twenty formatting buttons', () => {
+    it('renders all twenty-one formatting buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
@@ -188,6 +192,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert tag' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Blockquote' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Heading level' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 1 (high)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 2 (medium)' })).toBeInTheDocument()
@@ -244,7 +249,7 @@ describe('FormattingToolbar', () => {
     it('shows marks as not pressed when inactive', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
-      for (const label of ['Bold', 'Italic', 'Code', 'Strikethrough', 'Highlight']) {
+      for (const label of ['Bold', 'Italic', 'Code', 'Strikethrough', 'Highlight', 'Blockquote']) {
         const btn = screen.getByRole('button', { name: label })
         expect(btn).toHaveAttribute('aria-pressed', 'false')
         // Check that bg-accent is NOT a standalone class (hover:bg-accent is expected from ghost variant)
@@ -558,6 +563,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Internal link' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert tag' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Blockquote' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Heading level' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 1 (high)' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Priority 2 (medium)' })).toBeInTheDocument()

@@ -21,6 +21,7 @@ import {
   ChevronRight,
   Clock,
   GripVertical,
+  Repeat,
   Trash2,
 } from 'lucide-react'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
@@ -452,15 +453,29 @@ function SortableBlockInner({
             </span>
           )}
 
-          {/* Custom property chips — up to 3 shown */}
-          {properties && properties.length > 0 && (
+          {/* Repeat indicator — special-case for repeat property */}
+          {properties?.some((p) => p.key === 'repeat') && (
+            <span
+              className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 mt-1 text-[10px] font-medium leading-none select-none bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400"
+              aria-label={t('block.repeats', { value: properties.find((p) => p.key === 'repeat')?.value ?? '' })}
+            >
+              <Repeat size={12} className="flex-shrink-0" />
+              {properties.find((p) => p.key === 'repeat')?.value}
+            </span>
+          )}
+
+          {/* Custom property chips — up to 3 shown (excluding repeat) */}
+          {properties && properties.filter((p) => p.key !== 'repeat').length > 0 && (
             <>
-              {properties.slice(0, 3).map((p) => (
-                <PropertyChip key={p.key} propKey={p.key} value={p.value} />
-              ))}
-              {properties.length > 3 && (
+              {properties
+                .filter((p) => p.key !== 'repeat')
+                .slice(0, 3)
+                .map((p) => (
+                  <PropertyChip key={p.key} propKey={p.key} value={p.value} />
+                ))}
+              {properties.filter((p) => p.key !== 'repeat').length > 3 && (
                 <span className="mt-1 text-[10px] text-muted-foreground select-none">
-                  +{properties.length - 3}
+                  +{properties.filter((p) => p.key !== 'repeat').length - 3}
                 </span>
               )}
             </>

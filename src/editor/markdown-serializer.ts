@@ -11,6 +11,8 @@
 
 import type {
   BlockLinkNode,
+  BlockLevelNode,
+  BlockquoteNode,
   CodeBlockNode,
   DocNode,
   HeadingNode,
@@ -265,6 +267,24 @@ function serializeCodeBlock(node: CodeBlockNode): string {
   return `\`\`\`${lang}\n${code}\n\`\`\``
 }
 
+function serializeBlockquote(node: BlockquoteNode): string {
+  if (!node.content || node.content.length === 0) return '> '
+  // Recursively serialize each child block, then prefix every line with "> "
+  const inner = node.content
+    .map((child) => {
+      if (child.type === 'paragraph') return serializeParagraph(child)
+      if (child.type === 'heading') return serializeHeading(child)
+      if (child.type === 'codeBlock') return serializeCodeBlock(child)
+      if (child.type === 'blockquote') return serializeBlockquote(child)
+      return ''
+    })
+    .join('\n')
+  return inner
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n')
+}
+
 export function serialize(doc: DocNode): string {
   if (!doc.content || doc.content.length === 0) return ''
   return doc.content
@@ -272,6 +292,7 @@ export function serialize(doc: DocNode): string {
       if (node.type === 'paragraph') return serializeParagraph(node)
       if (node.type === 'heading') return serializeHeading(node)
       if (node.type === 'codeBlock') return serializeCodeBlock(node)
+      if (node.type === 'blockquote') return serializeBlockquote(node)
       console.warn(
         `[serializer] unknown top-level node type: "${(node as { type: string }).type}" — stripped`,
       )
@@ -447,7 +468,7 @@ export function parse(markdown: string): DocNode {
   if (markdown.length === 0) return { type: 'doc' }
 
   const lines = markdown.split('\n')
-  const blocks: (ParagraphNode | HeadingNode | CodeBlockNode)[] = []
+  const blocks: BlockLevelNode[] = []
   let i = 0
 
   while (i < lines.length) {
@@ -474,6 +495,26 @@ export function parse(markdown: string): DocNode {
             ? { type: 'codeBlock', attrs, content: [{ type: 'text', text: code }] }
             : { type: 'codeBlock', content: [{ type: 'text', text: code }] },
         )
+      }
+      continue
+    }
+
+    // Blockquote: > prefix (collect consecutive > lines)
+    if (line.startsWith('> ') || line === '>') {
+      const quoteLines: string[] = []
+      while (i < lines.length && (lines[i].startsWith('> ') || lines[i] === '>')) {
+        // Strip the "> " prefix (or lone ">")
+        quoteLines.push(lines[i] === '>' ? '' : lines[i].slice(2))
+        i++
+      }
+      // Recursively parse the inner content
+      const innerMarkdown = quoteLines.join('\n')
+      const innerDoc = parse(innerMarkdown)
+      const content = innerDoc.content
+      if (!content || content.length === 0) {
+        blocks.push({ type: 'blockquote' })
+      } else {
+        blocks.push({ type: 'blockquote', content })
       }
       continue
     }

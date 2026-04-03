@@ -6,6 +6,7 @@
  * via addToHistory:false on content replacement transactions.
  */
 
+import Blockquote from '@tiptap/extension-blockquote'
 import Bold from '@tiptap/extension-bold'
 import Code from '@tiptap/extension-code'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
@@ -221,6 +222,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Code,
       Strike,
       Highlight,
+      Blockquote,
       CodeBlockWithShortcut.configure({ lowlight }),
       Heading.configure({ levels: [1, 2, 3, 4, 5, 6] }),
       HardBreak,

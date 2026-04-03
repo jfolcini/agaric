@@ -28,6 +28,7 @@ import {
   Highlighter,
   Italic,
   Link2,
+  Quote,
   Redo2,
   Signal,
   Strikethrough,
@@ -81,6 +82,7 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
       highlight: ctx.editor.isActive('highlight'),
       link: ctx.editor.isActive('link'),
       codeBlock: ctx.editor.isActive('codeBlock'),
+      blockquote: ctx.editor.isActive('blockquote'),
       headingLevel: ctx.editor.isActive('heading', { level: 1 })
         ? 1
         : ctx.editor.isActive('heading', { level: 2 })
@@ -270,6 +272,22 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             }}
           >
             <FileCode2 size={14} />
+          </Button>
+        </Tip>
+
+        <Tip label={t('toolbar.blockquoteTip')}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('toolbar.blockquote')}
+            aria-pressed={state.blockquote}
+            className={state.blockquote ? 'bg-accent text-accent-foreground' : ''}
+            onPointerDown={(e) => {
+              e.preventDefault()
+              editor.chain().focus().toggleBlockquote().run()
+            }}
+          >
+            <Quote size={14} />
           </Button>
         </Tip>
 

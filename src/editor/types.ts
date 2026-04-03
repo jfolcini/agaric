@@ -74,9 +74,14 @@ export interface CodeBlockNode {
   readonly content?: readonly [TextNode]
 }
 
+export interface BlockquoteNode {
+  readonly type: 'blockquote'
+  readonly content?: readonly BlockLevelNode[]
+}
+
 export type InlineNode = TextNode | TagRefNode | BlockLinkNode | HardBreakNode
 
-export type BlockLevelNode = ParagraphNode | HeadingNode | CodeBlockNode
+export type BlockLevelNode = ParagraphNode | HeadingNode | CodeBlockNode | BlockquoteNode
 
 export interface DocNode {
   readonly type: 'doc'
@@ -149,6 +154,11 @@ export function codeBlock(code: string, language?: string): CodeBlockNode {
   return attrs
     ? { type: 'codeBlock', attrs, content: [{ type: 'text', text: code }] }
     : { type: 'codeBlock', content: [{ type: 'text', text: code }] }
+}
+
+export function blockquote(...blocks: BlockLevelNode[]): BlockquoteNode {
+  if (blocks.length === 0) return { type: 'blockquote' }
+  return { type: 'blockquote', content: blocks }
 }
 
 export function doc(...blocks: BlockLevelNode[]): DocNode {

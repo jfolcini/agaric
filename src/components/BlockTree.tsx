@@ -406,6 +406,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       { id: 'location', label: 'LOCATION — Set location' },
       { id: 'repeat', label: 'REPEAT — Set recurrence (daily/weekly/monthly/+Nd)' },
       { id: 'template', label: 'TEMPLATE — Insert block template' },
+      { id: 'quote', label: 'QUOTE — Insert blockquote' },
     ],
     [],
   )
@@ -734,6 +735,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
       if (item.id === 'code') {
         rovingEditor.editor?.chain().focus().toggleCodeBlock().run()
+        return
+      }
+
+      if (item.id === 'quote') {
+        rovingEditor.editor?.chain().focus().toggleBlockquote().run()
         return
       }
 

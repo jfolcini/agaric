@@ -3,6 +3,7 @@ import { parse, serialize } from '../markdown-serializer'
 import type { InlineNode, ParagraphNode, TextNode } from '../types'
 import {
   blockLink,
+  blockquote,
   bold,
   boldItalic,
   code,
@@ -168,10 +169,30 @@ describe('serialize', () => {
 
     it('unknown top-level node stripped with warning', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      const unknown = { type: 'blockquote', content: [] } as unknown as ParagraphNode
+      const unknown = { type: 'table', content: [] } as unknown as ParagraphNode
       expect(serialize(doc(unknown, paragraph(text('ok'))))).toBe('\nok')
       expect(warn).toHaveBeenCalledOnce()
       warn.mockRestore()
+    })
+  })
+
+  describe('blockquote', () => {
+    it('serializes blockquote with > prefix', () => {
+      expect(serialize(doc(blockquote(paragraph(text('hello')))))).toBe('> hello')
+    })
+
+    it('serializes empty blockquote', () => {
+      expect(serialize(doc(blockquote()))).toBe('> ')
+    })
+
+    it('serializes multi-line blockquote', () => {
+      expect(
+        serialize(doc(blockquote(paragraph(text('line 1')), paragraph(text('line 2'))))),
+      ).toBe('> line 1\n> line 2')
+    })
+
+    it('serializes blockquote with marks', () => {
+      expect(serialize(doc(blockquote(paragraph(bold('strong')))))).toBe('> **strong**')
     })
   })
 
@@ -492,6 +513,28 @@ describe('parse', () => {
       expect(parse('a\n')).toEqual(doc(paragraph(text('a')), paragraph()))
     })
   })
+
+  describe('blockquote', () => {
+    it('parses > blockquote lines', () => {
+      expect(parse('> hello')).toEqual(doc(blockquote(paragraph(text('hello')))))
+    })
+
+    it('handles multi-line blockquote', () => {
+      expect(parse('> line 1\n> line 2')).toEqual(
+        doc(blockquote(paragraph(text('line 1')), paragraph(text('line 2')))),
+      )
+    })
+
+    it('parses blockquote with marks', () => {
+      expect(parse('> **strong**')).toEqual(doc(blockquote(paragraph(bold('strong')))))
+    })
+
+    it('blockquote followed by paragraph', () => {
+      expect(parse('> quoted\nnormal')).toEqual(
+        doc(blockquote(paragraph(text('quoted'))), paragraph(text('normal'))),
+      )
+    })
+  })
 })
 
 // -- round-trip ---------------------------------------------------------------
@@ -527,6 +570,9 @@ describe('round-trip: serialize(parse(s)) === s', () => {
     ['escaped backslash before bold', '\\\\**bold**'],
     ['token after mark close', '**x**#[01ARZ3NDEKTSV4RRFFQ69G5FAV]'],
     ['bold then italic adjacent', '**a***b*'],
+    ['blockquote', '> hello'],
+    ['multi-line blockquote', '> line 1\n> line 2'],
+    ['blockquote with marks', '> **strong**'],
   ]
 
   for (const [name, input] of cases) {

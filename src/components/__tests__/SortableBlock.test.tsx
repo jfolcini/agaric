@@ -82,6 +82,9 @@ vi.mock('lucide-react', () => ({
   GripVertical: (props: { size: number }) => (
     <svg data-testid="grip-vertical-icon" width={props.size} height={props.size} />
   ),
+  Repeat: (props: { size: number; className?: string }) => (
+    <svg data-testid="repeat-icon" width={props.size} height={props.size} className={props.className} />
+  ),
   Trash2: (props: { size: number }) => (
     <svg data-testid="trash-icon" width={props.size} height={props.size} />
   ),
@@ -2462,7 +2465,7 @@ describe('SortableBlock property chips', () => {
     expect(screen.queryByTestId('property-chip-repeat')).not.toBeInTheDocument()
   })
 
-  it('shows overflow "+N" indicator when more than 3 properties', () => {
+  it('shows overflow "+N" indicator when more than 3 non-repeat properties', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -2473,7 +2476,7 @@ describe('SortableBlock property chips', () => {
           { key: 'effort', value: '2h' },
           { key: 'assignee', value: 'Alice' },
           { key: 'location', value: 'Office' },
-          { key: 'repeat', value: 'weekly' },
+          { key: 'context', value: '@phone' },
         ]}
       />,
     )
@@ -2481,7 +2484,7 @@ describe('SortableBlock property chips', () => {
     expect(screen.getByText('+1')).toBeInTheDocument()
   })
 
-  it('shows correct overflow count for 5 properties', () => {
+  it('shows correct overflow count for 5 properties (repeat rendered separately)', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -2498,7 +2501,9 @@ describe('SortableBlock property chips', () => {
       />,
     )
 
-    expect(screen.getByText('+2')).toBeInTheDocument()
+    // repeat is rendered as icon, 4 non-repeat properties: 3 shown + 1 overflow
+    expect(screen.getByText('+1')).toBeInTheDocument()
+    expect(screen.getByTestId('repeat-icon')).toBeInTheDocument()
   })
 
   it('does not show overflow indicator when 3 or fewer properties', () => {
