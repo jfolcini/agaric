@@ -1,5 +1,20 @@
 # Session Log
 
+## Session 117 — 2026-04-03 — Repeat Mode Prefixes + End Conditions (#644 sub-tasks 1+2)
+
+### Backend recurrence: .+/++ modes + repeat-until/repeat-count
+
+1 build subagent (Rust only).
+
+| File | Change |
+|------|--------|
+| `commands.rs` | #644-1: `shift_date` refactored — extracted `shift_date_once` helper. Three modes: `+` (original date), `.+` (today), `++` (advance to future, 10K safety limit). #644-2: End conditions in `set_todo_state_inner` — `repeat-until` date check, `repeat-count`/`repeat-seq` counter. Properties copied to siblings. 7 new tests. |
+
+### Stats
+- Rust: ~1486 tests pass (7 new)
+- Commit: `e78a789`
+- #644 sub-tasks 1+2 resolved
+
 ## Session 116 — 2026-04-03 — Properties Management View (#643)
 
 ### Dedicated sidebar view for property definitions
