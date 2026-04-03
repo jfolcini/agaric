@@ -26,7 +26,9 @@ import {
 } from 'lucide-react'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
+import { setProperty } from '../lib/tauri'
 import { cn } from '../lib/utils'
 import { BlockContextMenu } from './BlockContextMenu'
 import { EditableBlock } from './EditableBlock'
@@ -173,6 +175,7 @@ function SortableBlockInner({
 
   // ── Context menu state ───────────────────────────────────────────
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [editingProp, setEditingProp] = useState<{ key: string; value: string } | null>(null)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const touchStartPos = useRef<{ x: number; y: number } | null>(null)
   const blockRef = useRef<HTMLDivElement>(null)
@@ -471,7 +474,12 @@ function SortableBlockInner({
                 .filter((p) => p.key !== 'repeat')
                 .slice(0, 3)
                 .map((p) => (
-                  <PropertyChip key={p.key} propKey={p.key} value={p.value} />
+                  <PropertyChip
+                    key={p.key}
+                    propKey={p.key}
+                    value={p.value}
+                    onClick={() => setEditingProp({ key: p.key, value: p.value })}
+                  />
                 ))}
               {properties.filter((p) => p.key !== 'repeat').length > 3 && (
                 <span className="mt-1 text-[10px] text-muted-foreground select-none">
@@ -481,6 +489,33 @@ function SortableBlockInner({
             </>
           )}
         </div>
+
+        {/* ── Property edit popover ─────────────────────────────────── */}
+        {editingProp && (
+          <div className="absolute z-50 mt-1 rounded-md border bg-popover p-1 shadow-lg">
+            <input
+              type="text"
+              className="rounded border px-2 py-1 text-sm w-32"
+              defaultValue={editingProp.value}
+              autoFocus
+              onBlur={async (e) => {
+                const newValue = e.target.value.trim()
+                if (newValue !== editingProp.value) {
+                  try {
+                    await setProperty({ blockId, key: editingProp.key, valueText: newValue || null })
+                  } catch {
+                    toast.error('Failed to save property')
+                  }
+                }
+                setEditingProp(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                if (e.key === 'Escape') setEditingProp(null)
+              }}
+            />
+          </div>
+        )}
 
         {/* ── Block content ─────────────────────────────────────────── */}
         <div className={cn('flex-1 min-w-0', todoState === 'DONE' && 'line-through opacity-50')}>

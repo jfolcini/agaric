@@ -1992,10 +1992,10 @@ pub async fn set_todo_state_inner(
     state: Option<String>,
 ) -> Result<BlockRow, AppError> {
     if let Some(ref s) = state {
-        if !matches!(s.as_str(), "TODO" | "DOING" | "DONE") {
-            return Err(AppError::Validation(format!(
-                "todo_state must be TODO, DOING, or DONE, got '{s}'"
-            )));
+        if s.is_empty() || s.len() > 50 {
+            return Err(AppError::Validation(
+                "Todo state must be 1-50 characters".into(),
+            ));
         }
     }
 
@@ -11076,7 +11076,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn set_todo_state_invalid_state_returns_validation() {
+    async fn set_todo_state_rejects_too_long_string() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
@@ -11085,7 +11085,38 @@ mod tests {
             DEV,
             &mat,
             "content".into(),
-            "invalid test".into(),
+            "too long test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let long_state = "A".repeat(51);
+        let result =
+            set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some(long_state)).await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "state over 50 chars should return Validation error, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_todo_state_rejects_empty_string() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "empty test".into(),
             None,
             None,
         )
@@ -11095,12 +11126,46 @@ mod tests {
         mat.flush_background().await.unwrap();
 
         let result =
-            set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("INVALID".into())).await;
+            set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("".into())).await;
 
         assert!(
             matches!(result, Err(AppError::Validation(_))),
-            "invalid state should return Validation error, got: {result:?}"
+            "empty state should return Validation error, got: {result:?}"
         );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_todo_state_accepts_custom_keyword_cancelled() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "custom keyword test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_todo_state_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("CANCELLED".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.todo_state.as_deref(), Some("CANCELLED"));
 
         mat.shutdown();
     }

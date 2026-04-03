@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { PropertyChip } from '../PropertyChip'
 
@@ -56,5 +57,51 @@ describe('PropertyChip', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+
+  it('renders as button when onClick is provided', () => {
+    const { container } = render(
+      <PropertyChip propKey="effort" value="2h" onClick={() => {}} />,
+    )
+
+    const chip = container.querySelector('.property-chip')
+    expect(chip).toBeInTheDocument()
+    expect(chip?.tagName.toLowerCase()).toBe('button')
+  })
+
+  it('renders as button even without onClick', () => {
+    const { container } = render(<PropertyChip propKey="effort" value="2h" />)
+
+    const chip = container.querySelector('.property-chip')
+    expect(chip?.tagName.toLowerCase()).toBe('button')
+  })
+
+  it('calls onClick when clicked', async () => {
+    const user = userEvent.setup()
+    const handleClick = vi.fn()
+
+    render(<PropertyChip propKey="effort" value="2h" onClick={handleClick} />)
+
+    const chip = screen.getByRole('button')
+    await user.click(chip)
+
+    expect(handleClick).toHaveBeenCalledOnce()
+  })
+
+  it('adds hover styles only when onClick is provided', () => {
+    const { container: withClick } = render(
+      <PropertyChip propKey="effort" value="2h" onClick={() => {}} />,
+    )
+    const { container: withoutClick } = render(
+      <PropertyChip propKey="effort" value="2h" />,
+    )
+
+    const chipWithClick = withClick.querySelector('.property-chip')
+    const chipWithoutClick = withoutClick.querySelector('.property-chip')
+
+    expect(chipWithClick?.className).toContain('cursor-pointer')
+    expect(chipWithClick?.className).toContain('hover:bg-accent/50')
+    expect(chipWithoutClick?.className).not.toContain('cursor-pointer')
+    expect(chipWithoutClick?.className).not.toContain('hover:bg-accent/50')
   })
 })

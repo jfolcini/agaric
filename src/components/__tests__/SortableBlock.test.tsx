@@ -28,12 +28,17 @@ vi.mock('../EditableBlock', () => ({
   ),
 }))
 
-// Mock PropertyChip with a simple rendering
+// Mock PropertyChip with a simple rendering that passes through onClick
 vi.mock('../PropertyChip', () => ({
-  PropertyChip: (props: { propKey: string; value: string }) => (
-    <span data-testid={`property-chip-${props.propKey}`} className="property-chip">
+  PropertyChip: (props: { propKey: string; value: string; onClick?: () => void }) => (
+    <button
+      type="button"
+      data-testid={`property-chip-${props.propKey}`}
+      className="property-chip"
+      onClick={props.onClick}
+    >
       {props.propKey}: {props.value}
-    </span>
+    </button>
   ),
 }))
 
@@ -107,6 +112,18 @@ vi.mock('../BlockContextMenu', () => ({
       <span data-testid="context-menu-block-id">{blockId}</span>
     </div>
   ),
+}))
+
+// Mock tauri setProperty
+const mockSetProperty = vi.fn().mockResolvedValue({})
+vi.mock('../../lib/tauri', () => ({
+  setProperty: (...args: unknown[]) => mockSetProperty(...args),
+}))
+
+// Mock sonner toast
+const mockToastError = vi.fn()
+vi.mock('sonner', () => ({
+  toast: { error: (...args: unknown[]) => mockToastError(...args) },
 }))
 
 import userEvent from '@testing-library/user-event'
@@ -2537,5 +2554,43 @@ describe('SortableBlock property chips', () => {
     const inlineControls = container.querySelector('.inline-controls')
     const chip = inlineControls?.querySelector('.property-chip')
     expect(chip).toBeInTheDocument()
+  })
+})
+
+// =========================================================================
+// Property chip click-to-edit tests
+// =========================================================================
+
+describe('SortableBlock property chip click-to-edit', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+    mockSetProperty.mockResolvedValue({})
+  })
+
+  it('clicking a property chip shows edit input', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'effort', value: '2h' }]}
+      />,
+    )
+
+    // No input initially
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+
+    // Click the property chip
+    const chip = screen.getByTestId('property-chip-effort')
+    await user.click(chip)
+
+    // Input should now be visible with the property value
+    const input = screen.getByRole('textbox')
+    expect(input).toBeInTheDocument()
+    expect(input).toHaveValue('2h')
   })
 })
