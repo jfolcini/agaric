@@ -209,12 +209,13 @@
 
 **Planned improvements:**
 - Full template system: dynamic variable expansion, dedicated CRUD UI, configurable journal auto-apply (Planned #639)
+- Template insertion robustness: recursive child copy, picker UX, error handling (Planned #649)
 
 ### 13. Import / Export
 
 | Capability | Logseq | Agaric | Status |
 |---|---|---|---|
-| Markdown export | Full graph export to .md | `export_page_markdown` command: per-page export with resolved `#[ULID]`/`[[ULID]]` + YAML frontmatter. No bulk/graph export | Partial |
+| Markdown export | Full graph export to .md | Per-page `export_page_markdown` + full graph export as ZIP (`export_all_pages_markdown`). Resolved `#[ULID]`/`[[ULID]]` + YAML frontmatter | Done |
 | JSON/EDN export | Data export | Not implemented | Gap |
 | OPML export | Outline export | Not implemented | Gap |
 | Import from Roam | JSON import | Not implemented | Gap |
@@ -265,9 +266,9 @@
 
 **Agaric:** Open app -> today's journal auto-created with optional template -> 4 view modes (daily/weekly/monthly/agenda) -> calendar picker with content dots -> `Alt+Arrow` / `Alt+T` navigation -> `[[ULID]]` links -> backlinks with grouped linked + unlinked references.
 
-**Current gaps:** No dynamic template variables (date/time expansion). Monthly view is stacked sections, not calendar grid. No "load older days" / infinite scroll. No natural language dates.
+**Current gaps:** No dynamic template variables (date/time expansion). Monthly view is stacked sections, not calendar grid. No "load older days" / infinite scroll.
 
-**Planned (#630, #639):** Journal auto-populate structure. Dynamic variables (`{{today}}`, `{{time}}`). Template CRUD UI.
+**Planned (#639):** Dynamic variables (`{{today}}`, `{{time}}`). Template CRUD UI.
 
 **Verdict: Strong.** Core daily journal workflow exceeds Logseq (4 view modes, calendar picker, auto-create + journal template). Planned template system will close the remaining UX gaps.
 
@@ -347,21 +348,20 @@ These features are designed and scoped but not yet implemented. Each has bite-si
 
 | # | Feature | Impact | Cost | Phase |
 |---|---------|--------|------|-------|
-| 630 | **Journal templates** — auto-populate structure for new days | HIGH | M | Journaling |
 | 639 | **Templates system** — dynamic variables, CRUD UI, journal auto-apply config | HIGH | L | Journaling |
 | 641 | **Scheduling semantics** — due/scheduled dates drive agenda behavior (hide-before, deadline warnings, overdue rollforward) | HIGH | L | Tasks |
 | 642 | **Agenda filters** — filter by creation/completion dates, custom properties, flexible date ranges | MED | M | Tasks |
 | 643 | **Properties management view** — browse, create, rename, delete properties and types. Usage counts, batch rename propagation | HIGH | M | Properties |
 | 644 | **Repeating tasks** — `.+` (from completion) and `++` (catch-up) modes, end conditions (repeat-until, repeat-count), agenda projection of virtual future occurrences | HIGH | M | Tasks |
 | 645 | **Block property UX** — inline chips on blocks, click-to-edit popovers, block property drawer. Closes gap between reserved and custom property visibility | HIGH | M | Properties |
-| 652 | **Collapse state persistence** — localStorage, copy sidebar pattern | MED | S | Outlining |
+| 649 | **Template insertion robustness** — recursive child copy, picker UX (keyboard nav, responsive positioning), error handling for partial failures | MED | M | Journaling |
+| 651 | **Conflicts view** — navigation, refresh, metadata, type-specific rendering, batch resolution | MED | M | Sync |
 | 653 | **Editor formatting marks** — strikethrough (`~~`) + highlight (`==`) | MED | M | Editor |
 | 654 | **Editor block types** — blockquotes (`>`) + tables | MED | M | Editor |
 | 655 | **Inline query blocks** — `{{query ...}}` embedded live results | HIGH | M | Query |
 | 656 | **Namespaced pages** — `/` separator, page tree view in browser | MED | M | Pages |
 | 657 | **Block-level multi-selection** — static selection + batch operations | MED | M | Outlining |
 | 658 | **Custom task keywords** — configurable states beyond TODO/DOING/DONE | MED | M | Tasks |
-| 659 | **Full graph Markdown export** — bulk export all pages as ZIP | MED | S | Export |
 | 660 | **Logseq/Markdown import** — parse Logseq `.md` files into blocks | HIGH | L | Import |
 
 **Not in REVIEW-LATER (intentionally deferred):**
@@ -375,7 +375,7 @@ These features are designed and scoped but not yet implemented. Each has bite-si
 
 | Category | Logseq | Agaric (current) | Agaric (projected) | Notes |
 |---|:---:|:---:|:---:|---|
-| Block CRUD | 10 | 9 | 9 | Zoom-in done. Missing: block refs/embeds (deferred), multi-select, collapse persistence |
+| Block CRUD | 10 | 9 | 9 | Zoom-in + collapse persistence done. Missing: block refs/embeds (deferred), multi-select |
 | Page management | 9 | 8 | 8 | Aliases done. Missing: namespaces |
 | Editor formatting | 9 | 8 | 8 | 23 slash commands + formatting toolbar. Missing: strikethrough, highlight, tables, blockquotes, math |
 | Linking system | 10 | 8 | 8 | Linked + unlinked references, 11-type backlink filter. Missing: block refs/embeds (deferred) |
@@ -383,19 +383,19 @@ These features are designed and scoped but not yet implemented. Each has bite-si
 | Tags | 8 | 7 | 7 | Boolean AND/OR/NOT, prefix hierarchy. Tags not unified with pages (design choice) |
 | Query system | 9 | 5 | 6 | Tag/FTS/property queries + agenda. No inline query blocks. Planned: advanced agenda filters (#642) |
 | Task management | 8 | 9 | 10 | TODO/DOING/DONE + priority + recurrence + agenda dashboard + DonePanel. Planned: scheduling semantics (#641), repeat modes (#644) |
-| Daily journal | 8 | 9 | 9 | 4 modes + auto-create + journal template. Planned: auto-populate (#630), dynamic variables (#639) |
+| Daily journal | 8 | 9 | 9 | 4 modes + auto-create + journal template auto-apply. Planned: dynamic variables (#639) |
 | Search | 8 | 8 | 8 | FTS5 trigram + CJK + unlinked refs. Missing: scope filters |
 | Templates | 7 | 4 | 7 | /template command + template pages + journal auto-apply. Planned: variables, CRUD UI (#639) |
 | Sync/storage | 5 | 10 | 10 | SyncDaemon + three-way merge + TLS + mDNS + cert pinning. Fully automated LAN sync |
 | Data integrity | 4 | 9 | 9 | Op log + blake3 + recovery + undo hardening |
 | Performance arch | 6 | 8 | 8 | CQRS + cursor pagination + depth limits + Tauri 2 |
-| Import/export | 7 | 2 | 2 | Single-page Markdown export. No bulk export or import |
+| Import/export | 7 | 4 | 5 | Per-page + full graph Markdown export as ZIP. Planned: Logseq import (#660) |
 
-**Current totals: Logseq 116 / Agaric 122** (105%)
+**Current totals: Logseq 116 / Agaric 114** (98%)
 
-**Projected totals: Logseq 116 / Agaric 128** (110%)
+**Projected totals: Logseq 116 / Agaric 121** (104%)
 
-Agaric has surpassed Logseq overall, driven by architectural advantages in sync, data integrity, performance, and task management. The remaining Logseq advantages are in the **query system** (inline query blocks + Datalog), **linking** (block refs/embeds), and **import/export** — the first two are deferred by design; import/export is a future priority.
+Agaric is at near-parity with Logseq overall, driven by architectural advantages in sync, data integrity, performance, and task management. The remaining Logseq advantages are in the **query system** (inline query blocks + Datalog), **linking** (block refs/embeds), and **import/export** — the first two are deferred by design; import/export is a future priority. Projected scores show Agaric surpassing Logseq once planned features ship.
 
 ---
 
@@ -417,6 +417,9 @@ Features that moved from Gap to Done since the previous version of this document
 | Export page as Markdown | Gap | Shipped (export_page_markdown) |
 | Journal template auto-apply | Gap | Shipped (journal-template property) |
 | DonePanel (completed tasks by date) | Gap | Shipped (DonePanel component) |
+| Journal template auto-populate on create | Planned (#630) | #630 |
+| Collapse state persistence (localStorage) | Planned (#652) | #652 |
+| Full graph Markdown export as ZIP | Planned (#659) | #659 |
 
 ---
 
@@ -427,3 +430,4 @@ Features that moved from Gap to Done since the previous version of this document
 - Logseq Blog: https://blog.logseq.com/
 - Logseq Docs Repo: https://github.com/logseq/docs
 - Awesome Logseq: https://github.com/logseq/awesome-logseq
+/awesome-logseq
