@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 103 — 2026-04-03 — Priority Badge Unify + Inline Property Chips (#645 sub-tasks 0-3)
+
+### Unified priority badges + custom property chips on blocks
+
+1 build subagent + orchestrator direct fix for sub-task 0. No worktrees needed.
+
+| File | Change |
+|------|--------|
+| `SortableBlock.tsx` | #645-0: Priority badge style unified — solid colors (`bg-red-500 text-white`), `P1`/`P2`/`P3` labels, `rounded` pill (was: pastel circle, bare numbers). #645-3: Renders up to 3 `PropertyChip` components after scheduled date chip, `+N` overflow. |
+| `SortableBlock.test.tsx` | #645-0: Updated 12 tests for new badge style. #645-3: 7 new tests (chips render, empty/undefined, max 3, overflow). |
+| `PropertyChip.tsx` (new) | #645-1: Reusable property chip — `[key: value]` pill, `bg-muted text-muted-foreground`, matches date chip styling. |
+| `PropertyChip.test.tsx` (new) | #645-1: 7 tests (render, className, styling, alignment, key opacity, axe a11y). |
+| `BlockTree.tsx` | #645-2: `getBatchProperties(visibleIds)` fetches properties for visible blocks, filters reserved, maps to display strings. Passes `properties` to SortableBlock. |
+
+### Stats
+- Frontend: 2453 tests pass (2439 + 14 new)
+- Commit: `5068cc1`
+- REVIEW-LATER: #645 sub-tasks 0-3 resolved (item remains for sub-tasks 4-12)
+
 ## Session 102 — 2026-04-03 — Property Type Enforcement (#646)
 
 ### Type/date/field validation in set_property_in_tx
