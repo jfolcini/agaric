@@ -148,8 +148,20 @@ async fn daemon_loop(
     shutdown_notify: Arc<Notify>,
     cancel: Arc<AtomicBool>,
 ) -> Result<(), AppError> {
-    // 1. Start mDNS service
-    let mdns = MdnsService::new()?;
+    // 1. Start mDNS service (graceful fallback — #522)
+    //
+    // mDNS may fail on platforms where raw UDP sockets are blocked (e.g. iOS).
+    // When this happens we log a warning and continue without peer discovery.
+    // Sync still works via manual IP entry (stored in peer_refs); the mDNS
+    // branch in the select! loop is simply never triggered.
+    let mdns = match MdnsService::new() {
+        Ok(m) => Some(m),
+        Err(e) => {
+            tracing::warn!("mDNS initialization failed (peer discovery disabled): {e}");
+            tracing::info!("Sync will work via manual IP entry only");
+            None
+        }
+    };
 
     // 2. Start TLS WebSocket server (responder mode — #615)
     let resp_pool = pool.clone();
@@ -172,24 +184,46 @@ async fn daemon_loop(
     })
     .await?;
 
-    // 3. Announce this device on mDNS
-    mdns.announce(&device_id, port)?;
-    tracing::info!(port, "SyncDaemon started, mDNS announced");
+    // 3. Announce this device on mDNS (skipped when mDNS is unavailable)
+    if let Some(ref mdns) = mdns {
+        match mdns.announce(&device_id, port) {
+            Ok(_) => tracing::info!(port, "SyncDaemon started, mDNS announced"),
+            Err(e) => tracing::warn!("mDNS announce failed (peer discovery disabled): {e}"),
+        }
+    } else {
+        tracing::info!(
+            port,
+            "SyncDaemon started (mDNS unavailable, no announcement)"
+        );
+    }
 
-    // 4. Start mDNS browse
-    let browse_rx = mdns.browse()?;
+    // 4. Start mDNS browse (skipped when mDNS is unavailable)
+    let browse_rx = match mdns {
+        Some(ref mdns) => match mdns.browse() {
+            Ok(rx) => Some(rx),
+            Err(e) => {
+                tracing::warn!("mDNS browse failed (peer discovery disabled): {e}");
+                None
+            }
+        },
+        None => None,
+    };
 
     // Bridge mDNS browse events to a tokio mpsc channel so we can use
     // them inside `tokio::select!` without polling.  flume's blocking
     // `recv()` runs on a dedicated thread via `spawn_blocking`.
+    // When mDNS is unavailable, mdns_rx will never yield items and the
+    // select! branch is effectively disabled.
     let (mdns_tx, mut mdns_rx) = tokio::sync::mpsc::channel::<mdns_sd::ServiceEvent>(32);
-    tokio::task::spawn_blocking(move || {
-        while let Ok(event) = browse_rx.recv() {
-            if mdns_tx.blocking_send(event).is_err() {
-                break; // Channel closed, daemon shutting down
+    if let Some(browse_rx) = browse_rx {
+        tokio::task::spawn_blocking(move || {
+            while let Ok(event) = browse_rx.recv() {
+                if mdns_tx.blocking_send(event).is_err() {
+                    break; // Channel closed, daemon shutting down
+                }
             }
-        }
-    });
+        });
+    }
 
     // 5. Maintain discovered peers (device_id → DiscoveredPeer)
     let mut discovered: HashMap<String, DiscoveredPeer> = HashMap::new();
@@ -297,8 +331,10 @@ async fn daemon_loop(
 
     // Cleanup
     server.shutdown().await;
-    if let Err(e) = mdns.shutdown() {
-        tracing::warn!("mDNS shutdown error: {e}");
+    if let Some(mdns) = mdns {
+        if let Err(e) = mdns.shutdown() {
+            tracing::warn!("mDNS shutdown error: {e}");
+        }
     }
     tracing::info!("SyncDaemon shut down cleanly");
     Ok(())

@@ -138,6 +138,19 @@ Phase 2 store review with 2 parallel subagents (quality + test gaps). 3 S-cost f
 - Rust: 1457 tests pass (unchanged)
 - Commit: `7763637`
 
+## Session 84 — 2026-04-03 — Graceful mDNS Failure for iOS (#522)
+
+### mDNS failure no longer kills sync daemon
+1 item partially resolved: mDNS graceful degradation for iOS compatibility.
+
+| File | Change |
+|------|--------|
+| `sync_daemon.rs` | #522: MdnsService::new() failure → Option::None, announce/browse skipped, spawn_blocking conditional, shutdown guarded. Sync via manual IP still works. |
+
+### Stats
+- Rust: 1457 tests pass (unchanged)
+- Commit: `d19ca4c`
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command
