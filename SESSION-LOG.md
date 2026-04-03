@@ -1,5 +1,31 @@
 # Session Log
 
+## Session 64 — 2026-04-03 — Phase 6 Wave 5: DonePanel + queryByProperty valueDate (#609)
+
+### DonePanel for completed blocks + queryByProperty enhancement
+1 item resolved: DonePanel showing blocks completed on a given date, completing Phase 6 Wave 5.
+
+Built by 1 subagent (DonePanel component + JournalPage wiring + 16 tests) + orchestrator (queryByProperty valueDate param in backend + TS wrapper + test fixes). No separate review needed — straightforward DuePanel mirror pattern.
+
+| File | Change |
+|------|--------|
+| `pagination.rs` | Added `value_date` param to `query_by_property`, filters `bp.value_date = ?`. |
+| `commands.rs` | Added `value_date` to `query_by_property_inner` + Tauri command. Updated all call sites. |
+| `command_integration_tests.rs` | Updated 3 call sites for new param. |
+| `.sqlx/` | 1 cache file updated (query hash changed). |
+| `bindings.ts` | Auto-regenerated with `valueDate` param. |
+| `tauri.ts` | Added `valueDate` to `queryByProperty` wrapper. |
+| `tauri.test.ts` | Updated 2 test assertions for `valueDate: null`. |
+| `DonePanel.tsx` (new) | #609: Queries `completed_at` property by date, grouped by source page, ID descending sort, green CheckCircle2 icon, breadcrumbs, auto-hide when empty. |
+| `DonePanel.test.tsx` (new) | #609: 14 tests (render, empty, grouping, sort, loading, breadcrumbs, navigation, icons, pagination, collapse, date change, a11y). |
+| `JournalPage.tsx` | #609: Wired DonePanel below References in daily view. |
+| `JournalPage.test.tsx` | #609: 2 new tests (renders with date, DOM order after References). |
+
+### Stats
+- Rust: 1429 tests pass
+- Frontend: 79/79 test files, 2223 tests pass (2207 + 16 new)
+- Commit: `28ad4f3`
+
 ## Session 63 — 2026-04-03 — Scheduled Date + Auto-Timestamps (#592, #593)
 
 ### Full-stack scheduled_date column + auto-populated timestamps on todo transitions

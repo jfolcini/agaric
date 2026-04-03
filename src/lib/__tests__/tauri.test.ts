@@ -990,6 +990,7 @@ describe('queryByProperty', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
       key: 'status',
       valueText: 'done',
+      valueDate: null,
       cursor: 'cur1',
       limit: 10,
     })
@@ -1004,6 +1005,7 @@ describe('queryByProperty', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
       key: 'status',
       valueText: null,
+      valueDate: null,
       cursor: null,
       limit: null,
     })

@@ -59,6 +59,7 @@ import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
 import { useResolveStore } from '../stores/resolve'
 import { BlockTree } from './BlockTree'
+import { DonePanel } from './DonePanel'
 import { DuePanel } from './DuePanel'
 import { EmptyState } from './EmptyState'
 import { LinkedReferences } from './LinkedReferences'
@@ -615,6 +616,9 @@ export function JournalPage({
             </div>
             <div id="journal-references-panel">
               <LinkedReferences pageId={entry.pageId} onNavigateToPage={onNavigateToPage} />
+            </div>
+            <div id="journal-done-panel">
+              <DonePanel date={entry.dateStr} onNavigateToPage={onNavigateToPage} />
             </div>
           </>
         )}

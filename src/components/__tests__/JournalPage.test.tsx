@@ -40,6 +40,15 @@ vi.mock('../DuePanel', () => ({
   ),
 }))
 
+// ── Mock DonePanel ──────────────────────────────────────────────────
+vi.mock('../DonePanel', () => ({
+  DonePanel: (props: { date: string; onNavigateToPage?: unknown }) => (
+    <div data-testid="done-panel" data-date={props.date}>
+      DonePanel
+    </div>
+  ),
+}))
+
 // ── Mock LinkedReferences ───────────────────────────────────────────
 vi.mock('../LinkedReferences', () => ({
   LinkedReferences: (props: { pageId: string; onNavigateToPage?: unknown }) => (
@@ -1707,6 +1716,52 @@ describe('JournalPage', () => {
       // Node.DOCUMENT_POSITION_FOLLOWING = 4
       expect(
         duePanel.compareDocumentPosition(linkedRefs) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    })
+  })
+
+  // ── DonePanel in daily mode (#609) ─────────────────────────────────
+  describe('DonePanel', () => {
+    it('daily mode renders DonePanel with correct date', async () => {
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockResolvedValue({
+        items: [makeDailyPage('DP-TODAY', todayStr)],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByTestId('done-panel')).toBeInTheDocument()
+      })
+
+      expect(screen.getByTestId('done-panel')).toHaveAttribute('data-date', todayStr)
+    })
+
+    it('DonePanel renders after LinkedReferences in DOM order', async () => {
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockResolvedValue({
+        items: [makeDailyPage('DP-TODAY', todayStr)],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByTestId('done-panel')).toBeInTheDocument()
+      })
+
+      const linkedRefs = screen.getByTestId('linked-references')
+      const donePanel = screen.getByTestId('done-panel')
+
+      // LinkedReferences should come before DonePanel in DOM order
+      // Node.DOCUMENT_POSITION_FOLLOWING = 4
+      expect(
+        linkedRefs.compareDocumentPosition(donePanel) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy()
     })
   })

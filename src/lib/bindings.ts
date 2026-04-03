@@ -196,9 +196,9 @@ async queryByTags(tagIds: string[], prefixes: string[], mode: string, cursor: st
 /**
  * Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].
  */
-async queryByProperty(key: string, valueText: string | null, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
+async queryByProperty(key: string, valueText: string | null, valueDate: string | null, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("query_by_property", { key, valueText, cursor, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("query_by_property", { key, valueText, valueDate, cursor, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

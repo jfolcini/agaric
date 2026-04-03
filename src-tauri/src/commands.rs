@@ -1579,6 +1579,7 @@ pub async fn query_by_property_inner(
     pool: &SqlitePool,
     key: String,
     value_text: Option<String>,
+    value_date: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
@@ -1588,7 +1589,14 @@ pub async fn query_by_property_inner(
         ));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
-    pagination::query_by_property(pool, &key, value_text.as_deref(), &page).await
+    pagination::query_by_property(
+        pool,
+        &key,
+        value_text.as_deref(),
+        value_date.as_deref(),
+        &page,
+    )
+    .await
 }
 
 /// List all tags matching a name prefix (autocomplete / UI).
@@ -3315,10 +3323,11 @@ pub async fn query_by_property(
     pool: State<'_, ReadPool>,
     key: String,
     value_text: Option<String>,
+    value_date: Option<String>,
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    query_by_property_inner(&pool.0, key, value_text, cursor, limit)
+    query_by_property_inner(&pool.0, key, value_text, value_date, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -6425,7 +6434,7 @@ mod tests {
         insert_property(&pool, "QP_B1", "todo", "TODO").await;
         insert_property(&pool, "QP_B2", "todo", "DONE").await;
 
-        let result = query_by_property_inner(&pool, "todo".into(), None, None, None)
+        let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None)
             .await
             .unwrap();
 
@@ -6438,7 +6447,7 @@ mod tests {
     async fn query_by_property_empty_key_returns_validation_error() {
         let (pool, _dir) = test_pool().await;
 
-        let result = query_by_property_inner(&pool, "".into(), None, None, None).await;
+        let result = query_by_property_inner(&pool, "".into(), None, None, None, None).await;
 
         assert!(
             matches!(result, Err(AppError::Validation(_))),
@@ -6456,9 +6465,10 @@ mod tests {
         insert_property(&pool, "QP_A", "todo", "TODO").await;
         insert_property(&pool, "QP_B", "todo", "DONE").await;
 
-        let result = query_by_property_inner(&pool, "todo".into(), Some("TODO".into()), None, None)
-            .await
-            .unwrap();
+        let result =
+            query_by_property_inner(&pool, "todo".into(), Some("TODO".into()), None, None, None)
+                .await
+                .unwrap();
 
         assert_eq!(result.items.len(), 1, "only block with todo=TODO");
         assert_eq!(result.items[0].id, "QP_A");
@@ -6475,7 +6485,7 @@ mod tests {
         }
 
         // First page: limit 2
-        let r1 = query_by_property_inner(&pool, "status".into(), None, None, Some(2))
+        let r1 = query_by_property_inner(&pool, "status".into(), None, None, None, Some(2))
             .await
             .unwrap();
 
@@ -6486,9 +6496,10 @@ mod tests {
         assert_eq!(r1.items[1].id, "QP_P02");
 
         // Second page
-        let r2 = query_by_property_inner(&pool, "status".into(), None, r1.next_cursor, Some(2))
-            .await
-            .unwrap();
+        let r2 =
+            query_by_property_inner(&pool, "status".into(), None, None, r1.next_cursor, Some(2))
+                .await
+                .unwrap();
 
         assert_eq!(r2.items.len(), 2);
         assert!(r2.has_more);
@@ -6496,9 +6507,10 @@ mod tests {
         assert_eq!(r2.items[1].id, "QP_P04");
 
         // Third page: last item
-        let r3 = query_by_property_inner(&pool, "status".into(), None, r2.next_cursor, Some(2))
-            .await
-            .unwrap();
+        let r3 =
+            query_by_property_inner(&pool, "status".into(), None, None, r2.next_cursor, Some(2))
+                .await
+                .unwrap();
 
         assert_eq!(r3.items.len(), 1);
         assert!(!r3.has_more);
@@ -6519,7 +6531,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = query_by_property_inner(&pool, "todo".into(), None, None, None)
+        let result = query_by_property_inner(&pool, "todo".into(), None, None, None, None)
             .await
             .unwrap();
 

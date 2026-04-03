@@ -396,6 +396,7 @@ pub async fn query_by_property(
     pool: &SqlitePool,
     key: &str,
     value_text: Option<&str>,
+    value_date: Option<&str>,
     page: &PageRequest,
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
@@ -446,14 +447,16 @@ pub async fn query_by_property(
                AND b.deleted_at IS NULL
                AND b.is_conflict = 0
                AND (?2 IS NULL OR bp.value_text = ?2)
-               AND (?3 IS NULL OR b.id > ?4)
+               AND (?3 IS NULL OR bp.value_date = ?3)
+               AND (?4 IS NULL OR b.id > ?5)
              ORDER BY b.id ASC
-             LIMIT ?5"#,
+             LIMIT ?6"#,
             key,         // ?1
             value_text,  // ?2
-            cursor_flag, // ?3
-            cursor_id,   // ?4
-            fetch_limit, // ?5
+            value_date,  // ?3
+            cursor_flag, // ?4
+            cursor_id,   // ?5
+            fetch_limit, // ?6
         )
         .fetch_all(pool)
         .await?
@@ -1640,7 +1643,9 @@ mod tests {
         insert_property(&pool, "BLOCK002", "todo", "DONE").await;
 
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = query_by_property(&pool, "todo", None, &page).await.unwrap();
+        let resp = query_by_property(&pool, "todo", None, None, &page)
+            .await
+            .unwrap();
 
         assert_eq!(resp.items.len(), 2, "only blocks with 'todo' property");
         assert_eq!(resp.items[0].id, "BLOCK001");
@@ -1658,7 +1663,7 @@ mod tests {
         insert_property(&pool, "BLOCK002", "todo", "DONE").await;
 
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = query_by_property(&pool, "todo", Some("TODO"), &page)
+        let resp = query_by_property(&pool, "todo", Some("TODO"), None, &page)
             .await
             .unwrap();
 
@@ -1680,6 +1685,7 @@ mod tests {
             &pool,
             "status",
             None,
+            None,
             &PageRequest::new(None, Some(2)).unwrap(),
         )
         .await
@@ -1693,6 +1699,7 @@ mod tests {
             &pool,
             "status",
             None,
+            None,
             &PageRequest::new(r1.next_cursor, Some(2)).unwrap(),
         )
         .await
@@ -1705,6 +1712,7 @@ mod tests {
         let r3 = query_by_property(
             &pool,
             "status",
+            None,
             None,
             &PageRequest::new(r2.next_cursor, Some(2)).unwrap(),
         )
@@ -1723,7 +1731,7 @@ mod tests {
         insert_block(&pool, "BLOCK001", "content", "no props", None, None).await;
 
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = query_by_property(&pool, "nonexistent_key", None, &page)
+        let resp = query_by_property(&pool, "nonexistent_key", None, None, &page)
             .await
             .unwrap();
 
@@ -1744,7 +1752,9 @@ mod tests {
         soft_delete_block(&pool, "BLOCK002", FIXED_DELETED_AT).await;
 
         let page = PageRequest::new(None, Some(10)).unwrap();
-        let resp = query_by_property(&pool, "todo", None, &page).await.unwrap();
+        let resp = query_by_property(&pool, "todo", None, None, &page)
+            .await
+            .unwrap();
 
         assert_eq!(resp.items.len(), 1, "soft-deleted block must be excluded");
         assert_eq!(resp.items[0].id, "BLOCK001");

@@ -345,12 +345,14 @@ export async function revertOps(params: {
 export async function queryByProperty(params: {
   key: string
   valueText?: string
+  valueDate?: string
   cursor?: string
   limit?: number
 }): Promise<PageResponse<BlockRow>> {
   return invoke('query_by_property', {
     key: params.key,
     valueText: params.valueText ?? null,
+    valueDate: params.valueDate ?? null,
     cursor: params.cursor ?? null,
     limit: params.limit ?? null,
   })
