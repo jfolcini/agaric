@@ -50,6 +50,7 @@ import { cn } from '../lib/utils'
 import { useBlockStore } from '../stores/blocks'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
+import { BlockPropertyDrawer } from './BlockPropertyDrawer'
 import { HistorySheet } from './HistorySheet'
 import { SortableBlock } from './SortableBlock'
 import { Calendar } from './ui/calendar'
@@ -323,12 +324,19 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   // ── History sheet state ────────────────────────────────────────────
   const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
 
+  // ── Property drawer state ──────────────────────────────────────────
+  const [propertyDrawerBlockId, setPropertyDrawerBlockId] = useState<string | null>(null)
+
   const [blockProperties, setBlockProperties] = useState<
     Record<string, Array<{ key: string; value: string }>>
   >({})
 
   const handleShowHistory = useCallback((blockId: string) => {
     setHistoryBlockId(blockId)
+  }, [])
+
+  const handleShowProperties = useCallback((blockId: string) => {
+    setPropertyDrawerBlockId(blockId)
   }, [])
 
   const handleZoomIn = useCallback((blockId: string) => {
@@ -1173,6 +1181,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     onEscapeCancel: handleEscapeCancel,
     onToggleTodo: () => focusedBlockId && handleToggleTodo(focusedBlockId),
     onToggleCollapse: () => focusedBlockId && toggleCollapse(focusedBlockId),
+    onShowProperties: () => focusedBlockId && handleShowProperties(focusedBlockId),
   })
 
   // ── Discard button custom event (from FormattingToolbar) ───────────
@@ -1298,6 +1307,15 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     document.addEventListener('toggle-todo-state', handler)
     return () => document.removeEventListener('toggle-todo-state', handler)
   }, [focusedBlockId, handleToggleTodo])
+
+  // ── Listen for toolbar open-block-properties event ──────────────────
+  useEffect(() => {
+    const handler = () => {
+      if (focusedBlockId) handleShowProperties(focusedBlockId)
+    }
+    document.addEventListener('open-block-properties', handler)
+    return () => document.removeEventListener('open-block-properties', handler)
+  }, [focusedBlockId, handleShowProperties])
 
   // ── Keyboard shortcut: Ctrl+Shift+D → open date picker ─────────────
   useEffect(() => {
@@ -1463,6 +1481,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                     }}
                     onMerge={handleMergeById}
                     onShowHistory={handleShowHistory}
+                    onShowProperties={handleShowProperties}
                     onZoomIn={hasChildrenSet.has(block.id) ? handleZoomIn : undefined}
                   />
                 </div>
@@ -1515,6 +1534,15 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         open={!!historyBlockId}
         onOpenChange={(open) => {
           if (!open) setHistoryBlockId(null)
+        }}
+      />
+
+      {/* Property drawer for per-block properties */}
+      <BlockPropertyDrawer
+        blockId={propertyDrawerBlockId}
+        open={!!propertyDrawerBlockId}
+        onOpenChange={(open) => {
+          if (!open) setPropertyDrawerBlockId(null)
         }}
       />
     </>

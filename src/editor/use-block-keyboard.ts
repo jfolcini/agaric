@@ -36,6 +36,8 @@ export interface BlockKeyboardCallbacks {
   onToggleTodo?: () => void
   /** Toggle collapse/expand children (Ctrl/Cmd+.). */
   onToggleCollapse?: () => void
+  /** Show block properties drawer (Ctrl/Cmd+Shift+P). */
+  onShowProperties?: () => void
 }
 
 /** Minimal editor shape needed by the key handler (for testability). */
@@ -92,6 +94,13 @@ export function handleBlockKeyDown(
   if ((ctrlKey || metaKey) && key === '.') {
     event.preventDefault()
     callbacks.onToggleCollapse?.()
+    return
+  }
+
+  // Ctrl/Cmd+Shift+P: show block properties drawer
+  if ((ctrlKey || metaKey) && shiftKey && (key === 'P' || key === 'p')) {
+    event.preventDefault()
+    callbacks.onShowProperties?.()
     return
   }
 
@@ -168,6 +177,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     onMoveDown,
     onToggleTodo,
     onToggleCollapse,
+    onShowProperties,
   } = callbacks
 
   const handleKeyDown = useCallback(
@@ -187,6 +197,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onMoveDown,
         onToggleTodo,
         onToggleCollapse,
+        onShowProperties,
       })
     },
     [
@@ -204,6 +215,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       onMoveDown,
       onToggleTodo,
       onToggleCollapse,
+      onShowProperties,
     ],
   )
 

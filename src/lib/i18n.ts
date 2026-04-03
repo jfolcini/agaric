@@ -125,6 +125,8 @@ const resources = {
       'toolbar.dueDateTip': 'Due date (/due)',
       'toolbar.scheduledDateTip': 'Scheduled date (/schedule)',
       'toolbar.todoToggleTip': 'TODO cycle (Ctrl+Enter)',
+      'toolbar.properties': 'Properties',
+      'toolbar.propertiesTip': 'Block properties (Ctrl+Shift+P)',
       'toolbar.undoTip': 'Undo (Ctrl+Z)',
       'toolbar.redoTip': 'Redo (Ctrl+Y)',
       'toolbar.discardTip': 'Discard changes (Esc)',
@@ -149,6 +151,7 @@ const resources = {
       'contextMenu.priority2To3': 'Priority 2 → 3',
       'contextMenu.priority3ToClear': 'Priority 3 → Clear',
       'contextMenu.setPriority1': 'Set priority 1',
+      'contextMenu.properties': 'Properties...',
       'contextMenu.zoomIn': 'Zoom in',
 
       // Block
@@ -350,6 +353,14 @@ const resources = {
       'editor.templatePlaceholder': 'Type /template to start from a template, or just start typing...',
 
       // Property table
+      'property.drawerTitle': 'Block Properties',
+      'property.loading': 'Loading...',
+      'property.noProperties': 'No properties set',
+      'property.loadFailed': 'Failed to load properties',
+      'property.saveFailed': 'Failed to save property',
+      'property.deleteFailed': 'Failed to delete property',
+      'property.delete': 'Delete property',
+      'property.addProperty': 'Add property',
       'property.invalidNumber': 'Invalid number value',
       'property.deleteConfirm': 'Delete this property?',
       'property.deleteConfirmDesc': 'This will remove the property from the block.',

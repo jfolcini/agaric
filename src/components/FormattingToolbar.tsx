@@ -30,6 +30,7 @@ import {
   Link2,
   Quote,
   Redo2,
+  Settings2,
   Signal,
   Strikethrough,
   Undo2,
@@ -445,6 +446,19 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             }}
           >
             <CheckSquare size={14} />
+          </Button>
+        </Tip>
+        <Tip label={t('toolbar.propertiesTip')}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('toolbar.properties')}
+            onPointerDown={(e) => {
+              e.preventDefault()
+              document.dispatchEvent(new CustomEvent('open-block-properties'))
+            }}
+          >
+            <Settings2 size={14} />
           </Button>
         </Tip>
 

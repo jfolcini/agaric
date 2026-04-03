@@ -19,6 +19,7 @@ import {
   Merge,
   MoveDown,
   MoveUp,
+  Settings2,
   Signal,
   Trash2,
   ZoomIn,
@@ -51,6 +52,8 @@ export interface BlockContextMenuProps {
   dueDate?: string | null
   /** Show block history */
   onShowHistory?: (blockId: string) => void
+  /** Show block properties drawer */
+  onShowProperties?: (blockId: string) => void
   /** Zoom in to show only this block's children */
   onZoomIn?: (blockId: string) => void
 }
@@ -111,6 +114,7 @@ export function BlockContextMenu({
   priority,
   dueDate: _dueDate,
   onShowHistory,
+  onShowProperties,
   onZoomIn,
 }: BlockContextMenuProps): React.ReactElement {
   const { t } = useTranslation()
@@ -255,15 +259,27 @@ export function BlockContextMenu({
   ]
 
   // Group 5: History
-  const group5: MenuItem[] = onShowHistory
-    ? [
-        {
-          label: t('contextMenu.history'),
-          icon: <Clock size={14} />,
-          action: () => handleAction(onShowHistory),
-        },
-      ]
-    : []
+  const group5: MenuItem[] = [
+    ...(onShowHistory
+      ? [
+          {
+            label: t('contextMenu.history'),
+            icon: <Clock size={14} />,
+            action: () => handleAction(onShowHistory),
+          },
+        ]
+      : []),
+    ...(onShowProperties
+      ? [
+          {
+            label: t('contextMenu.properties'),
+            icon: <Settings2 size={14} />,
+            action: () => handleAction(onShowProperties),
+            shortcut: 'Ctrl+Shift+P',
+          },
+        ]
+      : []),
+  ]
 
   // Filter out items without actions and empty groups
   const groups = [group1, group2, group3, group4, group5]

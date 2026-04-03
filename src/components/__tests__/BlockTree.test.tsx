@@ -4004,3 +4004,21 @@ describe('BlockTree /template slash command', () => {
     expect(results?.some((r) => r.id === 'template')).toBe(true)
   })
 })
+
+// =========================================================================
+// Keyboard shortcut wiring: Ctrl+Shift+P → onShowProperties (#645)
+// =========================================================================
+
+describe('BlockTree Ctrl+Shift+P keyboard shortcut', () => {
+  it('passes onShowProperties to useBlockKeyboard', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts).toBeDefined()
+    })
+
+    expect(typeof capturedBlockKeyboardOpts?.onShowProperties).toBe('function')
+  })
+})
