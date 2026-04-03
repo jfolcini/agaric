@@ -406,7 +406,7 @@ export function JournalPage({
             } else if (filter.dimension === 'dueDate') {
               // Map filter values to actual dates
               const today = new Date()
-              const todayStr = today.toISOString().slice(0, 10)
+              const todayStr = formatDate(today)
               for (const value of filter.values) {
                 if (value === 'Today') {
                   const resp = await listBlocks({
@@ -418,13 +418,53 @@ export function JournalPage({
                     ids.add(b.id)
                     allBlocks.set(b.id, b)
                   }
+                } else if (value === 'This week') {
+                  const day = today.getDay()
+                  const mondayOffset = day === 0 ? -6 : 1 - day
+                  for (let d = 0; d < 7; d++) {
+                    const date = new Date(today)
+                    date.setDate(today.getDate() + mondayOffset + d)
+                    const dateStr = formatDate(date)
+                    const resp = await listBlocks({
+                      agendaDate: dateStr,
+                      agendaSource: 'column:due_date',
+                      limit: 500,
+                    })
+                    for (const b of resp.items) {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
                 } else if (value === 'Overdue') {
                   // Get all blocks with due_date < today
-                  // Use queryByProperty won't work directly for range queries
-                  // For v1, skip complex date ranges -- just handle "Today"
-                  // For other values, fetch all agenda items and filter client-side
+                  const resp = await queryByProperty({ key: 'due_date', limit: 500 })
+                  for (const b of resp.items) {
+                    if (b.due_date && b.due_date < todayStr && b.todo_state !== 'DONE') {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
+                } else if (
+                  value === 'Next 7 days' ||
+                  value === 'Next 14 days' ||
+                  value === 'Next 30 days'
+                ) {
+                  const numDays = value === 'Next 7 days' ? 7 : value === 'Next 14 days' ? 14 : 30
+                  for (let d = 0; d < numDays; d++) {
+                    const date = new Date(today)
+                    date.setDate(today.getDate() + d)
+                    const dateStr = formatDate(date)
+                    const resp = await listBlocks({
+                      agendaDate: dateStr,
+                      agendaSource: 'column:due_date',
+                      limit: 500,
+                    })
+                    for (const b of resp.items) {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
                 }
-                // Simplified: for v1 just handle "Today" well
               }
             } else if (filter.dimension === 'tag') {
               for (const value of filter.values) {

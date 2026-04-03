@@ -270,4 +270,23 @@ describe('AgendaFilterBuilder', () => {
     const { container } = renderBuilder()
     expect(container.querySelector('ul[aria-label="Applied filters"]')).not.toBeInTheDocument()
   })
+
+  // -----------------------------------------------------------------------
+  // 16. dueDate dimension shows all 6 choices including new presets
+  // -----------------------------------------------------------------------
+  it('dueDate dimension shows all 6 choices including new presets', async () => {
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+    await user.click(screen.getByText('Due date'))
+
+    const group = screen.getByRole('group', { name: /Due date options/i })
+    expect(within(group).getByLabelText('Today')).toBeInTheDocument()
+    expect(within(group).getByLabelText('This week')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Overdue')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Next 7 days')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Next 14 days')).toBeInTheDocument()
+    expect(within(group).getByLabelText('Next 30 days')).toBeInTheDocument()
+  })
 })

@@ -45,7 +45,7 @@ const DIMENSION_OPTIONS: Record<
   priority: { labelKey: 'agendaFilter.priority', choices: ['1', '2', '3'] },
   dueDate: {
     labelKey: 'agendaFilter.dueDate',
-    choices: ['Today', 'This week', 'Overdue', 'Next 7 days'],
+    choices: ['Today', 'This week', 'Overdue', 'Next 7 days', 'Next 14 days', 'Next 30 days'],
   },
   tag: { labelKey: 'agendaFilter.tag', choices: null }, // free-text
 }

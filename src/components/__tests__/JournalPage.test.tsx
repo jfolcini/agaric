@@ -16,7 +16,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { addDays, addMonths, endOfWeek, format, startOfWeek, subDays } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -59,15 +59,22 @@ vi.mock('../LinkedReferences', () => ({
 }))
 
 // ── Mock AgendaFilterBuilder ────────────────────────────────────────
+const { filterChangeRef } = vi.hoisted(() => ({
+  filterChangeRef: { current: null as ((filters: unknown[]) => void) | null },
+}))
+
 vi.mock('../AgendaFilterBuilder', () => ({
-  AgendaFilterBuilder: (props: { filters: unknown[]; onFiltersChange: unknown }) => (
-    <div
-      data-testid="agenda-filter-builder"
-      data-filter-count={Array.isArray(props.filters) ? props.filters.length : 0}
-    >
-      AgendaFilterBuilder
-    </div>
-  ),
+  AgendaFilterBuilder: (props: { filters: unknown[]; onFiltersChange: unknown }) => {
+    filterChangeRef.current = props.onFiltersChange as (filters: unknown[]) => void
+    return (
+      <div
+        data-testid="agenda-filter-builder"
+        data-filter-count={Array.isArray(props.filters) ? props.filters.length : 0}
+      >
+        AgendaFilterBuilder
+      </div>
+    )
+  },
 }))
 
 // ── Mock AgendaResults ──────────────────────────────────────────────
@@ -126,6 +133,7 @@ if (!HTMLElement.prototype.scrollIntoView) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  filterChangeRef.current = null
   useBlockStore.setState({
     blocks: [],
     rootParentId: null,
@@ -1300,6 +1308,164 @@ describe('JournalPage', () => {
         expect(screen.getByTestId('agenda-filter-builder')).toBeInTheDocument()
         const results = await axe(container)
         expect(results).toHaveNoViolations()
+      })
+    })
+  })
+
+  // ── Agenda date filters (#634) ──────────────────────────────────────
+
+  describe('agenda date filters', () => {
+    it("dueDate 'Overdue' filter returns blocks with due_date before today", async () => {
+      const todayStr = formatDate(new Date())
+      const pastDate = formatDate(subDays(new Date(), 3))
+      const futureDate = formatDate(addDays(new Date(), 3))
+
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_blocks') {
+          return emptyPage
+        }
+        if (cmd === 'query_by_property') {
+          const params = args as { key?: string }
+          if (params?.key === 'due_date') {
+            return {
+              items: [
+                {
+                  id: 'OVERDUE-1',
+                  block_type: 'content',
+                  content: 'Overdue task',
+                  parent_id: 'PAGE-1',
+                  position: 0,
+                  deleted_at: null,
+                  archived_at: null,
+                  is_conflict: false,
+                  conflict_type: null,
+                  todo_state: 'TODO',
+                  due_date: pastDate,
+                  priority: null,
+                  scheduled_date: null,
+                },
+                {
+                  id: 'TODAY-1',
+                  block_type: 'content',
+                  content: 'Today task',
+                  parent_id: 'PAGE-1',
+                  position: 1,
+                  deleted_at: null,
+                  archived_at: null,
+                  is_conflict: false,
+                  conflict_type: null,
+                  todo_state: 'TODO',
+                  due_date: todayStr,
+                  priority: null,
+                  scheduled_date: null,
+                },
+                {
+                  id: 'FUTURE-1',
+                  block_type: 'content',
+                  content: 'Future task',
+                  parent_id: 'PAGE-1',
+                  position: 2,
+                  deleted_at: null,
+                  archived_at: null,
+                  is_conflict: false,
+                  conflict_type: null,
+                  todo_state: 'TODO',
+                  due_date: futureDate,
+                  priority: null,
+                  scheduled_date: null,
+                },
+                {
+                  id: 'DONE-OVERDUE',
+                  block_type: 'content',
+                  content: 'Done overdue task',
+                  parent_id: 'PAGE-1',
+                  position: 3,
+                  deleted_at: null,
+                  archived_at: null,
+                  is_conflict: false,
+                  conflict_type: null,
+                  todo_state: 'DONE',
+                  due_date: pastDate,
+                  priority: null,
+                  scheduled_date: null,
+                },
+              ],
+              next_cursor: null,
+              has_more: false,
+            }
+          }
+          return emptyPage
+        }
+        if (cmd === 'batch_resolve') {
+          return [{ id: 'PAGE-1', title: 'My Project', block_type: 'page', deleted: false }]
+        }
+        return emptyPage
+      })
+
+      useJournalStore.setState({ mode: 'agenda' })
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByTestId('agenda-filter-builder')).toBeInTheDocument()
+      })
+
+      act(() => {
+        filterChangeRef.current?.([{ dimension: 'dueDate', values: ['Overdue'] }])
+      })
+
+      await waitFor(() => {
+        const results = screen.getByTestId('agenda-results')
+        expect(results).toHaveAttribute('data-block-count', '1')
+      })
+    })
+
+    it("dueDate 'This week' filter queries all 7 days", async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_blocks') {
+          return emptyPage
+        }
+        if (cmd === 'query_by_property') {
+          return emptyPage
+        }
+        if (cmd === 'batch_resolve') {
+          return []
+        }
+        return emptyPage
+      })
+
+      useJournalStore.setState({ mode: 'agenda' })
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getByTestId('agenda-filter-builder')).toBeInTheDocument()
+      })
+
+      act(() => {
+        filterChangeRef.current?.([{ dimension: 'dueDate', values: ['This week'] }])
+      })
+
+      await waitFor(() => {
+        const listBlockCalls = mockedInvoke.mock.calls.filter(
+          ([cmd, args]) =>
+            cmd === 'list_blocks' &&
+            (args as { agendaSource?: string })?.agendaSource === 'column:due_date',
+        )
+        expect(listBlockCalls).toHaveLength(7)
+
+        const dates = listBlockCalls.map(([, args]) => (args as { agendaDate: string }).agendaDate)
+        const uniqueDates = new Set(dates)
+        expect(uniqueDates.size).toBe(7)
+
+        const today = new Date()
+        const day = today.getDay()
+        const mondayOffset = day === 0 ? -6 : 1 - day
+        const expectedDates: string[] = []
+        for (let d = 0; d < 7; d++) {
+          const date = new Date(today)
+          date.setDate(today.getDate() + mondayOffset + d)
+          expectedDates.push(formatDate(date))
+        }
+        expect([...uniqueDates].sort()).toEqual(expectedDates.sort())
       })
     })
   })
