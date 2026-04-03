@@ -11,7 +11,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -281,7 +281,7 @@ describe('PagePropertyTable property editing', () => {
     })
   })
 
-  it('delete button calls deleteProperty', async () => {
+  it('delete button calls deleteProperty after confirmation', async () => {
     const user = userEvent.setup()
     setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
@@ -293,6 +293,14 @@ describe('PagePropertyTable property editing', () => {
     })
 
     await user.click(screen.getByLabelText('Delete property author'))
+
+    // Confirmation dialog should appear
+    await waitFor(() => {
+      expect(screen.getByText(/Delete this property\?/i)).toBeInTheDocument()
+    })
+
+    // Confirm deletion
+    await user.click(screen.getByRole('button', { name: /^Delete$/i }))
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('delete_property', {
@@ -522,5 +530,86 @@ describe('PagePropertyTable accessibility', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+})
+
+describe('PagePropertyTable validation and confirmation', () => {
+  it('shows error toast when invalid number is entered', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('priority', { value_num: 1 })], [makeDef('priority', 'number')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('priority value')).toBeInTheDocument()
+    })
+
+    const input = screen.getByLabelText('priority value') as HTMLInputElement
+    // Override the value property to bypass jsdom's number-input sanitization
+    // (jsdom rejects non-numeric characters on type="number" inputs)
+    Object.defineProperty(input, 'value', {
+      value: 'abc',
+      writable: true,
+      configurable: true,
+    })
+    fireEvent.change(input)
+    fireEvent.blur(input)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Invalid number value')
+    })
+  })
+
+  it('shows confirmation dialog before deleting property', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByLabelText('Delete property author'))
+
+    await waitFor(() => {
+      expect(screen.getByText(/Delete this property\?/i)).toBeInTheDocument()
+      expect(screen.getByText(/This will remove the property from the block\./i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^Delete$/i })).toBeInTheDocument()
+    })
+  })
+
+  it('does not delete until confirmation', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Delete property author')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByLabelText('Delete property author'))
+
+    // Dialog should be open
+    await waitFor(() => {
+      expect(screen.getByText(/Delete this property\?/i)).toBeInTheDocument()
+    })
+
+    // deleteProperty should NOT have been called yet
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_property', expect.anything())
+
+    // Cancel the dialog
+    await user.click(screen.getByRole('button', { name: /Cancel/i }))
+
+    // Dialog should be closed and deleteProperty still not called
+    await waitFor(() => {
+      expect(screen.queryByText(/Delete this property\?/i)).not.toBeInTheDocument()
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_property', expect.anything())
   })
 })

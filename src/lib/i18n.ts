@@ -300,7 +300,10 @@ const resources = {
       'pageBrowser.loading': 'Loading...',
       'pageBrowser.deletePage': 'Delete page?',
       'pageBrowser.deleteDescription':
-        'This will delete the page \u201c{{name}}\u201d. This action cannot be undone.',
+        'This will permanently delete the page \u201c{{name}}\u201d and all its child blocks. This action cannot be undone.',
+      'pageBrowser.deleteSuccess': 'Page deleted',
+      'pageBrowser.deleteCascadeWarning':
+        'This will permanently delete the page and all its blocks.',
       'pageBrowser.delete': 'Delete',
       'pageBrowser.cancel': 'Cancel',
       'pageBrowser.deleteButton': 'Delete page',
@@ -325,6 +328,12 @@ const resources = {
       'duePanel.filterAll': 'All',
       'duePanel.filterDue': 'Due',
       'duePanel.filterScheduled': 'Scheduled',
+
+      // Property table
+      'property.invalidNumber': 'Invalid number value',
+      'property.deleteConfirm': 'Delete this property?',
+      'property.deleteConfirmDesc': 'This will remove the property from the block.',
+      'property.createDefFailed': 'Failed to create property definition',
     },
   },
 }

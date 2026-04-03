@@ -50,6 +50,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   } = usePaginatedQuery(queryFn, { onError: t('pageBrowser.loadFailed') })
 
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [isCreating, setIsCreating] = useState(false)
   const [newPageName, setNewPageName] = useState('')
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
@@ -97,14 +98,18 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
   const handleDeletePage = useCallback(
     async (pageId: string) => {
+      setDeletingId(pageId)
       try {
         await deleteBlock(pageId)
         setPages((prev) => prev.filter((p) => p.id !== pageId))
         useResolveStore.getState().set(pageId, '(deleted)', true)
+        toast.success(t('pageBrowser.deleteSuccess'))
       } catch (error) {
         toast.error(t('pageBrowser.deleteFailed', { error: String(error) }), {
           action: { label: t('pageBrowser.retry'), onClick: () => handleDeletePage(pageId) },
         })
+      } finally {
+        setDeletingId(null)
       }
     },
     [setPages, t],
@@ -133,7 +138,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           placeholder={t('pageBrowser.newPagePlaceholder')}
           className="flex-1"
         />
-        <Button type="submit" variant="outline" disabled={isCreating}>
+        <Button type="submit" variant="outline" disabled={isCreating || !newPageName.trim()}>
           {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
           {t('pageBrowser.newPage')}
         </Button>
@@ -179,11 +184,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           >
             <button
               type="button"
-              className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer"
+              className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
               onClick={() => onPageSelect?.(page.id, page.content ?? t('pageBrowser.untitled'))}
             >
               <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="page-browser-item-title truncate">
+              <span className="page-browser-item-title truncate" title={page.content ?? t('pageBrowser.untitled')}>
                 {page.content ?? t('pageBrowser.untitled')}
               </span>
             </button>
@@ -192,6 +197,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
               size="icon-xs"
               aria-label={t('pageBrowser.deleteButton')}
               className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+              disabled={deletingId === page.id}
               onClick={(e) => {
                 e.stopPropagation()
                 setDeleteTarget({ id: page.id, name: page.content ?? t('pageBrowser.untitled') })

@@ -9,7 +9,18 @@
 
 import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,6 +40,7 @@ interface PagePropertyTableProps {
 }
 
 export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [properties, setProperties] = useState<PropertyRow[]>([])
@@ -37,6 +49,7 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
   const [defSearch, setDefSearch] = useState('')
   const [creatingDef, setCreatingDef] = useState(false)
   const [newDefType, setNewDefType] = useState('text')
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   // Load properties and definitions in parallel
   useEffect(() => {
@@ -67,7 +80,10 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
           const num = Number(rawValue)
           if (rawValue.trim() && !Number.isNaN(num)) {
             await setProperty({ blockId: pageId, key, valueNum: num })
-          } else if (!rawValue.trim()) {
+          } else if (rawValue.trim()) {
+            toast.error(t('property.invalidNumber'))
+            return
+          } else {
             await setProperty({ blockId: pageId, key, valueText: '' })
           }
         } else if (valueType === 'date') {
@@ -81,7 +97,7 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
         toast.error('Failed to save property')
       }
     },
-    [pageId],
+    [pageId, t],
   )
 
   const handleDeleteProperty = useCallback(
@@ -95,6 +111,13 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
     },
     [pageId],
   )
+
+  const handleConfirmDelete = useCallback(() => {
+    if (deleteTarget) {
+      handleDeleteProperty(deleteTarget)
+      setDeleteTarget(null)
+    }
+  }, [deleteTarget, handleDeleteProperty])
 
   const handleAddFromDef = useCallback(
     async (def: PropertyDefinition) => {
@@ -124,10 +147,10 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
       setDefSearch('')
       setCreatingDef(false)
       setNewDefType('text')
-    } catch {
-      toast.error('Failed to create property definition')
+    } catch (err: any) {
+      toast.error(err.message ?? t('property.createDefFailed'))
     }
-  }, [defSearch, newDefType, pageId])
+  }, [defSearch, newDefType, pageId, t])
 
   const filteredDefs = definitions.filter(
     (d) =>
@@ -176,7 +199,7 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
                   prop={prop}
                   def={def}
                   onSave={(rawValue) => handleSaveProperty(prop.key, def, rawValue)}
-                  onDelete={() => handleDeleteProperty(prop.key)}
+                  onDelete={() => setDeleteTarget(prop.key)}
                 />
               )
             })}
@@ -256,6 +279,29 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
           )}
         </div>
       )}
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('property.deleteConfirm')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('property.deleteConfirmDesc')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('action.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete}>
+              {t('action.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -303,6 +349,9 @@ function PropertyRowEditor({ prop, def, onSave, onDelete }: PropertyRowEditorPro
     [onSave],
   )
 
+  // TODO: PR-16 — Allow editing select property options via updatePropertyDefOptions.
+  // After a select property's options are created, users should be able to modify them
+  // (e.g., an "Edit options" button that opens a popover with an editable options list).
   const selectOptions: string[] = (() => {
     if (valueType !== 'select' || !def?.options) return []
     try {

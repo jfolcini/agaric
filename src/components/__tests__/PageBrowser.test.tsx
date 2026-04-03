@@ -362,7 +362,7 @@ describe('PageBrowser', () => {
       })
     })
 
-    it('creates page with "Untitled" when input is empty', async () => {
+    it('disables "New Page" button when input is empty or whitespace', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce(emptyPage)
 
@@ -372,19 +372,16 @@ describe('PageBrowser', () => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
 
-      mockedInvoke.mockResolvedValueOnce(makePage('P_NEW', 'Untitled'))
+      const newPageBtn = screen.getByRole('button', { name: /New Page/i })
+      expect(newPageBtn).toBeDisabled()
 
-      // Submit without typing anything
-      await user.click(screen.getByRole('button', { name: /New Page/i }))
+      const input = screen.getByPlaceholderText('New page name...')
+      await user.type(input, '   ')
+      expect(newPageBtn).toBeDisabled()
 
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-          blockType: 'page',
-          content: 'Untitled',
-          parentId: null,
-          position: null,
-        })
-      })
+      await user.clear(input)
+      await user.type(input, 'Some Page')
+      expect(newPageBtn).toBeEnabled()
     })
 
     it('submits via Enter key in the input', async () => {
@@ -439,6 +436,9 @@ describe('PageBrowser', () => {
 
       // Mock create_block to fail
       mockedInvoke.mockRejectedValueOnce(new Error('Create failed'))
+
+      const input = screen.getByPlaceholderText('New page name...')
+      await user.type(input, 'Failing Page')
 
       const newPageBtn = screen.getByRole('button', { name: /New Page/i })
       await user.click(newPageBtn)
@@ -502,6 +502,98 @@ describe('PageBrowser', () => {
     })
   })
 
+  it('page item button has focus-visible ring classes', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makePage('P1', 'Focus Page')],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<PageBrowser />)
+
+    await screen.findByText('Focus Page')
+
+    const pageRow = screen.getByText('Focus Page').closest('.group') as HTMLElement
+    const pageBtn = within(pageRow).getByRole('button', { name: /Focus Page/i })
+    expect(pageBtn.className).toContain('focus-visible:ring-2')
+    expect(pageBtn.className).toContain('focus-visible:ring-ring')
+    expect(pageBtn.className).toContain('focus-visible:ring-offset-1')
+  })
+
+  it('delete button is disabled while deletion is in progress', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makePage('P1', 'Deleting Page')],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<PageBrowser />)
+
+    await screen.findByText('Deleting Page')
+
+    // Mock delete_block to return a pending promise (never resolves)
+    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+
+    // Open dialog
+    const pageRow = screen.getByText('Deleting Page').closest('.group') as HTMLElement
+    const trashBtn = findTrashButton(pageRow)
+    await user.click(trashBtn)
+
+    // Click Delete in dialog
+    const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
+    await user.click(confirmBtn)
+
+    // Dialog closes but trash button should be disabled while delete is in progress
+    await waitFor(() => {
+      expect(trashBtn).toBeDisabled()
+    })
+  })
+
+  it('success toast shown after delete', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makePage('P1', 'Toast Page')],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<PageBrowser />)
+
+    await screen.findByText('Toast Page')
+
+    // Mock delete_block response
+    mockedInvoke.mockResolvedValueOnce({
+      block_id: 'P1',
+      deleted_at: '2025-01-15T00:00:00Z',
+      descendants_affected: 0,
+    })
+
+    // Open dialog and confirm
+    const pageRow = screen.getByText('Toast Page').closest('.group') as HTMLElement
+    const trashBtn = findTrashButton(pageRow)
+    await user.click(trashBtn)
+    const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
+    await user.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Page deleted')
+    })
+  })
+
+  it('page name has title attribute for accessibility', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makePage('P1', 'A very long page name that should be truncated')],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<PageBrowser />)
+
+    const pageTitle = await screen.findByText('A very long page name that should be truncated')
+    expect(pageTitle).toHaveAttribute('title', 'A very long page name that should be truncated')
+  })
+
   // UX #171: "New Page" button loading state
   describe('new page loading state', () => {
     it('disables "New Page" button during creation', async () => {
@@ -516,6 +608,9 @@ describe('PageBrowser', () => {
 
       // Mock create_block to return a pending promise (never resolves)
       mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+
+      const input = screen.getByPlaceholderText('New page name...')
+      await user.type(input, 'Test Page')
 
       const newPageBtn = screen.getByRole('button', { name: /New Page/i })
       await user.click(newPageBtn)
@@ -541,6 +636,9 @@ describe('PageBrowser', () => {
       })
       mockedInvoke.mockReturnValueOnce(p)
 
+      const input = screen.getByPlaceholderText('New page name...')
+      await user.type(input, 'Test Page')
+
       const newPageBtn = screen.getByRole('button', { name: /New Page/i })
       await user.click(newPageBtn)
 
@@ -548,12 +646,16 @@ describe('PageBrowser', () => {
       expect(newPageBtn).toBeDisabled()
 
       // Resolve the create call
-      resolveCreate(makePage('P_NEW', 'Untitled'))
+      resolveCreate(makePage('P_NEW', 'Test Page'))
 
-      // Button should re-enable after creation
+      // After creation, input is cleared so button is disabled due to empty input
       await waitFor(() => {
-        expect(newPageBtn).toBeEnabled()
+        expect(input).toHaveValue('')
       })
+
+      // Type new text to prove isCreating was reset — button should re-enable
+      await user.type(input, 'Another Page')
+      expect(newPageBtn).toBeEnabled()
     })
   })
 })
