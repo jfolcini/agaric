@@ -1,5 +1,5 @@
 /**
- * Roving TipTap editor — exactly ONE instance at all times (ADR-01).
+ * Roving TipTap editor — exactly ONE instance at all times.
  *
  * Mount on focus (parse → setContent). Unmount on blur (serialize →
  * compare → flush if dirty). Undo history is scoped per mount session
@@ -276,7 +276,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
 
       const doc = parse(markdown)
       replaceDocSilently(editor, doc as unknown as Record<string, unknown>)
-      // ADR-01: "Cleared on blur/flush. Ctrl+Z does not cross the flush boundary."
+      // Cleared on blur/flush. Ctrl+Z does not cross the flush boundary.
       // Reset undo history so previous block's edits don't leak into this one.
       // Pass { plugins } explicitly to preserve all plugin configurations
       // (including History keymaps) while resetting their internal state.

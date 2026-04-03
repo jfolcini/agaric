@@ -5,7 +5,7 @@
  * On selection, inserts a block_link node with the chosen ULID.
  * Never writes [[title]] to storage — only [[ULID]].
  *
- * ADR-01, ADR-20: picker resolves to ULID, not text.
+ * Picker resolves to ULID, not text.
  */
 
 import { Extension } from '@tiptap/core'

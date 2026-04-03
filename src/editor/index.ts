@@ -1,5 +1,5 @@
 /**
- * TipTap editor configuration — minimal extension set per ADR-01.
+ * TipTap editor configuration — minimal extension set.
  *
  * No starter-kit. Individual extensions only. Block-level Markdown
  * (headings, code blocks) supported via the markdown serializer.

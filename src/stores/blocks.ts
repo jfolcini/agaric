@@ -1,5 +1,5 @@
 /**
- * Block store — Zustand state for the block tree (ADR-01).
+ * Block store — Zustand state for the block tree.
  *
  * Manages the in-memory block list, focused block, and CRUD operations.
  * All mutations go through Tauri commands and update local state on success.

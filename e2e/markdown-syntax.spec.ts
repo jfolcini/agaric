@@ -10,7 +10,7 @@ import { expect, test } from '@playwright/test'
  * Also tests round-trip persistence: type/format -> save -> re-open -> verify
  * marks are still applied.
  *
- * Supported markdown subset (from markdown-serializer.ts / ADR-20):
+ * Supported markdown subset (from markdown-serializer.ts):
  *   blocks: # heading (h1-h6), ```code```
  *   marks:  **bold**  *italic*  `code`  [text](url)
  *   tokens: #[ULID]  [[ULID]]

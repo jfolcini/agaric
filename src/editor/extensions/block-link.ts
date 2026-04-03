@@ -5,7 +5,7 @@
  * Renders as a chip showing the resolved page title. The raw ULID is
  * never visible during editing.
  *
- * ADR-01, ADR-20: atom:true, inline:true. Attr: id (ULID).
+ * Atomic inline node. Attr: id (ULID).
  *
  * Uses a NodeView (addNodeView) so we can attach a click handler for
  * navigation and conditionally apply a "deleted" style for broken links.

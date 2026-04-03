@@ -2,7 +2,7 @@
  * StaticBlock — renders a non-focused block as a plain div.
  *
  * Clicking focuses the block, which mounts the TipTap editor.
- * This is the "static div for all non-focused blocks" from ADR-01.
+ * This is the "static div for all non-focused blocks" from the roving editor pattern.
  *
  * Inline tokens (block_link, tag_ref) are rendered as styled spans
  * with optional click-to-navigate (block links) and deleted decoration.

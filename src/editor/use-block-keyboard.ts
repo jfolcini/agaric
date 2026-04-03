@@ -1,5 +1,5 @@
 /**
- * useBlockKeyboard — keyboard boundary handling for the roving editor (ADR-01).
+ * useBlockKeyboard — keyboard boundary handling for the roving editor.
  *
  * ArrowUp/Left at pos 0 → prev block. ArrowDown/Right at end → next block.
  * Backspace on empty → delete block + focus prev. Enter → create new sibling.

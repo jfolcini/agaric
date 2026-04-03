@@ -1,5 +1,5 @@
 /**
- * Markdown serializer for the agaric content format (ADR-20).
+ * Markdown serializer for the agaric content format.
  *
  * Converts between ProseMirror JSON documents and a locked Markdown subset:
  *   blocks: # heading  ```code```
