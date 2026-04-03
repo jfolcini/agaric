@@ -14,9 +14,8 @@
  *  - Persistent help text (#304)
  *  - Aria-labels on actions (#298)
  *
- * NOTE: The backend currently does not distinguish conflict types in the DB.
- * "Text conflict" is shown as default. Property and Move conflict types will
- * be supported when the backend exposes them via a conflict_type field.
+ * Type-specific rendering for Text / Property / Move conflicts (#651-C2).
+ * Batch resolution via multi-select + batch actions (#651-C8).
  */
 
 import { listen } from '@tauri-apps/api/event'
@@ -76,6 +75,109 @@ function conflictTypeBadgeClass(type: 'Text' | 'Property' | 'Move'): string {
   }
 }
 
+/**
+ * Render the content area of a conflict item based on its type.
+ *
+ * - Property conflicts show a diff of changed metadata fields.
+ * - Move conflicts show parent/position changes.
+ * - Text conflicts (and fallbacks) show Current:/Incoming: content.
+ */
+function renderConflictContent(
+  conflictType: 'Text' | 'Property' | 'Move',
+  block: BlockRow,
+  original: BlockRow | undefined,
+  isExpanded: boolean,
+): React.ReactNode {
+  if (conflictType === 'Property' && original) {
+    const diffs: React.ReactNode[] = []
+    if (block.todo_state !== original.todo_state) {
+      diffs.push(
+        <div key="state">
+          State: <span className="text-muted-foreground">{original.todo_state ?? '(none)'}</span>
+          {' \u2192 '}<span className="font-medium">{block.todo_state ?? '(none)'}</span>
+        </div>,
+      )
+    }
+    if (block.priority !== original.priority) {
+      diffs.push(
+        <div key="priority">
+          Priority: <span className="text-muted-foreground">{original.priority ?? '(none)'}</span>
+          {' \u2192 '}<span className="font-medium">{block.priority ?? '(none)'}</span>
+        </div>,
+      )
+    }
+    if (block.due_date !== original.due_date) {
+      diffs.push(
+        <div key="due">
+          Due: <span className="text-muted-foreground">{original.due_date ?? '(none)'}</span>
+          {' \u2192 '}<span className="font-medium">{block.due_date ?? '(none)'}</span>
+        </div>,
+      )
+    }
+    if (block.scheduled_date !== original.scheduled_date) {
+      diffs.push(
+        <div key="sched">
+          Scheduled: <span className="text-muted-foreground">{original.scheduled_date ?? '(none)'}</span>
+          {' \u2192 '}<span className="font-medium">{block.scheduled_date ?? '(none)'}</span>
+        </div>,
+      )
+    }
+    if (block.content !== original.content) {
+      diffs.push(<div key="content">Content also changed</div>)
+    }
+    if (diffs.length > 0) {
+      return (
+        <div className="conflict-property-diff text-sm">
+          <span className="font-medium text-blue-600 dark:text-blue-400">Property changes</span>
+          <div className="mt-1 space-y-0.5 text-xs">{diffs}</div>
+        </div>
+      )
+    }
+    // Fall through to text rendering if no diffs detected
+  }
+
+  if (conflictType === 'Move' && original) {
+    return (
+      <div className="conflict-move-diff text-sm">
+        <span className="font-medium text-purple-600 dark:text-purple-400">Move conflict</span>
+        <div className="mt-1 space-y-0.5 text-xs">
+          {block.parent_id !== original.parent_id && (
+            <div>
+              Parent: <span className="font-mono text-muted-foreground">{truncateId(original.parent_id ?? '?')}</span>
+              {' \u2192 '}<span className="font-mono font-medium">{truncateId(block.parent_id ?? '?')}</span>
+            </div>
+          )}
+          {block.position !== original.position && (
+            <div>Position: {original.position ?? '?'} \u2192 {block.position ?? '?'}</div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // Default: Text conflict (or fallback)
+  return (
+    <>
+      <div className={`conflict-original text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}>
+        <span className="font-medium text-muted-foreground">Current:</span>{' '}
+        {original
+          ? (original.content
+            ? <span>{renderRichContent(original.content, { interactive: false })}</span>
+            : '(empty)')
+          : '(original not available)'}
+      </div>
+      <div className={`conflict-incoming text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}>
+        <span className="font-medium">Incoming:</span>{' '}
+        <span className="conflict-item-text">
+          {block.content
+            ? renderRichContent(block.content, { interactive: false })
+            : '(empty)'}
+        </span>
+      </div>
+    </>
+  )
+}
+
 export function ConflictList(): React.ReactElement {
   const { t } = useTranslation()
   const queryFn = useCallback((cursor?: string) => getConflicts({ cursor, limit: 50 }), [])
@@ -92,6 +194,8 @@ export function ConflictList(): React.ReactElement {
   const [confirmKeepBlock, setConfirmKeepBlock] = useState<BlockRow | null>(null)
   const [originals, setOriginals] = useState<Map<string, BlockRow>>(new Map())
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [batchAction, setBatchAction] = useState<'keep' | 'discard' | null>(null)
   const fetchedParentsRef = useRef(new Set<string>())
 
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
@@ -147,6 +251,15 @@ export function ConflictList(): React.ReactElement {
       unlisten?.()
     }
   }, [reload])
+
+  // Clean up selectedIds when blocks are removed after resolution
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const blockIds = new Set(blocks.map((b) => b.id))
+      const next = new Set([...prev].filter((id) => blockIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [blocks])
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -304,6 +417,44 @@ export function ConflictList(): React.ReactElement {
         </div>
       )}
 
+      {selectedIds.size > 0 && (
+        <div className="conflict-batch-toolbar flex items-center gap-2 rounded-lg border bg-muted/50 p-2 mb-2">
+          <span className="text-sm font-medium">
+            {selectedIds.size} selected
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              if (selectedIds.size === blocks.length) {
+                setSelectedIds(new Set())
+              } else {
+                setSelectedIds(new Set(blocks.map((b) => b.id)))
+              }
+            }}
+          >
+            {selectedIds.size === blocks.length ? 'Deselect all' : 'Select all'}
+          </Button>
+          <div className="flex-1" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setBatchAction('keep')}
+          >
+            <Check className="h-3.5 w-3.5 mr-1" />
+            Keep all
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setBatchAction('discard')}
+          >
+            <X className="h-3.5 w-3.5 mr-1" />
+            Discard all
+          </Button>
+        </div>
+      )}
+
       <div className="conflict-items space-y-2">
         {blocks.map((block) => {
           const original = block.parent_id ? originals.get(block.parent_id) : undefined
@@ -314,6 +465,22 @@ export function ConflictList(): React.ReactElement {
               key={block.id}
               className="conflict-item flex items-start justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
             >
+              <label className="flex items-center shrink-0 mr-2" onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(block.id)}
+                  onChange={() => {
+                    setSelectedIds((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(block.id)) next.delete(block.id)
+                      else next.add(block.id)
+                      return next
+                    })
+                  }}
+                  aria-label={`Select conflict ${truncateId(block.id)}`}
+                  className="h-4 w-4 rounded border-muted-foreground/50"
+                />
+              </label>
               <button
                 type="button"
                 className="conflict-item-content flex min-w-0 flex-col gap-1 text-left flex-1 cursor-pointer bg-transparent border-none p-0"
@@ -345,24 +512,7 @@ export function ConflictList(): React.ReactElement {
                   </span>
                   <span className="conflict-timestamp">{getConflictTimestamp(block)}</span>
                 </div>
-                <div
-                  className={`conflict-original text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}
-                >
-                  <span className="font-medium text-muted-foreground">Current:</span>{' '}
-                  {original
-                    ? (original.content
-                      ? <span>{renderRichContent(original.content, { interactive: false })}</span>
-                      : '(empty)')
-                    : '(original not available)'}
-                </div>
-                <div className={`conflict-incoming text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}>
-                  <span className="font-medium">Incoming:</span>{' '}
-                  <span className="conflict-item-text">
-                    {block.content
-                      ? renderRichContent(block.content, { interactive: false })
-                      : '(empty)'}
-                  </span>
-                </div>
+                {renderConflictContent(conflictType, block, original, isExpanded)}
               </button>
               <div className="conflict-item-actions flex items-center gap-2 ml-2 shrink-0">
                 {block.parent_id && (
@@ -501,6 +651,73 @@ export function ConflictList(): React.ReactElement {
               }}
             >
               Yes, discard
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Batch action confirmation dialog */}
+      <AlertDialog
+        open={!!batchAction}
+        onOpenChange={(open) => {
+          if (!open) setBatchAction(null)
+        }}
+      >
+        <AlertDialogContent className="conflict-batch-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {batchAction === 'keep' ? 'Keep all selected?' : 'Discard all selected?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {batchAction === 'keep'
+                ? `This will replace ${selectedIds.size} block(s) with their incoming versions.`
+                : `This will permanently remove ${selectedIds.size} conflicting version(s).`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="conflict-batch-yes"
+              onClick={async () => {
+                const selectedBlocks = blocks.filter((b) => selectedIds.has(b.id))
+                let failCount = 0
+                const savedBatchAction = batchAction
+                for (const block of selectedBlocks) {
+                  try {
+                    if (savedBatchAction === 'keep') {
+                      if (block.parent_id && block.content != null) {
+                        await editBlock(block.parent_id, block.content)
+                      }
+                      await deleteBlock(block.id)
+                      setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+                    } else {
+                      await deleteBlock(block.id)
+                      setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+                    }
+                  } catch {
+                    failCount++
+                  }
+                }
+                setSelectedIds(new Set())
+                setBatchAction(null)
+                if (failCount > 0) {
+                  toast.error(`${failCount} of ${selectedBlocks.length} operations failed`, {
+                    duration: 5000,
+                    action: {
+                      label: 'Retry',
+                      onClick: () => setBatchAction(savedBatchAction),
+                    },
+                  })
+                } else {
+                  toast.success(
+                    savedBatchAction === 'keep'
+                      ? `Kept ${selectedBlocks.length} conflict(s)`
+                      : `Discarded ${selectedBlocks.length} conflict(s)`,
+                  )
+                }
+              }}
+            >
+              {batchAction === 'keep' ? 'Yes, keep all' : 'Yes, discard all'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

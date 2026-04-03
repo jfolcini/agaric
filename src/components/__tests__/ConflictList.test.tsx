@@ -1632,4 +1632,415 @@ describe('ConflictList', () => {
       })
     })
   })
+
+  // --- #651 C-2 Type-specific rendering ---
+
+  it('renders property diff for Property conflict type (#651 C-2)', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'get_conflicts') {
+        return {
+          items: [
+            {
+              id: 'CPROP1',
+              block_type: 'content',
+              content: 'same content',
+              parent_id: 'ORIG_PROP',
+              position: 1,
+              deleted_at: null,
+              archived_at: null,
+              is_conflict: true,
+              conflict_type: 'Property',
+              todo_state: 'DONE',
+              priority: 'A',
+              due_date: null,
+              scheduled_date: null,
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'get_block') {
+        return {
+          id: 'ORIG_PROP',
+          block_type: 'content',
+          content: 'same content',
+          parent_id: null,
+          position: 1,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: 'TODO',
+          priority: 'B',
+          due_date: null,
+          scheduled_date: null,
+        }
+      }
+      return null
+    })
+
+    const { container } = render(<ConflictList />)
+
+    await waitFor(() => {
+      expect(container.querySelector('.conflict-property-diff')).toBeTruthy()
+    })
+
+    expect(screen.getByText('Property changes')).toBeInTheDocument()
+    expect(screen.getByText(/State:/)).toBeInTheDocument()
+    expect(screen.getByText(/Priority:/)).toBeInTheDocument()
+  })
+
+  it('renders move diff for Move conflict type (#651 C-2)', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'get_conflicts') {
+        return {
+          items: [
+            {
+              id: 'CMOVE1',
+              block_type: 'content',
+              content: 'moved block',
+              parent_id: 'NEW_PARENT',
+              position: 3,
+              deleted_at: null,
+              archived_at: null,
+              is_conflict: true,
+              conflict_type: 'Move',
+              todo_state: null,
+              priority: null,
+              due_date: null,
+              scheduled_date: null,
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'get_block') {
+        return {
+          id: 'NEW_PARENT',
+          block_type: 'content',
+          content: 'moved block',
+          parent_id: 'OLD_PARENT',
+          position: 1,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+        }
+      }
+      return null
+    })
+
+    const { container } = render(<ConflictList />)
+
+    await waitFor(() => {
+      expect(container.querySelector('.conflict-move-diff')).toBeTruthy()
+    })
+
+    expect(screen.getByText('Move conflict')).toBeInTheDocument()
+    expect(screen.getByText(/Parent:/)).toBeInTheDocument()
+  })
+
+  it('falls back to text rendering when Property conflict has no detectable diffs (#651 C-2)', async () => {
+    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    vi.mocked(invoke).mockImplementation(async (cmd: string, _args?: any) => {
+      if (cmd === 'get_conflicts') {
+        return {
+          items: [
+            {
+              id: 'CPROP_SAME',
+              block_type: 'content',
+              content: 'identical content',
+              parent_id: 'ORIG_SAME',
+              position: 1,
+              deleted_at: null,
+              archived_at: null,
+              is_conflict: true,
+              conflict_type: 'Property',
+              todo_state: 'TODO',
+              priority: 'A',
+              due_date: null,
+              scheduled_date: null,
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'get_block') {
+        return {
+          id: 'ORIG_SAME',
+          block_type: 'content',
+          content: 'identical content',
+          parent_id: null,
+          position: 1,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: 'TODO',
+          priority: 'A',
+          due_date: null,
+          scheduled_date: null,
+        }
+      }
+      return null
+    })
+
+    const { container } = render(<ConflictList />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Current:')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('Incoming:')).toBeInTheDocument()
+    expect(container.querySelector('.conflict-property-diff')).toBeNull()
+  })
+
+  // --- #651 C-8 Batch resolution ---
+
+  it('shows batch toolbar when conflicts are selected (#651 C-8)', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeConflict('C1', 'conflict 1'), makeConflict('C2', 'conflict 2')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    // Click first checkbox
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0])
+
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Keep all/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Discard all/i })).toBeInTheDocument()
+  })
+
+  it('select all selects all conflicts (#651 C-8)', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeConflict('C1', 'conflict 1'), makeConflict('C2', 'conflict 2')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    // Select one to show toolbar
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0])
+
+    // Click "Select all"
+    const selectAllBtn = screen.getByRole('button', { name: /Select all/i })
+    await user.click(selectAllBtn)
+
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+
+    // All checkboxes should be checked
+    const allCheckboxes = screen.getAllByRole('checkbox')
+    for (const cb of allCheckboxes) {
+      expect(cb).toBeChecked()
+    }
+  })
+
+  it('batch keep confirms and resolves selected conflicts (#651 C-8)', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict('C1', 'conflict 1', 'ORIG001'),
+        makeConflict('C2', 'conflict 2', 'ORIG001'),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({
+      get_conflicts: page,
+      get_block: originalBlock,
+      edit_block: { id: 'ORIG001', block_type: 'content', content: 'conflict 1' },
+      delete_block: {
+        block_id: 'C1',
+        deleted_at: '2025-01-15T00:00:00Z',
+        descendants_affected: 0,
+      },
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    // Select both conflicts
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[1])
+
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+
+    // Click "Keep all"
+    const keepAllBtn = screen.getByRole('button', { name: /Keep all/i })
+    await user.click(keepAllBtn)
+
+    // Confirm dialog
+    expect(screen.getByText('Keep all selected?')).toBeInTheDocument()
+    const confirmBtn = screen.getByRole('button', { name: /Yes, keep all/i })
+    await user.click(confirmBtn)
+
+    // Verify API calls for both
+    await waitFor(() => {
+      const editCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'edit_block')
+      const deleteCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')
+      expect(editCalls.length).toBeGreaterThanOrEqual(2)
+      expect(deleteCalls.length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
+  it('batch discard confirms and removes selected conflicts (#651 C-8)', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict('C1', 'conflict 1', 'ORIG001'),
+        makeConflict('C2', 'conflict 2', 'ORIG001'),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({
+      get_conflicts: page,
+      get_block: originalBlock,
+      delete_block: {
+        block_id: 'C1',
+        deleted_at: '2025-01-15T00:00:00Z',
+        descendants_affected: 0,
+      },
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    // Select both conflicts
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[1])
+
+    // Click "Discard all"
+    const discardAllBtn = screen.getByRole('button', { name: /Discard all/i })
+    await user.click(discardAllBtn)
+
+    // Confirm dialog
+    expect(screen.getByText('Discard all selected?')).toBeInTheDocument()
+    const confirmBtn = screen.getByRole('button', { name: /Yes, discard all/i })
+    await user.click(confirmBtn)
+
+    // Verify deleteBlock called for each
+    await waitFor(() => {
+      const deleteCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')
+      expect(deleteCalls.length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
+  it('batch toolbar hidden when no selection (#651 C-8)', async () => {
+    const page = {
+      items: [makeConflict('C1', 'conflict 1')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Keep all/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Discard all/i })).not.toBeInTheDocument()
+  })
+
+  it('a11y: no violations with batch toolbar visible (#651 C-8)', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeConflict('C1', 'conflict 1')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    // Select a conflict to show toolbar
+    const checkbox = screen.getAllByRole('checkbox')[0]
+    await user.click(checkbox)
+
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+
+    await waitFor(async () => {
+      const results = await axe(document.body, {
+        rules: { region: { enabled: false } },
+      })
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('shows partial failure toast when batch keep has mixed results (#651 C-8)', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeConflict('C1', 'conflict 1', 'ORIG001'),
+        makeConflict('C2', 'conflict 2', 'ORIG001'),
+      ],
+      next_cursor: null,
+      has_more: false,
+    }
+    let editCallCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_conflicts') return page
+      if (cmd === 'get_block') return originalBlock
+      if (cmd === 'edit_block') {
+        editCallCount++
+        if (editCallCount > 1) throw new Error('db locked')
+        return { id: 'ORIG001', block_type: 'content', content: 'conflict 1' }
+      }
+      if (cmd === 'delete_block') {
+        return { block_id: 'C1', deleted_at: '2025-01-15T00:00:00Z', descendants_affected: 0 }
+      }
+      return undefined
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    const checkboxes = screen.getAllByRole('checkbox')
+    await user.click(checkboxes[0])
+    await user.click(checkboxes[1])
+
+    const keepAllBtn = screen.getByRole('button', { name: /Keep all/i })
+    await user.click(keepAllBtn)
+
+    const confirmBtn = screen.getByRole('button', { name: /Yes, keep all/i })
+    await user.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining('1 of 2 operations failed'),
+        expect.objectContaining({ duration: 5000 }),
+      )
+    })
+  })
 })
