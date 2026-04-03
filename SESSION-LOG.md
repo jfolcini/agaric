@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 108 — 2026-04-03 — Strikethrough + Highlight Marks (#653)
+
+### Editor formatting: ~~strikethrough~~ and ==highlight==
+
+1 build subagent.
+
+| File | Change |
+|------|--------|
+| `types.ts` | #653: `StrikeMark` + `HighlightMark` types added to Mark union. |
+| `markdown-serializer.ts` | #653: Parse/serialize `~~strike~~` and `==highlight==` marks. |
+| `markdown-serializer.test.ts` | #653: 4 new tests (serialize + parse round-trips for both marks). |
+| `use-roving-editor.ts` | #653: `Strike` + `Highlight` TipTap extensions added. |
+| `FormattingToolbar.tsx` | #653: Strikethrough + Highlight toolbar buttons with active state. |
+| `FormattingToolbar.test.tsx` | #653: Button count updated, new buttons in assertions. |
+| `i18n.ts` | 4 new keys (toolbar.strikethrough/Tip, toolbar.highlight/Tip). |
+| `package.json` | Added `@tiptap/extension-strike`, `@tiptap/extension-highlight`. |
+
+### Stats
+- Frontend: 2474 tests pass (2470 + 4 new)
+- Commit: `9be337f`
+- REVIEW-LATER: 16 → 15 items (#653 resolved)
+
 ## Session 107 — 2026-04-03 — Full Graph Markdown Export (#659)
 
 ### Export all pages as ZIP
