@@ -1,5 +1,21 @@
 # Session Log
 
+## Session 94 — 2026-04-03 — Journal Auto-Create + Keyboard Shortcut (#629, #633)
+
+### Batch fix: 2 journaling launch items
+
+1 build subagent + 1 review subagent. Orchestrator fixed Biome lint issues (useCallback wrap, exhaustive deps, formatting).
+
+| File | Change |
+|------|--------|
+| `JournalPage.tsx` | #629: `handleAddBlock` wrapped in `useCallback` with `autoFocus` param. New `autoCreatedRef` + `useEffect` auto-creates today's page on mount when no page exists. Sets `focusedBlockId` for immediate typing. `loading` state initialized to `true` to prevent premature effect firing. #633: New `useEffect` keydown listener — Enter/n creates page on empty daily journal. Guards: daily mode only, not inside inputs/contentEditable. |
+| `JournalPage.test.tsx` | #629: 2 new tests (auto-creates when no page exists, skips when page exists). #633: 2 new tests (Enter creates page, skips inside input). |
+
+### Stats
+- Frontend: 2412 tests pass (2408 + 4 new)
+- Commit: `12dc8e1`
+- REVIEW-LATER: 13 → 11 items (#629, #633 resolved)
+
 ## Session 93 — 2026-04-03 — Frontend Polish Batch (#628, #631, #635, #638)
 
 ### Batch fix: 4 S-cost frontend items
