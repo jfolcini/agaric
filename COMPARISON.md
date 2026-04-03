@@ -30,9 +30,9 @@
 | Collapse/expand children | Click arrow or `Ctrl+Up/Down` | Chevron toggle, `Ctrl+.` shortcut. State is ephemeral (lost on reload) | Partial |
 | Zoom into block (focus mode) | `Alt+Right` shows block + descendants | Zoom-in with breadcrumb trail. Home button + ancestor navigation | Done |
 | Move block up/down | `Alt+Shift+Up/Down` | DnD reordering (tree-aware, @dnd-kit) + `Ctrl+Shift+Up/Down` keyboard shortcuts | Done |
-| Block-level selection | `Esc` + arrow keys for multi-block select | Not implemented (single-focus roving editor per ADR-01) | Gap |
+| Block-level selection | `Esc` + arrow keys for multi-block select | Not implemented (single-focus roving editor) | Gap |
 | Visual hierarchy | Bullet points + tree lines | Indentation + tree indent guide lines (`border-l`). No bullet points | Partial |
-| Cross-block undo | Ctrl+Z across blocks within session | Op-level undo/redo: `Ctrl+Z`/`Ctrl+Y`, per-page undo depth + redo stack, HistoryView with multi-select batch revert, word-level diff. Scoped per page (ADR-02) | Done |
+| Cross-block undo | Ctrl+Z across blocks within session | Op-level undo/redo: `Ctrl+Z`/`Ctrl+Y`, per-page undo depth + redo stack, HistoryView with multi-select batch revert, word-level diff. Scoped per page (intentional — see ARCHITECTURE.md §Undo/Redo) | Done |
 
 **Planned improvements:**
 - Inline property chips + click-to-edit + block property drawer (Planned #645) — makes custom properties visible and editable at block level
