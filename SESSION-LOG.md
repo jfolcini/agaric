@@ -1,5 +1,22 @@
 # Session Log
 
+## Session 128 — 2026-04-03 — Conflict resolution UX (#651 C-4/C-12/C-16)
+
+### Batch: undo support, rich content rendering, retry action for ConflictList
+
+1 build subagent (all three items share ConflictList.tsx). Technical + UX review in parallel. UX reviewer caught CSS class inheritance issue (text-muted-foreground on container conflicting with rich content colors) — fixed before commit. Added explicit toast durations (6s undo, 5s retry).
+
+| File | Change |
+|------|--------|
+| `ConflictList.tsx` | C-12: Import `renderRichContent` from StaticBlock; replace plain text content with rich rendering for both "Current:" and "Incoming:" sections (`interactive: false`). Move `text-muted-foreground` from container to label span only. C-16: Partial failure toast now has `action: { label: 'Retry delete' }` with 5s duration. C-4: `handleKeep` captures `originalContent` + `DeleteResponse`; success toast has "Undo" action (6s) that calls `restoreBlock` + reverts `editBlock`. `handleDiscard` changed from `(blockId)` to `(block: BlockRow)`; success toast has "Undo" action that calls `restoreBlock`. |
+| `ConflictList.test.tsx` | 4 new tests (C-12 rich content rendering, C-16 retry action, C-4 Keep undo, C-4 Discard undo). 5 existing assertions updated for new toast signatures. 59/59 pass. |
+| `REVIEW-LATER.md` | Removed C-4/C-12/C-16 from #651 remaining (6 → 3). Added to previously-resolved list. |
+
+### Stats
+- Frontend: 4 new tests, 5 updated assertions (59/59 ConflictList tests pass)
+- Commit: `afe313c`
+- REVIEW-LATER: #651 now has 3 remaining items (C-2, C-3, C-8). 12 open items total (unchanged — items resolved within existing tracker).
+
 ## Session 127 — 2026-04-03 — REVIEW-LATER + FEATURE-MAP cleanup
 
 Finalized session 126 doc updates: removed #649 entirely from REVIEW-LATER (all items T-1/T-3/T-4/T-5/T-6/T-8/T-13 now done). Removed C-6 from #651 remaining issues, added to previously-resolved list. Synced FEATURE-MAP deferred table — removed 9 items resolved in prior sessions (#643, #645, #647, #648, #649, #650, #652, #653, #659). REVIEW-LATER: 12 open items.
