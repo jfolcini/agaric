@@ -598,7 +598,8 @@ All list queries use cursor-based keyset pagination.
 - **Agenda sort/group**: `sortAgendaBlocks()`, `sortByPriority()`, `sortByState()`, `sortAgendaBlocksBy()` dispatcher, `groupByDate()`, `groupByPriority()`, `groupByState()` in `agenda-sort.ts`. Date groups: Overdue, Today, Tomorrow, future dates, No date. Priority groups: P1, P2, P3, No priority. State groups: DOING, TODO, DONE, No state. Sort key chain configurable: date→state→priority (default), priority→date→state, state→date→priority.
 - **Agenda toolbar**: `AgendaSortGroupControls` component — "Group by" and "Sort by" popover dropdowns with pill-style buttons. State persisted in localStorage (`agaric:agenda:groupBy`, `agaric:agenda:sortBy`). `AgendaResults` supports `groupBy` and `sortBy` props.
 - **Agenda default query**: Shows blocks with `due_date` or `scheduled_date` matching today (via `list_blocks` with `agenda_date`/`agenda_source`), not all TODO blocks.
-- **AgendaFilterBuilder**: status, priority, dueDate (6 presets: Today/This week/Overdue/Next 7/14/30 days), scheduledDate (6 presets), tag dimensions
+- **AgendaFilterBuilder**: status (custom keywords from localStorage), priority, dueDate (6 presets: Today/This week/Overdue/Next 7/14/30 days), scheduledDate (6 presets), completedDate (4 presets), tag dimensions
+- **Inline query blocks**: `{{query type:tag expr:...}}` syntax in block content renders live results via `QueryResult` component. Supports tag queries (`queryByTags`), property queries (`queryByProperty`), and backlink queries (`listBlocks`). Collapsible panel with todo badges, page breadcrumbs, click-to-navigate. `/query` slash command inserts template.
 
 ---
 
@@ -689,7 +690,6 @@ trailing-whitespace, end-of-file-fixer, check-yaml/toml/json, check-merge-confli
 | 644 | Repeating tasks (modes, end conditions, agenda projection) | Tasks |
 | 651 | Conflicts view — metadata, resolution, rendering gaps | Sync |
 | 654 | Editor block types (tables) | Editor |
-| 655 | Inline query blocks (`{{query ...}}` embedded results) | Query |
 | 657 | Block-level multi-selection (core done, batch toolbar pending) | Outlining |
 | 660 | Logseq/Markdown import | Import |
 

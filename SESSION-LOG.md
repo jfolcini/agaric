@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 135 — 2026-04-03 — Inline query blocks MVP (#655) + #642 update
+
+### Batch: QueryResult component + StaticBlock detection + /query slash command
+
+1 build subagent. Also discovered #642 items 1 (scheduledDate) and 3 (completedDate) already implemented — updated REVIEW-LATER scope.
+
+| File | Change |
+|------|--------|
+| `QueryResult.tsx` | NEW: `parseQueryExpression()` parser + `QueryResult` component. Fetches via `queryByTags`/`queryByProperty`/`listBlocks`. Collapsible panel with todo badges, page breadcrumbs, navigation. Loading/error/empty states. |
+| `QueryResult.test.tsx` | NEW: 10 tests (3 parser + loading + results + empty + error + collapse + navigation + a11y). |
+| `StaticBlock.tsx` | Detect `{{query ...}}` pattern, render QueryResult instead of rich text. |
+| `BlockTree.tsx` | Added `/query` slash command, inserts `{{query type:tag expr:}}` template. |
+| `BlockTree.test.tsx` | 3 new tests (search returns query, handler inserts template, updated all-commands count). |
+| `REVIEW-LATER.md` | Removed #655. Updated #642 (scheduledDate/completedDate already done). 9 → 8 open items. |
+| `FEATURE-MAP.md` | Added inline query blocks to agenda section. Removed #655 from deferred. |
+
+### Stats
+- Frontend: 13 new tests (10 QueryResult + 3 BlockTree)
+- Commit: `92cb013`
+- REVIEW-LATER: #655 fully resolved and removed. #642 updated. 8 open items (was 9).
+
 ## Session 134 — 2026-04-03 — Agenda custom keywords + page search hierarchy (#658, #656)
 
 ### Batch: two S-cost completions
