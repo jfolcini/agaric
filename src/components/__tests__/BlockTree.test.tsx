@@ -3222,3 +3222,164 @@ describe('BlockTree link/tag/code slash commands', () => {
     expect(mockToggleCodeBlock).toHaveBeenCalled()
   })
 })
+
+// =========================================================================
+// Date picker text input integration tests (#599)
+// =========================================================================
+
+describe('DatePickerOverlay text input', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('date picker shows text input field', async () => {
+    const tree = [makeBlock('A', null, 0, 'Some block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    // Open the date picker via /date slash command
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'date', label: 'DATE — Link to a date page' })
+    })
+
+    // Verify the text input is rendered inside the date picker
+    const input = screen.getByLabelText('Type a date')
+    expect(input).toBeInTheDocument()
+    expect(input).toHaveAttribute('type', 'text')
+    expect(input).toHaveAttribute('placeholder', 'Type a date... (today, +3d, Apr 15)')
+
+    // Calendar should also be present
+    expect(screen.getByTestId('mock-calendar')).toBeInTheDocument()
+  })
+
+  it("typing 'tomorrow' shows parsed preview", async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Some block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    // Open the date picker
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'date', label: 'DATE — Link to a date page' })
+    })
+
+    const input = screen.getByLabelText('Type a date')
+
+    // Type 'tomorrow'
+    await user.type(input, 'tomorrow')
+
+    // The preview should show a parsed date (format YYYY-MM-DD)
+    expect(screen.getByText(/Parsed:/)).toBeInTheDocument()
+    expect(screen.getByText(/press Enter to apply/)).toBeInTheDocument()
+
+    // Should NOT show the error message
+    expect(screen.queryByText('Could not parse date')).not.toBeInTheDocument()
+  })
+
+  it('typing an invalid date shows error message', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Some block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    // Open the date picker
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'date', label: 'DATE — Link to a date page' })
+    })
+
+    const input = screen.getByLabelText('Type a date')
+
+    // Type something unparseable
+    await user.type(input, 'notadate')
+
+    // Should show the error message
+    expect(screen.getByText('Could not parse date')).toBeInTheDocument()
+    expect(screen.queryByText(/Parsed:/)).not.toBeInTheDocument()
+  })
+
+  it('pressing Enter with valid date applies it via the date handler', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Some block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    // Use mockImplementation to handle set_due_date specifically
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') {
+        return { items: [tree[0]], next_cursor: null, has_more: false }
+      }
+      if (cmd === 'set_due_date') {
+        return {
+          id: 'A',
+          block_type: 'content',
+          content: 'Some block',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: '2025-04-15',
+          scheduled_date: null,
+        }
+      }
+      return emptyPage
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    // Open the date picker in due-date mode so we can verify set_due_date is called
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'due', label: 'DUE — Set due date on block' })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Type a date')).toBeInTheDocument()
+    })
+
+    const input = screen.getByLabelText('Type a date')
+
+    // Type a specific date and press Enter
+    await user.type(input, '2025-04-15{Enter}')
+
+    // Verify set_due_date was called with the parsed date
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_due_date', {
+        blockId: 'A',
+        date: '2025-04-15',
+      })
+    })
+
+    // Verify block store was updated
+    await waitFor(() => {
+      const block = useBlockStore.getState().blocks.find((b) => b.id === 'A')
+      expect(block?.due_date).toBe('2025-04-15')
+    })
+  })
+})

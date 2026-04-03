@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 73 — 2026-04-03 — Flexible Date Parsing (#599)
+
+### Multi-format date parser + date picker text input
+1 item resolved: flexible date input parsing with live preview in date picker.
+
+Built by 2 subagents (parser utility + 27 tests; date picker integration + 4 tests). No review — self-contained utility with comprehensive tests.
+
+| File | Change |
+|------|--------|
+| `parse-date.ts` (new) | #599: `parseDate()` — ISO, relative (+3d/+1w/+2m), natural language (today/tomorrow/next Monday/in N days), month names, no-year, ambiguous numeric. 218 lines. |
+| `parse-date.test.ts` (new) | 27 tests (all formats + edge cases + validation). |
+| `BlockTree.tsx` | #599: Text input above Calendar in date picker overlay. Live preview of parsed date. Enter to apply. |
+| `BlockTree.test.tsx` | 4 new tests (text input renders, preview, error, Enter applies). |
+
+### Stats
+- Frontend: 82/82 test files, 2320 tests pass (2289 + 31 new)
+- Commit: `c66c328`
+
 ## Session 72 — 2026-04-03 — Phase 6 Wave 4: Agenda Stackable Filters (#606-#608)
 
 ### Agenda filter refactor — filter builder + results list + execution
