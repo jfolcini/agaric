@@ -143,6 +143,7 @@ const resources = {
       'contextMenu.priority2To3': 'Priority 2 → 3',
       'contextMenu.priority3ToClear': 'Priority 3 → Clear',
       'contextMenu.setPriority1': 'Set priority 1',
+      'contextMenu.zoomIn': 'Zoom in',
 
       // Block
       'block.reorder': 'Reorder block (drag or use keyboard)',
@@ -161,6 +162,8 @@ const resources = {
       'block.priorityTip': 'Priority {{level}} (click to cycle)',
       'block.dueDate': 'Due {{date}}',
       'block.scheduledDate': 'Scheduled {{date}}',
+      'block.breadcrumb': 'Block breadcrumb',
+      'block.untitled': 'Untitled',
 
       // Errors
       'error.generic': 'Something went wrong',

@@ -14,8 +14,10 @@
 
 import { closestCenter, DndContext, DragOverlay, MeasuringStrategy } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { ChevronRight, Home } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { parse, serialize } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
@@ -42,6 +44,7 @@ import {
   setTodoState as setTodoStateCmd,
 } from '../lib/tauri'
 import { getDragDescendants } from '../lib/tree-utils'
+import { cn } from '../lib/utils'
 import { useBlockStore } from '../stores/blocks'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
@@ -190,6 +193,7 @@ interface BlockTreeProps {
 }
 
 export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): React.ReactElement {
+  const { t } = useTranslation()
   const blocks = useBlockStore((s) => s.blocks)
   const rootParentId = useBlockStore((s) => s.rootParentId)
   const focusedBlockId = useBlockStore((s) => s.focusedBlockId)
@@ -210,6 +214,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   // ── Collapse state ─────────────────────────────────────────────────
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
 
+  // ── Zoom state ─────────────────────────────────────────────────────
+  const [zoomedBlockId, setZoomedBlockId] = useState<string | null>(null)
+
   // ── Date picker for /DATE and /DUE commands ────────────────────────
   const [datePickerOpen, setDatePickerOpen] = useState(false)
   const [datePickerMode, setDatePickerMode] = useState<'date' | 'due' | 'schedule'>('date')
@@ -224,6 +231,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   const handleShowHistory = useCallback((blockId: string) => {
     setHistoryBlockId(blockId)
+  }, [])
+
+  const handleZoomIn = useCallback((blockId: string) => {
+    setZoomedBlockId(blockId)
   }, [])
 
   // ── Extracted hooks ────────────────────────────────────────────────
@@ -266,6 +277,30 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     }
     return result
   }, [blocks, collapsedIds])
+
+  const zoomedVisible = useMemo(() => {
+    if (!zoomedBlockId) return collapsedVisible
+    const zoomedBlock = blocks.find((b) => b.id === zoomedBlockId)
+    if (!zoomedBlock) return collapsedVisible
+    const depthOffset = zoomedBlock.depth + 1
+    const descendants = getDragDescendants(blocks, zoomedBlockId)
+    return collapsedVisible
+      .filter((b) => descendants.has(b.id))
+      .map((b) => ({ ...b, depth: b.depth - depthOffset }))
+  }, [zoomedBlockId, blocks, collapsedVisible])
+
+  const zoomBreadcrumb = useMemo(() => {
+    if (!zoomedBlockId) return []
+    const trail: Array<{ id: string; content: string }> = []
+    let currentId: string | null = zoomedBlockId
+    while (currentId) {
+      const block = blocks.find((b) => b.id === currentId)
+      if (!block) break
+      trail.unshift({ id: block.id, content: block.content ?? '' })
+      currentId = block.parent_id
+    }
+    return trail
+  }, [zoomedBlockId, blocks])
 
   // ── Slash command definitions ──────────────────────────────────────
   const SLASH_COMMANDS: PickerItem[] = useMemo(
@@ -348,6 +383,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   useEffect(() => {
     load(parentId)
+    setZoomedBlockId(null)
   }, [load, parentId])
 
   // Scan loaded blocks for [[ULID]] tokens not yet in the resolve cache
@@ -424,7 +460,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   // ── DnD hook (needs handleFlush + collapsedVisible) ────────────────
   const dnd = useBlockDnD({
     blocks,
-    collapsedVisible,
+    collapsedVisible: zoomedVisible,
     rootParentId,
     rovingEditor,
     handleFlush,
@@ -1089,6 +1125,37 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   return (
     <>
+      {zoomBreadcrumb.length > 0 && (
+        <nav
+          aria-label={t('block.breadcrumb')}
+          className="flex items-center gap-1 px-2 py-1.5 text-sm text-muted-foreground border-b border-border/40 overflow-x-auto"
+        >
+          <button
+            type="button"
+            className="flex-shrink-0 hover:text-foreground transition-colors"
+            onClick={() => setZoomedBlockId(null)}
+          >
+            <Home size={14} />
+          </button>
+          {zoomBreadcrumb.map((item, i) => (
+            <Fragment key={item.id}>
+              <ChevronRight size={12} className="flex-shrink-0 text-muted-foreground/50" />
+              <button
+                type="button"
+                className={cn(
+                  'truncate max-w-[200px] hover:text-foreground transition-colors',
+                  i === zoomBreadcrumb.length - 1 && 'text-foreground font-medium',
+                )}
+                onClick={() =>
+                  i === zoomBreadcrumb.length - 1 ? undefined : setZoomedBlockId(item.id)
+                }
+              >
+                {item.content || t('block.untitled')}
+              </button>
+            </Fragment>
+          ))}
+        </nav>
+      )}
       <DndContext
         sensors={dnd.sensors}
         collisionDetection={closestCenter}
@@ -1166,6 +1233,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                     }}
                     onMerge={handleMergeById}
                     onShowHistory={handleShowHistory}
+                    onZoomIn={hasChildrenSet.has(block.id) ? handleZoomIn : undefined}
                   />
                 </div>
               )

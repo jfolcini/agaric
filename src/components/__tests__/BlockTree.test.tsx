@@ -121,6 +121,7 @@ vi.mock('../SortableBlock', () => ({
     onToggleTodo?: (id: string) => void
     priority?: string | null
     onTogglePriority?: (id: string) => void
+    onZoomIn?: (id: string) => void
   }) => (
     <div
       data-testid={`sortable-block-${props.blockId}`}
@@ -154,6 +155,15 @@ vi.mock('../SortableBlock', () => ({
           type="button"
         >
           Priority
+        </button>
+      )}
+      {props.onZoomIn && (
+        <button
+          data-testid={`zoom-in-${props.blockId}`}
+          onClick={() => props.onZoomIn?.(props.blockId)}
+          type="button"
+        >
+          Zoom In
         </button>
       )}
       SortableBlock
@@ -3591,5 +3601,127 @@ describe('BlockTree Enter creates new sibling block', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', {
       blockId: 'NEW_WITH_CONTENT',
     })
+  })
+})
+
+// =========================================================================
+// Zoom-in to block with breadcrumb trail (#637)
+// =========================================================================
+
+describe('BlockTree zoom-in', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('zoom filters blocks to descendants only', async () => {
+    const user = userEvent.setup()
+    const tree = [
+      makeBlock('A', null, 0, 'Parent A'),
+      makeBlock('B', 'A', 1, 'Child B'),
+      makeBlock('D', 'B', 2, 'Grandchild D'),
+      makeBlock('C', 'A', 1, 'Child C'),
+    ]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    // All blocks visible initially
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-B')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-C')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-D')).toBeInTheDocument()
+    })
+
+    // Block A has children, so it should have a zoom-in button
+    expect(screen.getByTestId('zoom-in-A')).toBeInTheDocument()
+
+    // Zoom into A
+    await user.click(screen.getByTestId('zoom-in-A'))
+
+    // After zooming into A, only descendants (B, C, D) should be visible; A itself should not
+    await waitFor(() => {
+      expect(screen.queryByTestId('sortable-block-A')).not.toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-B')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-C')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-D')).toBeInTheDocument()
+    })
+  })
+
+  it('breadcrumb renders when zoomed', async () => {
+    const user = userEvent.setup()
+    const tree = [
+      makeBlock('A', null, 0, 'Root A'),
+      makeBlock('B', 'A', 1, 'Child B'),
+      makeBlock('C', 'B', 2, 'Grandchild C'),
+    ]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-B')).toBeInTheDocument()
+    })
+
+    // No breadcrumb initially
+    expect(screen.queryByRole('navigation', { name: 'Block breadcrumb' })).not.toBeInTheDocument()
+
+    // Zoom into B (which has children)
+    await user.click(screen.getByTestId('zoom-in-B'))
+
+    // Breadcrumb should appear
+    await waitFor(() => {
+      expect(screen.getByRole('navigation', { name: 'Block breadcrumb' })).toBeInTheDocument()
+    })
+
+    // Breadcrumb should contain the ancestor trail: A → B
+    expect(screen.getByText('Root A')).toBeInTheDocument()
+    expect(screen.getByText('Child B')).toBeInTheDocument()
+  })
+
+  it('clicking home button in breadcrumb resets zoom', async () => {
+    const user = userEvent.setup()
+    const tree = [
+      makeBlock('A', null, 0, 'Root A'),
+      makeBlock('B', 'A', 1, 'Child B'),
+      makeBlock('C', 'B', 2, 'Grandchild C'),
+    ]
+
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+    })
+
+    // Zoom into A
+    await user.click(screen.getByTestId('zoom-in-A'))
+
+    // Verify zoom is active (A is hidden, descendants visible)
+    await waitFor(() => {
+      expect(screen.queryByTestId('sortable-block-A')).not.toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-B')).toBeInTheDocument()
+    })
+
+    // Breadcrumb should be visible
+    const nav = screen.getByRole('navigation', { name: 'Block breadcrumb' })
+    expect(nav).toBeInTheDocument()
+
+    // Click the home button (first button inside the nav)
+    const homeButton = nav.querySelector('button')!
+    await user.click(homeButton)
+
+    // All blocks should be visible again
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-B')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-C')).toBeInTheDocument()
+    })
+
+    // Breadcrumb should be gone
+    expect(screen.queryByRole('navigation', { name: 'Block breadcrumb' })).not.toBeInTheDocument()
   })
 })

@@ -21,6 +21,7 @@ import {
   MoveUp,
   Signal,
   Trash2,
+  ZoomIn,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -50,6 +51,8 @@ export interface BlockContextMenuProps {
   dueDate?: string | null
   /** Show block history */
   onShowHistory?: (blockId: string) => void
+  /** Zoom in to show only this block's children */
+  onZoomIn?: (blockId: string) => void
 }
 
 interface MenuItem {
@@ -108,6 +111,7 @@ export function BlockContextMenu({
   priority,
   dueDate: _dueDate,
   onShowHistory,
+  onZoomIn,
 }: BlockContextMenuProps): React.ReactElement {
   const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
@@ -222,6 +226,15 @@ export function BlockContextMenu({
           action: onToggleCollapse ? () => handleAction(onToggleCollapse) : undefined,
           shortcut: 'Ctrl+.',
         },
+        ...(onZoomIn
+          ? [
+              {
+                label: t('contextMenu.zoomIn'),
+                icon: <ZoomIn size={14} />,
+                action: () => handleAction(onZoomIn),
+              },
+            ]
+          : []),
       ]
     : []
 

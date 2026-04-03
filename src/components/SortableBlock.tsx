@@ -128,6 +128,8 @@ interface SortableBlockProps {
   onMerge?: (blockId: string) => void
   /** Show block history sheet */
   onShowHistory?: (blockId: string) => void
+  /** Zoom in to show only this block's children */
+  onZoomIn?: (blockId: string) => void
 }
 
 function SortableBlockInner({
@@ -157,6 +159,7 @@ function SortableBlockInner({
   onMoveDown,
   onMerge,
   onShowHistory,
+  onZoomIn,
 }: SortableBlockProps): React.ReactElement {
   const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -481,6 +484,7 @@ function SortableBlockInner({
             onMoveDown={onMoveDown}
             onMerge={onMerge}
             onShowHistory={onShowHistory}
+            onZoomIn={onZoomIn}
             hasChildren={hasChildren}
             isCollapsed={isCollapsed}
             todoState={todoState}
