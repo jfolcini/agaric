@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 65 — 2026-04-03 — Editor UX fixes: save on blur + picker positioning (#581, #584)
+
+### Two S-cost editor interaction fixes
+2 items resolved: new block content saved on blur even with popups in DOM, picker popups positioned at cursor.
+
+Built by 2 parallel subagents (A: blur handler + getMarkdown on RovingEditorHandle + 4 tests; B: coordsAtPos positioning + clientRect fallback + 3 tests). No separate review — small, well-scoped changes with clear test coverage.
+
+| File | Change |
+|------|--------|
+| `use-roving-editor.ts` | #581: Added `getMarkdown()` + `originalMarkdown` to RovingEditorHandle interface + implementation. |
+| `EditableBlock.tsx` | #581: Early-save guard in handleBlur — persists content when originalMarkdown==='' before transient UI checks. |
+| `EditableBlock.test.tsx` | #581: 4 new tests (popup save, no double-save, existing content skip, empty content skip). |
+| `suggestion-renderer.ts` | #584: `updatePosition()` now uses `editor.view.coordsAtPos(range.to)` for cursor position, falls back to `clientRect()`. |
+| `suggestion-renderer.test.ts` | #584: 3 new tests (cursor coords, fallback, null safety). |
+| `SortableBlock.test.tsx` | Updated `makeRovingEditor` helper for new handle fields. |
+
+### Stats
+- Frontend: 79/79 test files, 2230 tests pass (2223 + 7 new)
+- Commit: `42c4235`
+
 ## Session 64 — 2026-04-03 — Phase 6 Wave 5: DonePanel + queryByProperty valueDate (#609)
 
 ### DonePanel for completed blocks + queryByProperty enhancement

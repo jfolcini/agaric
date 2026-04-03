@@ -105,6 +105,17 @@ function EditableBlockInner({
     (e: React.FocusEvent) => {
       if (!rovingEditor.activeBlockId) return
 
+      // For new blocks (created empty), persist any typed content before
+      // checking transient UI. This prevents data loss when a popup is in
+      // the DOM but the user clicked outside.
+      if (rovingEditor.originalMarkdown === '' && rovingEditor.getMarkdown) {
+        const content = rovingEditor.getMarkdown()
+        if (content && content !== '') {
+          edit(blockId, content)
+          // Don't return — continue to normal blur logic (unmount, setFocused, etc.)
+        }
+      }
+
       // Don't unmount if focus moved to a suggestion popup, formatting toolbar,
       // or date picker — these are transient UI elements that need the editor to stay mounted.
       const related = e.relatedTarget as HTMLElement | null

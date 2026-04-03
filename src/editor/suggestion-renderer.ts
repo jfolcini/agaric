@@ -6,16 +6,37 @@
  * ReactRenderer from @tiptap/react to render outside the main tree.
  */
 
+import type { Editor } from '@tiptap/core'
 import { ReactRenderer } from '@tiptap/react'
 import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
 import { SuggestionList, type SuggestionListRef } from './SuggestionList'
 
 function updatePosition(
   el: HTMLElement,
-  clientRect: (() => DOMRect | null) | null | undefined,
+  props: {
+    editor: Editor
+    range: { from: number; to: number }
+    clientRect?: (() => DOMRect | null) | null
+  },
 ): void {
-  if (!el || !clientRect) return
-  const rect = clientRect()
+  if (!el) return
+
+  // Try cursor position first (more accurate — follows the end of typed text)
+  let rect: DOMRect | null = null
+  try {
+    const coords = props.editor.view.coordsAtPos(props.range.to)
+    if (coords) {
+      rect = new DOMRect(coords.left, coords.top, 1, coords.bottom - coords.top)
+    }
+  } catch {
+    // Fallback to clientRect
+  }
+
+  // Fallback to trigger clientRect
+  if (!rect && props.clientRect) {
+    rect = props.clientRect()
+  }
+
   if (!rect) return
 
   const popupHeight = el.offsetHeight || 200
@@ -28,9 +49,10 @@ function updatePosition(
     top = rect.top - popupHeight - 4
   }
 
-  // Position at the end of the trigger text (where cursor is), not the start.
+  // When using clientRect fallback, position at the end of the trigger text.
   // For multi-char triggers like [[, clientRect spans the trigger — we want
   // the right edge so the popup appears where the user is typing.
+  // When using coordsAtPos the rect is already 1px wide at the cursor.
   let left = rect.width > 1 ? rect.right : rect.left
   const popupWidth = el.offsetWidth || 240
   if (left + popupWidth > viewportWidth - 8) {
@@ -65,12 +87,12 @@ export function createSuggestionRenderer(label?: string) {
       popup.classList.add('suggestion-popup')
       document.body.appendChild(popup)
       popup.appendChild(renderer.element)
-      updatePosition(popup, props.clientRect)
+      updatePosition(popup, props)
     },
 
     onUpdate(props: SuggestionProps) {
       renderer?.updateProps(props)
-      if (popup) updatePosition(popup, props.clientRect)
+      if (popup) updatePosition(popup, props)
     },
 
     onKeyDown({ event }: SuggestionKeyDownProps) {

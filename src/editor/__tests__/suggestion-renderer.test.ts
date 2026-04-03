@@ -319,4 +319,89 @@ describe('positioning', () => {
 
     renderer.onExit()
   })
+
+  it('positions popup at cursor coordinates when editor view is available', () => {
+    const renderer = createSuggestionRenderer()
+    const coordsAtPos = vi.fn().mockReturnValue({ left: 150, right: 151, top: 80, bottom: 100 })
+    const mockEditor = { view: { coordsAtPos } }
+
+    renderer.onStart({
+      items: [],
+      command: vi.fn(),
+      clientRect: () =>
+        ({ left: 50, right: 70, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: mockEditor as any,
+      query: 'verylongtagname',
+      range: { from: 0, to: 16 },
+      text: '@verylongtagname',
+      decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+    } as any)
+
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    expect(popup).toBeTruthy()
+    // Should use coordsAtPos result (150), NOT clientRect left/right (50/70)
+    expect(coordsAtPos).toHaveBeenCalledWith(16)
+    expect(popup.style.left).toBe('150px')
+    // top = rect.bottom + 4 = 100 + 4 = 104
+    expect(popup.style.top).toBe('104px')
+
+    renderer.onExit()
+  })
+
+  it('falls back to clientRect when coordsAtPos fails', () => {
+    const renderer = createSuggestionRenderer()
+    const coordsAtPos = vi.fn().mockImplementation(() => {
+      throw new Error('Position out of range')
+    })
+    const mockEditor = { view: { coordsAtPos } }
+    const mockRect = { left: 50, right: 70, top: 80, bottom: 100, width: 20, height: 20 }
+
+    renderer.onStart({
+      items: [],
+      command: vi.fn(),
+      clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: mockEditor as any,
+      query: '',
+      range: { from: 0, to: 2 },
+      text: '[[',
+      decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+    } as any)
+
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    expect(popup).toBeTruthy()
+    // Should fall back to clientRect: rect.right (70) since width > 1
+    expect(popup.style.left).toBe('70px')
+
+    renderer.onExit()
+  })
+
+  it('handles null props gracefully when both coordsAtPos and clientRect are unavailable', () => {
+    const renderer = createSuggestionRenderer()
+
+    expect(() => {
+      renderer.onStart({
+        items: [],
+        command: vi.fn(),
+        clientRect: null,
+        // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+        editor: {} as any,
+        query: '',
+        range: { from: 0, to: 1 },
+        text: '@',
+        decorationNode: null,
+        // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      } as any)
+    }).not.toThrow()
+
+    // Popup is created but no positioning styles are applied (early return)
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    expect(popup).toBeTruthy()
+    expect(popup.style.position).toBe('')
+
+    renderer.onExit()
+  })
 })

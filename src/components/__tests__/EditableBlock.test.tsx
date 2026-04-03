@@ -73,6 +73,8 @@ function makeRovingEditor(
     activeBlockId: string | null
     mount: ReturnType<typeof vi.fn>
     unmount: ReturnType<typeof vi.fn>
+    getMarkdown: ReturnType<typeof vi.fn>
+    originalMarkdown: string
   }> = {},
 ) {
   return {
@@ -80,6 +82,8 @@ function makeRovingEditor(
     mount: overrides.mount ?? vi.fn(),
     unmount: overrides.unmount ?? vi.fn(() => null),
     activeBlockId: overrides.activeBlockId ?? null,
+    getMarkdown: overrides.getMarkdown ?? vi.fn(() => null),
+    originalMarkdown: overrides.originalMarkdown ?? 'existing content',
   }
 }
 
@@ -586,6 +590,130 @@ describe('EditableBlock', () => {
       fireEvent.blur(editorWrapper, { relatedTarget: btn })
 
       expect(mockUnmount).not.toHaveBeenCalled()
+
+      document.body.removeChild(popup)
+    })
+  })
+
+  // ── #581: Save content on blur for newly created blocks ───────────
+
+  describe('new block blur save', () => {
+    it('saves new block content on blur even when popup is in DOM', () => {
+      const mockGetMarkdown = vi.fn(() => 'typed text')
+      const mockUnmount = vi.fn(() => null)
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+        getMarkdown: mockGetMarkdown,
+        originalMarkdown: '',
+      })
+
+      const { container } = render(
+        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
+      )
+
+      // Simulate a suggestion popup being open in the DOM
+      const popup = document.createElement('div')
+      popup.classList.add('suggestion-popup')
+      document.body.appendChild(popup)
+
+      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      fireEvent.blur(editorWrapper, { relatedTarget: null })
+
+      // Content should be saved even though popup causes early return
+      expect(mockGetMarkdown).toHaveBeenCalled()
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'typed text')
+      // Editor stays mounted (popup guard still triggers early return)
+      expect(mockUnmount).not.toHaveBeenCalled()
+
+      document.body.removeChild(popup)
+    })
+
+    it('does not double-save when blur handler runs normally for new blocks', () => {
+      const mockGetMarkdown = vi.fn(() => 'typed text')
+      const mockUnmount = vi.fn(() => 'typed text')
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+        getMarkdown: mockGetMarkdown,
+        originalMarkdown: '',
+      })
+
+      const { container } = render(
+        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
+      )
+
+      // No popup in DOM — blur runs fully (early save + unmount save)
+      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      fireEvent.blur(editorWrapper, { relatedTarget: null })
+
+      // Early save fires once (from the new-block guard)
+      // Then unmount fires and saves again — both calls go to edit()
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'typed text')
+      expect(mockUnmount).toHaveBeenCalledOnce()
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+    })
+
+    it('does not early-save when block had existing content', () => {
+      const mockGetMarkdown = vi.fn(() => 'updated')
+      const mockUnmount = vi.fn(() => 'updated')
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+        getMarkdown: mockGetMarkdown,
+        originalMarkdown: 'original',
+      })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="original"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      // Popup in the DOM — should early return WITHOUT saving
+      const popup = document.createElement('div')
+      popup.classList.add('suggestion-popup')
+      document.body.appendChild(popup)
+
+      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      fireEvent.blur(editorWrapper, { relatedTarget: null })
+
+      // originalMarkdown is not empty, so the early-save guard should NOT fire
+      expect(mockGetMarkdown).not.toHaveBeenCalled()
+      expect(mockEdit).not.toHaveBeenCalled()
+      expect(mockUnmount).not.toHaveBeenCalled()
+
+      document.body.removeChild(popup)
+    })
+
+    it('does not early-save when getMarkdown returns empty string', () => {
+      const mockGetMarkdown = vi.fn(() => '')
+      const mockUnmount = vi.fn(() => null)
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: mockUnmount,
+        getMarkdown: mockGetMarkdown,
+        originalMarkdown: '',
+      })
+
+      const { container } = render(
+        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
+      )
+
+      // Popup in DOM — triggers early return
+      const popup = document.createElement('div')
+      popup.classList.add('suggestion-popup')
+      document.body.appendChild(popup)
+
+      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      fireEvent.blur(editorWrapper, { relatedTarget: null })
+
+      // getMarkdown returned empty string — nothing to save
+      expect(mockGetMarkdown).toHaveBeenCalled()
+      expect(mockEdit).not.toHaveBeenCalled()
 
       document.body.removeChild(popup)
     })

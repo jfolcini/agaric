@@ -142,6 +142,13 @@ export interface RovingEditorHandle {
   unmount: () => string | null
   /** The block ID currently being edited, or null. */
   activeBlockId: string | null
+  /**
+   * Read the current editor content as markdown WITHOUT unmounting.
+   * Returns null if the editor is not mounted.
+   */
+  getMarkdown: () => string | null
+  /** The markdown string that was passed to `mount()`. */
+  originalMarkdown: string
 }
 
 /**
@@ -286,12 +293,22 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     return delta.changed ? delta.newMarkdown : null
   }, [editor])
 
+  const getMarkdown = useCallback((): string | null => {
+    if (!editor) return null
+    const json = editor.getJSON() as DocNode
+    return serialize(json)
+  }, [editor])
+
   return {
     editor,
     mount,
     unmount,
     get activeBlockId() {
       return activeBlockIdRef.current
+    },
+    getMarkdown,
+    get originalMarkdown() {
+      return originalMarkdownRef.current
     },
   }
 }
