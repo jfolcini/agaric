@@ -88,7 +88,12 @@ vi.mock('lucide-react', () => ({
     <svg data-testid="grip-vertical-icon" width={props.size} height={props.size} />
   ),
   Repeat: (props: { size: number; className?: string }) => (
-    <svg data-testid="repeat-icon" width={props.size} height={props.size} className={props.className} />
+    <svg
+      data-testid="repeat-icon"
+      width={props.size}
+      height={props.size}
+      className={props.className}
+    />
   ),
   Trash2: (props: { size: number }) => (
     <svg data-testid="trash-icon" width={props.size} height={props.size} />
@@ -539,7 +544,7 @@ describe('SortableBlock collapse/expand chevron', () => {
     )
 
     const inlineControls = container.querySelector('.inline-controls')
-    const spacer = inlineControls?.querySelector('.w-\\[18px\\]')
+    const spacer = inlineControls?.querySelector('.w-5')
     expect(spacer).toBeInTheDocument()
     expect(spacer?.tagName.toLowerCase()).toBe('div')
   })
@@ -873,9 +878,9 @@ describe('SortableBlock task marker', () => {
 })
 
 describe('gutter alignment', () => {
-  it('collapse toggle has mt-1 for first-line alignment', () => {
+  it('gutter container has pt-1 for first-line alignment', () => {
     mockUseSortable.mockReturnValue(makeSortable())
-    render(
+    const { container } = render(
       <SortableBlock
         blockId="B1"
         content="test"
@@ -884,13 +889,14 @@ describe('gutter alignment', () => {
         hasChildren
       />,
     )
-    const collapseBtn = screen.getByRole('button', { name: /collapse/i })
-    expect(collapseBtn.className).toContain('mt-1')
+    const gutter = container.querySelector('.w-\\[44px\\]')
+    expect(gutter).toBeInTheDocument()
+    expect(gutter?.className).toContain('pt-1')
   })
 
-  it('task marker has mt-1 for first-line alignment', () => {
+  it('inline-controls container has pt-1 for first-line alignment', () => {
     mockUseSortable.mockReturnValue(makeSortable())
-    render(
+    const { container } = render(
       <SortableBlock
         blockId="B1"
         content="test"
@@ -898,11 +904,11 @@ describe('gutter alignment', () => {
         rovingEditor={makeRovingEditor()}
       />,
     )
-    const marker = screen.getByRole('button', { name: /set as todo/i })
-    expect(marker.className).toContain('mt-1')
+    const inlineControls = container.querySelector('.inline-controls')
+    expect(inlineControls?.className).toContain('pt-1')
   })
 
-  it('drag handle has mt-1 and p-0.5 for alignment', () => {
+  it('drag handle has p-0.5 for alignment', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     render(
       <SortableBlock
@@ -913,11 +919,11 @@ describe('gutter alignment', () => {
       />,
     )
     const handle = screen.getByRole('button', { name: /drag/i })
-    expect(handle.className).toContain('mt-1')
     expect(handle.className).toContain('p-0.5')
+    expect(handle.className).not.toContain('mt-1')
   })
 
-  it('delete button has mt-1 and p-0.5 for alignment', () => {
+  it('delete button has p-0.5 for alignment', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     render(
       <SortableBlock
@@ -929,11 +935,11 @@ describe('gutter alignment', () => {
       />,
     )
     const deleteBtn = screen.getByRole('button', { name: /delete/i })
-    expect(deleteBtn.className).toContain('mt-1')
     expect(deleteBtn.className).toContain('p-0.5')
+    expect(deleteBtn.className).not.toContain('mt-1')
   })
 
-  it('due date chip has mt-1 for vertical alignment with gutter elements', () => {
+  it('due date chip does not have mt-1 (alignment via container pt-1)', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     const { container } = render(
       <SortableBlock
@@ -945,7 +951,7 @@ describe('gutter alignment', () => {
       />,
     )
     const chip = container.querySelector('.due-date-chip')
-    expect(chip?.className).toContain('mt-1')
+    expect(chip?.className).not.toContain('mt-1')
   })
 })
 
@@ -1177,7 +1183,7 @@ describe('SortableBlock priority badge', () => {
     expect(screen.getByRole('button', { name: /Priority P3.*Click to cycle/i })).toBeInTheDocument()
   })
 
-  it('priority badge has mt-1 for first-line alignment', () => {
+  it('priority badge does not have mt-1 (alignment via container pt-1)', () => {
     const { container } = render(
       <SortableBlock
         blockId="B1"
@@ -1189,7 +1195,7 @@ describe('SortableBlock priority badge', () => {
     )
 
     const badge = container.querySelector('.priority-badge')
-    expect(badge?.className).toContain('mt-1')
+    expect(badge?.className).not.toContain('mt-1')
   })
 })
 
@@ -1428,7 +1434,7 @@ describe('SortableBlock inline controls', () => {
     expect(gutter).toBeInTheDocument()
   })
 
-  it('outer wrapper uses no gap so gutter and inline controls sit flush', () => {
+  it('outer wrapper uses gap-1 for uniform spacing between sections', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1439,8 +1445,7 @@ describe('SortableBlock inline controls', () => {
     )
 
     const wrapper = container.querySelector('.sortable-block')
-    expect(wrapper?.className).not.toContain('gap-1')
-    expect(wrapper?.className).not.toContain('gap-0')
+    expect(wrapper?.className).toContain('gap-1')
   })
 
   it('gutter uses gap-1 between grip and delete', () => {
@@ -1494,7 +1499,7 @@ describe('SortableBlock inline controls', () => {
     expect(inlineControls?.className).toContain('gap-1')
   })
 
-  it('all control buttons share mt-1 for vertical alignment', () => {
+  it('alignment handled by container pt-1 instead of per-element mt-1', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1513,10 +1518,15 @@ describe('SortableBlock inline controls', () => {
     const checkbox = container.querySelector('.task-marker')
     const badge = container.querySelector('.priority-badge')
 
-    expect(grip?.className).toContain('mt-1')
-    expect(del?.className).toContain('mt-1')
-    expect(checkbox?.className).toContain('mt-1')
-    expect(badge?.className).toContain('mt-1')
+    // Individual elements no longer have mt-1
+    expect(grip?.className).not.toContain('mt-1')
+    expect(del?.className).not.toContain('mt-1')
+    expect(checkbox?.className).not.toContain('mt-1')
+    expect(badge?.className).not.toContain('mt-1')
+
+    // Containers have pt-1 instead
+    const inlineControls = container.querySelector('.inline-controls')
+    expect(inlineControls?.className).toContain('pt-1')
   })
 })
 
@@ -2755,5 +2765,186 @@ describe('SortableBlock property chip click-to-edit', () => {
       expect(screen.getByRole('textbox')).toBeInTheDocument()
     })
     expect(screen.queryByTestId('select-options-dropdown')).not.toBeInTheDocument()
+  })
+})
+
+// =========================================================================
+// Vertical alignment regression tests (#644 task 0b)
+// =========================================================================
+
+describe('SortableBlock vertical alignment', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('sortable-block row has gap-1 for uniform inter-section spacing', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+    const row = container.querySelector('.sortable-block')
+    expect(row?.className).toContain('gap-1')
+  })
+
+  it('gutter and inline-controls both use pt-1 for consistent top offset', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+        priority="1"
+        dueDate="2026-06-15"
+        scheduledDate="2026-06-10"
+      />,
+    )
+
+    // Find gutter via w-[44px] class selector
+    const gutter = container.querySelector('.w-\\[44px\\]')
+    expect(gutter?.className).toContain('pt-1')
+
+    // inline-controls has pt-1
+    const inlineControls = container.querySelector('.inline-controls')
+    expect(inlineControls?.className).toContain('pt-1')
+  })
+
+  it('no element inside gutter or inline-controls uses mt-1', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+        todoState="TODO"
+        priority="1"
+        dueDate="2026-06-15"
+        scheduledDate="2026-06-10"
+        properties={[
+          { key: 'repeat', value: '+1w' },
+          { key: 'effort', value: '2h' },
+        ]}
+      />,
+    )
+
+    // Check all elements that previously had mt-1
+    const dragHandle = container.querySelector('.drag-handle')
+    const collapseToggle = container.querySelector('.collapse-toggle')
+    const taskMarker = container.querySelector('.task-marker')
+    const priorityBadge = container.querySelector('.priority-badge')
+    const dueDateChip = container.querySelector('.due-date-chip')
+    const scheduledChip = container.querySelector('.scheduled-chip')
+    const repeatIndicator = container.querySelector('.repeat-indicator')
+
+    for (const el of [
+      dragHandle,
+      collapseToggle,
+      taskMarker,
+      priorityBadge,
+      dueDateChip,
+      scheduledChip,
+      repeatIndicator,
+    ]) {
+      expect(el).toBeInTheDocument()
+      expect(el?.className).not.toContain('mt-1')
+    }
+  })
+
+  it('chevron icon uses size 16 (matching other gutter icons)', () => {
+    render(
+      <SortableBlock
+        blockId="B1"
+        content="test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+      />,
+    )
+
+    const chevron = screen.getByTestId('chevron-right-icon')
+    expect(chevron).toHaveAttribute('width', '16')
+    expect(chevron).toHaveAttribute('height', '16')
+  })
+
+  it('gutter and inline-controls use same gap value', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        priority="1"
+      />,
+    )
+
+    const gutter = container.querySelector('.w-\\[44px\\]')
+    const inlineControls = container.querySelector('.inline-controls')
+
+    // Both containers use the same gap-1 value
+    expect(gutter?.className).toContain('gap-1')
+    expect(inlineControls?.className).toContain('gap-1')
+  })
+
+  it('renders all indicators simultaneously without layout issues', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="Full indicators"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+        todoState="DOING"
+        priority="2"
+        dueDate="2026-06-15"
+        scheduledDate="2026-06-10"
+        properties={[
+          { key: 'repeat', value: '+1w' },
+          { key: 'effort', value: '2h' },
+        ]}
+      />,
+    )
+
+    // All indicators are rendered
+    expect(container.querySelector('.collapse-toggle')).toBeInTheDocument()
+    expect(container.querySelector('.task-checkbox-doing')).toBeInTheDocument()
+    expect(container.querySelector('.priority-badge')).toBeInTheDocument()
+    expect(container.querySelector('.due-date-chip')).toBeInTheDocument()
+    expect(container.querySelector('.scheduled-chip')).toBeInTheDocument()
+    expect(container.querySelector('.repeat-indicator')).toBeInTheDocument()
+    expect(screen.getByTestId('property-chip-effort')).toBeInTheDocument()
+
+    // inline-controls has correct structure
+    const inlineControls = container.querySelector('.inline-controls')
+    expect(inlineControls?.className).toContain('flex')
+    expect(inlineControls?.className).toContain('items-start')
+    expect(inlineControls?.className).toContain('pt-1')
+    expect(inlineControls?.className).toContain('gap-1')
+  })
+
+  it('has no a11y violations with all alignment changes', async () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="a11y check"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        hasChildren
+        todoState="TODO"
+        priority="1"
+        dueDate="2026-06-15"
+        scheduledDate="2026-06-10"
+      />,
+    )
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 })

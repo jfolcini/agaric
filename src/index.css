@@ -156,7 +156,7 @@
 
 /* Match static block padding so text doesn't jump on focus/blur. */
 .ProseMirror {
-  @apply px-3 py-1.5 text-base outline-none;
+  @apply px-3 py-1 text-base outline-none;
   min-height: 1.75rem;
   line-height: 1.5;
 }

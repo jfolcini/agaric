@@ -36,11 +36,11 @@ describe('PropertyChip', () => {
     expect(chip?.className).toContain('text-muted-foreground')
   })
 
-  it('has mt-1 for vertical alignment with other inline chips', () => {
+  it('does not have mt-1 (alignment handled by parent container pt-1)', () => {
     const { container } = render(<PropertyChip propKey="effort" value="1h" />)
 
     const chip = container.querySelector('.property-chip')
-    expect(chip?.className).toContain('mt-1')
+    expect(chip?.className).not.toContain('mt-1')
   })
 
   it('key label has opacity-60 class', () => {
@@ -60,9 +60,7 @@ describe('PropertyChip', () => {
   })
 
   it('renders as button when onClick is provided', () => {
-    const { container } = render(
-      <PropertyChip propKey="effort" value="2h" onClick={() => {}} />,
-    )
+    const { container } = render(<PropertyChip propKey="effort" value="2h" onClick={() => {}} />)
 
     const chip = container.querySelector('.property-chip')
     expect(chip).toBeInTheDocument()
@@ -92,9 +90,7 @@ describe('PropertyChip', () => {
     const { container: withClick } = render(
       <PropertyChip propKey="effort" value="2h" onClick={() => {}} />,
     )
-    const { container: withoutClick } = render(
-      <PropertyChip propKey="effort" value="2h" />,
-    )
+    const { container: withoutClick } = render(<PropertyChip propKey="effort" value="2h" />)
 
     const chipWithClick = withClick.querySelector('.property-chip')
     const chipWithoutClick = withoutClick.querySelector('.property-chip')
