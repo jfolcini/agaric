@@ -1282,7 +1282,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(12)
+    expect(results).toHaveLength(13)
     expect(results?.map((r) => r.id)).toEqual([
       'todo',
       'doing',
@@ -1296,6 +1296,7 @@ describe('BlockTree slash command wiring', () => {
       'effort',
       'assignee',
       'location',
+      'repeat',
     ])
   })
 
@@ -1425,6 +1426,20 @@ describe('BlockTree slash command wiring', () => {
     const results = await capturedSearchSlashCommands?.('location')
 
     expect(results?.some((r) => r.id === 'location')).toBe(true)
+  })
+
+  it('searchSlashCommands returns /repeat command when query matches "repeat"', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('repeat')
+
+    expect(results?.some((r) => r.id === 'repeat')).toBe(true)
   })
 })
 

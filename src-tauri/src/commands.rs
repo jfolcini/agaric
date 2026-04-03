@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use chrono::Datelike;
 use serde::Serialize;
 use specta::Type;
 use sqlx::SqlitePool;
@@ -1807,12 +1808,79 @@ pub async fn set_property_inner(
     })
 }
 
+/// Return the number of days in the given month of the given year.
+fn days_in_month(year: i32, month: u32) -> u32 {
+    chrono::NaiveDate::from_ymd_opt(
+        if month == 12 { year + 1 } else { year },
+        if month == 12 { 1 } else { month + 1 },
+        1,
+    )
+    .map(|d| d.pred_opt().unwrap().day())
+    .unwrap_or(28)
+}
+
+/// Shift a `YYYY-MM-DD` date string by a recurrence interval.
+///
+/// Supported rules:
+/// - `daily`  — every day
+/// - `weekly` — every 7 days
+/// - `monthly` — every month (same day-of-month, clamped)
+/// - `+Nd` — every N days
+/// - `+Nw` — every N weeks
+/// - `+Nm` — every N months
+fn shift_date(date: &str, rule: &str) -> Option<String> {
+    let parts: Vec<&str> = date.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let year: i32 = parts[0].parse().ok()?;
+    let month: u32 = parts[1].parse().ok()?;
+    let day: u32 = parts[2].parse().ok()?;
+
+    let base = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+
+    let shifted = match rule.trim().to_lowercase().as_str() {
+        "daily" => base + chrono::Duration::days(1),
+        "weekly" => base + chrono::Duration::days(7),
+        "monthly" => {
+            let new_month = if month == 12 { 1 } else { month + 1 };
+            let new_year = if month == 12 { year + 1 } else { year };
+            let max_day = days_in_month(new_year, new_month);
+            chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))?
+        }
+        _ => {
+            // Parse +Nd, +Nw, +Nm patterns
+            let re_match = rule.trim().strip_prefix('+')?;
+            let (num_str, unit) = re_match.split_at(re_match.len() - 1);
+            let n: i64 = num_str.parse().ok()?;
+            match unit {
+                "d" => base + chrono::Duration::days(n),
+                "w" => base + chrono::Duration::days(n * 7),
+                "m" => {
+                    let total_months = (year as i64 * 12 + month as i64 - 1) + n;
+                    let new_year = (total_months / 12) as i32;
+                    let new_month = (total_months % 12 + 1) as u32;
+                    let max_day = days_in_month(new_year, new_month);
+                    chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))?
+                }
+                _ => return None,
+            }
+        }
+    };
+
+    Some(shifted.format("%Y-%m-%d").to_string())
+}
+
 /// Set the todo state on a block (TODO / DOING / DONE or clear).
 ///
 /// Validates the value and delegates to [`set_property_inner`] with the
 /// reserved `"todo_state"` key.  Also auto-populates `created_at` and
 /// `completed_at` timestamps as regular `block_properties` rows based on
 /// state transitions.
+///
+/// When transitioning to DONE and the block has a `repeat` property, a new
+/// sibling block is created with TODO state and the dates shifted forward
+/// by the recurrence interval.
 pub async fn set_todo_state_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1933,6 +2001,91 @@ pub async fn set_todo_state_inner(
             .await?;
         }
         _ => {} // Same state or other transitions — no timestamp changes
+    }
+
+    // Recurrence: when transitioning to DONE, check for repeat property
+    if new_state.as_deref() == Some("DONE") && prev_state.as_deref() != Some("DONE") {
+        let repeat_rule: Option<String> = sqlx::query_scalar(
+            "SELECT value_text FROM block_properties WHERE block_id = ?1 AND key = 'repeat'",
+        )
+        .bind(&block_id)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some(rule) = repeat_rule {
+            // Fetch the original block (with updated DONE state)
+            let original = get_block_inner(pool, block_id.clone()).await?;
+
+            // Create next occurrence as a sibling
+            let new_block = create_block_inner(
+                pool,
+                device_id,
+                materializer,
+                original.block_type.clone(),
+                original.content.unwrap_or_default(),
+                original.parent_id.clone(),
+                original.position.map(|p| p + 1),
+            )
+            .await?;
+
+            // Set TODO state on new block
+            set_property_inner(
+                pool,
+                device_id,
+                materializer,
+                new_block.id.clone(),
+                "todo_state".to_string(),
+                Some("TODO".to_string()),
+                None,
+                None,
+                None,
+            )
+            .await?;
+
+            // Copy repeat property to new block
+            set_property_inner(
+                pool,
+                device_id,
+                materializer,
+                new_block.id.clone(),
+                "repeat".to_string(),
+                Some(rule.clone()),
+                None,
+                None,
+                None,
+            )
+            .await?;
+
+            // Shift due_date if present
+            if let Some(ref due) = original.due_date {
+                if let Some(shifted) = shift_date(due, &rule) {
+                    set_due_date_inner(
+                        pool,
+                        device_id,
+                        materializer,
+                        new_block.id.clone(),
+                        Some(shifted),
+                    )
+                    .await
+                    .ok();
+                }
+            }
+
+            // Shift scheduled_date if present
+            if let Some(ref sched) = original.scheduled_date {
+                if let Some(shifted) = shift_date(sched, &rule) {
+                    set_scheduled_date_inner(
+                        pool,
+                        device_id,
+                        materializer,
+                        new_block.id.clone(),
+                        Some(shifted),
+                    )
+                    .await
+                    .ok();
+                }
+            }
+        }
     }
 
     Ok(result)
@@ -12011,5 +12164,361 @@ mod tests {
             .await
             .unwrap();
         assert!(r4.is_none());
+    }
+
+    // ====================================================================
+    // Recurrence on DONE transition tests (#595)
+    // ====================================================================
+
+    /// Helper: set a repeat property on a block via block_properties table.
+    async fn set_repeat_property(
+        pool: &SqlitePool,
+        device_id: &str,
+        mat: &Materializer,
+        block_id: &str,
+        rule: &str,
+    ) {
+        set_property_inner(
+            pool,
+            device_id,
+            mat,
+            block_id.to_string(),
+            "repeat".to_string(),
+            Some(rule.to_string()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recurrence_daily_creates_next_occurrence() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create block, set TODO, set due_date, set repeat=daily
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "daily task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-06-15".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+        mat.flush_background().await.unwrap();
+
+        // Transition to DONE
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Original block should be DONE
+        let original = get_block_inner(&pool, block.id.clone()).await.unwrap();
+        assert_eq!(original.todo_state.as_deref(), Some("DONE"));
+
+        // Find the new sibling block (any block with todo_state=TODO that isn't original)
+        let new_blocks: Vec<BlockRow> = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+                      is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+                      due_date, scheduled_date
+               FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
+            block.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(new_blocks.len(), 1, "should create exactly one new block");
+        let new_block = &new_blocks[0];
+
+        assert_eq!(new_block.todo_state.as_deref(), Some("TODO"));
+        assert_eq!(new_block.content.as_deref(), Some("daily task"));
+        assert_eq!(new_block.due_date.as_deref(), Some("2025-06-16"));
+
+        // Check repeat property was copied
+        let props = get_properties_inner(&pool, new_block.id.clone())
+            .await
+            .unwrap();
+        let repeat_prop = props.iter().find(|p| p.key == "repeat");
+        assert!(
+            repeat_prop.is_some(),
+            "new block should have repeat property"
+        );
+        assert_eq!(repeat_prop.unwrap().value_text.as_deref(), Some("daily"));
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recurrence_weekly_shifts_by_7_days() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "weekly task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-06-15".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, DEV, &mat, &block.id, "weekly").await;
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Find new block
+        let new_blocks: Vec<BlockRow> = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+                      is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+                      due_date, scheduled_date
+               FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
+            block.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(new_blocks.len(), 1);
+        assert_eq!(new_blocks[0].due_date.as_deref(), Some("2025-06-22"));
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recurrence_monthly_handles_month_end() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "monthly task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Jan 31 → monthly should clamp to Feb 28 (2025 is not a leap year)
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-01-31".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, DEV, &mat, &block.id, "monthly").await;
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let new_blocks: Vec<BlockRow> = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+                      is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+                      due_date, scheduled_date
+               FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
+            block.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(new_blocks.len(), 1);
+        assert_eq!(
+            new_blocks[0].due_date.as_deref(),
+            Some("2025-02-28"),
+            "Jan 31 + monthly should clamp to Feb 28"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recurrence_custom_plus_3d() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "every 3 days".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-06-28".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_repeat_property(&pool, DEV, &mat, &block.id, "+3d").await;
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let new_blocks: Vec<BlockRow> = sqlx::query_as!(
+            BlockRow,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+                      is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
+                      due_date, scheduled_date
+               FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
+            block.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(new_blocks.len(), 1);
+        assert_eq!(
+            new_blocks[0].due_date.as_deref(),
+            Some("2025-07-01"),
+            "+3d from Jun 28 should be Jul 1"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recurrence_no_repeat_property_does_nothing() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "no repeat".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("TODO".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            Some("2025-06-15".into()),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // No repeat property set — transition to DONE
+        set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("DONE".into()))
+            .await
+            .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Should NOT create any new TODO blocks
+        let todo_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE todo_state = 'TODO' AND deleted_at IS NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            todo_count, 0,
+            "no new block should be created without repeat property"
+        );
+
+        mat.shutdown();
     }
 }

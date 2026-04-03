@@ -277,6 +277,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       { id: 'effort', label: 'EFFORT — Set effort estimate (15m/30m/1h/2h/4h/1d)' },
       { id: 'assignee', label: 'ASSIGNEE — Set assignee' },
       { id: 'location', label: 'LOCATION — Set location' },
+      { id: 'repeat', label: 'REPEAT — Set recurrence (daily/weekly/monthly/+Nd)' },
     ],
     [],
   )
@@ -599,7 +600,12 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         }
       }
 
-      if (item.id === 'effort' || item.id === 'assignee' || item.id === 'location') {
+      if (
+        item.id === 'effort' ||
+        item.id === 'assignee' ||
+        item.id === 'location' ||
+        item.id === 'repeat'
+      ) {
         if (!focusedBlockId) return
         try {
           await setProperty({ blockId: focusedBlockId, key: item.id, valueText: '' })

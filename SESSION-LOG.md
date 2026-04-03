@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 74 — 2026-04-03 — Recurring Tasks (#595)
+
+### Auto-create next occurrence on DONE + /repeat slash command
+1 item resolved: recurring tasks with automatic next-occurrence generation.
+
+Built by 2 parallel subagents (Rust: shift_date + recurrence hook in set_todo_state_inner + 5 tests; Frontend: /repeat slash command + 1 test).
+
+| File | Change |
+|------|--------|
+| `commands.rs` | #595: `shift_date()` + `days_in_month()` helpers. Recurrence hook in `set_todo_state_inner` — on DONE, creates sibling with TODO + shifted dates + copied repeat. 5 tests. |
+| `BlockTree.tsx` | #595: `/repeat` slash command (sets property via setProperty). |
+| `BlockTree.test.tsx` | Updated count 12→13, 1 new search test. |
+
+### Stats
+- Rust: 1443 tests pass (1437 + 6 new)
+- Frontend: 82/82 test files, 2321 tests pass (2320 + 1 new)
+- Commit: `a120ff0`
+
 ## Session 73 — 2026-04-03 — Flexible Date Parsing (#599)
 
 ### Multi-format date parser + date picker text input
