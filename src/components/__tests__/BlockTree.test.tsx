@@ -4611,3 +4611,162 @@ describe('BlockTree multi-selection (#657)', () => {
     expect(useBlockStore.getState().selectedBlockIds).toEqual([])
   })
 })
+
+// =========================================================================
+// Batch toolbar (#657)
+// =========================================================================
+
+describe('BlockTree batch toolbar (#657)', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('shows batch toolbar when blocks are selected', async () => {
+    const tree = [makeBlock('A', null, 0, 'Alpha'), makeBlock('B', null, 1, 'Beta')]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: ['A'],
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+  })
+
+  it('batch toolbar hidden when no selection', async () => {
+    const tree = [makeBlock('A', null, 0, 'Alpha')]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: [],
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
+  })
+
+  it('batch delete shows confirmation dialog', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Alpha'), makeBlock('B', null, 1, 'Beta')]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: ['A', 'B'],
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    const deleteBtn = screen.getByRole('button', { name: /Delete/i })
+    await user.click(deleteBtn)
+
+    expect(screen.getByText(/Delete 2 block/)).toBeInTheDocument()
+  })
+
+  it('batch delete calls deleteBlock for each selected', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Alpha'), makeBlock('B', null, 1, 'Beta')]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: ['A', 'B'],
+    })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'delete_block')
+        return {
+          block_id: 'X',
+          deleted_at: '2026-04-03T00:00:00Z',
+          descendants_affected: 0,
+        }
+      return null
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    // Click Delete, then confirm
+    await user.click(screen.getByRole('button', { name: /Delete/i }))
+    await user.click(screen.getByRole('button', { name: /Yes, delete/i }))
+
+    await waitFor(() => {
+      const deleteCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_block')
+      expect(deleteCalls.length).toBe(2)
+    })
+
+    // Selection should be cleared
+    expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+  })
+
+  it('batch set todo state calls setTodoState for each selected', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Alpha'), makeBlock('B', null, 1, 'Beta')]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: ['A', 'B'],
+    })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'set_todo_state')
+        return {
+          id: 'X',
+          block_type: 'content',
+          content: 'X',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: 'TODO',
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+        }
+      return null
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    // Click TODO button in the batch toolbar
+    await user.click(screen.getByRole('button', { name: 'TODO' }))
+
+    await waitFor(() => {
+      const todoCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'set_todo_state')
+      expect(todoCalls.length).toBe(2)
+    })
+
+    // Selection should be cleared
+    expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+  })
+
+  it('clear selection button clears selectedBlockIds', async () => {
+    const user = userEvent.setup()
+    const tree = [makeBlock('A', null, 0, 'Alpha')]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: ['A'],
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    await user.click(screen.getByRole('button', { name: /Clear selection/i }))
+
+    expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+    expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
+  })
+})

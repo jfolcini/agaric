@@ -14,7 +14,7 @@
 
 import { closestCenter, DndContext, DragOverlay, MeasuringStrategy } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { ChevronRight, Home } from 'lucide-react'
+import { ChevronRight, Home, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -35,6 +35,7 @@ import { formatRepeatLabel } from '../lib/repeat-utils'
 import {
   batchResolve,
   createBlock,
+  deleteBlock,
   deleteProperty,
   editBlock,
   getBatchProperties,
@@ -55,6 +56,17 @@ import { BlockPropertyDrawer } from './BlockPropertyDrawer'
 import { EmptyState } from './EmptyState'
 import { HistorySheet } from './HistorySheet'
 import { SortableBlock } from './SortableBlock'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './ui/alert-dialog'
+import { Button } from './ui/button'
 import { Calendar } from './ui/calendar'
 import { Skeleton } from './ui/skeleton'
 
@@ -347,6 +359,59 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const [blockProperties, setBlockProperties] = useState<
     Record<string, Array<{ key: string; value: string }>>
   >({})
+
+  // ── Batch operations state ─────────────────────────────────────────
+  const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
+
+  const handleBatchSetTodo = useCallback(
+    async (state: string | null) => {
+      const ids = [...selectedBlockIds]
+      let successCount = 0
+      let failCount = 0
+      for (const id of ids) {
+        try {
+          await setTodoStateCmd(id, state)
+          useBlockStore.setState((s) => ({
+            blocks: s.blocks.map((b) => (b.id === id ? { ...b, todo_state: state } : b)),
+          }))
+          successCount++
+        } catch {
+          failCount++
+        }
+      }
+      clearSelected()
+      if (failCount > 0) {
+        toast.error(`${failCount} of ${ids.length} failed to update`)
+      } else {
+        toast.success(`Set ${successCount} block(s) to ${state ?? 'none'}`)
+      }
+    },
+    [selectedBlockIds, clearSelected],
+  )
+
+  const handleBatchDelete = useCallback(async () => {
+    const ids = [...selectedBlockIds]
+    let successCount = 0
+    let failCount = 0
+    for (const id of ids) {
+      try {
+        await deleteBlock(id)
+        useBlockStore.setState((s) => ({
+          blocks: s.blocks.filter((b) => b.id !== id),
+        }))
+        successCount++
+      } catch {
+        failCount++
+      }
+    }
+    clearSelected()
+    setBatchDeleteConfirm(false)
+    if (failCount > 0) {
+      toast.error(`${failCount} of ${ids.length} failed to delete`)
+    } else {
+      toast.success(`Deleted ${successCount} block(s)`)
+    }
+  }, [selectedBlockIds, clearSelected])
 
   const handleShowHistory = useCallback((blockId: string) => {
     setHistoryBlockId(blockId)
@@ -1619,6 +1684,68 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           ))}
         </nav>
       )}
+      {selectedBlockIds.length > 0 && (
+        <div className="batch-toolbar sticky top-0 z-10 flex items-center gap-2 rounded-lg border bg-background/95 backdrop-blur px-3 py-2 mb-2 shadow-sm">
+          <span className="text-sm font-medium tabular-nums">
+            {selectedBlockIds.length} selected
+          </span>
+
+          <div className="flex-1" />
+
+          <div className="flex items-center gap-1">
+            {[
+              { state: null as string | null, label: 'Clear' },
+              { state: 'TODO', label: 'TODO' },
+              { state: 'DOING', label: 'DOING' },
+              { state: 'DONE', label: 'DONE' },
+            ].map(({ state, label }) => (
+              <Button
+                key={label}
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => handleBatchSetTodo(state)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setBatchDeleteConfirm(true)}
+          >
+            <Trash2 className="h-3.5 w-3.5 mr-1" />
+            Delete
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => clearSelected()}
+            aria-label="Clear selection"
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
+      <AlertDialog open={batchDeleteConfirm} onOpenChange={setBatchDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedBlockIds.length} block(s)?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will soft-delete the selected blocks. They can be restored from the trash.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleBatchDelete}>
+              Yes, delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <DndContext
         sensors={dnd.sensors}
         collisionDetection={closestCenter}
