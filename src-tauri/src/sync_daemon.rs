@@ -341,7 +341,8 @@ async fn try_sync_with_peer(
     // 7. Run sync protocol through the orchestrator
     let event_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(Arc::clone(event_sink)));
     let mut orch = SyncOrchestrator::new(pool.clone(), device_id.to_string(), materializer.clone())
-        .with_event_sink(event_sink_box);
+        .with_event_sink(event_sink_box)
+        .with_expected_remote_id(peer_id.to_string());
 
     match run_sync_session(&mut orch, &mut conn, cancel).await {
         Ok(()) => {
@@ -372,7 +373,9 @@ async fn try_sync_with_peer(
     // Clear cancel flag after session completes (whether by success, error, or cancellation)
     cancel.store(false, Ordering::Release);
 
-    let _ = conn.close().await;
+    let _ = conn.close().await.map_err(|e| {
+        tracing::debug!("failed to close sync connection: {e}");
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -395,15 +398,21 @@ async fn run_sync_session(
     let first_msg = orch.start().await?;
     conn.send_json(&first_msg).await?;
 
-    // Exchange messages until complete
-    while !orch.is_complete() {
+    // Exchange messages until terminal state
+    while !orch.is_terminal() {
         // Check cancellation before waiting for the next message
         if cancel.load(Ordering::Acquire) {
             return Err(AppError::InvalidOperation("sync cancelled by user".into()));
         }
 
         let incoming: SyncMessage = conn.recv_json().await?;
-        match orch.handle_message(incoming).await? {
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            orch.handle_message(incoming),
+        )
+        .await
+        .map_err(|_| AppError::InvalidOperation("handle_message timed out after 60s".into()))??;
+        match response {
             Some(response) => {
                 conn.send_json(&response).await?;
             }

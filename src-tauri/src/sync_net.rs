@@ -276,12 +276,18 @@ impl SyncServer {
                                 tokio::spawn(async move {
                                     let tls_stream = match acceptor.accept(tcp_stream).await {
                                         Ok(s) => s,
-                                        Err(_e) => return,
+                                        Err(e) => {
+                                            tracing::debug!("TLS handshake failed: {e}");
+                                            return;
+                                        }
                                     };
                                     let ws_stream =
                                         match tokio_tungstenite::accept_async(tls_stream).await {
                                             Ok(s) => s,
-                                            Err(_e) => return,
+                                            Err(e) => {
+                                                tracing::debug!("WebSocket upgrade failed: {e}");
+                                                return;
+                                            }
                                         };
                                     let conn = SyncConnection {
                                         inner: InnerStream::Server(ws_stream),

@@ -20,6 +20,19 @@ Phase 2 executed: 3 parallel review subagents (error handling, test gaps, archit
 
 REVIEW-LATER: 7 → 14 items (7 existing + 7 new sync findings).
 
+### Batch from new findings: #614, #616, #617, #618, #619
+
+5 S-cost sync hardening fixes built by 1 subagent. 4 new tests.
+
+| File | Change |
+|------|--------|
+| `sync_protocol.rs` | #614: `expected_remote_id` field + validation in HeadExchange. #616: JSON payload validation in `apply_remote_ops`. #618: `is_terminal()` method. 4 tests. |
+| `sync_daemon.rs` | #614: Set expected peer ID on orchestrator. #617: 60s timeout on `handle_message`. #618: Loop uses `is_terminal()`. #619: Log connection close errors. |
+| `sync_net.rs` | #619: Log TLS handshake + WebSocket upgrade errors. |
+
+Rust: 1446 tests pass (1443 + 4 new - 1 updated). Commit: `a8d022c`.
+REVIEW-LATER: 14 → 9 items (resolved #614, #616, #617, #618, #619).
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command

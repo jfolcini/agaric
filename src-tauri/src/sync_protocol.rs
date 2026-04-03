@@ -234,6 +234,16 @@ pub async fn apply_remote_ops(
             continue;
         }
 
+        // Validate payload is well-formed JSON before insertion
+        if let Err(e) = serde_json::from_str::<serde_json::Value>(&record.payload) {
+            tracing::warn!(
+                device_id = %record.device_id,
+                seq = record.seq,
+                "skipping op with invalid payload: {e}"
+            );
+            continue;
+        }
+
         // INSERT OR IGNORE — duplicate delivery is a no-op
         let r = sqlx::query(
             "INSERT OR IGNORE INTO op_log \
@@ -615,6 +625,9 @@ pub struct SyncOrchestrator {
     pending_ops_to_send: Vec<OpRecord>,
     received_ops: Vec<OpTransfer>,
     remote_device_id: Option<String>,
+    /// When set, the orchestrator validates that the remote device_id
+    /// received in HeadExchange matches this expected peer identity.
+    expected_remote_id: Option<String>,
     event_sink: Option<Box<dyn crate::sync_events::SyncEventSink>>,
 }
 
@@ -635,6 +648,7 @@ impl SyncOrchestrator {
             pending_ops_to_send: Vec::new(),
             received_ops: Vec::new(),
             remote_device_id: None,
+            expected_remote_id: None,
             event_sink: None,
         }
     }
@@ -642,6 +656,15 @@ impl SyncOrchestrator {
     /// Attach an event sink that will be notified on every state transition.
     pub fn with_event_sink(mut self, sink: Box<dyn crate::sync_events::SyncEventSink>) -> Self {
         self.event_sink = Some(sink);
+        self
+    }
+
+    /// Set the expected remote device_id for peer identity validation.
+    ///
+    /// When set, the orchestrator will reject HeadExchange messages where
+    /// the remote device_id does not match this value.
+    pub fn with_expected_remote_id(mut self, peer_id: String) -> Self {
+        self.expected_remote_id = Some(peer_id);
         self
     }
 
@@ -744,6 +767,25 @@ impl SyncOrchestrator {
                     .find(|h| h.device_id != self.device_id)
                     .map(|h| h.device_id.clone())
                     .unwrap_or_default();
+
+                // Validate the remote device claims a known peer identity
+                if !remote_id.is_empty() {
+                    if let Some(expected) = &self.expected_remote_id {
+                        if &remote_id != expected {
+                            let msg = format!(
+                                "peer device_id mismatch: expected {expected}, got {remote_id}"
+                            );
+                            self.state = SyncState::Failed(msg.clone());
+                            self.session.state = self.state.clone();
+                            self.emit(crate::sync_events::SyncEvent::Error {
+                                message: msg.clone(),
+                                remote_device_id: remote_id,
+                            });
+                            return Err(AppError::InvalidOperation(msg));
+                        }
+                    }
+                }
+
                 self.remote_device_id = Some(remote_id.clone());
                 self.session.remote_device_id = remote_id;
 
@@ -912,6 +954,15 @@ impl SyncOrchestrator {
     /// Returns `true` when the session has reached a terminal state.
     pub fn is_complete(&self) -> bool {
         self.state == SyncState::Complete
+    }
+
+    /// Returns `true` when the sync session has reached a terminal state
+    /// (Complete, Failed, or ResetRequired).
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self.state,
+            SyncState::Complete | SyncState::Failed(_) | SyncState::ResetRequired
+        )
     }
 
     /// Borrow the session counters.
@@ -2133,6 +2184,166 @@ mod tests {
             SyncState::Failed("HeadExchange received in wrong state".into()),
             "state should transition to Failed with descriptive message"
         );
+
+        materializer.shutdown();
+    }
+
+    // ======================================================================
+    // #618 — is_terminal includes all terminal states
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn is_terminal_includes_all_terminal_states() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        // Complete → terminal
+        let mut orch = SyncOrchestrator::new(pool.clone(), "dev".into(), materializer.clone());
+        orch.state = SyncState::Complete;
+        assert!(orch.is_terminal(), "Complete should be terminal");
+        assert!(orch.is_complete(), "Complete should also pass is_complete");
+
+        // Failed → terminal
+        let mut orch = SyncOrchestrator::new(pool.clone(), "dev".into(), materializer.clone());
+        orch.state = SyncState::Failed("err".into());
+        assert!(orch.is_terminal(), "Failed should be terminal");
+        assert!(!orch.is_complete(), "Failed should not pass is_complete");
+
+        // ResetRequired → terminal
+        let mut orch = SyncOrchestrator::new(pool.clone(), "dev".into(), materializer.clone());
+        orch.state = SyncState::ResetRequired;
+        assert!(orch.is_terminal(), "ResetRequired should be terminal");
+        assert!(
+            !orch.is_complete(),
+            "ResetRequired should not pass is_complete"
+        );
+
+        // Non-terminal states
+        for state in [
+            SyncState::Idle,
+            SyncState::ExchangingHeads,
+            SyncState::StreamingOps,
+            SyncState::ApplyingOps,
+            SyncState::Merging,
+        ] {
+            let mut orch = SyncOrchestrator::new(pool.clone(), "dev".into(), materializer.clone());
+            orch.state = state.clone();
+            assert!(!orch.is_terminal(), "{state:?} should NOT be terminal");
+        }
+
+        materializer.shutdown();
+    }
+
+    // ======================================================================
+    // #616 — apply_remote_ops skips ops with invalid JSON payload
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn apply_remote_ops_skips_invalid_payload() {
+        let (local_pool, _local_dir) = test_pool().await;
+        let materializer = Materializer::new(local_pool.clone());
+
+        // Build an op with a valid hash but invalid JSON payload.
+        // We need the hash to match the payload for it to pass hash verification,
+        // so we create it via append_local_op_at first, then corrupt the payload
+        // while recomputing the hash to match.
+        let bad_payload_op = OpTransfer {
+            device_id: "remote-dev".into(),
+            seq: 1,
+            parent_seqs: None,
+            hash: crate::hash::compute_op_hash(
+                "remote-dev",
+                1,
+                None,
+                "create_block",
+                "NOT VALID JSON {{{",
+            ),
+            op_type: "create_block".into(),
+            payload: "NOT VALID JSON {{{".into(),
+            created_at: FIXED_TS.into(),
+        };
+
+        let result = apply_remote_ops(&local_pool, &materializer, vec![bad_payload_op])
+            .await
+            .unwrap();
+
+        // The op should have passed hash verification but been skipped
+        // due to invalid payload.
+        assert_eq!(
+            result.inserted, 0,
+            "invalid payload op should not be inserted"
+        );
+        assert_eq!(result.hash_mismatches, 0, "hash should have matched");
+
+        materializer.shutdown();
+    }
+
+    // ======================================================================
+    // #614 — orchestrator rejects HeadExchange with unexpected peer device_id
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orchestrator_rejects_unexpected_peer_device_id() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone())
+            .with_expected_remote_id("expected-peer".into());
+
+        let _start = orch.start().await.unwrap();
+
+        // Send HeadExchange with a different device_id than expected
+        let result = orch
+            .handle_message(SyncMessage::HeadExchange {
+                heads: vec![DeviceHead {
+                    device_id: "wrong-peer".into(),
+                    seq: 1,
+                    hash: "abc".into(),
+                }],
+            })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "mismatched peer device_id should be rejected"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("peer device_id mismatch"),
+            "error should mention mismatch, got: {err_msg}"
+        );
+        assert_eq!(
+            orch.session().state,
+            SyncState::Failed(
+                "peer device_id mismatch: expected expected-peer, got wrong-peer".into()
+            ),
+        );
+
+        materializer.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orchestrator_accepts_matching_peer_device_id() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone())
+            .with_expected_remote_id("expected-peer".into());
+
+        let _start = orch.start().await.unwrap();
+
+        // Send HeadExchange with the correct device_id
+        let result = orch
+            .handle_message(SyncMessage::HeadExchange {
+                heads: vec![DeviceHead {
+                    device_id: "expected-peer".into(),
+                    seq: 1,
+                    hash: "abc".into(),
+                }],
+            })
+            .await;
+
+        assert!(result.is_ok(), "matching peer device_id should be accepted");
 
         materializer.shutdown();
     }
