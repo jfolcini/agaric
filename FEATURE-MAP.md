@@ -579,6 +579,8 @@ All list queries use cursor-based keyset pagination.
 - **Inline chips**: `PropertyChip` renders custom properties in `SortableBlock` (max 3, overflow "+N"). Due/scheduled date chips are clickable (dispatch CustomEvent to open date picker). Property key labels support click-to-rename (create-new + delete-old pattern). Ref values resolved to page titles via `resolveBlockTitle`.
 - **Click-to-edit**: Type-aware popovers — text input, select dropdown, ref-type page picker (search-as-you-type with `listBlocks({ blockType: 'page' })`). Ref picker calls `setProperty` with `valueRef`.
 - **Repeat properties**: 5 seeded definitions (repeat, repeat-until, repeat-count, repeat-seq, repeat-origin). Repeat-origin is a ref to the recurrence chain source.
+- **Repeat slash commands**: 11 `/repeat` variants — standard (daily/weekly/monthly/yearly), from-completion (`.+daily`/`.+weekly`/`.+monthly`), catch-up (`++daily`/`++weekly`/`++monthly`), remove. `formatRepeatLabel()` utility (in `src/lib/repeat-utils.ts`) converts raw values to human-readable labels for badge display.
+- **Repeat end-condition commands**: 5 items — `/repeat-until` (opens date picker in `repeat-until` mode), `/repeat-limit` (5/10/20 occurrences via `repeat-count` property), `/repeat-limit-remove` (clears both `repeat-count` and `repeat-until`).
 
 ---
 
