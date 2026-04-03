@@ -3575,13 +3575,15 @@ pub async fn list_projected_agenda_inner(
 
         // Parse mode and interval from rule
         let trimmed = rule.trim().to_lowercase();
-        let (_mode, interval) = if let Some(rest) = trimmed.strip_prefix(".+") {
+        let (mode, interval) = if let Some(rest) = trimmed.strip_prefix(".+") {
             ("dot_plus", rest)
         } else if let Some(rest) = trimmed.strip_prefix("++") {
             ("plus_plus", rest)
         } else {
             ("default", trimmed.as_str())
         };
+
+        let today = chrono::Local::now().date_naive();
 
         // Project for each date source (due_date, scheduled_date)
         let sources: Vec<(&str, &str)> = [
@@ -3602,9 +3604,65 @@ pub async fn list_projected_agenda_inner(
                 Err(_) => continue,
             };
 
-            let mut current = base;
+            // Determine starting point based on mode
+            let mut current = match mode {
+                "dot_plus" => {
+                    // .+ mode: shift from today (completion-based)
+                    today
+                }
+                "plus_plus" => {
+                    // ++ mode: advance from original date until > today
+                    let mut c = base;
+                    for _ in 0..10_000 {
+                        c = match shift_date_once(c, interval) {
+                            Some(d) => d,
+                            None => break,
+                        };
+                        if c > today {
+                            break;
+                        }
+                    }
+                    // c is now the first future cadence date;
+                    // we need to include it, so go back one step
+                    // by setting current = base and fast-forwarding
+                    // Actually: set current so that first shift_date_once
+                    // in the loop produces c. We can't easily reverse,
+                    // so pre-add c if in range, then continue from c.
+                    c
+                }
+                _ => base, // Default: shift from original date
+            };
+
             let mut projected_count = 0usize;
             let max_remaining = remaining.unwrap_or(usize::MAX);
+
+            // For ++ mode, the caught-up date itself is the first projection.
+            // The main loop shifts before checking, so it would skip `current`.
+            // Pre-add it if it falls within the requested range.
+            if mode == "plus_plus"
+                && projected_count < max_remaining
+                && entries.len() < cap
+                && current >= range_start
+                && current <= range_end
+            {
+                if let Some(until) = until_date {
+                    if current <= until {
+                        entries.push(ProjectedAgendaEntry {
+                            block: block.clone(),
+                            projected_date: current.format("%Y-%m-%d").to_string(),
+                            source: source_name.to_string(),
+                        });
+                        projected_count += 1;
+                    }
+                } else {
+                    entries.push(ProjectedAgendaEntry {
+                        block: block.clone(),
+                        projected_date: current.format("%Y-%m-%d").to_string(),
+                        source: source_name.to_string(),
+                    });
+                    projected_count += 1;
+                }
+            }
 
             // Safety limit to prevent infinite loops
             for _ in 0..10_000 {
@@ -14648,6 +14706,50 @@ mod tests {
             ".+ weekly first projection {first_date} should be near today+7d ({today})"
         );
         assert!(first_date > today, ".+ first projection should be in the future");
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Catch-up task".into(), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Due date far in the past
+        set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2025-01-06".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // ++ mode: advance on original cadence until > today
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
+            Some("++weekly".into()), None, None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        let today = chrono::Local::now().date_naive();
+        let start = today.format("%Y-%m-%d").to_string();
+        let end = (today + chrono::Duration::days(30)).format("%Y-%m-%d").to_string();
+
+        let entries = list_projected_agenda_inner(
+            &pool, start, end, None,
+        ).await.unwrap();
+
+        // ++ mode should produce dates on the original Monday cadence
+        // First projection should be the next Monday after today (from 2025-01-06 cadence)
+        assert!(!entries.is_empty(), "++ mode should produce projections");
+        let first_date = chrono::NaiveDate::parse_from_str(&entries[0].projected_date, "%Y-%m-%d").unwrap();
+        assert!(first_date > today, "++ first projection should be in the future");
+        // Should be on a Monday (weekday 0 = Monday in chrono)
+        assert_eq!(first_date.weekday(), chrono::Weekday::Mon,
+            "++ weekly from Monday cadence should land on Monday, got {first_date}");
 
         mat.shutdown();
     }

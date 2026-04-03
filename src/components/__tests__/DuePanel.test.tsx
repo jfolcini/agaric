@@ -611,5 +611,35 @@ describe('DuePanel', () => {
         expect(results).toHaveNoViolations()
       })
     })
+
+    it('projected entries are deduplicated against real blocks', async () => {
+      // Real block B1 appears in normal agenda
+      mockedListBlocks.mockResolvedValue({
+        items: [makeBlock({ id: 'B1', content: 'Real block', todo_state: 'TODO' })],
+        next_cursor: null,
+        has_more: false,
+      })
+      // Projected entry also references B1
+      mockedListProjectedAgenda.mockResolvedValue([{
+        block: makeBlock({
+          id: 'B1', content: 'Real block',
+          parent_id: 'PAGE1', todo_state: 'TODO',
+          due_date: '2025-06-15',
+        }),
+        projected_date: '2025-06-15',
+        source: 'due_date',
+      }])
+
+      render(<DuePanel date="2025-06-15" />)
+
+      // Wait for the real block to appear
+      await screen.findByText('Real block')
+
+      // The "Projected" section should NOT appear since the only projected entry
+      // is for a block that already exists in the real agenda
+      await waitFor(() => {
+        expect(screen.queryByText('Projected')).not.toBeInTheDocument()
+      })
+    })
   })
 })

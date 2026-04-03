@@ -337,13 +337,17 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
           ))}
 
           {/* Projected future occurrences from repeating tasks */}
-          {projectedEntries.length > 0 && (
+          {(() => {
+            // Deduplicate: exclude projected entries whose block already appears in real agenda
+            const realBlockIds = new Set(blocks.map((b) => b.id))
+            const uniqueProjected = projectedEntries.filter((e) => !realBlockIds.has(e.block.id))
+            return uniqueProjected.length > 0 ? (
             <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
               <p className="text-xs font-medium text-muted-foreground mb-2">
                 {t('due.projected', { defaultValue: 'Projected' })}
               </p>
               <ul className="space-y-1">
-                {projectedEntries.map((entry) => (
+                {uniqueProjected.map((entry) => (
                   <li
                     key={`projected-${entry.block.id}-${entry.source}`}
                     className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 transition-colors"
@@ -380,7 +384,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                 ))}
               </ul>
             </div>
-          )}
+          ) : null})()}
 
           {/* Load more */}
           {hasMore && (
