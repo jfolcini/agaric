@@ -30,7 +30,7 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 
 ## 2. Database Schema
 
-**15 migration files**. **14 tables + 1 FTS5 virtual table**. **21+ indexes**.
+**16 migration files**. **14 tables + 1 FTS5 virtual table**. **21+ indexes**.
 
 ### Core Tables
 
@@ -155,7 +155,7 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 
 | Command | Purpose |
 |---------|---------|
-| `set_todo_state` | Set todo state (null/TODO/DOING/DONE). Recurrence support on done transition. |
+| `set_todo_state` | Set todo state (null/TODO/DOING/DONE). Recurrence support on done transition: creates sibling with shifted dates, sets `repeat-origin` ref to original block. |
 | `set_priority` | Set priority (null/1/2/3). |
 | `set_due_date` | Set due date (YYYY-MM-DD or null). |
 | `set_scheduled_date` | Set scheduled date (YYYY-MM-DD or null). |
@@ -333,7 +333,7 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 | **Daily** | Single day page with prev/next navigation and "today" button. Auto-creates today's page on launch. |
 | **Weekly** | Mon–Sun calendar grid, each day as a collapsible section. |
 | **Monthly** | Calendar grid (react-day-picker) with content indicators; click a day to switch to daily. |
-| **Agenda** | Task panels (TODO/DOING/DONE) with priority sorting, collapsible sections, and AgendaFilterBuilder (status, priority, dueDate, scheduledDate, tag dimensions). |
+| **Agenda** | Task panels (TODO/DOING/DONE) with priority sorting, collapsible sections, and AgendaFilterBuilder (status, priority, dueDate, scheduledDate, tag dimensions). Default view shows today's dated tasks (due_date + scheduled_date) grouped by date (Overdue/Today/Tomorrow/future) with sort key chain: date ASC → state (DOING>TODO>DONE>null) → priority (1>2>3>null). Supports `groupBy` prop (`'date'` or `'none'`). |
 
 - Floating calendar picker for date jumping
 - Days with content highlighted
@@ -585,6 +585,8 @@ All list queries use cursor-based keyset pagination.
 - **Auto-create**: Today's page created on launch + Enter/n keyboard shortcut on empty journal
 - **Calendar picker**: react-day-picker with content indicators
 - **Agenda panels**: TODO/DOING/DONE with priority sorting
+- **Agenda sort/group**: `sortAgendaBlocks()` and `groupByDate()` in `agenda-sort.ts`. Date groups: Overdue, Today, Tomorrow, future dates, No date. Sort key chain: date ASC → state rank → priority rank. `AgendaResults` supports `groupBy='date'` (sections with headers/counts) or `'none'` (flat).
+- **Agenda default query**: Shows blocks with `due_date` or `scheduled_date` matching today (via `list_blocks` with `agenda_date`/`agenda_source`), not all TODO blocks.
 - **AgendaFilterBuilder**: status, priority, dueDate (6 presets: Today/This week/Overdue/Next 7/14/30 days), scheduledDate (6 presets), tag dimensions
 
 ---

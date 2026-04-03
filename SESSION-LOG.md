@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 123 — 2026-04-03 — Repeat Properties, Repeat-Origin, Toolbar Badges, Agenda Sort/Group (#644, #662)
+
+### Batch: repeat property seeds + repeat-origin chain + toolbar badges + agenda sort/group/default
+
+3 parallel build subagents (Rust, toolbar, frontend).
+
+| File | Change |
+|------|--------|
+| `migrations/0016_seed_repeat_properties.sql` | #644-1: New migration seeding 5 property definitions (repeat, repeat-until, repeat-count, repeat-seq, repeat-origin). |
+| `commands.rs` | #644: Set `repeat-origin` ref property on recurrence siblings. Fixed clippy warning (`if let Some(ref ref_date)` → `if let Some(ref_date)`). 2 new tests. |
+| `FormattingToolbar.tsx` | #644-0c: Replaced Signal icon + bare numbers with colored P1/P2/P3 badge spans matching DuePanel/AgendaResults style. Removed Signal import, changed button size to `icon-xs`. |
+| `FormattingToolbar.test.tsx` | 1 new test (badge text + colors). |
+| `agenda-sort.ts` | #662-1: New utility — `sortAgendaBlocks()` (date asc → state rank → priority rank) and `groupByDate()` (Overdue/Today/Tomorrow/date/No date groups). |
+| `agenda-sort.test.ts` | 12 new tests (sort, group, fallback, immutability). |
+| `AgendaResults.tsx` | #662-2: New `groupBy` prop. `'date'` renders grouped sections with headers (label, count, colored Overdue). `'none'` renders flat sorted list. Uses `sortAgendaBlocks`/`groupByDate`. |
+| `AgendaResults.test.tsx` | 3 new tests (group headers, sort within groups, flat mode). Updated empty-state text. |
+| `JournalPage.tsx` | #662-3: Default agenda fetches `list_blocks` with `agenda_date`/`agenda_source` (due_date + scheduled_date for today) instead of all TODO blocks. Passes `groupBy="date"` to AgendaResults. |
+| `JournalPage.test.tsx` | Updated default agenda test mocks. 1 new test (load-more with agenda params). |
+| `i18n.ts` | Updated `agenda.noTasks` message. Added 4 keys: `agenda.overdue`, `agenda.today`, `agenda.tomorrow`, `agenda.noDate`. |
+| `REVIEW-LATER.md` | Removed #644 tasks 0c+1, updated task 4 (repeat-origin done). Removed #662 tasks 1-3. |
+| `FEATURE-MAP.md` | Updated agenda section, migration count (15→16), `set_todo_state` description. |
+
+### Stats
+- Frontend: 15 new tests (1 toolbar + 12 agenda-sort + 2 agenda results + 1 journal)
+- Rust: 2 new tests (recurrence origin, chain)
+- Commit: `bae8edf`
+- REVIEW-LATER: #644 tasks 0c+1 done, #662 tasks 1-3 done
+
 ## Session 122 — 2026-04-03 — Task Keywords Settings UI (#658 resolved)
 
 ### Custom task state management in PropertiesView
