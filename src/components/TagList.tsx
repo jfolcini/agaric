@@ -9,6 +9,7 @@
 import { Plus, Tag, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -34,6 +35,7 @@ interface TagListProps {
 }
 
 export function TagList({ onTagClick }: TagListProps): React.ReactElement {
+  const { t } = useTranslation()
   const [tags, setTags] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
@@ -58,6 +60,10 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   const handleCreateTag = useCallback(async () => {
     const name = newTagName.trim()
     if (!name) return
+    if (name.length > 100) {
+      toast.error(t('tags.nameTooLong'))
+      return
+    }
     setIsCreating(true)
     try {
       const resp = await createBlock({ blockType: 'tag', content: name })
@@ -152,7 +158,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                 className="cursor-pointer border-none bg-transparent p-0"
                 onClick={() => onTagClick?.(tag.id, tag.content || 'Unnamed')}
               >
-                <Badge variant="secondary">{tag.content || 'Unnamed'}</Badge>
+                <Badge variant="secondary" className="truncate max-w-[150px]" title={tag.content || 'Unnamed'}>{tag.content || 'Unnamed'}</Badge>
               </button>
               <div className="flex-1" />
               <Button
@@ -181,7 +187,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
             <AlertDialogTitle>Delete tag?</AlertDialogTitle>
             <AlertDialogDescription>
               This will delete the tag &ldquo;{deleteTarget?.name}&rdquo;. This action cannot be
-              undone.
+              undone. {t('tags.deleteWarning')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

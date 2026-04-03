@@ -430,4 +430,49 @@ describe('TagList', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  describe('long tag name overflow (TG-12)', () => {
+    it('truncates long tag names', async () => {
+      const longName = 'a'.repeat(200)
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makeTag('T1', longName)],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<TagList />)
+
+      const badge = await screen.findByText(longName)
+      expect(badge).toBeInTheDocument()
+      expect(badge).toHaveClass('truncate')
+      expect(badge).toHaveAttribute('title', longName)
+    })
+  })
+
+  describe('tag name validation (TG-4)', () => {
+    it('rejects tag names over 100 characters', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<TagList />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/No tags yet/)).toBeInTheDocument()
+      })
+
+      const longName = 'x'.repeat(101)
+      const input = screen.getByPlaceholderText('New tag name...')
+      await user.type(input, longName)
+
+      const addBtn = screen.getByRole('button', { name: /Add Tag/i })
+      await user.click(addBtn)
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith('Tag name must be under 100 characters')
+      })
+
+      // Should NOT have called create_block (only the initial list_blocks)
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    })
+  })
 })

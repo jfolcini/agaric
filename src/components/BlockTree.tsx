@@ -464,6 +464,19 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const handleSlashCommandRef = useRef<(item: PickerItem) => void>(() => {})
   const handleCheckboxRef = useRef<(state: 'TODO' | 'DONE') => void>(() => {})
 
+  // ── Context-aware placeholder for the editor ────────────────────────
+  const editorPlaceholder = useMemo(() => {
+    if (!focusedBlockId || blocks.length === 0) return undefined
+    const focused = blocks.find((b) => b.id === focusedBlockId)
+    if (!focused) return undefined
+    const isFirstChild = blocks[0]?.id === focusedBlockId
+    const isEmpty = !focused.content || focused.content.trim() === ''
+    if (isFirstChild && isEmpty) {
+      return t('editor.templatePlaceholder')
+    }
+    return undefined
+  }, [focusedBlockId, blocks, t])
+
   const rovingEditor = useRovingEditor({
     resolveBlockTitle: resolve.resolveBlockTitle,
     resolveTagName: resolve.resolveTagName,
@@ -477,6 +490,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     searchSlashCommands,
     onSlashCommand: (item: PickerItem) => handleSlashCommandRef.current(item),
     onCheckbox: (state: 'TODO' | 'DONE') => handleCheckboxRef.current(state),
+    ...(editorPlaceholder ? { placeholder: editorPlaceholder } : {}),
   })
 
   const viewport = useViewportObserver()

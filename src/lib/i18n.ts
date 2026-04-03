@@ -333,11 +333,19 @@ const resources = {
       'search.minCharsHint': 'Search requires at least 3 characters',
       'search.parentPage': 'in: {{title}}',
 
+      // Editor
+      'editor.templatePlaceholder': 'Type /template to start from a template, or just start typing...',
+
       // Property table
       'property.invalidNumber': 'Invalid number value',
       'property.deleteConfirm': 'Delete this property?',
       'property.deleteConfirmDesc': 'This will remove the property from the block.',
       'property.createDefFailed': 'Failed to create property definition',
+
+      // Tags
+      'tags.loadFailed': 'Failed to load tags',
+      'tags.nameTooLong': 'Tag name must be under 100 characters',
+      'tags.deleteWarning': 'Blocks using this tag will lose the reference.',
     },
   },
 }

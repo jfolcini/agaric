@@ -9,6 +9,8 @@
 import { Plus, Search, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -43,6 +45,7 @@ function HighlightPrefix({ text, prefix }: { text: string; prefix: string }): Re
 }
 
 export function TagFilterPanel(): React.ReactElement {
+  const { t } = useTranslation()
   const [prefix, setPrefix] = useState('')
   const [matchingTags, setMatchingTags] = useState<MatchingTag[]>([])
   const [selectedTags, setSelectedTags] = useState<SelectedTag[]>([])
@@ -66,7 +69,7 @@ export function TagFilterPanel(): React.ReactElement {
         })),
       )
     } catch {
-      // Silently fail
+      toast.error(t('tags.loadFailed'))
     }
   }, [])
 
@@ -125,7 +128,7 @@ export function TagFilterPanel(): React.ReactElement {
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
       } catch {
-        // Silently fail
+        toast.error(t('tags.loadFailed'))
       }
       setLoading(false)
     },
@@ -164,7 +167,7 @@ export function TagFilterPanel(): React.ReactElement {
           const parent = await getBlock(block.parent_id)
           navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
         } catch {
-          // Silently fail — parent lookup failed
+          toast.error(t('tags.loadFailed'))
         }
       }
     },
@@ -202,8 +205,8 @@ export function TagFilterPanel(): React.ReactElement {
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm text-muted-foreground">Selected:</span>
           {selectedTags.map((tag) => (
-            <Badge key={tag.id} variant="secondary" className="gap-1">
-              {tag.name}
+            <Badge key={tag.id} variant="secondary" className="gap-1 truncate max-w-[150px]" title={tag.name}>
+              <span className="truncate">{tag.name}</span>
               <button
                 type="button"
                 className="ml-1 rounded-full hover:bg-muted"

@@ -15,12 +15,21 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { useNavigationStore } from '../../stores/navigation'
 import { TagFilterPanel } from '../TagFilterPanel'
 
+vi.mock('sonner', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+  },
+}))
+
 const mockedInvoke = vi.mocked(invoke)
+const mockedToastError = vi.mocked(toast.error)
 
 const makeTag = (overrides?: Partial<Record<string, unknown>>) => ({
   tag_id: 'TAG001',
@@ -433,6 +442,21 @@ describe('TagFilterPanel', () => {
 
     // Component should not crash
     expect(screen.getByPlaceholderText('Search tags by prefix...')).toBeInTheDocument()
+  })
+
+  it('shows error toast when tag loading fails', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('backend error'))
+
+    render(<TagFilterPanel />)
+
+    const input = screen.getByPlaceholderText('Search tags by prefix...')
+    fireEvent.change(input, { target: { value: 'fail' } })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to load tags')
   })
 
   it('hides already-selected tags from matching results', async () => {
