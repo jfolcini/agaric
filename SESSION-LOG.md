@@ -90,8 +90,22 @@ Deep review of tauri.ts wrappers, tree-utils, tauri-mock.
 | `REVIEW-LATER.md` | Added #628-#630, resolved #628, #630. 2 items remain (#522, #629). |
 
 - Frontend: 2332 tests pass (77 tauri + 118 mock unchanged)
-- Commit: `5e2b7eb`
+- Commit: `653011c`
 - REVIEW-LATER: 1 → 4 → 2 items (3 added, 2 resolved)
+
+### #629 Resolved — tauri.ts contract tests for all 57 wrappers
+
+14 new describe blocks with 20 tests covering all previously untested wrapper functions.
+Cross-cutting test updated to verify all 57 wrappers. Coverage: 70% → 100%.
+
+| File | Change |
+|------|--------|
+| `tauri.test.ts` | 14 new describe blocks, 20 new tests. Cross-cutting test updated. |
+| `REVIEW-LATER.md` | Resolved #629. 1 item remains (#522 iOS). |
+
+- Frontend: 2352 tests pass (97 tauri, up from 77)
+- Commit: `69ba6c5`
+- REVIEW-LATER: 2 → 1 item (#629 resolved)
 
 ## Session 75 — 2026-04-03 — Phase 2: Sync Deep Review + New Findings
 

@@ -16,27 +16,37 @@ import {
   batchResolve,
   cancelPairing,
   cancelSync,
+  computeEditDiff,
   confirmPairing,
+  countAgendaBatch,
+  countBacklinksBatch,
   createBlock,
+  createPropertyDef,
   deleteBlock,
   deletePeerRef,
   deleteProperty,
+  deletePropertyDef,
   editBlock,
+  exportPageMarkdown,
   getBacklinks,
   getBatchProperties,
   getBlock,
   getBlockHistory,
   getConflicts,
   getDeviceId,
+  getPageAliases,
   getPeerRef,
   getProperties,
   getStatus,
+  listBacklinksGrouped,
   listBlocks,
   listPageHistory,
   listPeerRefs,
+  listPropertyDefs,
   listPropertyKeys,
   listTagsByPrefix,
   listTagsForBlock,
+  listUnlinkedReferences,
   moveBlock,
   purgeBlock,
   queryBacklinksFiltered,
@@ -44,17 +54,21 @@ import {
   queryByTags,
   redoPageOp,
   removeTag,
+  resolvePageByAlias,
   restoreBlock,
   revertOps,
   searchBlocks,
   setDueDate,
+  setPageAliases,
   setPriority,
   setProperty,
+  setScheduledDate,
   setTodoState,
   startPairing,
   startSync,
   undoPageOp,
   updatePeerName,
+  updatePropertyDefOptions,
 } from '../tauri'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -1453,6 +1467,386 @@ describe('thin fixed-field commands', () => {
 })
 
 // ---------------------------------------------------------------------------
+// countAgendaBatch
+// ---------------------------------------------------------------------------
+
+describe('countAgendaBatch', () => {
+  it('invokes count_agenda_batch with dates', async () => {
+    const expected = { '2025-01-15': 3, '2025-01-16': 1 }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await countAgendaBatch({ dates: ['2025-01-15', '2025-01-16'] })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('count_agenda_batch', {
+      dates: ['2025-01-15', '2025-01-16'],
+    })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// countBacklinksBatch
+// ---------------------------------------------------------------------------
+
+describe('countBacklinksBatch', () => {
+  it('invokes count_backlinks_batch with pageIds', async () => {
+    const expected = { PAGE1: 5, PAGE2: 0 }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await countBacklinksBatch({ pageIds: ['PAGE1', 'PAGE2'] })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('count_backlinks_batch', {
+      pageIds: ['PAGE1', 'PAGE2'],
+    })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// setScheduledDate
+// ---------------------------------------------------------------------------
+
+describe('setScheduledDate', () => {
+  it('invokes set_scheduled_date with blockId and date', async () => {
+    const expected = { id: 'BLOCK1', scheduled_date: '2026-06-15' }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await setScheduledDate('BLOCK1', '2026-06-15')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('set_scheduled_date', {
+      blockId: 'BLOCK1',
+      date: '2026-06-15',
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('passes null to clear the scheduled date', async () => {
+    const expected = { id: 'BLOCK1', scheduled_date: null }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    await setScheduledDate('BLOCK1', null)
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_scheduled_date', {
+      blockId: 'BLOCK1',
+      date: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computeEditDiff
+// ---------------------------------------------------------------------------
+
+describe('computeEditDiff', () => {
+  it('invokes compute_edit_diff with deviceId and seq', async () => {
+    const expected = [
+      { tag: 'Equal', value: 'hello ' },
+      { tag: 'Delete', value: 'world' },
+      { tag: 'Insert', value: 'there' },
+    ]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await computeEditDiff({ deviceId: 'dev1', seq: 42 })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('compute_edit_diff', {
+      deviceId: 'dev1',
+      seq: 42,
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('returns null for non-edit ops', async () => {
+    mockedInvoke.mockResolvedValueOnce(null)
+
+    const result = await computeEditDiff({ deviceId: 'dev1', seq: 1 })
+
+    expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listBacklinksGrouped
+// ---------------------------------------------------------------------------
+
+describe('listBacklinksGrouped', () => {
+  const emptyResponse = {
+    groups: [],
+    next_cursor: null,
+    has_more: false,
+    total_count: 0,
+    filtered_count: 0,
+  }
+
+  it('invokes list_backlinks_grouped with pageId mapped to blockId', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyResponse)
+
+    const result = await listBacklinksGrouped({ pageId: 'PAGE1' })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', {
+      blockId: 'PAGE1',
+      filters: null,
+      sort: null,
+      cursor: null,
+      limit: null,
+    })
+    expect(result).toEqual(emptyResponse)
+  })
+
+  it('passes filters and sort when provided', async () => {
+    const filters = [{ type: 'Contains' as const, query: 'hello' }]
+    const sort = { type: 'Created' as const, dir: 'Desc' as const }
+    mockedInvoke.mockResolvedValueOnce(emptyResponse)
+
+    await listBacklinksGrouped({ pageId: 'PAGE1', filters, sort, cursor: 'cur1', limit: 10 })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', {
+      blockId: 'PAGE1',
+      filters,
+      sort,
+      cursor: 'cur1',
+      limit: 10,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listUnlinkedReferences
+// ---------------------------------------------------------------------------
+
+describe('listUnlinkedReferences', () => {
+  const emptyResponse = {
+    groups: [],
+    next_cursor: null,
+    has_more: false,
+    total_count: 0,
+    filtered_count: 0,
+  }
+
+  it('invokes list_unlinked_references with pageId', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyResponse)
+
+    const result = await listUnlinkedReferences({ pageId: 'PAGE1' })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_unlinked_references', {
+      pageId: 'PAGE1',
+      cursor: null,
+      limit: null,
+    })
+    expect(result).toEqual(emptyResponse)
+  })
+
+  it('passes cursor and limit when provided', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyResponse)
+
+    await listUnlinkedReferences({ pageId: 'PAGE1', cursor: 'cur1', limit: 20 })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('list_unlinked_references', {
+      pageId: 'PAGE1',
+      cursor: 'cur1',
+      limit: 20,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// createPropertyDef
+// ---------------------------------------------------------------------------
+
+describe('createPropertyDef', () => {
+  it('invokes create_property_def with all params', async () => {
+    const expected = {
+      key: 'status',
+      value_type: 'select',
+      options: '["todo","done"]',
+      created_at: '2025-01-15T00:00:00Z',
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await createPropertyDef({
+      key: 'status',
+      valueType: 'select',
+      options: '["todo","done"]',
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
+      key: 'status',
+      valueType: 'select',
+      options: '["todo","done"]',
+    })
+    expect(result).toEqual(expected)
+  })
+
+  it('defaults optional options to null', async () => {
+    const expected = {
+      key: 'priority',
+      value_type: 'text',
+      options: null,
+      created_at: '2025-01-15T00:00:00Z',
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    await createPropertyDef({ key: 'priority', valueType: 'text' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
+      key: 'priority',
+      valueType: 'text',
+      options: null,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listPropertyDefs
+// ---------------------------------------------------------------------------
+
+describe('listPropertyDefs', () => {
+  it('invokes list_property_defs with no arguments', async () => {
+    const expected = [
+      {
+        key: 'status',
+        value_type: 'select',
+        options: '["todo","done"]',
+        created_at: '2025-01-15T00:00:00Z',
+      },
+    ]
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await listPropertyDefs()
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('list_property_defs')
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// updatePropertyDefOptions
+// ---------------------------------------------------------------------------
+
+describe('updatePropertyDefOptions', () => {
+  it('invokes update_property_def_options with key and options', async () => {
+    const expected = {
+      key: 'status',
+      value_type: 'select',
+      options: '["todo","done","cancelled"]',
+      created_at: '2025-01-15T00:00:00Z',
+    }
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await updatePropertyDefOptions('status', '["todo","done","cancelled"]')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+      key: 'status',
+      options: '["todo","done","cancelled"]',
+    })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// deletePropertyDef
+// ---------------------------------------------------------------------------
+
+describe('deletePropertyDef', () => {
+  it('invokes delete_property_def with key', async () => {
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await deletePropertyDef('status')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_property_def', { key: 'status' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// setPageAliases
+// ---------------------------------------------------------------------------
+
+describe('setPageAliases', () => {
+  it('invokes set_page_aliases with pageId and aliases', async () => {
+    const expected = ['alias1', 'alias2']
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await setPageAliases('PAGE1', ['alias1', 'alias2'])
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('set_page_aliases', {
+      pageId: 'PAGE1',
+      aliases: ['alias1', 'alias2'],
+    })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getPageAliases
+// ---------------------------------------------------------------------------
+
+describe('getPageAliases', () => {
+  it('invokes get_page_aliases with pageId', async () => {
+    const expected = ['alias1', 'alias2']
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await getPageAliases('PAGE1')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('get_page_aliases', { pageId: 'PAGE1' })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolvePageByAlias
+// ---------------------------------------------------------------------------
+
+describe('resolvePageByAlias', () => {
+  it('invokes resolve_page_by_alias with alias', async () => {
+    const expected: [string, string | null] = ['PAGE1', 'My Page']
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await resolvePageByAlias('my-alias')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('resolve_page_by_alias', { alias: 'my-alias' })
+    expect(result).toEqual(expected)
+  })
+
+  it('returns null when alias not found', async () => {
+    mockedInvoke.mockResolvedValueOnce(null)
+
+    const result = await resolvePageByAlias('nonexistent')
+
+    expect(mockedInvoke).toHaveBeenCalledWith('resolve_page_by_alias', { alias: 'nonexistent' })
+    expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// exportPageMarkdown
+// ---------------------------------------------------------------------------
+
+describe('exportPageMarkdown', () => {
+  it('invokes export_page_markdown with pageId', async () => {
+    const expected = '# My Page\n\nHello world'
+    mockedInvoke.mockResolvedValueOnce(expected)
+
+    const result = await exportPageMarkdown('PAGE1')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('export_page_markdown', { pageId: 'PAGE1' })
+    expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Cross-cutting concerns
 // ---------------------------------------------------------------------------
 
@@ -1483,16 +1877,26 @@ describe('cross-cutting', () => {
     await deleteProperty('id', 'k')
     await getProperties('id')
     await getBatchProperties(['id'])
-    await listPageHistory({ pageId: 'id' })
-    await revertOps({ ops: [{ device_id: 'd', seq: 1 }] })
-    await queryByProperty({ key: 'k' })
-    await queryBacklinksFiltered({ blockId: 'id' })
-    await listPropertyKeys()
+    await countAgendaBatch({ dates: ['2025-01-15'] })
+    await countBacklinksBatch({ pageIds: ['id'] })
     await setTodoState('id', 'TODO')
     await setPriority('id', '1')
     await setDueDate('id', '2026-06-15')
+    await setScheduledDate('id', '2026-07-01')
+    await listPageHistory({ pageId: 'id' })
+    await revertOps({ ops: [{ device_id: 'd', seq: 1 }] })
+    await queryByProperty({ key: 'k' })
     await undoPageOp({ pageId: 'id', undoDepth: 1 })
     await redoPageOp({ undoDeviceId: 'd', undoSeq: 1 })
+    await computeEditDiff({ deviceId: 'd', seq: 1 })
+    await queryBacklinksFiltered({ blockId: 'id' })
+    await listBacklinksGrouped({ pageId: 'id' })
+    await listUnlinkedReferences({ pageId: 'id' })
+    await listPropertyKeys()
+    await createPropertyDef({ key: 'k', valueType: 'text' })
+    await listPropertyDefs()
+    await updatePropertyDefOptions('k', '[]')
+    await deletePropertyDef('k')
     await listPeerRefs()
     await getPeerRef('peer-1')
     await deletePeerRef('peer-1')
@@ -1503,6 +1907,10 @@ describe('cross-cutting', () => {
     await cancelPairing()
     await startSync('peer-1')
     await cancelSync()
+    await setPageAliases('id', ['alias'])
+    await getPageAliases('id')
+    await resolvePageByAlias('alias')
+    await exportPageMarkdown('id')
 
     const commandNames = mockedInvoke.mock.calls.map((call) => call[0])
     expect(commandNames).toEqual([
@@ -1529,16 +1937,26 @@ describe('cross-cutting', () => {
       'delete_property',
       'get_properties',
       'get_batch_properties',
-      'list_page_history',
-      'revert_ops',
-      'query_by_property',
-      'query_backlinks_filtered',
-      'list_property_keys',
+      'count_agenda_batch',
+      'count_backlinks_batch',
       'set_todo_state',
       'set_priority',
       'set_due_date',
+      'set_scheduled_date',
+      'list_page_history',
+      'revert_ops',
+      'query_by_property',
       'undo_page_op',
       'redo_page_op',
+      'compute_edit_diff',
+      'query_backlinks_filtered',
+      'list_backlinks_grouped',
+      'list_unlinked_references',
+      'list_property_keys',
+      'create_property_def',
+      'list_property_defs',
+      'update_property_def_options',
+      'delete_property_def',
       'list_peer_refs',
       'get_peer_ref',
       'delete_peer_ref',
@@ -1549,6 +1967,10 @@ describe('cross-cutting', () => {
       'cancel_pairing',
       'start_sync',
       'cancel_sync',
+      'set_page_aliases',
+      'get_page_aliases',
+      'resolve_page_by_alias',
+      'export_page_markdown',
     ])
   })
 })
