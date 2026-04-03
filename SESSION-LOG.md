@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 100 — 2026-04-03 — Journal Template Auto-Apply (#630)
+
+### Journal pages now auto-populate from template
+
+1 build subagent + 1 review subagent. Orchestrator fixed Biome import ordering.
+
+| File | Change |
+|------|--------|
+| `template-utils.ts` | #630: New `loadJournalTemplate()` — queries pages with `journal-template: true`, returns first match. |
+| `JournalPage.tsx` | #630: `handleAddBlock` checks for journal template on NEW page creation. If template exists, inserts template blocks via `insertTemplateBlocks`; otherwise creates empty block. Existing pages unchanged. |
+| `template-utils.test.ts` | #630: 2 new tests (journal template found, null when absent). |
+| `JournalPage.test.tsx` | #630: 1 new test (auto-create applies journal template). 2 existing tests fixed for template query mock. |
+
+### Stats
+- Frontend: 2439 tests pass (2436 + 3 new)
+- Commit: `3946412`
+- REVIEW-LATER: 8 → 7 items (#630 resolved)
+
 ## Session 99 — 2026-04-03 — /template Slash Command (#632, #639 partial)
 
 ### Template insertion via /template slash command
