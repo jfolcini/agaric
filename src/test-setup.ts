@@ -3,6 +3,7 @@ import { afterEach, expect, vi } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import 'vitest-axe/extend-expect'
 import * as matchers from 'vitest-axe/matchers'
+import './lib/i18n'
 
 expect.extend(matchers)
 

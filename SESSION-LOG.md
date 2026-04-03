@@ -151,6 +151,22 @@ Phase 2 store review with 2 parallel subagents (quality + test gaps). 3 S-cost f
 - Rust: 1457 tests pass (unchanged)
 - Commit: `d19ca4c`
 
+## Session 85 — 2026-04-03 — i18n Framework Setup (#520)
+
+### i18next + react-i18next installed, pattern established
+1 item partially resolved: i18n framework configured with ~35 English keys.
+
+| File | Change |
+|------|--------|
+| `i18n.ts` (new) | i18next config with English translations, JSDoc usage guide. |
+| `main.tsx` | Import i18n initialization. |
+| `test-setup.ts` | Import i18n for test environment. |
+| `PageEditor.tsx` | Pattern demo: 2 strings extracted via `useTranslation()`. |
+
+### Stats
+- Frontend: 82/82 test files, 2332 tests pass (unchanged)
+- Commit: `6446a11`
+
 ## Session 74 — 2026-04-03 — Recurring Tasks (#595)
 
 ### Auto-create next occurrence on DONE + /repeat slash command

@@ -8,6 +8,7 @@
 import { Plus } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useBlockStore } from '../stores/blocks'
@@ -31,6 +32,7 @@ export function PageEditor({
   onBack,
   onNavigateToPage,
 }: PageEditorProps): React.ReactElement {
+  const { t } = useTranslation()
   const blocks = useBlockStore((s) => s.blocks)
   const createBelow = useBlockStore((s) => s.createBelow)
   const setFocused = useBlockStore((s) => s.setFocused)
@@ -91,10 +93,10 @@ export function PageEditor({
         await load(pageId)
         setFocused(result.id)
       } catch {
-        toast.error('Failed to create block')
+        toast.error(t('error.createBlockFailed'))
       }
     }
-  }, [blocks, createBelow, setFocused, pageId])
+  }, [blocks, createBelow, setFocused, pageId, t])
 
   return (
     <div className="page-editor flex flex-col gap-3">
@@ -119,7 +121,7 @@ export function PageEditor({
           onClick={handleAddBlock}
         >
           <Plus className="h-4 w-4" />
-          Add block
+          {t('action.addBlock')}
         </Button>
       </div>
     </div>
