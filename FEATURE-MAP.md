@@ -581,6 +581,7 @@ All list queries use cursor-based keyset pagination.
 - **Repeat properties**: 5 seeded definitions (repeat, repeat-until, repeat-count, repeat-seq, repeat-origin). Repeat-origin is a ref to the recurrence chain source.
 - **Repeat slash commands**: 11 `/repeat` variants — standard (daily/weekly/monthly/yearly), from-completion (`.+daily`/`.+weekly`/`.+monthly`), catch-up (`++daily`/`++weekly`/`++monthly`), remove. `formatRepeatLabel()` utility (in `src/lib/repeat-utils.ts`) converts raw values to human-readable labels for badge display.
 - **Repeat end-condition commands**: 5 items — `/repeat-until` (opens date picker in `repeat-until` mode), `/repeat-limit` (5/10/20 occurrences via `repeat-count` property), `/repeat-limit-remove` (clears both `repeat-count` and `repeat-until`).
+- **Agenda projection**: `list_projected_agenda` command computes virtual future occurrences for repeating tasks within a date range. Queries non-DONE blocks with `repeat` property + date, shifts forward using `shift_date_once`, respects end conditions (`repeat-until`, `repeat-count`/`repeat-seq`). Returns `ProjectedAgendaEntry` (block + projected_date + source). DuePanel renders projected entries with dashed border, muted styling, and "Projected" header.
 
 ---
 

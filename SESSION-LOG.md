@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 130 — 2026-04-03 — Agenda projection for repeating tasks (#644 tasks 8+9)
+
+### Batch: backend projection query + frontend DuePanel rendering
+
+2 parallel build subagents (Rust backend, frontend). Orchestrator registered command in lib.rs and regenerated specta bindings between builds. Technical reviewer found 4 missing test gaps (`.+` mode, both-dates, exhausted count, limit clamping) — all fixed post-review. #644 fully resolved — removed from REVIEW-LATER.
+
+| File | Change |
+|------|--------|
+| `pagination.rs` | NEW: `ProjectedAgendaEntry` struct (block + projected_date + source). |
+| `commands.rs` | NEW: `list_projected_agenda_inner` — queries non-DONE blocks with repeat+date, shifts forward via `shift_date_once`, respects repeat-until/repeat-count/repeat-seq end conditions. 3 modes: default, `.+`, `++`. Safety limit 10K iterations, result cap [1,500]. NEW: Tauri command handler. 10 tests. |
+| `lib.rs` | Registered `list_projected_agenda` in both specta + runtime builders. |
+| `.sqlx/` | 5 new query cache files for compile-time checked SQL. |
+| `tauri.ts` | NEW: `ProjectedAgendaEntry` type + `listProjectedAgenda()` wrapper. |
+| `bindings.ts` | Regenerated with new command + type. |
+| `DuePanel.tsx` | Fetch projected entries via `listProjectedAgenda`. Projected section: dashed border separator, "Projected" header, muted styling with emoji indicators, clickable navigation, keyboard support. Page title resolution for projected blocks. |
+| `DuePanel.test.tsx` | 5 new tests (render, empty, navigation, priority badge, a11y). 24/24 pass. |
+| `REVIEW-LATER.md` | Removed #644 entirely (summary row + detail section). 12 → 11 open items. |
+| `FEATURE-MAP.md` | Added agenda projection to properties section. |
+
+### Stats
+- Backend: 10 new tests (weekly, repeat-until, repeat-count, exhausted-count, DONE-skip, validation, empty, .+ mode, both-dates, limit cap)
+- Frontend: 5 new tests (24/24 DuePanel pass)
+- Commits: `e62664d` (code)
+- REVIEW-LATER: #644 fully resolved and removed. 11 open items (was 12).
+
 ## Session 129 — 2026-04-03 — Repeat mode picker + end-condition UI (#644 tasks 6+7)
 
 ### Batch: repeat slash command UX + end-condition commands
