@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 124 — 2026-04-03 — Property UX + Agenda Group Modes (#645, #662)
+
+### Batch: date chip click-to-edit + key rename + slash presets + group by priority/state
+
+2 parallel build subagents (property UX, agenda grouping). Also cleaned up REVIEW-LATER.md — discovered #644 tasks 2-5 and #645 tasks 0-5/7-11 were already implemented in prior sessions but not marked done.
+
+| File | Change |
+|------|--------|
+| `SortableBlock.tsx` | #645-6: Due/scheduled date chips clickable — dispatch CustomEvent to open date picker. #645-7c: `editingKey` state + key rename popover (create-new + delete-old). |
+| `SortableBlock.test.tsx` | 10 new tests (4 date chip click, 2 key rename, 4 cursor/class checks). |
+| `PropertyChip.tsx` | #645-7c: `onKeyClick` prop, key label hover:underline + cursor-pointer when handler provided. |
+| `PropertyChip.test.tsx` | 3 new tests (onKeyClick, stopPropagation, hover class). |
+| `BlockTree.tsx` | #645-12: `ASSIGNEE_COMMANDS` (2 presets) + `LOCATION_COMMANDS` (4 presets) with progressive disclosure. Handler extracts values from preset IDs. |
+| `BlockTree.test.tsx` | 6 new tests (assignee/location preset search + value setting). |
+| `agenda-sort.ts` | #662-5/6: `groupByPriority()` (P1/P2/P3/No priority) + `groupByState()` (DOING/TODO/DONE/No state) with within-group sorting. |
+| `agenda-sort.test.ts` | 8 new tests (grouping, sorting, empty groups, empty input). |
+| `AgendaResults.tsx` | #662-5/6: `groupBy` prop accepts `'priority'` and `'state'`; renders colored group headers with count badges. |
+| `AgendaResults.test.tsx` | 2 new tests (priority group headers, state group headers). |
+| `REVIEW-LATER.md` | Removed completed #644 tasks 2-5, #645 tasks 0-5/7-11. Updated remaining task lists. |
+
+### Stats
+- Frontend: 25 new tests (10 SortableBlock + 3 PropertyChip + 6 BlockTree + 8 agenda-sort + 2 AgendaResults)
+- Commit: `090fec0`
+- REVIEW-LATER: #645 tasks 6, 7c, 12 done; #662 tasks 5, 6 done. Bulk cleanup of previously-done tasks.
+
 ## Session 123 — 2026-04-03 — Repeat Properties, Repeat-Origin, Toolbar Badges, Agenda Sort/Group (#644, #662)
 
 ### Batch: repeat property seeds + repeat-origin chain + toolbar badges + agenda sort/group/default

@@ -333,7 +333,7 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 | **Daily** | Single day page with prev/next navigation and "today" button. Auto-creates today's page on launch. |
 | **Weekly** | Mon–Sun calendar grid, each day as a collapsible section. |
 | **Monthly** | Calendar grid (react-day-picker) with content indicators; click a day to switch to daily. |
-| **Agenda** | Task panels (TODO/DOING/DONE) with priority sorting, collapsible sections, and AgendaFilterBuilder (status, priority, dueDate, scheduledDate, tag dimensions). Default view shows today's dated tasks (due_date + scheduled_date) grouped by date (Overdue/Today/Tomorrow/future) with sort key chain: date ASC → state (DOING>TODO>DONE>null) → priority (1>2>3>null). Supports `groupBy` prop (`'date'` or `'none'`). |
+| **Agenda** | Task panels (TODO/DOING/DONE) with priority sorting, collapsible sections, and AgendaFilterBuilder (status, priority, dueDate, scheduledDate, tag dimensions). Default view shows today's dated tasks (due_date + scheduled_date) grouped by date (Overdue/Today/Tomorrow/future) with sort key chain: date ASC → state (DOING>TODO>DONE>null) → priority (1>2>3>null). Supports `groupBy` prop (`'date'`, `'priority'`, `'state'`, or `'none'`). Priority groups: P1/P2/P3/No priority. State groups: DOING/TODO/DONE/No state. |
 
 - Floating calendar picker for date jumping
 - Days with content highlighted
@@ -475,7 +475,7 @@ Minimal extension set (no starter-kit). Single roving instance.
 
 **Base**: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT, ASSIGNEE, LOCATION, TEMPLATE
 
-**Progressive disclosure**: PRIORITY 1/2/3, REPEAT (daily/weekly/monthly/yearly), Heading 1-6
+**Progressive disclosure**: PRIORITY 1/2/3, REPEAT (daily/weekly/monthly/yearly), Heading 1-6, ASSIGNEE (Me/Custom), LOCATION (Office/Home/Remote/Custom)
 
 ### Markdown Serializer (`markdown-serializer.ts`, 684 lines)
 
@@ -576,6 +576,8 @@ All list queries use cursor-based keyset pagination.
 - **Schema registry**: property_definitions table with value_type and options
 - **Built-in seeds**: 9 pre-defined properties (todo_state, priority, due_date, scheduled_date, created_at, completed_at, effort, assignee, location)
 - **UI**: PagePropertyTable with type-aware inputs, collapsible display
+- **Inline chips**: `PropertyChip` renders custom properties in `SortableBlock` (max 3, overflow "+N"). Due/scheduled date chips are clickable (dispatch CustomEvent to open date picker). Property key labels support click-to-rename (create-new + delete-old pattern).
+- **Repeat properties**: 5 seeded definitions (repeat, repeat-until, repeat-count, repeat-seq, repeat-origin). Repeat-origin is a ref to the recurrence chain source.
 
 ---
 
@@ -585,7 +587,7 @@ All list queries use cursor-based keyset pagination.
 - **Auto-create**: Today's page created on launch + Enter/n keyboard shortcut on empty journal
 - **Calendar picker**: react-day-picker with content indicators
 - **Agenda panels**: TODO/DOING/DONE with priority sorting
-- **Agenda sort/group**: `sortAgendaBlocks()` and `groupByDate()` in `agenda-sort.ts`. Date groups: Overdue, Today, Tomorrow, future dates, No date. Sort key chain: date ASC → state rank → priority rank. `AgendaResults` supports `groupBy='date'` (sections with headers/counts) or `'none'` (flat).
+- **Agenda sort/group**: `sortAgendaBlocks()`, `groupByDate()`, `groupByPriority()`, and `groupByState()` in `agenda-sort.ts`. Date groups: Overdue, Today, Tomorrow, future dates, No date. Priority groups: P1, P2, P3, No priority. State groups: DOING, TODO, DONE, No state. Sort key chain: date ASC → state rank → priority rank. `AgendaResults` supports `groupBy='date'|'priority'|'state'|'none'`.
 - **Agenda default query**: Shows blocks with `due_date` or `scheduled_date` matching today (via `list_blocks` with `agenda_date`/`agenda_source`), not all TODO blocks.
 - **AgendaFilterBuilder**: status, priority, dueDate (6 presets: Today/This week/Overdue/Next 7/14/30 days), scheduledDate (6 presets), tag dimensions
 
