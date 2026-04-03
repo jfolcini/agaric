@@ -133,12 +133,14 @@ vi.mock('../BlockContextMenu', () => ({
   ),
 }))
 
-// Mock tauri setProperty and listPropertyDefs
+// Mock tauri setProperty, listPropertyDefs, and listBlocks
 const mockSetProperty = vi.fn().mockResolvedValue({})
 const mockListPropertyDefs = vi.fn().mockResolvedValue([])
+const mockListBlocks = vi.fn().mockResolvedValue({ items: [], next_cursor: null, has_more: false })
 vi.mock('../../lib/tauri', () => ({
   setProperty: (...args: unknown[]) => mockSetProperty(...args),
   listPropertyDefs: (...args: unknown[]) => mockListPropertyDefs(...args),
+  listBlocks: (...args: unknown[]) => mockListBlocks(...args),
 }))
 
 // Mock sonner toast
@@ -3124,5 +3126,269 @@ describe('SortableBlock property key rename', () => {
       key: 'effort',
       valueText: null,
     })
+  })
+})
+
+// =========================================================================
+// Ref property picker tests (#645-7b)
+// =========================================================================
+
+describe('SortableBlock ref property picker', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+    mockSetProperty.mockResolvedValue({})
+  })
+
+  it('ref property shows page picker instead of text input', async () => {
+    const user = userEvent.setup()
+
+    mockListPropertyDefs.mockResolvedValue([
+      {
+        key: 'related',
+        value_type: 'ref',
+        options: null,
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ])
+    mockListBlocks.mockResolvedValue({
+      items: [
+        { id: 'PAGE_1', content: 'Meeting Notes', block_type: 'page' },
+        { id: 'PAGE_2', content: 'Project Plan', block_type: 'page' },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'related', value: 'PAGE_1' }]}
+      />,
+    )
+
+    // No picker initially
+    expect(screen.queryByTestId('ref-picker')).not.toBeInTheDocument()
+
+    // Click the property chip
+    const chip = screen.getByTestId('property-chip-related')
+    await user.click(chip)
+
+    // Wait for the ref picker to appear
+    await waitFor(() => {
+      expect(screen.getByTestId('ref-picker')).toBeInTheDocument()
+    })
+
+    // Should have search input, not a plain text input
+    expect(screen.getByTestId('ref-search-input')).toBeInTheDocument()
+
+    // Should show page list
+    expect(screen.getByRole('button', { name: 'Meeting Notes' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Project Plan' })).toBeInTheDocument()
+
+    // No select-options-dropdown or plain text input
+    expect(screen.queryByTestId('select-options-dropdown')).not.toBeInTheDocument()
+  })
+
+  it('ref picker search filters pages', async () => {
+    const user = userEvent.setup()
+
+    mockListPropertyDefs.mockResolvedValue([
+      {
+        key: 'parent_page',
+        value_type: 'ref',
+        options: null,
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ])
+    mockListBlocks.mockResolvedValue({
+      items: [
+        { id: 'PAGE_A', content: 'Alpha Document', block_type: 'page' },
+        { id: 'PAGE_B', content: 'Beta Report', block_type: 'page' },
+        { id: 'PAGE_C', content: 'Gamma Analysis', block_type: 'page' },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'parent_page', value: '' }]}
+      />,
+    )
+
+    // Click the property chip
+    const chip = screen.getByTestId('property-chip-parent_page')
+    await user.click(chip)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ref-picker')).toBeInTheDocument()
+    })
+
+    // All three pages visible initially
+    expect(screen.getByRole('button', { name: 'Alpha Document' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Beta Report' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Gamma Analysis' })).toBeInTheDocument()
+
+    // Type in search
+    const searchInput = screen.getByTestId('ref-search-input')
+    await user.type(searchInput, 'beta')
+
+    // Only Beta Report should remain
+    expect(screen.queryByRole('button', { name: 'Alpha Document' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Beta Report' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Gamma Analysis' })).not.toBeInTheDocument()
+  })
+
+  it('ref picker selects page and calls setProperty with valueRef', async () => {
+    const user = userEvent.setup()
+
+    mockListPropertyDefs.mockResolvedValue([
+      {
+        key: 'linked',
+        value_type: 'ref',
+        options: null,
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ])
+    mockListBlocks.mockResolvedValue({
+      items: [
+        { id: 'PAGE_X', content: 'Design Doc', block_type: 'page' },
+        { id: 'PAGE_Y', content: 'Sprint Retro', block_type: 'page' },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_42"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'linked', value: '' }]}
+      />,
+    )
+
+    // Click the property chip to open picker
+    const chip = screen.getByTestId('property-chip-linked')
+    await user.click(chip)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ref-picker')).toBeInTheDocument()
+    })
+
+    // Click "Sprint Retro"
+    const pageBtn = screen.getByRole('button', { name: 'Sprint Retro' })
+    await user.click(pageBtn)
+
+    // setProperty should have been called with valueRef
+    expect(mockSetProperty).toHaveBeenCalledWith({
+      blockId: 'BLOCK_42',
+      key: 'linked',
+      valueRef: 'PAGE_Y',
+    })
+
+    // Picker should be closed
+    expect(screen.queryByTestId('ref-picker')).not.toBeInTheDocument()
+  })
+
+  it('ref picker closes on Escape', async () => {
+    const user = userEvent.setup()
+
+    mockListPropertyDefs.mockResolvedValue([
+      {
+        key: 'source',
+        value_type: 'ref',
+        options: null,
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ])
+    mockListBlocks.mockResolvedValue({
+      items: [
+        { id: 'PAGE_1', content: 'Some Page', block_type: 'page' },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'source', value: '' }]}
+      />,
+    )
+
+    // Click the property chip
+    const chip = screen.getByTestId('property-chip-source')
+    await user.click(chip)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ref-picker')).toBeInTheDocument()
+    })
+
+    // Press Escape in the search input
+    const searchInput = screen.getByTestId('ref-search-input')
+    await user.type(searchInput, '{Escape}')
+
+    // Picker should be dismissed
+    await waitFor(() => {
+      expect(screen.queryByTestId('ref-picker')).not.toBeInTheDocument()
+    })
+  })
+
+  it('ref picker shows "No pages found" when search has no matches', async () => {
+    const user = userEvent.setup()
+
+    mockListPropertyDefs.mockResolvedValue([
+      {
+        key: 'ref_prop',
+        value_type: 'ref',
+        options: null,
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ])
+    mockListBlocks.mockResolvedValue({
+      items: [
+        { id: 'PAGE_1', content: 'Only Page', block_type: 'page' },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'ref_prop', value: '' }]}
+      />,
+    )
+
+    const chip = screen.getByTestId('property-chip-ref_prop')
+    await user.click(chip)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ref-picker')).toBeInTheDocument()
+    })
+
+    // Type something that doesn't match any page
+    const searchInput = screen.getByTestId('ref-search-input')
+    await user.type(searchInput, 'zzzznonexistent')
+
+    // Should show "No pages found"
+    expect(screen.getByTestId('ref-no-results')).toBeInTheDocument()
+    expect(screen.getByText('No pages found')).toBeInTheDocument()
   })
 })

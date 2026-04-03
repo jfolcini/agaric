@@ -355,4 +355,36 @@ describe('AgendaResults', () => {
     const badges = screen.getAllByText('(1)')
     expect(badges.length).toBe(4)
   })
+
+  // 12. sortBy="priority" sorts blocks by priority first
+  it('sortBy="priority" sorts blocks by priority first', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', priority: '3', due_date: '2025-06-10', content: 'Low prio' }),
+      makeBlock({ id: 'B2', priority: '1', due_date: '2025-06-20', content: 'High prio' }),
+    ]
+
+    render(<AgendaResults {...defaultProps({ blocks })} groupBy="none" sortBy="priority" />)
+
+    const items = screen.getAllByRole('listitem')
+    // priority-first: P1 before P3, regardless of date
+    expect(items[0]).toHaveTextContent('High prio')
+    expect(items[1]).toHaveTextContent('Low prio')
+  })
+
+  // 13. sortBy="state" sorts blocks by state first
+  it('sortBy="state" sorts blocks by state first', () => {
+    const blocks = [
+      makeBlock({ id: 'B1', todo_state: 'DONE', due_date: '2025-06-10', content: 'Finished task' }),
+      makeBlock({ id: 'B2', todo_state: 'DOING', due_date: '2025-06-20', content: 'Active task' }),
+      makeBlock({ id: 'B3', todo_state: 'TODO', due_date: '2025-06-15', content: 'Pending task' }),
+    ]
+
+    render(<AgendaResults {...defaultProps({ blocks })} groupBy="none" sortBy="state" />)
+
+    const items = screen.getAllByRole('listitem')
+    // state-first: DOING > TODO > DONE
+    expect(items[0]).toHaveTextContent('Active task')
+    expect(items[1]).toHaveTextContent('Pending task')
+    expect(items[2]).toHaveTextContent('Finished task')
+  })
 })

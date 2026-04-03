@@ -28,7 +28,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
-import { listPropertyDefs, setProperty } from '../lib/tauri'
+import { listBlocks, listPropertyDefs, setProperty } from '../lib/tauri'
+import type { BlockRow } from '../lib/tauri'
 import { cn } from '../lib/utils'
 import { BlockContextMenu } from './BlockContextMenu'
 import { EditableBlock } from './EditableBlock'
@@ -181,6 +182,9 @@ function SortableBlockInner({
   const [editingProp, setEditingProp] = useState<{ key: string; value: string } | null>(null)
   const [editingKey, setEditingKey] = useState<{ oldKey: string; value: string } | null>(null)
   const [selectOptions, setSelectOptions] = useState<string[] | null>(null)
+  const [isRefProp, setIsRefProp] = useState(false)
+  const [refPages, setRefPages] = useState<BlockRow[]>([])
+  const [refSearch, setRefSearch] = useState('')
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const touchStartPos = useRef<{ x: number; y: number } | null>(null)
   const blockRef = useRef<HTMLDivElement>(null)
@@ -203,14 +207,19 @@ function SortableBlockInner({
     }
   }, [isDragging, clearLongPress])
 
-  // ── Load property definitions for select-type detection ──────────
+  // ── Load property definitions for select-type / ref-type detection ──
   useEffect(() => {
     if (!editingProp) {
       setSelectOptions(null)
+      setIsRefProp(false)
+      setRefPages([])
+      setRefSearch('')
       return
     }
+    let stale = false
     listPropertyDefs()
       .then((defs) => {
+        if (stale) return
         const def = defs.find((d) => d.key === editingProp.key)
         if (def?.value_type === 'select' && def.options) {
           try {
@@ -218,11 +227,24 @@ function SortableBlockInner({
           } catch {
             setSelectOptions(null)
           }
+          setIsRefProp(false)
+        } else if (def?.value_type === 'ref') {
+          setIsRefProp(true)
+          setSelectOptions(null)
+          listBlocks({ blockType: 'page' })
+            .then((res) => { if (!stale) setRefPages(res.items) })
+            .catch(() => { if (!stale) setRefPages([]) })
         } else {
           setSelectOptions(null)
+          setIsRefProp(false)
         }
       })
-      .catch(() => setSelectOptions(null))
+      .catch(() => {
+        if (stale) return
+        setSelectOptions(null)
+        setIsRefProp(false)
+      })
+    return () => { stale = true }
   }, [editingProp])
 
   const openContextMenu = useCallback((x: number, y: number) => {
@@ -513,15 +535,18 @@ function SortableBlockInner({
               {properties
                 .filter((p) => p.key !== 'repeat')
                 .slice(0, 3)
-                .map((p) => (
-                  <PropertyChip
-                    key={p.key}
-                    propKey={p.key}
-                    value={p.value}
-                    onClick={() => setEditingProp({ key: p.key, value: p.value })}
-                    onKeyClick={() => setEditingKey({ oldKey: p.key, value: p.value })}
-                  />
-                ))}
+                .map((p) => {
+                  const displayValue = resolveBlockTitle ? (resolveBlockTitle(p.value) || p.value) : p.value
+                  return (
+                    <PropertyChip
+                      key={p.key}
+                      propKey={p.key}
+                      value={displayValue}
+                      onClick={() => setEditingProp({ key: p.key, value: p.value })}
+                      onKeyClick={() => setEditingKey({ oldKey: p.key, value: p.value })}
+                    />
+                  )
+                })}
               {properties.filter((p) => p.key !== 'repeat').length > 3 && (
                 <span className="text-[10px] text-muted-foreground select-none">
                   +{properties.filter((p) => p.key !== 'repeat').length - 3}
@@ -556,6 +581,64 @@ function SortableBlockInner({
                     {opt}
                   </button>
                 ))}
+              </div>
+            ) : isRefProp ? (
+              <div
+                className="flex flex-col gap-0.5 w-56"
+                data-testid="ref-picker"
+                aria-label={t('block.refPickerLabel')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setEditingProp(null)
+                }}
+              >
+                <input
+                  ref={(el) => el?.focus()}
+                  type="text"
+                  className="rounded border px-2 py-1 text-sm w-full"
+                  placeholder={t('block.searchPages')}
+                  data-testid="ref-search-input"
+                  value={refSearch}
+                  onChange={(e) => setRefSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setEditingProp(null)
+                  }}
+                />
+                <div className="max-h-48 overflow-y-auto flex flex-col gap-0.5">
+                  {(() => {
+                    const filtered = refPages.filter((page) => {
+                      if (!refSearch) return true
+                      const title = page.content || ''
+                      return title.toLowerCase().includes(refSearch.toLowerCase())
+                    })
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="px-2 py-1 text-sm text-muted-foreground" data-testid="ref-no-results">
+                          {t('block.noPagesFound')}
+                        </div>
+                      )
+                    }
+                    return filtered.map((page) => (
+                      <button
+                        key={page.id}
+                        type="button"
+                        className={cn(
+                          'text-left rounded px-2 py-1 text-sm hover:bg-accent transition-colors truncate',
+                          page.id === editingProp.value && 'bg-accent font-medium',
+                        )}
+                        onClick={async () => {
+                          try {
+                            await setProperty({ blockId, key: editingProp.key, valueRef: page.id })
+                          } catch {
+                            toast.error(t('property.saveFailed'))
+                          }
+                          setEditingProp(null)
+                        }}
+                      >
+                        {page.content || t('block.untitled')}
+                      </button>
+                    ))
+                  })()}
+                </div>
               </div>
             ) : (
               <input

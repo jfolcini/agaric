@@ -174,6 +174,9 @@ const resources = {
       'block.repeats': 'Repeats {{value}}',
       'block.breadcrumb': 'Block breadcrumb',
       'block.untitled': 'Untitled',
+      'block.searchPages': 'Search pages...',
+      'block.noPagesFound': 'No pages found',
+      'block.refPickerLabel': 'Select a page',
 
       // Errors
       'error.generic': 'Something went wrong',
@@ -253,6 +256,15 @@ const resources = {
       'agenda.today': 'Today',
       'agenda.tomorrow': 'Tomorrow',
       'agenda.noDate': 'No date',
+      'agenda.sortBy': 'Sort by',
+      'agenda.groupBy': 'Group by',
+      'agenda.sortDate': 'Date',
+      'agenda.sortPriority': 'Priority',
+      'agenda.sortState': 'State',
+      'agenda.groupDate': 'Date',
+      'agenda.groupPriority': 'Priority',
+      'agenda.groupState': 'State',
+      'agenda.groupNone': 'None',
 
       // Agenda Filter
       'agendaFilter.status': 'Status',

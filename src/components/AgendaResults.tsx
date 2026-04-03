@@ -20,7 +20,9 @@ import {
   groupByPriority,
   groupByState,
   sortAgendaBlocks,
+  sortAgendaBlocksBy,
   type AgendaGroup,
+  type AgendaSortBy,
 } from '../lib/agenda-sort'
 import type { BlockRow } from '../lib/tauri'
 
@@ -43,6 +45,8 @@ export interface AgendaResultsProps {
   pageTitles: Map<string, string>
   /** Group blocks by this dimension. Default: 'none'. */
   groupBy?: 'date' | 'priority' | 'state' | 'none'
+  /** Primary sort key. Default: 'date'. */
+  sortBy?: AgendaSortBy
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -140,6 +144,7 @@ export function AgendaResults({
   onClearFilters,
   pageTitles,
   groupBy,
+  sortBy = 'date',
 }: AgendaResultsProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -266,7 +271,7 @@ export function AgendaResults({
   }
 
   // Apply sorting to blocks for consistent ordering
-  const sortedBlocks = sortAgendaBlocks(blocks)
+  const sortedBlocks = sortAgendaBlocksBy(blocks, sortBy)
 
   return (
     <div className="agenda-results space-y-1">

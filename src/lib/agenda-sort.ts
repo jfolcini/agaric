@@ -221,6 +221,68 @@ export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
   return result
 }
 
+/**
+ * Sort agenda blocks using the key chain: priority ASC → date ASC → state.
+ * Pure function, does not mutate input.
+ */
+export function sortByPriority(blocks: BlockRow[]): BlockRow[] {
+  return [...blocks].sort((a, b) => {
+    // 1. Priority: 1 > 2 > 3 > null
+    const prioA = priorityRank(a.priority)
+    const prioB = priorityRank(b.priority)
+    if (prioA !== prioB) return prioA - prioB
+
+    // 2. Date ascending
+    const dateA = effectiveDate(a)
+    const dateB = effectiveDate(b)
+    if (dateA !== dateB) return dateA < dateB ? -1 : 1
+
+    // 3. State: DOING > TODO > DONE > null
+    const stateA = stateRank(a.todo_state)
+    const stateB = stateRank(b.todo_state)
+    return stateA - stateB
+  })
+}
+
+/**
+ * Sort agenda blocks using the key chain: state (DOING>TODO>DONE>null) → date ASC → priority.
+ * Pure function, does not mutate input.
+ */
+export function sortByState(blocks: BlockRow[]): BlockRow[] {
+  return [...blocks].sort((a, b) => {
+    // 1. State: DOING > TODO > DONE > null
+    const stateA = stateRank(a.todo_state)
+    const stateB = stateRank(b.todo_state)
+    if (stateA !== stateB) return stateA - stateB
+
+    // 2. Date ascending
+    const dateA = effectiveDate(a)
+    const dateB = effectiveDate(b)
+    if (dateA !== dateB) return dateA < dateB ? -1 : 1
+
+    // 3. Priority: 1 > 2 > 3 > null
+    const prioA = priorityRank(a.priority)
+    const prioB = priorityRank(b.priority)
+    return prioA - prioB
+  })
+}
+
+/**
+ * Dispatch to the correct sort function based on the sortBy parameter.
+ * Defaults to date-first sort.
+ */
+export function sortAgendaBlocksBy(blocks: BlockRow[], sortBy: AgendaSortBy): BlockRow[] {
+  switch (sortBy) {
+    case 'priority':
+      return sortByPriority(blocks)
+    case 'state':
+      return sortByState(blocks)
+    case 'date':
+    default:
+      return sortAgendaBlocks(blocks)
+  }
+}
+
 /** Short month names for compact date display. */
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 

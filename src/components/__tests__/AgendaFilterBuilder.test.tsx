@@ -20,8 +20,8 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import type { AgendaFilter, AgendaFilterBuilderProps } from '../AgendaFilterBuilder'
-import { AgendaFilterBuilder } from '../AgendaFilterBuilder'
+import type { AgendaFilter, AgendaFilterBuilderProps, AgendaSortGroupControlsProps } from '../AgendaFilterBuilder'
+import { AgendaFilterBuilder, AgendaSortGroupControls } from '../AgendaFilterBuilder'
 
 const defaultProps: AgendaFilterBuilderProps = {
   filters: [],
@@ -348,5 +348,87 @@ describe('AgendaFilterBuilder', () => {
     expect(within(group).queryByLabelText('Next 7 days')).not.toBeInTheDocument()
     expect(within(group).queryByLabelText('Next 14 days')).not.toBeInTheDocument()
     expect(within(group).queryByLabelText('Next 30 days')).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// AgendaSortGroupControls
+// ---------------------------------------------------------------------------
+
+describe('AgendaSortGroupControls', () => {
+  const sortGroupDefaultProps: AgendaSortGroupControlsProps = {
+    groupBy: 'date',
+    onGroupByChange: vi.fn(),
+    sortBy: 'date',
+    onSortByChange: vi.fn(),
+  }
+
+  function renderSortGroup(overrides?: Partial<AgendaSortGroupControlsProps>) {
+    const props = { ...sortGroupDefaultProps, ...overrides }
+    return render(<AgendaSortGroupControls {...props} />)
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  // 19. Renders sort/group controls (buttons visible)
+  it('renders sort and group control buttons', () => {
+    renderSortGroup()
+    expect(screen.getByLabelText('Group by')).toBeInTheDocument()
+    expect(screen.getByLabelText('Sort by')).toBeInTheDocument()
+  })
+
+  // 20. Shows current selections
+  it('shows current group and sort selections', () => {
+    renderSortGroup({ groupBy: 'priority', sortBy: 'state' })
+    expect(screen.getByLabelText('Group by')).toHaveTextContent('Priority')
+    expect(screen.getByLabelText('Sort by')).toHaveTextContent('State')
+  })
+
+  // 21. Clicking group-by button shows options, selecting one calls onGroupByChange
+  it('clicking group-by button shows options, selecting one calls onGroupByChange', async () => {
+    const user = userEvent.setup()
+    const onGroupByChange = vi.fn()
+    renderSortGroup({ onGroupByChange })
+
+    await user.click(screen.getByLabelText('Group by'))
+
+    // All group options should be visible
+    const groupList = screen.getByRole('list', { name: 'Group by' })
+    expect(within(groupList).getByText('Date')).toBeInTheDocument()
+    expect(within(groupList).getByText('Priority')).toBeInTheDocument()
+    expect(within(groupList).getByText('State')).toBeInTheDocument()
+    expect(within(groupList).getByText('None')).toBeInTheDocument()
+
+    // Select Priority
+    await user.click(within(groupList).getByText('Priority'))
+    expect(onGroupByChange).toHaveBeenCalledWith('priority')
+  })
+
+  // 22. Clicking sort-by button shows options, selecting one calls onSortByChange
+  it('clicking sort-by button shows options, selecting one calls onSortByChange', async () => {
+    const user = userEvent.setup()
+    const onSortByChange = vi.fn()
+    renderSortGroup({ onSortByChange })
+
+    await user.click(screen.getByLabelText('Sort by'))
+
+    // All sort options should be visible
+    const sortList = screen.getByRole('list', { name: 'Sort by' })
+    expect(within(sortList).getByText('Date')).toBeInTheDocument()
+    expect(within(sortList).getByText('Priority')).toBeInTheDocument()
+    expect(within(sortList).getByText('State')).toBeInTheDocument()
+
+    // Select State
+    await user.click(within(sortList).getByText('State'))
+    expect(onSortByChange).toHaveBeenCalledWith('state')
+  })
+
+  // 23. A11y audit passes with new controls
+  it('a11y: no violations', async () => {
+    const { container } = renderSortGroup()
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 })

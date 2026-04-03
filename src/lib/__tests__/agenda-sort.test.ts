@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BlockRow } from '../tauri'
-import { sortAgendaBlocks, groupByDate, groupByPriority, groupByState } from '../agenda-sort'
+import { sortAgendaBlocks, groupByDate, groupByPriority, groupByState, sortByPriority, sortByState, sortAgendaBlocksBy } from '../agenda-sort'
 
 function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
   return {
@@ -240,5 +240,117 @@ describe('groupByState', () => {
   it('empty blocks returns empty groups', () => {
     const groups = groupByState([])
     expect(groups).toEqual([])
+  })
+})
+
+describe('sortByPriority', () => {
+  it('sorts priority first, then date, then state', () => {
+    const blocks = [
+      makeBlock({ id: 'p3-early', priority: '3', due_date: '2025-06-10', todo_state: 'TODO' }),
+      makeBlock({ id: 'p1-late', priority: '1', due_date: '2025-06-20', todo_state: 'TODO' }),
+      makeBlock({ id: 'p1-early-doing', priority: '1', due_date: '2025-06-10', todo_state: 'DOING' }),
+      makeBlock({ id: 'p1-early-done', priority: '1', due_date: '2025-06-10', todo_state: 'DONE' }),
+      makeBlock({ id: 'p2', priority: '2', due_date: '2025-06-15', todo_state: 'TODO' }),
+    ]
+    const sorted = sortByPriority(blocks)
+    expect(sorted.map((b) => b.id)).toEqual([
+      'p1-early-doing',
+      'p1-early-done',
+      'p1-late',
+      'p2',
+      'p3-early',
+    ])
+  })
+
+  it('sorts null priority to bottom', () => {
+    const blocks = [
+      makeBlock({ id: 'pn', priority: null, due_date: '2025-06-10' }),
+      makeBlock({ id: 'p1', priority: '1', due_date: '2025-06-10' }),
+    ]
+    const sorted = sortByPriority(blocks)
+    expect(sorted[0].id).toBe('p1')
+    expect(sorted[1].id).toBe('pn')
+  })
+
+  it('does not mutate input array', () => {
+    const blocks = [
+      makeBlock({ id: 'p2', priority: '2' }),
+      makeBlock({ id: 'p1', priority: '1' }),
+    ]
+    const copy = [...blocks]
+    sortByPriority(blocks)
+    expect(blocks[0].id).toBe(copy[0].id)
+    expect(blocks[1].id).toBe(copy[1].id)
+  })
+})
+
+describe('sortByState', () => {
+  it('sorts state first, then date, then priority', () => {
+    const blocks = [
+      makeBlock({ id: 'done', todo_state: 'DONE', due_date: '2025-06-10', priority: '1' }),
+      makeBlock({ id: 'doing-late', todo_state: 'DOING', due_date: '2025-06-20', priority: '1' }),
+      makeBlock({ id: 'doing-early-p3', todo_state: 'DOING', due_date: '2025-06-10', priority: '3' }),
+      makeBlock({ id: 'doing-early-p1', todo_state: 'DOING', due_date: '2025-06-10', priority: '1' }),
+      makeBlock({ id: 'todo', todo_state: 'TODO', due_date: '2025-06-10', priority: '1' }),
+      makeBlock({ id: 'none', todo_state: null, due_date: '2025-06-10', priority: '1' }),
+    ]
+    const sorted = sortByState(blocks)
+    expect(sorted.map((b) => b.id)).toEqual([
+      'doing-early-p1',
+      'doing-early-p3',
+      'doing-late',
+      'todo',
+      'done',
+      'none',
+    ])
+  })
+
+  it('sorts null state to bottom', () => {
+    const blocks = [
+      makeBlock({ id: 'none', todo_state: null, due_date: '2025-06-10' }),
+      makeBlock({ id: 'todo', todo_state: 'TODO', due_date: '2025-06-10' }),
+    ]
+    const sorted = sortByState(blocks)
+    expect(sorted[0].id).toBe('todo')
+    expect(sorted[1].id).toBe('none')
+  })
+
+  it('does not mutate input array', () => {
+    const blocks = [
+      makeBlock({ id: 'done', todo_state: 'DONE' }),
+      makeBlock({ id: 'doing', todo_state: 'DOING' }),
+    ]
+    const copy = [...blocks]
+    sortByState(blocks)
+    expect(blocks[0].id).toBe(copy[0].id)
+    expect(blocks[1].id).toBe(copy[1].id)
+  })
+})
+
+describe('sortAgendaBlocksBy', () => {
+  const blocks = [
+    makeBlock({ id: 'p3-doing', priority: '3', todo_state: 'DOING', due_date: '2025-06-20' }),
+    makeBlock({ id: 'p1-todo', priority: '1', todo_state: 'TODO', due_date: '2025-06-10' }),
+  ]
+
+  it('dispatches to date sort for sortBy=date', () => {
+    const sorted = sortAgendaBlocksBy(blocks, 'date')
+    // date-first: 06-10 before 06-20
+    expect(sorted[0].id).toBe('p1-todo')
+    expect(sorted[1].id).toBe('p3-doing')
+  })
+
+  it('dispatches to priority sort for sortBy=priority', () => {
+    const sorted = sortAgendaBlocksBy(blocks, 'priority')
+    // priority-first: p1 before p3
+    expect(sorted[0].id).toBe('p1-todo')
+    expect(sorted[1].id).toBe('p3-doing')
+  })
+
+  it('dispatches to state sort for sortBy=state', () => {
+    const sorted = sortAgendaBlocksBy(blocks, 'state')
+    // state-first: DOING (0) before TODO (1)
+    expect(sorted[0].id).toBe('p3-doing')
+    expect(sorted[1].id).toBe('p1-todo')
   })
 })

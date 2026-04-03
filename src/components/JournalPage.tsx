@@ -44,6 +44,7 @@ import { Calendar } from '@/components/ui/calendar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import type { BlockRow } from '../lib/tauri'
+import type { AgendaGroupBy, AgendaSortBy } from '../lib/agenda-sort'
 import {
   batchResolve,
   countAgendaBatch,
@@ -57,7 +58,7 @@ import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
 import { useResolveStore } from '../stores/resolve'
 import type { AgendaFilter } from './AgendaFilterBuilder'
-import { AgendaFilterBuilder } from './AgendaFilterBuilder'
+import { AgendaFilterBuilder, AgendaSortGroupControls } from './AgendaFilterBuilder'
 import { AgendaResults } from './AgendaResults'
 import { BlockTree } from './BlockTree'
 import { DonePanel } from './DonePanel'
@@ -257,6 +258,30 @@ export function JournalPage({
   const [agendaHasMore, setAgendaHasMore] = useState(false)
   const [agendaCursor, setAgendaCursor] = useState<string | null>(null)
   const [agendaPageTitles, setAgendaPageTitles] = useState<Map<string, string>>(new Map())
+
+  // ── Agenda sort/group state (persisted in localStorage) ─────────────
+  const [agendaGroupBy, setAgendaGroupBy] = useState<AgendaGroupBy>(() => {
+    try {
+      const stored = localStorage.getItem('agaric:agenda:groupBy')
+      if (stored === 'date' || stored === 'priority' || stored === 'state' || stored === 'none') return stored
+    } catch { /* ignore */ }
+    return 'date'
+  })
+  const [agendaSortBy, setAgendaSortBy] = useState<AgendaSortBy>(() => {
+    try {
+      const stored = localStorage.getItem('agaric:agenda:sortBy')
+      if (stored === 'date' || stored === 'priority' || stored === 'state') return stored
+    } catch { /* ignore */ }
+    return 'date'
+  })
+
+  useEffect(() => {
+    try { localStorage.setItem('agaric:agenda:groupBy', agendaGroupBy) } catch { /* ignore */ }
+  }, [agendaGroupBy])
+
+  useEffect(() => {
+    try { localStorage.setItem('agaric:agenda:sortBy', agendaSortBy) } catch { /* ignore */ }
+  }, [agendaSortBy])
 
   /** Fetch all pages and build a dateStr->pageId lookup. */
   const fetchPages = useCallback(async () => {
@@ -964,11 +989,17 @@ export function JournalPage({
     )
   }
 
-  /** Render agenda view — filter builder + flat results list. */
+  /** Render agenda view — filter builder + sort/group controls + flat results list. */
   function renderAgenda() {
     return (
       <div className="agenda-view space-y-4">
         <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
+        <AgendaSortGroupControls
+          groupBy={agendaGroupBy}
+          onGroupByChange={setAgendaGroupBy}
+          sortBy={agendaSortBy}
+          onSortByChange={setAgendaSortBy}
+        />
         <AgendaResults
           blocks={filteredBlocks}
           loading={agendaLoading}
@@ -978,7 +1009,8 @@ export function JournalPage({
           hasActiveFilters={agendaFilters.length > 0}
           onClearFilters={() => setAgendaFilters([])}
           pageTitles={agendaPageTitles}
-          groupBy="date"
+          groupBy={agendaGroupBy}
+          sortBy={agendaSortBy}
         />
       </div>
     )
