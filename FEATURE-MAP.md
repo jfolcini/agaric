@@ -20,11 +20,11 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 - Op log is strictly append-only (never mutate, never delete except compaction)
 - CQRS split: commands write ops, materializer writes derived state
 - Cursor-based keyset pagination on ALL list queries (no offset)
-- Single roving TipTap instance (ADR-01)
+- Single roving TipTap instance
 - Biome only (no ESLint/Prettier)
 - sqlx compile-time queries with committed `.sqlx/` cache
 - PRAGMA foreign_keys = ON on every connection
-- ULID uppercase normalization (Crockford base32, ADR-07)
+- ULID uppercase normalization (Crockford base32 for blake3 hash determinism)
 
 ---
 
@@ -454,7 +454,7 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 
 ### TipTap Configuration
 
-Minimal extension set (no starter-kit). Single roving instance per ADR-01.
+Minimal extension set (no starter-kit). Single roving instance.
 
 **Built-in extensions**: Document, Paragraph, Text, Bold, Italic, Code, CodeBlockLowlight, Heading (1-6), HardBreak, History, Placeholder
 

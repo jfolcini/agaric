@@ -41,7 +41,7 @@ prek run --all-files         # Pre-commit hooks
 5. **Biome only** — no ESLint, no Prettier
 6. **sqlx compile-time queries** — `query!` / `query_as!` / `query_scalar!`. `.sqlx/` cache committed. Run `cargo sqlx prepare` after SQL changes.
 7. **PRAGMA foreign_keys = ON** — enforced on every connection (both pools)
-8. **ULID uppercase normalization** — Crockford base32 for blake3 hash determinism (ADR-07)
+8. **ULID uppercase normalization** — Crockford base32 for blake3 hash determinism
 
 ## Architectural Stability
 
