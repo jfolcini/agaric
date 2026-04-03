@@ -12,7 +12,13 @@
 
 import { useCallback, useRef } from 'react'
 import type { PickerItem } from '../editor/SuggestionList'
-import { createBlock, listBlocks, listTagsByPrefix, searchBlocks } from '../lib/tauri'
+import {
+  createBlock,
+  listBlocks,
+  listTagsByPrefix,
+  resolvePageByAlias,
+  searchBlocks,
+} from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 
 export interface UseBlockResolveReturn {
@@ -141,6 +147,24 @@ export function useBlockResolve(): UseBlockResolveReturn {
             .filter((m) => !m.isCreate)
             .map((m) => ({ id: m.id, title: m.label, deleted: false })),
         )
+    }
+
+    // Try to find a page by alias and prepend it if not already present
+    if (q.length > 0) {
+      try {
+        const aliasMatch = await resolvePageByAlias(q)
+        if (aliasMatch) {
+          const [pageId, title] = aliasMatch
+          if (!matches.some((m) => m.id === pageId)) {
+            matches.unshift({
+              id: pageId,
+              label: `${title ?? 'Untitled'} (alias: ${q})`,
+            })
+          }
+        }
+      } catch {
+        // Alias lookup failed — ignore silently
+      }
     }
 
     // Append a "Create new" option when the query doesn't exactly match an existing page

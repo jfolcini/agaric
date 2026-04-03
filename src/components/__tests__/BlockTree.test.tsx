@@ -1729,7 +1729,12 @@ describe('BlockTree searchPages caching', () => {
       next_cursor: null,
       has_more: false,
     }
-    mockedInvoke.mockResolvedValueOnce(pagesResp)
+    // Route by command name to avoid resolve_page_by_alias consuming the mock
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return pagesResp
+      if (cmd === 'resolve_page_by_alias') return null
+      return emptyPage
+    })
     // Use short query (≤2 chars) to hit the cache path
     const result1 = await capturedSearchPages?.('al')
 
@@ -1738,12 +1743,17 @@ describe('BlockTree searchPages caching', () => {
       { id: '__create__', label: 'al', isCreate: true },
     ])
 
-    // Second call — should NOT trigger another API call (cached in pagesListRef)
-    const callsBefore = mockedInvoke.mock.calls.length
+    // Second call — should NOT trigger another list_blocks call (cached in pagesListRef)
+    // But resolve_page_by_alias is still called (not cached)
+    const listBlocksCallsBefore = mockedInvoke.mock.calls.filter(
+      (c) => c[0] === 'list_blocks',
+    ).length
     const result2 = await capturedSearchPages?.('al')
-    const callsAfter = mockedInvoke.mock.calls.length
+    const listBlocksCallsAfter = mockedInvoke.mock.calls.filter(
+      (c) => c[0] === 'list_blocks',
+    ).length
 
-    expect(callsAfter).toBe(callsBefore)
+    expect(listBlocksCallsAfter).toBe(listBlocksCallsBefore)
     expect(result2).toEqual([
       { id: 'P1', label: 'Alpha Page' },
       { id: '__create__', label: 'al', isCreate: true },

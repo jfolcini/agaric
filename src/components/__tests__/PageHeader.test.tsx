@@ -57,12 +57,13 @@ beforeEach(() => {
     if (cmd === 'list_tags_for_block') return []
     if (cmd === 'get_properties') return []
     if (cmd === 'list_property_defs') return []
+    if (cmd === 'get_page_aliases') return []
     return null
   })
 })
 
 /** Helper to set up invoke mock with tags */
-function setupTagMock(appliedIds: string[] = ['TAG_1']) {
+function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) {
   mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
     if (cmd === 'list_blocks') {
       return {
@@ -119,6 +120,8 @@ function setupTagMock(appliedIds: string[] = ['TAG_1']) {
       }
     if (cmd === 'get_properties') return []
     if (cmd === 'list_property_defs') return []
+    if (cmd === 'get_page_aliases') return aliases
+    if (cmd === 'set_page_aliases') return args?.aliases ?? []
     return null
   })
 }
@@ -429,6 +432,7 @@ describe('PageHeader edge cases', () => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
       if (cmd === 'edit_block') throw new Error('backend error')
+      if (cmd === 'get_page_aliases') return []
       return null
     })
 
@@ -481,6 +485,119 @@ describe('PageHeader accessibility', () => {
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+})
+
+// ── Alias display & editing ───────────────────────────────────────────────
+
+describe('PageHeader alias display', () => {
+  it('fetches and displays aliases on mount', async () => {
+    setupTagMock([], ['daily-note', 'DN'])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Also known as:')).toBeInTheDocument()
+      expect(screen.getByText('daily-note')).toBeInTheDocument()
+      expect(screen.getByText('DN')).toBeInTheDocument()
+    })
+
+    // Verify get_page_aliases was called
+    expect(mockedInvoke).toHaveBeenCalledWith('get_page_aliases', { pageId: 'PAGE_1' })
+  })
+
+  it('shows "Add alias" button when no aliases', async () => {
+    setupTagMock([])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await waitFor(() => {
+      const addAliasBtn = screen.getByRole('button', { name: /\+ add alias/i })
+      expect(addAliasBtn).toBeInTheDocument()
+    })
+  })
+
+  it('clicking Edit enables alias editing mode', async () => {
+    const user = userEvent.setup()
+    setupTagMock([], ['my-alias'])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    // Wait for aliases to render
+    await waitFor(() => {
+      expect(screen.getByText('my-alias')).toBeInTheDocument()
+    })
+
+    // Click the Edit button
+    const editBtn = screen.getByRole('button', { name: /edit/i })
+    await user.click(editBtn)
+
+    // Should now show the alias input form
+    await waitFor(() => {
+      expect(screen.getByLabelText('New alias input')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /done/i })).toBeInTheDocument()
+    })
+
+    // Should show remove button on existing alias
+    expect(screen.getByRole('button', { name: /remove alias my-alias/i })).toBeInTheDocument()
+  })
+
+  it('adding an alias calls setPageAliases', async () => {
+    const user = userEvent.setup()
+    setupTagMock([], ['existing-alias'])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    // Wait for aliases to render, then enter edit mode
+    await waitFor(() => {
+      expect(screen.getByText('existing-alias')).toBeInTheDocument()
+    })
+
+    const editBtn = screen.getByRole('button', { name: /edit/i })
+    await user.click(editBtn)
+
+    // Type a new alias and submit
+    const aliasInput = screen.getByLabelText('New alias input')
+    await user.type(aliasInput, 'new-alias')
+    await user.click(screen.getByRole('button', { name: /^add$/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_page_aliases', {
+        pageId: 'PAGE_1',
+        aliases: ['existing-alias', 'new-alias'],
+      })
+    })
+
+    // The new alias should appear in the UI
+    expect(screen.getByText('new-alias')).toBeInTheDocument()
+  })
+
+  it('removing an alias calls setPageAliases', async () => {
+    const user = userEvent.setup()
+    setupTagMock([], ['alias-a', 'alias-b'])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    // Wait for aliases to render
+    await waitFor(() => {
+      expect(screen.getByText('alias-a')).toBeInTheDocument()
+      expect(screen.getByText('alias-b')).toBeInTheDocument()
+    })
+
+    // Enter edit mode
+    const editBtn = screen.getByRole('button', { name: /edit/i })
+    await user.click(editBtn)
+
+    // Remove alias-a
+    const removeBtn = screen.getByRole('button', { name: /remove alias alias-a/i })
+    await user.click(removeBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_page_aliases', {
+        pageId: 'PAGE_1',
+        aliases: ['alias-b'],
+      })
     })
   })
 })

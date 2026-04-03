@@ -112,6 +112,10 @@ mod specta_tests {
             // Batch count commands (#604)
             crate::commands::count_agenda_batch,
             crate::commands::count_backlinks_batch,
+            // Page aliases (#598)
+            crate::commands::set_page_aliases,
+            crate::commands::get_page_aliases,
+            crate::commands::resolve_page_by_alias,
         ])
     }
 
@@ -268,6 +272,10 @@ pub fn run() {
         // Batch count commands (#604)
         commands::count_agenda_batch,
         commands::count_backlinks_batch,
+        // Page aliases (#598)
+        commands::set_page_aliases,
+        commands::get_page_aliases,
+        commands::resolve_page_by_alias,
     ]);
 
     tauri::Builder::default()

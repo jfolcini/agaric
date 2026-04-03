@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 71 — 2026-04-03 — Page Aliases (#598)
+
+### Page aliases: data model + commands + header UI + picker matching
+1 item resolved: page aliases with case-insensitive lookup, header display/editing, and BlockLinkPicker matching.
+
+Built by 2 parallel subagents (Rust: migration + 3 commands + 5 tests; Frontend: PageHeader aliases + useBlockResolve alias matching + 10 tests) + orchestrator (type mismatch fix, test mock routing for invoke conflicts).
+
+| File | Change |
+|------|--------|
+| `0015_page_aliases.sql` (new) | #598: `page_aliases(page_id, alias)` table + unique index. |
+| `commands.rs` | #598: `set_page_aliases_inner`, `get_page_aliases_inner`, `resolve_page_by_alias_inner` + 3 Tauri wrappers + 5 tests. |
+| `lib.rs` | #598: Registered 3 commands. |
+| `tauri.ts` | #598: `setPageAliases`, `getPageAliases`, `resolvePageByAlias` wrappers. |
+| `PageHeader.tsx` | #598: Alias badges, inline add/remove editing, fetch on mount. |
+| `useBlockResolve.ts` | #598: `searchPages` calls `resolvePageByAlias` and prepends alias matches. |
+| `PageHeader.test.tsx` | 5 new tests (fetch+display, add button, edit mode, add/remove alias). |
+| `useBlockResolve.test.ts` | 5 new tests (alias match, skip duplicate, error ignore, null title, empty query). |
+| `BlockTree.test.tsx` | Fixed caching test for resolve_page_by_alias invoke interference. |
+
+### Stats
+- Rust: 1437 tests pass (1432 + 5 new)
+- Frontend: 79/79 test files, 2264 tests pass (2254 + 10 new)
+- Commit: `18240c5`
+
 ## Session 70 — 2026-04-03 — Agenda Source Filter (#597)
 
 ### Multi-date agenda queries with source filter

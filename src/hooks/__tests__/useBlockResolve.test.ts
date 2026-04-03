@@ -19,16 +19,24 @@ vi.mock('../../lib/tauri', () => ({
   createBlock: vi.fn(),
   listBlocks: vi.fn(),
   listTagsByPrefix: vi.fn(),
+  resolvePageByAlias: vi.fn(),
   searchBlocks: vi.fn(),
 }))
 
-import { createBlock, listBlocks, listTagsByPrefix, searchBlocks } from '../../lib/tauri'
+import {
+  createBlock,
+  listBlocks,
+  listTagsByPrefix,
+  resolvePageByAlias,
+  searchBlocks,
+} from '../../lib/tauri'
 import { useResolveStore } from '../../stores/resolve'
 import { useBlockResolve } from '../useBlockResolve'
 
 const mockedCreateBlock = vi.mocked(createBlock)
 const mockedListBlocks = vi.mocked(listBlocks)
 const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
+const mockedResolvePageByAlias = vi.mocked(resolvePageByAlias)
 const mockedSearchBlocks = vi.mocked(searchBlocks)
 
 beforeEach(() => {
@@ -1387,5 +1395,136 @@ describe('pagesListRef', () => {
     })
 
     expect(result.current.pagesListRef.current).toEqual([{ id: 'EXT1', title: 'External Page' }])
+  })
+})
+
+// ── searchPages alias matching ──────────────────────────────────────────
+
+describe('searchPages — alias matching via resolvePageByAlias', () => {
+  it('searchPages matches alias via resolvePageByAlias', async () => {
+    // FTS returns no direct matches
+    mockedSearchBlocks.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    // Alias lookup finds a page
+    mockedResolvePageByAlias.mockResolvedValue(['ALIAS_PAGE_1', 'Daily Notes'])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('daily-note')
+    })
+
+    expect(mockedResolvePageByAlias).toHaveBeenCalledWith('daily-note')
+
+    // The alias match should be prepended to the results
+    const nonCreate = items.filter((i) => !i.isCreate)
+    expect(nonCreate[0]).toEqual({
+      id: 'ALIAS_PAGE_1',
+      label: 'Daily Notes (alias: daily-note)',
+    })
+  })
+
+  it('searchPages skips alias when already in results', async () => {
+    // FTS already has the page
+    mockedSearchBlocks.mockResolvedValue({
+      items: [
+        {
+          id: 'ALIAS_PAGE_2',
+          block_type: 'page',
+          content: 'Weekly Review',
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    // Alias also resolves to the same page
+    mockedResolvePageByAlias.mockResolvedValue(['ALIAS_PAGE_2', 'Weekly Review'])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('weekly')
+    })
+
+    // The alias match should NOT be duplicated
+    const nonCreate = items.filter((i) => !i.isCreate)
+    expect(nonCreate).toHaveLength(1)
+    expect(nonCreate[0]).toEqual({ id: 'ALIAS_PAGE_2', label: 'Weekly Review' })
+  })
+
+  it('searchPages ignores alias lookup failure silently', async () => {
+    mockedSearchBlocks.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    // Alias lookup throws
+    mockedResolvePageByAlias.mockRejectedValue(new Error('alias service down'))
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      // Should NOT throw
+      items = await result.current.searchPages('broken-alias')
+    })
+
+    // Only the create option should be present
+    expect(items).toEqual([{ id: '__create__', label: 'broken-alias', isCreate: true }])
+  })
+
+  it('searchPages handles null alias title as "Untitled"', async () => {
+    mockedSearchBlocks.mockResolvedValue({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    mockedResolvePageByAlias.mockResolvedValue(['ALIAS_PAGE_3', null])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('mystery')
+    })
+
+    const nonCreate = items.filter((i) => !i.isCreate)
+    expect(nonCreate[0]).toEqual({
+      id: 'ALIAS_PAGE_3',
+      label: 'Untitled (alias: mystery)',
+    })
+  })
+
+  it('searchPages does not call resolvePageByAlias for empty query', async () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [{ id: 'P1', title: 'Some Page' }]
+    })
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+
+    expect(mockedResolvePageByAlias).not.toHaveBeenCalled()
   })
 })

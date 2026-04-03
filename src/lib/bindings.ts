@@ -589,6 +589,39 @@ async countBacklinksBatch(pageIds: string[]) : Promise<Result<Partial<{ [key in 
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`].
+ */
+async setPageAliases(pageId: string, aliases: string[]) : Promise<Result<string[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_page_aliases", { pageId, aliases }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: get page aliases. Delegates to [`get_page_aliases_inner`].
+ */
+async getPageAliases(pageId: string) : Promise<Result<string[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_page_aliases", { pageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: resolve a page by alias. Delegates to [`resolve_page_by_alias_inner`].
+ */
+async resolvePageByAlias(alias: string) : Promise<Result<[string, string | null] | null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resolve_page_by_alias", { alias }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useBlockTags } from '../hooks/useBlockTags'
-import { editBlock } from '../lib/tauri'
+import { editBlock, getPageAliases, setPageAliases } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
@@ -32,6 +32,19 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const [editableTitle, setEditableTitle] = useState(title)
   const [tagQuery, setTagQuery] = useState('')
   const [showTagPicker, setShowTagPicker] = useState(false)
+
+  // --- Alias state ---
+  const [aliases, setAliases] = useState<string[]>([])
+  const [editingAliases, setEditingAliases] = useState(false)
+  const [aliasInput, setAliasInput] = useState('')
+
+  // Fetch aliases on mount / page change
+  useEffect(() => {
+    if (!pageId) return
+    getPageAliases(pageId)
+      .then(setAliases)
+      .catch(() => {})
+  }, [pageId])
 
   // Sync editableTitle when prop changes (e.g., navigating to a different page)
   useEffect(() => {
@@ -128,6 +141,80 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           {title}
         </div>
       </div>
+
+      {/* Aliases */}
+      {(aliases.length > 0 || editingAliases) && (
+        <div className="flex flex-wrap items-center gap-1 px-1 text-xs text-muted-foreground">
+          <span className="font-medium">Also known as:</span>
+          {aliases.map((alias) => (
+            <span key={alias} className="rounded-md bg-muted px-1.5 py-0.5">
+              {alias}
+              {editingAliases && (
+                <button
+                  type="button"
+                  className="ml-1 text-destructive hover:text-destructive/80"
+                  onClick={() => {
+                    const next = aliases.filter((a) => a !== alias)
+                    setAliases(next)
+                    setPageAliases(pageId, next).catch(() =>
+                      toast.error('Failed to update aliases'),
+                    )
+                  }}
+                  aria-label={`Remove alias ${alias}`}
+                >
+                  ×
+                </button>
+              )}
+            </span>
+          ))}
+          {editingAliases ? (
+            <form
+              className="flex items-center gap-1"
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (aliasInput.trim()) {
+                  const next = [...aliases, aliasInput.trim()]
+                  setAliases(next)
+                  setPageAliases(pageId, next).catch(() => toast.error('Failed to update aliases'))
+                  setAliasInput('')
+                }
+              }}
+            >
+              <input
+                type="text"
+                className="w-24 rounded border px-1 py-0.5 text-xs"
+                placeholder="New alias..."
+                value={aliasInput}
+                onChange={(e) => setAliasInput(e.target.value)}
+                aria-label="New alias input"
+              />
+              <button type="submit" className="text-xs text-primary">
+                Add
+              </button>
+              <button type="button" className="text-xs" onClick={() => setEditingAliases(false)}>
+                Done
+              </button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              className="text-xs text-primary hover:underline"
+              onClick={() => setEditingAliases(true)}
+            >
+              {aliases.length > 0 ? 'Edit' : '+ Add alias'}
+            </button>
+          )}
+        </div>
+      )}
+      {aliases.length === 0 && !editingAliases && (
+        <button
+          type="button"
+          className="text-xs text-muted-foreground hover:text-primary px-1"
+          onClick={() => setEditingAliases(true)}
+        >
+          + Add alias
+        </button>
+      )}
 
       {/* Tag badges row */}
       <div className="flex flex-wrap items-center gap-1.5">

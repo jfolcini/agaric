@@ -3006,6 +3006,89 @@ pub(crate) async fn count_backlinks_batch_inner(
 }
 
 // ---------------------------------------------------------------------------
+// Page aliases (#598)
+// ---------------------------------------------------------------------------
+
+/// Replace the full set of aliases for a page. Returns the aliases that were
+/// actually inserted (empty/whitespace-only entries are skipped; duplicates
+/// across different pages are silently ignored via INSERT OR IGNORE).
+pub async fn set_page_aliases_inner(
+    pool: &SqlitePool,
+    page_id: &str,
+    aliases: Vec<String>,
+) -> Result<Vec<String>, AppError> {
+    // Verify page exists and is a page type
+    let exists: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL",
+    )
+    .bind(page_id)
+    .fetch_one(pool)
+    .await?;
+
+    if !exists {
+        return Err(AppError::NotFound("page not found".into()));
+    }
+
+    // Delete existing aliases
+    sqlx::query("DELETE FROM page_aliases WHERE page_id = ?1")
+        .bind(page_id)
+        .execute(pool)
+        .await?;
+
+    // Insert new aliases (skip empty, trim whitespace, deduplicate)
+    let mut inserted = Vec::new();
+    for alias in aliases {
+        let trimmed = alias.trim().to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // INSERT OR IGNORE handles duplicate alias across different pages
+        let result =
+            sqlx::query("INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)")
+                .bind(page_id)
+                .bind(&trimmed)
+                .execute(pool)
+                .await?;
+        if result.rows_affected() > 0 {
+            inserted.push(trimmed);
+        }
+    }
+
+    Ok(inserted)
+}
+
+/// Return all aliases for a page, sorted alphabetically.
+pub async fn get_page_aliases_inner(
+    pool: &SqlitePool,
+    page_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let aliases: Vec<String> =
+        sqlx::query_scalar("SELECT alias FROM page_aliases WHERE page_id = ?1 ORDER BY alias")
+            .bind(page_id)
+            .fetch_all(pool)
+            .await?;
+    Ok(aliases)
+}
+
+/// Look up a page by one of its aliases. Returns `(page_id, title)` if found.
+pub async fn resolve_page_by_alias_inner(
+    pool: &SqlitePool,
+    alias: &str,
+) -> Result<Option<(String, Option<String>)>, AppError> {
+    let result: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT pa.page_id, b.content \
+         FROM page_aliases pa \
+         JOIN blocks b ON b.id = pa.page_id \
+         WHERE pa.alias = ?1 COLLATE NOCASE \
+           AND b.deleted_at IS NULL",
+    )
+    .bind(alias)
+    .fetch_optional(pool)
+    .await?;
+    Ok(result)
+}
+
+// ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
@@ -3881,6 +3964,46 @@ pub async fn count_backlinks_batch(
     page_ids: Vec<String>,
 ) -> Result<HashMap<String, usize>, AppError> {
     count_backlinks_batch_inner(&read_pool.0, page_ids)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn set_page_aliases(
+    write_pool: State<'_, WritePool>,
+    page_id: String,
+    aliases: Vec<String>,
+) -> Result<Vec<String>, AppError> {
+    set_page_aliases_inner(&write_pool.0, &page_id, aliases)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: get page aliases. Delegates to [`get_page_aliases_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn get_page_aliases(
+    read_pool: State<'_, ReadPool>,
+    page_id: String,
+) -> Result<Vec<String>, AppError> {
+    get_page_aliases_inner(&read_pool.0, &page_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: resolve a page by alias. Delegates to [`resolve_page_by_alias_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn resolve_page_by_alias(
+    read_pool: State<'_, ReadPool>,
+    alias: String,
+) -> Result<Option<(String, Option<String>)>, AppError> {
+    resolve_page_by_alias_inner(&read_pool.0, &alias)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -11758,5 +11881,135 @@ mod tests {
         );
 
         mat.shutdown();
+    }
+
+    // ======================================================================
+    // page_aliases (#598)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_page_aliases_creates_and_returns_aliases() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "page-1", "page", "My Page", None, Some(0)).await;
+
+        let inserted = set_page_aliases_inner(&pool, "page-1", vec!["Alpha".into(), "Beta".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(inserted.len(), 2);
+        assert!(inserted.contains(&"Alpha".to_string()));
+        assert!(inserted.contains(&"Beta".to_string()));
+
+        // Verify persistence
+        let aliases = get_page_aliases_inner(&pool, "page-1").await.unwrap();
+        assert_eq!(aliases, vec!["Alpha", "Beta"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_page_aliases_replaces_existing() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "page-2", "page", "Page Two", None, Some(0)).await;
+
+        // Set initial aliases
+        set_page_aliases_inner(&pool, "page-2", vec!["Old1".into(), "Old2".into()])
+            .await
+            .unwrap();
+
+        // Replace with new aliases
+        let inserted = set_page_aliases_inner(
+            &pool,
+            "page-2",
+            vec!["New1".into(), "New2".into(), "New3".into()],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(inserted.len(), 3);
+
+        let aliases = get_page_aliases_inner(&pool, "page-2").await.unwrap();
+        assert_eq!(aliases, vec!["New1", "New2", "New3"]);
+
+        // Old aliases should be gone
+        let resolved = resolve_page_by_alias_inner(&pool, "Old1").await.unwrap();
+        assert!(resolved.is_none(), "old alias should no longer resolve");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_page_aliases_skips_empty_and_duplicates() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "page-3", "page", "Page Three", None, Some(0)).await;
+
+        let inserted = set_page_aliases_inner(
+            &pool,
+            "page-3",
+            vec![
+                "  ".into(), // whitespace only — skipped
+                "".into(),   // empty — skipped
+                "Valid".into(),
+                "Valid".into(), // duplicate — second insert is ignored
+                "  Trimmed  ".into(),
+            ],
+        )
+        .await
+        .unwrap();
+
+        // "Valid" appears once, "Trimmed" appears once
+        assert_eq!(inserted.len(), 2);
+        assert!(inserted.contains(&"Valid".to_string()));
+        assert!(inserted.contains(&"Trimmed".to_string()));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn get_page_aliases_returns_sorted_list() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "page-4", "page", "Page Four", None, Some(0)).await;
+
+        set_page_aliases_inner(
+            &pool,
+            "page-4",
+            vec!["Zulu".into(), "Alpha".into(), "Mike".into()],
+        )
+        .await
+        .unwrap();
+
+        let aliases = get_page_aliases_inner(&pool, "page-4").await.unwrap();
+        assert_eq!(aliases, vec!["Alpha", "Mike", "Zulu"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn resolve_page_by_alias_case_insensitive() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "page-5", "page", "Page Five", None, Some(0)).await;
+
+        set_page_aliases_inner(&pool, "page-5", vec!["MyAlias".into()])
+            .await
+            .unwrap();
+
+        // Exact case
+        let r1 = resolve_page_by_alias_inner(&pool, "MyAlias").await.unwrap();
+        assert!(r1.is_some());
+        let (pid, title) = r1.unwrap();
+        assert_eq!(pid, "page-5");
+        assert_eq!(title.as_deref(), Some("Page Five"));
+
+        // Different case
+        let r2 = resolve_page_by_alias_inner(&pool, "myalias").await.unwrap();
+        assert!(r2.is_some());
+        assert_eq!(r2.unwrap().0, "page-5");
+
+        let r3 = resolve_page_by_alias_inner(&pool, "MYALIAS").await.unwrap();
+        assert!(r3.is_some());
+        assert_eq!(r3.unwrap().0, "page-5");
+
+        // Non-existent alias
+        let r4 = resolve_page_by_alias_inner(&pool, "NoSuchAlias")
+            .await
+            .unwrap();
+        assert!(r4.is_none());
     }
 }

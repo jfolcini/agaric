@@ -595,3 +595,22 @@ export async function startSync(peerId: string): Promise<SyncSessionInfo> {
 export async function cancelSync(): Promise<void> {
   return invoke('cancel_sync')
 }
+
+// ---------------------------------------------------------------------------
+// Page alias commands (#598)
+// ---------------------------------------------------------------------------
+
+/** Set the complete list of aliases for a page (replaces existing). */
+export async function setPageAliases(pageId: string, aliases: string[]): Promise<string[]> {
+  return invoke('set_page_aliases', { pageId, aliases })
+}
+
+/** Get all aliases for a page. */
+export async function getPageAliases(pageId: string): Promise<string[]> {
+  return invoke('get_page_aliases', { pageId })
+}
+
+/** Resolve a page by one of its aliases. Returns page ID + title, or null. */
+export async function resolvePageByAlias(alias: string): Promise<[string, string | null] | null> {
+  return invoke('resolve_page_by_alias', { alias })
+}
