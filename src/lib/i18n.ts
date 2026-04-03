@@ -311,6 +311,10 @@ const resources = {
       'pageBrowser.createFailed': 'Failed to create page: {{error}}',
       'pageBrowser.deleteFailed': 'Failed to delete page: {{error}}',
       'pageBrowser.retry': 'Retry',
+      'pageBrowser.exportAll': 'Export all pages',
+      'pageBrowser.exporting': 'Exporting...',
+      'pageBrowser.exportSuccess': 'Pages exported as ZIP',
+      'pageBrowser.exportFailed': 'Failed to export pages',
 
       // Due Panel
       'duePanel.headerOne': '1 Due',

@@ -658,4 +658,18 @@ describe('PageBrowser', () => {
       expect(newPageBtn).toBeEnabled()
     })
   })
+
+  it('renders Export all pages button', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makePage('P1', 'A Page')],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<PageBrowser />)
+
+    const exportBtn = await screen.findByRole('button', { name: /Export all pages/i })
+    expect(exportBtn).toBeInTheDocument()
+    expect(exportBtn).toBeEnabled()
+  })
 })

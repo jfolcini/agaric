@@ -6,7 +6,7 @@
  * Includes delete with confirmation dialog and toast error feedback.
  */
 
-import { FileText, Loader2, Plus, Trash2 } from 'lucide-react'
+import { Download, FileText, Loader2, Plus, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
+import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
@@ -54,6 +55,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [isCreating, setIsCreating] = useState(false)
   const [newPageName, setNewPageName] = useState('')
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
+  const [exporting, setExporting] = useState(false)
 
   // Track load-more announcements for screen readers
   const prevLengthRef = useRef(0)
@@ -121,6 +123,19 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       setDeleteTarget(null)
     }
   }, [deleteTarget, handleDeletePage])
+
+  const handleExportAll = useCallback(async () => {
+    setExporting(true)
+    try {
+      const blob = await exportGraphAsZip()
+      const date = new Date().toISOString().slice(0, 10)
+      downloadBlob(blob, `agaric-export-${date}.zip`)
+      toast.success(t('pageBrowser.exportSuccess'))
+    } catch {
+      toast.error(t('pageBrowser.exportFailed'))
+    }
+    setExporting(false)
+  }, [t])
 
   return (
     <div className="page-browser space-y-4">
@@ -220,6 +235,17 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           {loading ? t('pageBrowser.loading') : t('pageBrowser.loadMore')}
         </Button>
       )}
+
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={exporting}
+        onClick={handleExportAll}
+        className="w-full"
+      >
+        <Download className="h-4 w-4 mr-1" />
+        {exporting ? t('pageBrowser.exporting') : t('pageBrowser.exportAll')}
+      </Button>
 
       <output className="sr-only" aria-live="polite">
         {loadMoreAnnouncement}
