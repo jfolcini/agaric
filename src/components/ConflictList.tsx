@@ -58,6 +58,11 @@ function inferConflictType(block: BlockRow, _original?: BlockRow): 'Text' | 'Pro
   return 'Text'
 }
 
+/** Truncate long content for dialog previews. */
+function truncatePreview(text: string, max = 120): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text
+}
+
 /** Badge color class by conflict type. */
 function conflictTypeBadgeClass(type: 'Text' | 'Property' | 'Move'): string {
   switch (type) {
@@ -357,6 +362,27 @@ export function ConflictList(): React.ReactElement {
             <AlertDialogTitle>Keep incoming version?</AlertDialogTitle>
             <AlertDialogDescription>
               This will replace the current content with the incoming version.
+              {confirmKeepBlock && (
+                <span className="mt-2 block space-y-1 text-xs">
+                  <span className="block">
+                    <span className="font-medium">Current:</span>{' '}
+                    <span className="text-muted-foreground">
+                      {truncatePreview(
+                        confirmKeepBlock.parent_id
+                          ? (originals.get(confirmKeepBlock.parent_id)?.content
+                              ?? '(original not available)')
+                          : '(no original)',
+                      )}
+                    </span>
+                  </span>
+                  <span className="block">
+                    <span className="font-medium">Incoming:</span>{' '}
+                    <span className="text-muted-foreground">
+                      {truncatePreview(confirmKeepBlock.content ?? '(empty)')}
+                    </span>
+                  </span>
+                </span>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -385,6 +411,17 @@ export function ConflictList(): React.ReactElement {
             <AlertDialogTitle>Discard conflict?</AlertDialogTitle>
             <AlertDialogDescription>
               This will permanently remove the conflicting version.
+              {confirmDiscardId && (() => {
+                const discardBlock = blocks.find((b) => b.id === confirmDiscardId)
+                return discardBlock ? (
+                  <span className="mt-2 block text-xs">
+                    <span className="font-medium">Content:</span>{' '}
+                    <span className="text-muted-foreground">
+                      {truncatePreview(discardBlock.content ?? '(empty)')}
+                    </span>
+                  </span>
+                ) : null
+              })()}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

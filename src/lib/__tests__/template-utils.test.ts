@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { insertTemplateBlocks, loadJournalTemplate, loadTemplatePages } from '../template-utils'
+import { insertTemplateBlocks, loadJournalTemplate, loadTemplatePages, loadTemplatePagesWithPreview } from '../template-utils'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -250,10 +250,11 @@ describe('loadJournalTemplate', () => {
       has_more: false,
     })
 
-    const result = await loadJournalTemplate()
+    const { template, duplicateWarning } = await loadJournalTemplate()
 
-    expect(result).not.toBeNull()
-    expect(result?.id).toBe('JT1')
+    expect(template).not.toBeNull()
+    expect(template?.id).toBe('JT1')
+    expect(duplicateWarning).toBeNull()
     expect(mockedInvoke).toHaveBeenCalledWith(
       'query_by_property',
       expect.objectContaining({
@@ -270,7 +271,104 @@ describe('loadJournalTemplate', () => {
       has_more: false,
     })
 
-    const result = await loadJournalTemplate()
-    expect(result).toBeNull()
+    const { template, duplicateWarning } = await loadJournalTemplate()
+    expect(template).toBeNull()
+    expect(duplicateWarning).toBeNull()
+  })
+
+  it('returns duplicateWarning when multiple journal templates exist', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        { id: 'JT1', block_type: 'page', content: 'Daily Journal' },
+        { id: 'JT2', block_type: 'page', content: 'Weekly Journal' },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { template, duplicateWarning } = await loadJournalTemplate()
+
+    expect(template).not.toBeNull()
+    expect(template?.id).toBe('JT1')
+    expect(duplicateWarning).not.toBeNull()
+    expect(duplicateWarning).toContain('Multiple journal templates found (2)')
+    expect(duplicateWarning).toContain('Daily Journal')
+  })
+
+  it('returns null duplicateWarning when exactly one template exists', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [{ id: 'JT1', block_type: 'page', content: 'Only Journal' }],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const { duplicateWarning } = await loadJournalTemplate()
+    expect(duplicateWarning).toBeNull()
+  })
+})
+
+describe('loadTemplatePagesWithPreview', () => {
+  it('returns pages with first child content as preview', async () => {
+    // Mock query_by_property → 1 template page
+    mockedInvoke.mockResolvedValueOnce({
+      items: [{ id: 'T1', block_type: 'page', content: 'Meeting Notes' }],
+      next_cursor: null,
+      has_more: false,
+    })
+    // Mock list_blocks(T1) → 1 child
+    mockedInvoke.mockResolvedValueOnce({
+      items: [{ id: 'C1', block_type: 'content', content: '## Attendees', parent_id: 'T1', position: 0 }],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const result = await loadTemplatePagesWithPreview()
+    expect(result).toHaveLength(1)
+    expect(result[0].preview).toBe('## Attendees')
+  })
+
+  it('returns null preview when template has no children', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [{ id: 'T1', block_type: 'page', content: 'Empty Template' }],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const result = await loadTemplatePagesWithPreview()
+    expect(result[0].preview).toBeNull()
+  })
+
+  it('truncates long preview text at 60 chars', async () => {
+    const longContent = 'A'.repeat(80)
+    mockedInvoke.mockResolvedValueOnce({
+      items: [{ id: 'T1', block_type: 'page', content: 'Long Template' }],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [{ id: 'C1', block_type: 'content', content: longContent, parent_id: 'T1', position: 0 }],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const result = await loadTemplatePagesWithPreview()
+    expect(result[0].preview).toBe('A'.repeat(60) + '\u2026')
+  })
+
+  it('handles preview fetch failure gracefully', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      items: [{ id: 'T1', block_type: 'page', content: 'Template' }],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedInvoke.mockRejectedValueOnce(new Error('list_blocks failed'))
+
+    const result = await loadTemplatePagesWithPreview()
+    expect(result[0].preview).toBeNull()
   })
 })

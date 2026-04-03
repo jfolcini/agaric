@@ -692,7 +692,7 @@ describe('ConflictList', () => {
     // Dialog should be visible
     expect(screen.getByText('Keep incoming version?')).toBeInTheDocument()
     expect(
-      screen.getByText('This will replace the current content with the incoming version.'),
+      screen.getByText(/This will replace the current content with the incoming version\./),
     ).toBeInTheDocument()
 
     // edit_block/delete_block should NOT have been called yet
@@ -1344,5 +1344,77 @@ describe('ConflictList', () => {
       ).length
       expect(callCountAfter).toBeGreaterThan(callCountBefore)
     })
+  })
+
+  // --- #651 C-6 Content preview in Keep/Discard confirmation dialogs ---
+
+  it('Keep dialog shows content preview of original and incoming (#651 C-6)', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'incoming changes', 'ORIG001')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+
+    // Wait for original to be fetched
+    await screen.findByText('original content')
+
+    // Open Keep dialog
+    const keepBtn = screen.getByRole('button', { name: /Keep/i })
+    await user.click(keepBtn)
+
+    // Dialog should show content preview
+    const dialog = document.querySelector('.conflict-keep-confirm')
+    expect(dialog).toBeTruthy()
+    expect(dialog?.textContent).toContain('incoming changes')
+    expect(dialog?.textContent).toContain('original content')
+  })
+
+  it('Discard dialog shows content preview of conflict (#651 C-6)', async () => {
+    const user = userEvent.setup()
+    const conflict = makeConflict('C1', 'conflict to discard', 'ORIG001')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict to discard')
+
+    // Open Discard dialog
+    const discardBtn = screen.getByRole('button', { name: /Discard conflict for block/i })
+    await user.click(discardBtn)
+
+    // Dialog should show content preview
+    const dialog = document.querySelector('.conflict-discard-confirm')
+    expect(dialog).toBeTruthy()
+    expect(dialog?.textContent).toContain('conflict to discard')
+  })
+
+  it('Keep dialog truncates long content in preview (#651 C-6)', async () => {
+    const user = userEvent.setup()
+    const longContent = 'A'.repeat(200)
+    const conflict = makeConflict('C1', longContent, 'ORIG001')
+    mockInvokeByCommand({
+      get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
+      get_block: originalBlock,
+    })
+
+    render(<ConflictList />)
+
+    await screen.findByText(/AAAA/)
+
+    const keepBtn = screen.getByRole('button', { name: /Keep/i })
+    await user.click(keepBtn)
+
+    const dialog = document.querySelector('.conflict-keep-confirm')
+    // Should contain truncated content (120 chars + ellipsis), not full 200 chars
+    const dialogText = dialog?.textContent ?? ''
+    expect(dialogText).toContain('A'.repeat(120))
+    expect(dialogText).toContain('\u2026')
+    expect(dialogText).not.toContain('A'.repeat(200))
   })
 })

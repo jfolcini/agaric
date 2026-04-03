@@ -703,7 +703,10 @@ export function JournalPage({
         }
 
         if (isNewPage) {
-          const journalTemplate = await loadJournalTemplate()
+          const { template: journalTemplate, duplicateWarning } = await loadJournalTemplate()
+          if (duplicateWarning) {
+            toast.warning(duplicateWarning)
+          }
           if (journalTemplate) {
             const ids = await insertTemplateBlocks(journalTemplate.id, pageId)
             await load(pageId)

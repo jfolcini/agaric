@@ -11,19 +11,46 @@ export async function loadTemplatePages(): Promise<BlockRow[]> {
 
 /**
  * Load the journal template page (property `journal-template` = 'true').
- * Returns the first matching page, or null if none exists.
- * Warns to console if multiple journal templates are found.
+ * Returns the first matching page (or null) and an optional warning when
+ * multiple journal templates are found so the caller can surface it to the user.
  */
-export async function loadJournalTemplate(): Promise<BlockRow | null> {
+export async function loadJournalTemplate(): Promise<{
+  template: BlockRow | null
+  duplicateWarning: string | null
+}> {
   const resp = await queryByProperty({ key: 'journal-template', valueText: 'true', limit: 10 })
   const pages = resp.items.filter((b) => b.block_type === 'page')
-  if (pages.length > 1) {
-    console.warn(
-      `Multiple journal templates found (${pages.length}). Using "${pages[0].content ?? pages[0].id}". ` +
-        'Remove the journal-template property from extra pages to avoid ambiguity.',
-    )
+  const duplicateWarning =
+    pages.length > 1
+      ? `Multiple journal templates found (${pages.length}). Using "${pages[0].content ?? pages[0].id}". ` +
+        'Remove the journal-template property from extra pages to avoid ambiguity.'
+      : null
+  return { template: pages[0] ?? null, duplicateWarning }
+}
+
+/**
+ * Load template pages with a preview of their first child's content.
+ * Returns the page data plus a truncated preview string.
+ */
+export async function loadTemplatePagesWithPreview(): Promise<
+  Array<{ id: string; content: string; preview: string | null }>
+> {
+  const pages = await loadTemplatePages()
+  const result: Array<{ id: string; content: string; preview: string | null }> = []
+  for (const page of pages) {
+    let preview: string | null = null
+    try {
+      const children = await listBlocks({ parentId: page.id, limit: 1 })
+      if (children.items.length > 0) {
+        const text = children.items[0].content ?? ''
+        preview = text.length > 60 ? `${text.slice(0, 60)}…` : text
+      }
+    } catch {
+      // Preview is best-effort — skip on failure
+    }
+    result.push({ id: page.id, content: page.content ?? '', preview })
   }
-  return pages[0] ?? null
+  return result
 }
 
 /**

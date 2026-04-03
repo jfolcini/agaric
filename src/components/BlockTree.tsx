@@ -44,7 +44,7 @@ import {
   setScheduledDate as setScheduledDateCmd,
   setTodoState as setTodoStateCmd,
 } from '../lib/tauri'
-import { insertTemplateBlocks, loadTemplatePages } from '../lib/template-utils'
+import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '../lib/template-utils'
 import { getDragDescendants } from '../lib/tree-utils'
 import { cn } from '../lib/utils'
 import { useBlockStore } from '../stores/blocks'
@@ -174,7 +174,7 @@ function TemplatePicker({
   onSelect,
   onClose,
 }: {
-  templatePages: Array<{ id: string; content: string }>
+  templatePages: Array<{ id: string; content: string; preview: string | null }>
   onSelect: (templatePageId: string) => void
   onClose: () => void
 }): React.ReactElement {
@@ -230,7 +230,10 @@ function TemplatePicker({
             className="w-full text-left rounded px-2 py-1.5 text-sm hover:bg-accent transition-colors"
             onClick={() => onSelect(tp.id)}
           >
-            {tp.content || t('block.untitled')}
+            <span className="font-medium">{tp.content || t('block.untitled')}</span>
+            {tp.preview && (
+              <span className="block text-xs text-muted-foreground truncate">{tp.preview}</span>
+            )}
           </button>
         ))}
       </div>
@@ -315,7 +318,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   // ── Template picker for /TEMPLATE command ──────────────────────────
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
-  const [templatePages, setTemplatePages] = useState<Array<{ id: string; content: string }>>([])
+  const [templatePages, setTemplatePages] = useState<Array<{ id: string; content: string; preview: string | null }>>([])
 
   // ── Enter-creates-block refs ───────────────────────────────────────
   const justCreatedBlockIds = useRef(new Set<string>())
@@ -943,12 +946,12 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
       if (item.id === 'template') {
         try {
-          const pages = await loadTemplatePages()
+          const pages = await loadTemplatePagesWithPreview()
           if (pages.length === 0) {
             toast.error(t('slash.noTemplates'))
             return
           }
-          setTemplatePages(pages.map((p) => ({ id: p.id, content: p.content ?? '' })))
+          setTemplatePages(pages)
           setTemplatePickerOpen(true)
         } catch {
           toast.error(t('slash.templateLoadFailed'))
