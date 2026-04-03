@@ -34,14 +34,20 @@ export async function insertTemplateBlocks(
   async function copyChildren(sourceParentId: string, destParentId: string): Promise<void> {
     const resp = await listBlocks({ parentId: sourceParentId, limit: 500 })
     for (const child of resp.items) {
-      const newBlock = await createBlock({
-        blockType: 'content',
-        content: child.content ?? '',
-        parentId: destParentId,
-      })
-      ids.push(newBlock.id)
-      // Recursively copy grandchildren
-      await copyChildren(child.id, newBlock.id)
+      try {
+        const newBlock = await createBlock({
+          blockType: 'content',
+          content: child.content ?? '',
+          parentId: destParentId,
+        })
+        ids.push(newBlock.id)
+        // Recursively copy grandchildren
+        await copyChildren(child.id, newBlock.id)
+      } catch {
+        // Log warning but continue with remaining siblings.
+        // Partial template is better than no template.
+        console.warn(`Template block copy failed for source ${child.id}, skipping`)
+      }
     }
   }
 

@@ -19,7 +19,8 @@
  * be supported when the backend exposes them via a conflict_type field.
  */
 
-import { Check, ChevronDown, ExternalLink, GitMerge, X } from 'lucide-react'
+import { listen } from '@tauri-apps/api/event'
+import { Check, ChevronDown, ExternalLink, GitMerge, RefreshCw, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -77,6 +78,7 @@ export function ConflictList(): React.ReactElement {
     loading,
     hasMore,
     loadMore,
+    reload,
     setItems: setBlocks,
   } = usePaginatedQuery(queryFn, { onError: 'Failed to load conflicts' })
 
@@ -116,6 +118,29 @@ export function ConflictList(): React.ReactElement {
       cancelled = true
     }
   }, [blocks])
+
+  // Listen for sync:complete events to refresh the conflict list (#651-C5).
+  // Falls back gracefully when running outside Tauri (e.g. in tests / browser).
+  useEffect(() => {
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+
+    listen<unknown>('sync:complete', () => {
+      if (!cancelled) reload()
+    })
+      .then((fn) => {
+        if (cancelled) fn()
+        else unlisten = fn
+      })
+      .catch(() => {
+        // Not in Tauri context — no-op
+      })
+
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [reload])
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -199,10 +224,22 @@ export function ConflictList(): React.ReactElement {
       )}
 
       {blocks.length > 0 && (
-        <p className="text-xs text-muted-foreground mb-2">
-          <strong>Keep</strong> replaces the current content with the incoming version.{' '}
-          <strong>Discard</strong> removes the conflicting version.
-        </p>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs text-muted-foreground">
+            <strong>Keep</strong> replaces the current content with the incoming version.{' '}
+            <strong>Discard</strong> removes the conflicting version.
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="conflict-refresh-btn shrink-0 ml-2"
+            onClick={reload}
+            disabled={loading}
+            aria-label="Refresh conflict list"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+          </Button>
+        </div>
       )}
 
       <div className="conflict-items space-y-2">

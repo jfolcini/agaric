@@ -169,6 +169,64 @@ describe('insertTemplateBlocks', () => {
     expect(listCalls).toHaveLength(3)
   })
 
+  it('continues copying after a single block creation failure', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    // listBlocks(TMPL) → 3 children (A, B, C)
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        { id: 'A', block_type: 'content', content: 'Block A', parent_id: 'TMPL', position: 0 },
+        { id: 'B', block_type: 'content', content: 'Block B', parent_id: 'TMPL', position: 1 },
+        { id: 'C', block_type: 'content', content: 'Block C', parent_id: 'TMPL', position: 2 },
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+    // createBlock for A → NEW_A (success)
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'NEW_A',
+      block_type: 'content',
+      content: 'Block A',
+    })
+    // listBlocks(A) → no children
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+    })
+    // createBlock for B → FAIL
+    mockedInvoke.mockRejectedValueOnce(new Error('create_block failed'))
+    // createBlock for C → NEW_C (success)
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'NEW_C',
+      block_type: 'content',
+      content: 'Block C',
+    })
+    // listBlocks(C) → no children
+    mockedInvoke.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT')
+
+    // B was skipped; A and C were created
+    expect(ids).toEqual(['NEW_A', 'NEW_C'])
+    expect(ids).toHaveLength(2)
+
+    // createBlock was called 3 times (A success, B fail, C success)
+    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(createCalls).toHaveLength(3)
+
+    // Warning was logged for the failed block
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Template block copy failed for source B, skipping',
+    )
+
+    warnSpy.mockRestore()
+  })
+
   it('returns empty array when template has no children', async () => {
     mockedInvoke.mockResolvedValueOnce({
       items: [],

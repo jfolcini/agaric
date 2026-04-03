@@ -22,6 +22,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
@@ -36,6 +37,13 @@ vi.mock('sonner', () => ({
     error: vi.fn(),
     success: vi.fn(),
   },
+}))
+
+const mockUnlisten = vi.fn()
+const mockListen = vi.fn().mockResolvedValue(mockUnlisten)
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: (...args: unknown[]) => mockListen(...args),
 }))
 
 const mockedInvoke = vi.mocked(invoke)
@@ -1233,5 +1241,108 @@ describe('ConflictList', () => {
     expect(typeBadge?.getAttribute('aria-label')).toBe(
       'Text conflict — content edited on multiple devices',
     )
+  })
+
+  // --- #651-C5 Sync event listener and Refresh button ---
+
+  it('registers a sync:complete event listener on mount (#651-C5)', async () => {
+    mockInvokeByCommand({ get_conflicts: emptyPage })
+
+    render(<ConflictList />)
+
+    await waitFor(() => {
+      expect(mockListen).toHaveBeenCalledWith('sync:complete', expect.any(Function))
+    })
+  })
+
+  it('cleans up the sync:complete listener on unmount (#651-C5)', async () => {
+    mockInvokeByCommand({ get_conflicts: emptyPage })
+
+    const { unmount } = render(<ConflictList />)
+
+    // Wait for the listener to be registered
+    await waitFor(() => {
+      expect(mockListen).toHaveBeenCalledWith('sync:complete', expect.any(Function))
+    })
+
+    // Unmount and verify unlisten is called
+    unmount()
+
+    expect(mockUnlisten).toHaveBeenCalled()
+  })
+
+  it('refetches conflicts when sync:complete event fires (#651-C5)', async () => {
+    const page = {
+      items: [makeConflict('C1', 'conflict 1')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    // Reset invoke call count to detect the refetch
+    const callCountBefore = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'get_conflicts',
+    ).length
+
+    // Simulate the sync:complete event by invoking the captured listener callback
+    const listenerCall = mockListen.mock.calls.find(
+      ([event]: [string]) => event === 'sync:complete',
+    )
+    expect(listenerCall).toBeTruthy()
+    const callback = listenerCall![1]
+    callback({ payload: { ops_received: 3, ops_sent: 0 } })
+
+    await waitFor(() => {
+      const callCountAfter = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'get_conflicts',
+      ).length
+      expect(callCountAfter).toBeGreaterThan(callCountBefore)
+    })
+  })
+
+  it('shows a Refresh button when conflicts exist (#651-C5)', async () => {
+    const page = {
+      items: [makeConflict('C1', 'conflict 1')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    const refreshBtn = await screen.findByRole('button', { name: /Refresh conflict list/i })
+    expect(refreshBtn).toBeInTheDocument()
+  })
+
+  it('clicking Refresh button triggers a refetch (#651-C5)', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeConflict('C1', 'conflict 1')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('conflict 1')
+
+    const callCountBefore = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'get_conflicts',
+    ).length
+
+    const refreshBtn = screen.getByRole('button', { name: /Refresh conflict list/i })
+    await user.click(refreshBtn)
+
+    await waitFor(() => {
+      const callCountAfter = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'get_conflicts',
+      ).length
+      expect(callCountAfter).toBeGreaterThan(callCountBefore)
+    })
   })
 })
