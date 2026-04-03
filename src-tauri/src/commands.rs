@@ -1729,6 +1729,79 @@ async fn set_property_in_tx(
     };
     validate_set_property(&prop_payload)?;
 
+    // 1b. Date format validation
+    if let Some(ref date_str) = value_date {
+        if !is_valid_iso_date(date_str) {
+            return Err(AppError::Validation(format!(
+                "Invalid date format: '{}'. Expected YYYY-MM-DD.",
+                date_str
+            )));
+        }
+    }
+
+    // 1c. Reserved key field validation (skip for clear operations where all values are None)
+    let is_clear = value_text.is_none()
+        && value_num.is_none()
+        && value_date.is_none()
+        && value_ref.is_none();
+    if !is_clear {
+        match key.as_str() {
+            "due_date" | "scheduled_date" => {
+                if value_date.is_none() {
+                    return Err(AppError::Validation(format!(
+                        "Property '{}' requires value_date, not value_text/value_num/value_ref.",
+                        key
+                    )));
+                }
+            }
+            "todo_state" | "priority" => {
+                if value_text.is_none() {
+                    return Err(AppError::Validation(format!(
+                        "Property '{}' requires value_text, not value_date/value_num/value_ref.",
+                        key
+                    )));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // 1d. Type validation against property_definitions (non-reserved keys only)
+    if !is_clear && !is_reserved_property_key(&key) {
+        let def_type: Option<String> = sqlx::query_scalar(
+            "SELECT value_type FROM property_definitions WHERE key = ?",
+        )
+        .bind(&key)
+        .fetch_optional(&mut **tx)
+        .await?;
+
+        if let Some(expected_type) = def_type {
+            let type_matches = match expected_type.as_str() {
+                "text" | "select" => value_text.is_some(),
+                "number" => value_num.is_some(),
+                "date" => value_date.is_some(),
+                _ => true,
+            };
+            if !type_matches {
+                let actual_type = if value_text.is_some() {
+                    "text"
+                } else if value_num.is_some() {
+                    "number"
+                } else if value_date.is_some() {
+                    "date"
+                } else if value_ref.is_some() {
+                    "ref"
+                } else {
+                    "unknown"
+                };
+                return Err(AppError::Validation(format!(
+                    "Property '{}' expects type '{}', got '{}'.",
+                    key, expected_type, actual_type
+                )));
+            }
+        }
+    }
+
     // 2. Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
@@ -11257,6 +11330,213 @@ mod tests {
             prop_count, 0,
             "reserved key should not be in block_properties"
         );
+
+        mat.shutdown();
+    }
+
+    // ======================================================================
+    // set_property — date format / reserved key / property_definitions type
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_property_rejects_invalid_date_format() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "date val test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "my_date".into(),
+            None,
+            None,
+            Some("not-a-date".into()),
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("Invalid date format")),
+            "invalid date string should return Validation error, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_property_rejects_out_of_range_date() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "date range test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "my_date".into(),
+            None,
+            None,
+            Some("2025-13-45".into()),
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("Invalid date format")),
+            "out-of-range date should return Validation error, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_property_rejects_due_date_with_value_text() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "reserved field test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "due_date".into(),
+            Some("2025-01-01".into()),
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("requires value_date")),
+            "due_date with value_text should return Validation error, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_property_rejects_todo_state_with_value_date() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "reserved field test 2".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "todo_state".into(),
+            None,
+            None,
+            Some("2025-01-01".into()),
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("requires value_text")),
+            "todo_state with value_date should return Validation error, got: {result:?}"
+        );
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_property_accepts_valid_reserved_key_with_correct_field() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "reserved accept test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "due_date".into(),
+            None,
+            None,
+            Some("2025-01-15".into()),
+            None,
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "due_date with valid value_date should succeed, got: {result:?}"
+        );
+
+        let block = result.unwrap();
+        assert_eq!(block.due_date, Some("2025-01-15".into()));
 
         mat.shutdown();
     }
