@@ -66,6 +66,15 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
     ],
   },
   {
+    category: 'Block Selection',
+    shortcuts: [
+      { keys: 'Ctrl + Click', description: 'Toggle block selection' },
+      { keys: 'Shift + Click', description: 'Range select blocks' },
+      { keys: 'Ctrl + A', condition: 'not editing', description: 'Select all blocks' },
+      { keys: 'Escape', condition: 'with selection', description: 'Clear selection' },
+    ],
+  },
+  {
     category: 'Undo / Redo',
     shortcuts: [
       { keys: 'Ctrl + Z', condition: 'outside editor', description: 'Undo last page operation' },

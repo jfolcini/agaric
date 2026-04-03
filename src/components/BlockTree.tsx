@@ -362,17 +362,59 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   // ── Batch operations state ─────────────────────────────────────────
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
+  const [batchInProgress, setBatchInProgress] = useState(false)
 
   const handleBatchSetTodo = useCallback(
     async (state: string | null) => {
+      if (batchInProgress) return
+      setBatchInProgress(true)
+      try {
+        const ids = [...selectedBlockIds]
+        let successCount = 0
+        let failCount = 0
+        for (const id of ids) {
+          try {
+            await setTodoStateCmd(id, state)
+            useBlockStore.setState((s) => ({
+              blocks: s.blocks.map((b) => (b.id === id ? { ...b, todo_state: state } : b)),
+            }))
+            successCount++
+          } catch {
+            failCount++
+          }
+        }
+        clearSelected()
+        if (failCount > 0) {
+          toast.error(`${failCount} of ${ids.length} failed to update`)
+        } else {
+          toast.success(`Set ${successCount} block(s) to ${state ?? 'none'}`)
+        }
+      } finally {
+        setBatchInProgress(false)
+      }
+    },
+    [selectedBlockIds, clearSelected, batchInProgress],
+  )
+
+  const handleBatchDelete = useCallback(async () => {
+    if (batchInProgress) return
+    setBatchInProgress(true)
+    try {
       const ids = [...selectedBlockIds]
+      // Filter out blocks whose parent is also in the selection (parent deletion cascades)
+      const idsSet = new Set(ids)
+      const toDelete = ids.filter((id) => {
+        const block = useBlockStore.getState().blocks.find((b) => b.id === id)
+        if (block?.parent_id && idsSet.has(block.parent_id)) return false
+        return true
+      })
       let successCount = 0
       let failCount = 0
-      for (const id of ids) {
+      for (const id of toDelete) {
         try {
-          await setTodoStateCmd(id, state)
+          await deleteBlock(id)
           useBlockStore.setState((s) => ({
-            blocks: s.blocks.map((b) => (b.id === id ? { ...b, todo_state: state } : b)),
+            blocks: s.blocks.filter((b) => b.id !== id),
           }))
           successCount++
         } catch {
@@ -380,38 +422,16 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         }
       }
       clearSelected()
+      setBatchDeleteConfirm(false)
       if (failCount > 0) {
-        toast.error(`${failCount} of ${ids.length} failed to update`)
+        toast.error(`${failCount} of ${toDelete.length} failed to delete`)
       } else {
-        toast.success(`Set ${successCount} block(s) to ${state ?? 'none'}`)
+        toast.success(`Deleted ${successCount} block(s)`)
       }
-    },
-    [selectedBlockIds, clearSelected],
-  )
-
-  const handleBatchDelete = useCallback(async () => {
-    const ids = [...selectedBlockIds]
-    let successCount = 0
-    let failCount = 0
-    for (const id of ids) {
-      try {
-        await deleteBlock(id)
-        useBlockStore.setState((s) => ({
-          blocks: s.blocks.filter((b) => b.id !== id),
-        }))
-        successCount++
-      } catch {
-        failCount++
-      }
+    } finally {
+      setBatchInProgress(false)
     }
-    clearSelected()
-    setBatchDeleteConfirm(false)
-    if (failCount > 0) {
-      toast.error(`${failCount} of ${ids.length} failed to delete`)
-    } else {
-      toast.success(`Deleted ${successCount} block(s)`)
-    }
-  }, [selectedBlockIds, clearSelected])
+  }, [selectedBlockIds, clearSelected, batchInProgress])
 
   const handleShowHistory = useCallback((blockId: string) => {
     setHistoryBlockId(blockId)
@@ -1495,7 +1515,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         selectAll()
       }
       // Escape — clear selection (when not editing and there's an active selection)
-      if (e.key === 'Escape' && !focusedBlockId && selectedBlockIds.length > 0) {
+      if (e.key === 'Escape' && !e.defaultPrevented && !focusedBlockId && selectedBlockIds.length > 0) {
         e.preventDefault()
         clearSelected()
       }
@@ -1704,6 +1724,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                 variant="outline"
                 size="sm"
                 className="h-7 text-xs"
+                disabled={batchInProgress}
                 onClick={() => handleBatchSetTodo(state)}
               >
                 {label}
@@ -1714,6 +1735,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           <Button
             variant="destructive"
             size="sm"
+            disabled={batchInProgress}
             onClick={() => setBatchDeleteConfirm(true)}
           >
             <Trash2 className="h-3.5 w-3.5 mr-1" />

@@ -4769,4 +4769,57 @@ describe('BlockTree batch toolbar (#657)', () => {
     expect(useBlockStore.getState().selectedBlockIds).toEqual([])
     expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
   })
+
+  it('batch buttons disabled during operation', async () => {
+    let resolveInvoke!: (v: unknown) => void
+    const tree = [makeBlock('A', null, 0, 'Alpha'), makeBlock('B', null, 1, 'Beta')]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: ['A', 'B'],
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    // Now mock set_todo_state to block, after initial render is done
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'set_todo_state') {
+        return new Promise((resolve) => {
+          resolveInvoke = resolve
+        })
+      }
+      return { items: [], next_cursor: null, has_more: false }
+    })
+
+    // Start a batch TODO operation
+    const todoBtn = screen.getByRole('button', { name: 'TODO' })
+    await userEvent.click(todoBtn)
+
+    // Buttons should be disabled while operation is in progress
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'TODO' })).toBeDisabled()
+    })
+    expect(screen.getByRole('button', { name: 'DOING' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'DONE' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Delete/i })).toBeDisabled()
+
+    // Resolve the pending invoke calls to clean up
+    resolveInvoke({
+      id: 'A',
+      block_type: 'content',
+      content: 'Alpha',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+      archived_at: null,
+      is_conflict: false,
+      conflict_type: null,
+      todo_state: 'TODO',
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+    })
+  })
 })

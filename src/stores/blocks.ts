@@ -131,7 +131,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     set({
       loading: true,
       rootParentId: newRoot,
-      ...(newRoot !== prevRoot ? { blocks: [], focusedBlockId: null } : {}),
+      ...(newRoot !== prevRoot ? { blocks: [], focusedBlockId: null, selectedBlockIds: [] } : {}),
     })
     try {
       const allBlocks = await loadSubtree(parentId)
@@ -269,6 +269,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       set((state) => ({
         blocks: state.blocks.filter((b) => b.id !== blockId && !descendants.has(b.id)),
         focusedBlockId: state.focusedBlockId === blockId ? null : state.focusedBlockId,
+        selectedBlockIds: state.selectedBlockIds.filter((id) => id !== blockId),
       }))
       notifyUndoNewAction(rootParentId)
     } catch {

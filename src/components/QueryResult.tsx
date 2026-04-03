@@ -53,6 +53,11 @@ export function QueryResult({
     setLoading(true)
     setError(null)
     try {
+      if (!expression.trim()) {
+        setError('Query expression is empty')
+        setLoading(false)
+        return
+      }
       const { type, params } = parseQueryExpression(expression)
       let items: BlockRow[] = []
 
@@ -66,14 +71,24 @@ export function QueryResult({
         })
         items = resp.items
       } else if (type === 'property') {
+        if (!params.key) {
+          setError('Property query requires key:NAME parameter')
+          setLoading(false)
+          return
+        }
         const resp = await queryByProperty({
-          key: params.key ?? '',
+          key: params.key,
           valueText: params.value ?? undefined,
           valueDate: params.date ?? undefined,
           limit: 50,
         })
         items = resp.items
       } else if (type === 'backlinks') {
+        if (!params.target) {
+          setError('Backlinks query requires target:ULID parameter')
+          setLoading(false)
+          return
+        }
         const resp = await listBlocks({ parentId: params.target, limit: 50 })
         items = resp.items
       } else {

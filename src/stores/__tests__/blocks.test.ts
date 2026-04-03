@@ -1435,5 +1435,43 @@ describe('useBlockStore', () => {
       useBlockStore.getState().setFocused('A')
       expect(useBlockStore.getState().selectedBlockIds).toEqual([])
     })
+
+    it('remove() clears deleted block from selectedBlockIds', async () => {
+      useBlockStore.setState({
+        blocks: [
+          makeBlock({ id: 'A', content: 'alpha', position: 0 }),
+          makeBlock({ id: 'B', content: 'beta', position: 1 }),
+        ],
+        selectedBlockIds: ['A', 'B'],
+        focusedBlockId: null,
+      })
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'A',
+        deleted_at: '2025-01-01T00:00:00Z',
+        descendants_affected: 0,
+      })
+
+      await useBlockStore.getState().remove('A')
+
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B'])
+    })
+
+    it('load() clears selectedBlockIds on page navigation', async () => {
+      useBlockStore.setState({
+        blocks: [makeBlock({ id: 'A', content: 'alpha', position: 0 })],
+        rootParentId: 'PAGE_OLD',
+        selectedBlockIds: ['A'],
+        focusedBlockId: null,
+      })
+
+      // Start loading a different parent (never resolves)
+      mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+      const loadPromise = useBlockStore.getState().load('NEW_PAGE')
+
+      expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+
+      // Cleanup — avoid unhandled rejection
+      void loadPromise
+    })
   })
 })
