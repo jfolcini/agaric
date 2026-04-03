@@ -13,7 +13,7 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 | **Backend** | Rust, Tauri 2, SQLite (WAL mode), async Tokio |
 | **Sync** | Local WiFi, mDNS discovery, WebSocket + TLS, ECDSA P-256 cert pinning |
 | **Data integrity** | blake3 hash chains, three-way merge (diffy), zstd+CBOR snapshots |
-| **Testing** | Vitest (~2928 tests), cargo nextest (~850 tests), Playwright (14 E2E specs), fast-check, insta snapshots, Criterion benchmarks |
+| **Testing** | Vitest (~2937 tests), cargo nextest (~850 tests), Playwright (14 E2E specs), fast-check, insta snapshots, Criterion benchmarks |
 
 ### Key Invariants
 
@@ -633,7 +633,7 @@ backlink_query, cache, commands, dag, db, device, draft, error, fts, hash, mater
 
 | Layer | Framework | Count |
 |-------|-----------|-------|
-| Frontend unit/component | Vitest + RTL + vitest-axe | 87 files, ~2928 tests |
+| Frontend unit/component | Vitest + RTL + vitest-axe | 87 files, ~2937 tests |
 | Frontend property-based | fast-check | 1 file, 500 iterations/property |
 | Frontend E2E | Playwright | 14 spec files |
 | Backend unit | tokio + insta | 15+ modules |
@@ -679,22 +679,13 @@ trailing-whitespace, end-of-file-fixer, check-yaml/toml/json, check-merge-confli
 | 639 | Templates system (dynamic variables, CRUD UI) | Journaling |
 | 641 | Scheduling semantics (due/scheduled drive agenda) | Tasks |
 | 642 | Agenda filter by creation/completion dates, custom properties | Tasks |
-| 643 | Properties management view (browse, create, rename, delete) | Properties |
 | 644 | Repeating tasks (modes, end conditions, agenda projection) | Tasks |
-| 645 | Block property UX (inline chips, click-to-edit, property drawer) | Properties |
-| 647 | Pages view — accessibility, feedback, safety gaps | Views |
-| 648 | PagePropertyTable — validation, confirmation, completion gaps | Properties |
-| 649 | Templates — insertion robustness and picker UX | Journaling |
-| 650 | Tags view — counts, error handling, hierarchy, validation gaps | Views |
-| 651 | Conflicts view — navigation, refresh, metadata, resolution gaps | Sync |
-| 652 | Collapse state persistence (localStorage) | Outlining |
-| 653 | Editor formatting marks (strikethrough + highlight) | Editor |
-| 654 | Editor block types (blockquotes + tables) | Editor |
+| 651 | Conflicts view — metadata, resolution, rendering gaps | Sync |
+| 654 | Editor block types (tables) | Editor |
 | 655 | Inline query blocks (`{{query ...}}` embedded results) | Query |
 | 656 | Namespaced pages (`/` separator, tree view) | Pages |
 | 657 | Block-level multi-selection (static + batch ops) | Outlining |
 | 658 | Custom task keywords (configurable states) | Tasks |
-| 659 | Full graph Markdown export (bulk ZIP) | Export |
 | 660 | Logseq/Markdown import | Import |
 
 ---

@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 127 — 2026-04-03 — REVIEW-LATER + FEATURE-MAP cleanup
+
+Finalized session 126 doc updates: removed #649 entirely from REVIEW-LATER (all items T-1/T-3/T-4/T-5/T-6/T-8/T-13 now done). Removed C-6 from #651 remaining issues, added to previously-resolved list. Synced FEATURE-MAP deferred table — removed 9 items resolved in prior sessions (#643, #645, #647, #648, #649, #650, #652, #653, #659). REVIEW-LATER: 12 open items.
+
+## Session 126 — 2026-04-03 — Template Picker UX + Conflict Dialog Preview (#649 T-3/T-8, #651 C-6)
+
+### Batch: journal template warning + picker preview + conflict dialog content
+
+2 parallel build subagents (template UX, conflict dialogs). Also cleaned up REVIEW-LATER.md — discovered 11 items already implemented in prior sessions (#661 fully done, #649 T-1/T-4/T-5/T-6/T-13, #651 C-1/C-5/C-7/C-9/C-10/C-15). Added missing #656/#658 to summary table.
+
+| File | Change |
+|------|--------|
+| `template-utils.ts` | #649-T3: `loadJournalTemplate()` returns `{ template, duplicateWarning }` — caller shows toast.warning. #649-T8: New `loadTemplatePagesWithPreview()` fetches first child preview per template (60-char truncation). |
+| `template-utils.test.ts` | 6 new tests (2 loadJournalTemplate return type, 4 loadTemplatePagesWithPreview: preview, empty, truncation, error). |
+| `BlockTree.tsx` | #649-T8: TemplatePicker props include `preview`. Button shows title (bold) + subtitle (muted preview text). Uses `loadTemplatePagesWithPreview`. |
+| `JournalPage.tsx` | #649-T3: Destructures `{ template, duplicateWarning }`, calls `toast.warning(duplicateWarning)` when present. |
+| `ConflictList.tsx` | #651-C6: `truncatePreview(text, max=120)` helper. Keep dialog shows Current/Incoming content preview. Discard dialog shows conflict content preview. |
+| `ConflictList.test.tsx` | 3 new tests (Keep dialog preview, Discard dialog preview, truncation at 120 chars). |
+| `REVIEW-LATER.md` | Removed #661 entirely. Removed done sub-items from #649 (T-1/T-4/T-5/T-6/T-13) and #651 (C-1/C-5/C-7/C-9/C-10/C-15). Added #656/#658 to summary table. Updated counts: 13 open items. |
+
+### Stats
+- Frontend: 9 new tests (6 template-utils + 3 ConflictList)
+- Commit: `d480c62`
+- REVIEW-LATER: #661 removed (fully done). #649 T-3/T-8 done (2 remaining: T-3/T-8 → 0). #651 C-6 done (7 remaining → 6). Cleanup: 11 previously-done items removed. 13 open items total.
+
 ## Session 125 — 2026-04-03 — Ref Property Picker + Agenda Sort/Group Toolbar (#645-7b, #662-4)
 
 ### Batch: ref property click-to-edit + sort/group toolbar controls
