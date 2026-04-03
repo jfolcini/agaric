@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 111 — 2026-04-03 — Template Picker + Conflict View Fixes (#649, #651 partial)
+
+### S-cost slices from template and conflict items
+
+2 parallel build subagents.
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | #649-T1: Improved "no templates" i18n message with step-by-step guidance. #649-T6: TemplatePicker responsive positioning + max-h-[60vh] overflow scroll. |
+| `ConflictList.tsx` | #651-C1: "View original" passes `block.content ?? 'Untitled'` (was empty string). #651-C7: `max-h-40 overflow-y-auto` on expanded content. #651-C9: Conflict type badges get descriptive `aria-label` via i18n. |
+| `ConflictList.test.tsx` | #651: 2 new tests (title in navigateToPage, badge aria-label). |
+| `i18n.ts` | Updated noTemplates message. 3 new conflict type keys. |
+
+### Stats
+- Frontend: ~2492 tests pass
+- Commit: `27d4d71`
+- #649-T1/T6 resolved, #651-C1/C7/C9 resolved
+
 ## Session 110 — 2026-04-03 — /effort Presets + Recursive Template Copy (#645-12, #649-T4)
 
 ### Effort slash command presets + template nested structure
