@@ -1,4 +1,20 @@
 # Session Log
+
+## Session 102 — 2026-04-03 — Property Type Enforcement (#646)
+
+### Type/date/field validation in set_property_in_tx
+
+1 build subagent + 1 review subagent.
+
+| File | Change |
+|------|--------|
+| `commands.rs` | #646: Three validations added to `set_property_in_tx`: (1) `value_date` checked via `is_valid_iso_date()`, (2) reserved keys enforce correct field type (due_date→value_date, todo_state→value_text), clear allowed, (3) non-reserved keys checked against `property_definitions` table type. 5 new tests. |
+
+### Stats
+- Rust: 1482 tests pass (1477 + 5 new)
+- Commit: `7545f83`
+- REVIEW-LATER: 8 → 7 items (#646 resolved)
+
 ## Session 101 — 2026-04-03 — Workflow Updates + Properties Deep Review
 
 ### Workflow & documentation updates
