@@ -1,5 +1,22 @@
 # Session Log
 
+## Session 95 — 2026-04-03 — Outliner Enter Key (#636)
+
+### Enter creates new sibling block (outliner-style) with empty-block cleanup
+
+1 build subagent + 1 review subagent. Reviewer caught outdated comment + TS type issue (both fixed by orchestrator).
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | #636: `handleEnterSave` now async — flush + `createBelow(focusedBlockId)` + focus new block. `justCreatedBlockIds` ref tracks new block IDs. `prevFocusedRef` + cleanup `useEffect` silently deletes empty just-created blocks when focus moves away. |
+| `use-block-keyboard.ts` | #636: Updated comment — "Enter → create new sibling" (was "Enter → insert \\n"). |
+| `BlockTree.test.tsx` | #636: 3 new tests (Enter creates sibling + focuses, empty block cleanup, non-empty preserved). |
+
+### Stats
+- Frontend: 2414 tests pass (2408 + 6 new across sessions 93-95)
+- Commit: `c75f667`
+- REVIEW-LATER: 11 → 10 items (#636 resolved)
+
 ## Session 94 — 2026-04-03 — Journal Auto-Create + Keyboard Shortcut (#629, #633)
 
 ### Batch fix: 2 journaling launch items
