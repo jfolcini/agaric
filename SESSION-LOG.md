@@ -1,5 +1,20 @@
 # Session Log
 
+## Session 114 — 2026-04-03 — Micro-fixes: Conflict A11y + Template Keys + Custom State Visual
+
+### 3 orchestrator-applied S-cost slices
+
+| File | Change |
+|------|--------|
+| `ConflictList.tsx` | #651-C15: Expand/collapse button gets `aria-label` (expand/collapse via i18n). |
+| `BlockTree.tsx` | #649-T13: TemplatePicker ArrowUp/Down cycles through template buttons. |
+| `SortableBlock.tsx` | #658: Custom task states (CANCELLED, WAITING, etc.) render as orange circle, distinct from empty. |
+| `i18n.ts` | 2 new keys (conflict.expand, conflict.collapse). |
+
+### Stats
+- Frontend: ~2503 tests pass (no new tests — CSS/a11y/keyboard changes)
+- Commit: `5a16b56`
+
 ## Session 113 — 2026-04-03 — Conflict Refresh + Template Error Handling (#651-C5, #649-T5)
 
 ### Sync-aware conflict list + resilient template insertion
