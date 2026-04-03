@@ -344,6 +344,8 @@ const resources = {
       'pageBrowser.exporting': 'Exporting...',
       'pageBrowser.exportSuccess': 'Pages exported as ZIP',
       'pageBrowser.exportFailed': 'Failed to export pages',
+      'pageBrowser.searchPlaceholder': 'Search pages...',
+      'pageBrowser.noMatches': 'No matching pages',
 
       // Due Panel
       'duePanel.headerOne': '1 Due',

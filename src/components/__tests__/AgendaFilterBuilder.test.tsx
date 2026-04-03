@@ -18,10 +18,10 @@
 
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { AgendaFilter, AgendaFilterBuilderProps, AgendaSortGroupControlsProps } from '../AgendaFilterBuilder'
-import { AgendaFilterBuilder, AgendaSortGroupControls } from '../AgendaFilterBuilder'
+import { AgendaFilterBuilder, AgendaSortGroupControls, getTaskStates } from '../AgendaFilterBuilder'
 
 const defaultProps: AgendaFilterBuilderProps = {
   filters: [],
@@ -348,6 +348,60 @@ describe('AgendaFilterBuilder', () => {
     expect(within(group).queryByLabelText('Next 7 days')).not.toBeInTheDocument()
     expect(within(group).queryByLabelText('Next 14 days')).not.toBeInTheDocument()
     expect(within(group).queryByLabelText('Next 30 days')).not.toBeInTheDocument()
+  })
+
+  // -----------------------------------------------------------------------
+  // 19. getTaskStates reads custom task states from localStorage
+  // -----------------------------------------------------------------------
+  describe('getTaskStates', () => {
+    afterEach(() => {
+      localStorage.removeItem('task_cycle')
+    })
+
+    it('returns default states when localStorage is empty', () => {
+      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE'])
+    })
+
+    it('reads custom states from localStorage, filtering out nulls', () => {
+      localStorage.setItem(
+        'task_cycle',
+        JSON.stringify([null, 'TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED']),
+      )
+      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED'])
+    })
+
+    it('falls back to defaults on invalid JSON', () => {
+      localStorage.setItem('task_cycle', 'not-json')
+      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE'])
+    })
+
+    it('falls back to defaults when stored value is not an array', () => {
+      localStorage.setItem('task_cycle', JSON.stringify('TODO'))
+      expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE'])
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // 20. Status filter shows custom states from localStorage
+  // -----------------------------------------------------------------------
+  it('status filter shows custom states from localStorage', async () => {
+    localStorage.setItem(
+      'task_cycle',
+      JSON.stringify([null, 'TODO', 'DOING', 'DONE', 'WAITING']),
+    )
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+    await user.click(screen.getByText('Status'))
+
+    const group = screen.getByRole('group', { name: /Status options/i })
+    expect(within(group).getByLabelText('TODO')).toBeInTheDocument()
+    expect(within(group).getByLabelText('DOING')).toBeInTheDocument()
+    expect(within(group).getByLabelText('DONE')).toBeInTheDocument()
+    expect(within(group).getByLabelText('WAITING')).toBeInTheDocument()
+
+    localStorage.removeItem('task_cycle')
   })
 })
 

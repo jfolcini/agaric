@@ -821,4 +821,124 @@ describe('PageBrowser', () => {
       expect(screen.getByRole('button', { name: 'Create page under work/dev' })).toBeInTheDocument()
     })
   })
+
+  describe('search/filter', () => {
+    it('search filters pages and shows only matches', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage('P1', 'Meeting notes'),
+          makePage('P2', 'Shopping list'),
+          makePage('P3', 'Meeting agenda'),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Meeting notes')
+
+      const searchInput = screen.getByPlaceholderText('Search pages...')
+      await user.type(searchInput, 'Meeting')
+
+      // Matching pages visible (title attribute stays intact despite highlight)
+      expect(screen.getByTitle('Meeting notes')).toBeInTheDocument()
+      expect(screen.getByTitle('Meeting agenda')).toBeInTheDocument()
+      // Non-matching page hidden
+      expect(screen.queryByTitle('Shopping list')).not.toBeInTheDocument()
+    })
+
+    it('search filters namespaced pages and expands matching ancestors', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage('P1', 'work/project-a'),
+          makePage('P2', 'work/project-b'),
+          makePage('P3', 'personal/journal'),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('project-a')
+
+      const searchInput = screen.getByPlaceholderText('Search pages...')
+      await user.type(searchInput, 'project-a')
+
+      // Matching page should be visible
+      expect(screen.getByText(/project-a/)).toBeInTheDocument()
+      // Ancestor folder should be visible
+      expect(screen.getByText('work')).toBeInTheDocument()
+      // Non-matching pages should not be visible
+      expect(screen.queryByText('project-b')).not.toBeInTheDocument()
+      expect(screen.queryByText('journal')).not.toBeInTheDocument()
+      expect(screen.queryByText('personal')).not.toBeInTheDocument()
+    })
+
+    it('search with no matches shows empty state', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage('P1', 'Meeting notes')],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Meeting notes')
+
+      const searchInput = screen.getByPlaceholderText('Search pages...')
+      await user.type(searchInput, 'zzz-nonexistent')
+
+      expect(screen.queryByText('Meeting notes')).not.toBeInTheDocument()
+      expect(screen.getByText('No matching pages')).toBeInTheDocument()
+    })
+
+    it('search is case-insensitive', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage('P1', 'Meeting Notes')],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Meeting Notes')
+
+      const searchInput = screen.getByPlaceholderText('Search pages...')
+      await user.type(searchInput, 'meeting')
+
+      expect(screen.getByTitle('Meeting Notes')).toBeInTheDocument()
+    })
+
+    it('clearing search shows all pages again', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage('P1', 'Meeting notes'),
+          makePage('P2', 'Shopping list'),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('Meeting notes')
+
+      const searchInput = screen.getByPlaceholderText('Search pages...')
+      await user.type(searchInput, 'Meeting')
+
+      expect(screen.queryByText('Shopping list')).not.toBeInTheDocument()
+
+      await user.clear(searchInput)
+
+      expect(screen.getByText('Meeting notes')).toBeInTheDocument()
+      expect(screen.getByText('Shopping list')).toBeInTheDocument()
+    })
+  })
 })

@@ -6,9 +6,9 @@
  * Includes delete with confirmation dialog and toast error feedback.
  */
 
-import { ChevronRight, Download, FileText, Loader2, Plus, Trash2 } from 'lucide-react'
+import { ChevronRight, Download, FileText, Loader2, Plus, Search, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
@@ -72,16 +72,40 @@ function buildPageTree(pages: Array<{ id: string; content: string | null }>): Pa
   return root
 }
 
+/** Highlight matching segments of text when a filter is active. */
+function HighlightMatch({
+  text,
+  filterText,
+}: {
+  text: string
+  filterText: string
+}): React.ReactElement {
+  if (!filterText) return <>{text}</>
+  const idx = text.toLowerCase().indexOf(filterText.toLowerCase())
+  if (idx === -1) return <>{text}</>
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-yellow-200 dark:bg-yellow-800 rounded-sm">{text.slice(idx, idx + filterText.length)}</mark>
+      {text.slice(idx + filterText.length)}
+    </>
+  )
+}
+
 function PageTreeItem({
   node,
   depth,
   onNavigate,
   onCreateUnder,
+  filterText,
+  forceExpand,
 }: {
   node: PageTreeNode
   depth: number
   onNavigate: (pageId: string, title: string) => void
   onCreateUnder: (namespacePath: string) => void
+  filterText: string
+  forceExpand: boolean
 }) {
   const [expanded, setExpanded] = useState(true) // namespaces start expanded
 
@@ -95,10 +119,12 @@ function PageTreeItem({
         className="w-full text-left px-2 py-1 text-sm hover:bg-accent rounded truncate"
         title={node.fullPath}
       >
-        {node.name}
+        <HighlightMatch text={node.name} filterText={filterText} />
       </button>
     )
   }
+
+  const isExpanded = forceExpand || expanded
 
   // Namespace folder — collapsible
   return (
@@ -106,13 +132,13 @@ function PageTreeItem({
       <div className="group flex items-center" style={{ paddingLeft: `${depth * 16}px` }}>
         <button
           type="button"
-          onClick={() => setExpanded(!expanded)}
+          onClick={() => !forceExpand && setExpanded(!expanded)}
           className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 rounded flex items-center gap-1"
         >
           <ChevronRight
-            className={cn('h-3 w-3 transition-transform', expanded && 'rotate-90')}
+            className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-90')}
           />
-          {node.name}
+          <HighlightMatch text={node.name} filterText={filterText} />
         </button>
         <button
           type="button"
@@ -126,7 +152,7 @@ function PageTreeItem({
           <Plus size={12} />
         </button>
       </div>
-      {expanded &&
+      {isExpanded &&
         node.children.map((child) => (
           <PageTreeItem
             key={child.fullPath}
@@ -134,6 +160,8 @@ function PageTreeItem({
             depth={depth + 1}
             onNavigate={onNavigate}
             onCreateUnder={onCreateUnder}
+            filterText={filterText}
+            forceExpand={forceExpand}
           />
         ))}
     </div>
@@ -159,6 +187,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [isCreating, setIsCreating] = useState(false)
   const [newPageName, setNewPageName] = useState('')
+  const [filterText, setFilterText] = useState('')
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   const [exporting, setExporting] = useState(false)
   const formRef = useRef<HTMLFormElement>(null)
@@ -250,6 +279,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     }, 0)
   }, [])
 
+  const filteredPages = useMemo(() => {
+    if (!filterText.trim()) return pages
+    const lower = filterText.toLowerCase()
+    return pages.filter((p) => (p.content ?? '').toLowerCase().includes(lower))
+  }, [pages, filterText])
+
+  const isFiltering = filterText.trim().length > 0
+
   return (
     <div className="page-browser space-y-4">
       {/* Create page form */}
@@ -272,6 +309,20 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           {t('pageBrowser.newPage')}
         </Button>
       </form>
+
+      {/* Search/filter input */}
+      {pages.length > 0 && (
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          <Input
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            placeholder={t('pageBrowser.searchPlaceholder')}
+            className="pl-8"
+            aria-label={t('pageBrowser.searchPlaceholder')}
+          />
+        </div>
+      )}
 
       {loading && pages.length === 0 && (
         <div className="page-browser-loading space-y-1">
@@ -304,17 +355,24 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
       {/* biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn */}
       <div className="page-browser-list space-y-1" role="list">
-        {pages.some((p) => p.content?.includes('/'))
-          ? buildPageTree(pages).map((node) => (
+        {isFiltering && filteredPages.length === 0 ? (
+          <div className="page-browser-no-matches rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+            <Search className="mx-auto mb-2 h-5 w-5" />
+            {t('pageBrowser.noMatches')}
+          </div>
+        ) : filteredPages.some((p) => p.content?.includes('/'))
+          ? buildPageTree(filteredPages).map((node) => (
               <PageTreeItem
                 key={node.fullPath}
                 node={node}
                 depth={0}
                 onNavigate={(pageId, title) => onPageSelect?.(pageId, title)}
                 onCreateUnder={handleCreateUnder}
+                filterText={filterText.trim()}
+                forceExpand={isFiltering}
               />
             ))
-          : pages.map((page) => (
+          : filteredPages.map((page) => (
               // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
               <div
                 key={page.id}
@@ -328,7 +386,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 >
                   <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <span className="page-browser-item-title truncate" title={page.content ?? t('pageBrowser.untitled')}>
-                    {page.content ?? t('pageBrowser.untitled')}
+                    <HighlightMatch text={page.content ?? t('pageBrowser.untitled')} filterText={filterText.trim()} />
                   </span>
                 </button>
                 <Button

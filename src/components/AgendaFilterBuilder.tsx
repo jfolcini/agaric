@@ -38,11 +38,25 @@ export interface AgendaFilterBuilderProps {
 // Dimension metadata
 // ---------------------------------------------------------------------------
 
+/** Read custom task states from localStorage, filtering out nulls. */
+export function getTaskStates(): string[] {
+  try {
+    const stored = localStorage.getItem('task_cycle')
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      if (Array.isArray(parsed)) {
+        return parsed.filter((s): s is string => typeof s === 'string' && s.length > 0)
+      }
+    }
+  } catch {}
+  return ['TODO', 'DOING', 'DONE']
+}
+
 const DIMENSION_OPTIONS: Record<
   AgendaFilterDimension,
-  { labelKey: string; choices: string[] | null }
+  { labelKey: string; choices: string[] | null | (() => string[]) }
 > = {
-  status: { labelKey: 'agendaFilter.status', choices: ['TODO', 'DOING', 'DONE'] },
+  status: { labelKey: 'agendaFilter.status', choices: getTaskStates },
   priority: { labelKey: 'agendaFilter.priority', choices: ['1', '2', '3'] },
   dueDate: {
     labelKey: 'agendaFilter.dueDate',
@@ -158,11 +172,12 @@ function TextValuePicker({
 function ValuePicker({ dimension, selected, onChange }: ValuePickerProps): React.ReactElement {
   const meta = DIMENSION_OPTIONS[dimension]
   const label = dimensionLabel(dimension)
+  const choices = typeof meta.choices === 'function' ? meta.choices() : meta.choices
 
-  if (meta.choices) {
+  if (choices) {
     return (
       <ChoiceValuePicker
-        choices={meta.choices}
+        choices={choices}
         label={label}
         selected={selected}
         onChange={onChange}
