@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 99 — 2026-04-03 — /template Slash Command (#632, #639 partial)
+
+### Template insertion via /template slash command
+
+1 build subagent + 1 review subagent. Orchestrator added TemplatePicker component (Escape + auto-focus), fixed Biome formatting.
+
+**Design decision for #639:** Templates are regular pages with `template` property set to `true` (Logseq approach). No new schema needed.
+
+| File | Change |
+|------|--------|
+| `template-utils.ts` (new) | `loadTemplatePages()` queries pages with template=true. `insertTemplateBlocks()` copies template children as new blocks under a parent. |
+| `template-utils.test.ts` (new) | 4 tests (load pages, empty result, insert children, empty template). |
+| `BlockTree.tsx` | #632: `/template` slash command + `TemplatePicker` component (dialog with Escape, auto-focus, backdrop dismiss). `handleTemplateSelect` inserts template blocks as siblings. |
+| `BlockTree.test.tsx` | #632: 2 new tests (search returns template, command list includes template). Updated count 13→14. |
+| `i18n.ts` | 6 new slash.template* keys. |
+
+### Stats
+- Frontend: 2436 tests pass (2430 + 6 new)
+- Commit: `0059813`
+- REVIEW-LATER: 7 → 6 items (#632 resolved, #639 updated with design decision)
+
 ## Session 98 — 2026-04-03 — Repeat Presets + Scheduled Date Filter (#640, #642)
 
 ### /repeat presets + scheduledDate agenda dimension
