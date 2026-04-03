@@ -12,11 +12,18 @@ export async function loadTemplatePages(): Promise<BlockRow[]> {
 /**
  * Load the journal template page (property `journal-template` = 'true').
  * Returns the first matching page, or null if none exists.
+ * Warns to console if multiple journal templates are found.
  */
 export async function loadJournalTemplate(): Promise<BlockRow | null> {
-  const resp = await queryByProperty({ key: 'journal-template', valueText: 'true', limit: 1 })
-  const page = resp.items.find((b) => b.block_type === 'page')
-  return page ?? null
+  const resp = await queryByProperty({ key: 'journal-template', valueText: 'true', limit: 10 })
+  const pages = resp.items.filter((b) => b.block_type === 'page')
+  if (pages.length > 1) {
+    console.warn(
+      `Multiple journal templates found (${pages.length}). Using "${pages[0].content ?? pages[0].id}". ` +
+        'Remove the journal-template property from extra pages to avoid ambiguity.',
+    )
+  }
+  return pages[0] ?? null
 }
 
 /**

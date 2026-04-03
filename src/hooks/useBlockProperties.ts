@@ -17,8 +17,24 @@ import { announce } from '../lib/announcer'
 import { setPriority as setPriorityCmd, setTodoState as setTodoStateCmd } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 
-/** Task state cycle: none -> TODO -> DOING -> DONE -> none. */
-const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE']
+/** Default task state cycle: none -> TODO -> DOING -> DONE -> none. */
+const TASK_CYCLE_DEFAULT: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE']
+
+/** Read custom task cycle from localStorage, falling back to default. */
+function getTaskCycle(): readonly (string | null)[] {
+  try {
+    const stored = localStorage.getItem('task_cycle')
+    if (stored) {
+      const parsed = JSON.parse(stored) as (string | null)[]
+      if (Array.isArray(parsed) && parsed.length >= 2) return parsed
+    }
+  } catch {
+    // localStorage unavailable
+  }
+  return TASK_CYCLE_DEFAULT
+}
+
+const TASK_CYCLE = getTaskCycle()
 
 /** Display labels for screen reader announcements. */
 const STATE_LABELS: Record<string, string> = { TODO: 'To do', DOING: 'In progress', DONE: 'Done' }
