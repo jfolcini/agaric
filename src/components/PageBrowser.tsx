@@ -76,10 +76,12 @@ function PageTreeItem({
   node,
   depth,
   onNavigate,
+  onCreateUnder,
 }: {
   node: PageTreeNode
   depth: number
   onNavigate: (pageId: string, title: string) => void
+  onCreateUnder: (namespacePath: string) => void
 }) {
   const [expanded, setExpanded] = useState(true) // namespaces start expanded
 
@@ -101,17 +103,29 @@ function PageTreeItem({
   // Namespace folder — collapsible
   return (
     <div>
-      <button
-        type="button"
-        style={{ paddingLeft: `${depth * 16}px` }}
-        onClick={() => setExpanded(!expanded)}
-        className="w-full text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 rounded flex items-center gap-1"
-      >
-        <ChevronRight
-          className={cn('h-3 w-3 transition-transform', expanded && 'rotate-90')}
-        />
-        {node.name}
-      </button>
+      <div className="group flex items-center" style={{ paddingLeft: `${depth * 16}px` }}>
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 rounded flex items-center gap-1"
+        >
+          <ChevronRight
+            className={cn('h-3 w-3 transition-transform', expanded && 'rotate-90')}
+          />
+          {node.name}
+        </button>
+        <button
+          type="button"
+          className="opacity-0 group-hover:opacity-100 h-5 w-5 flex items-center justify-center rounded hover:bg-accent transition-opacity"
+          aria-label={`Create page under ${node.fullPath}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onCreateUnder(node.fullPath)
+          }}
+        >
+          <Plus size={12} />
+        </button>
+      </div>
       {expanded &&
         node.children.map((child) => (
           <PageTreeItem
@@ -119,6 +133,7 @@ function PageTreeItem({
             node={child}
             depth={depth + 1}
             onNavigate={onNavigate}
+            onCreateUnder={onCreateUnder}
           />
         ))}
     </div>
@@ -146,6 +161,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [newPageName, setNewPageName] = useState('')
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   const [exporting, setExporting] = useState(false)
+  const formRef = useRef<HTMLFormElement>(null)
 
   // Track load-more announcements for screen readers
   const prevLengthRef = useRef(0)
@@ -227,10 +243,18 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     setExporting(false)
   }, [t])
 
+  const handleCreateUnder = useCallback((namespacePath: string) => {
+    setNewPageName(`${namespacePath}/`)
+    setTimeout(() => {
+      formRef.current?.querySelector<HTMLInputElement>('input')?.focus()
+    }, 0)
+  }, [])
+
   return (
     <div className="page-browser space-y-4">
       {/* Create page form */}
       <form
+        ref={formRef}
         onSubmit={(e) => {
           e.preventDefault()
           handleCreatePage()
@@ -287,6 +311,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 node={node}
                 depth={0}
                 onNavigate={(pageId, title) => onPageSelect?.(pageId, title)}
+                onCreateUnder={handleCreateUnder}
               />
             ))
           : pages.map((page) => (

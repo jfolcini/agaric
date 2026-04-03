@@ -766,4 +766,59 @@ describe('PageBrowser', () => {
       expect(onPageSelect).toHaveBeenCalledWith('P1', 'work/project-a')
     })
   })
+
+  describe('create page under namespace', () => {
+    it('namespace folder shows + button', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage('P1', 'work/project-a')],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('work')
+
+      const createBtn = screen.getByRole('button', { name: /create page under work/i })
+      expect(createBtn).toBeInTheDocument()
+    })
+
+    it('clicking + on namespace prefills input', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        items: [makePage('P1', 'work/project-a')],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('work')
+
+      const createBtn = screen.getByRole('button', { name: /create page under work/i })
+      await user.click(createBtn)
+
+      const input = screen.getByPlaceholderText('New page name...')
+      expect(input).toHaveValue('work/')
+    })
+
+    it('a11y: + button has proper aria-label with namespace path', async () => {
+      mockedInvoke.mockResolvedValueOnce({
+        items: [
+          makePage('P1', 'work/dev/task-1'),
+          makePage('P2', 'work/dev/task-2'),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<PageBrowser />)
+
+      await screen.findByText('work')
+
+      // Both namespace levels should have proper aria-labels
+      expect(screen.getByRole('button', { name: 'Create page under work' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Create page under work/dev' })).toBeInTheDocument()
+    })
+  })
 })

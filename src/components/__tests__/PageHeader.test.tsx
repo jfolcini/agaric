@@ -666,3 +666,51 @@ describe('PageHeader page-level undo/redo buttons', () => {
     })
   })
 })
+
+// ── Breadcrumb navigation for namespaced pages ────────────────────────────
+
+describe('PageHeader breadcrumb', () => {
+  it('shows breadcrumb for namespaced page title', () => {
+    render(<PageHeader pageId="PAGE_1" title="work/project-alpha/tasks" />)
+
+    const nav = screen.getByRole('navigation', { name: /page breadcrumb/i })
+    expect(nav).toBeInTheDocument()
+
+    // Ancestor segments should appear as buttons
+    expect(screen.getByRole('button', { name: 'work' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'project-alpha' })).toBeInTheDocument()
+
+    // Final segment should appear as plain text (not a button)
+    expect(nav).toHaveTextContent('tasks')
+    const buttons = nav.querySelectorAll('button')
+    const buttonTexts = Array.from(buttons).map((b) => b.textContent)
+    expect(buttonTexts).not.toContain('tasks')
+  })
+
+  it('does not show breadcrumb for flat page title', () => {
+    render(<PageHeader pageId="PAGE_1" title="Simple Page" />)
+
+    expect(screen.queryByRole('navigation', { name: /page breadcrumb/i })).not.toBeInTheDocument()
+  })
+
+  it('breadcrumb ancestor navigates to pages view', async () => {
+    const user = userEvent.setup()
+    render(<PageHeader pageId="PAGE_1" title="work/project-alpha" />)
+
+    const workBtn = screen.getByRole('button', { name: 'work' })
+    await user.click(workBtn)
+
+    expect(useNavigationStore.getState().currentView).toBe('pages')
+  })
+
+  it('a11y: no violations with breadcrumb', async () => {
+    const { container } = render(
+      <PageHeader pageId="PAGE_1" title="work/project-alpha/tasks" onBack={() => {}} />,
+    )
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+})

@@ -31,6 +31,11 @@ export interface PageHeaderProps {
 export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const { t } = useTranslation()
 
+  // --- Breadcrumb navigation for namespaced pages ---
+  const navigateToNamespace = useCallback(() => {
+    useNavigationStore.getState().setView('pages')
+  }, [])
+
   // --- Title editing ---
   const titleRef = useRef<HTMLDivElement>(null)
   const [editableTitle, setEditableTitle] = useState(title)
@@ -220,6 +225,32 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           </Button>
         </div>
       </div>
+
+      {/* Breadcrumb for namespaced page titles */}
+      {title.includes('/') && (() => {
+        const segments = title.split('/')
+        return (
+          <nav className="flex items-center gap-1 text-xs text-muted-foreground px-1 mt-1" aria-label="Page breadcrumb">
+            {segments.slice(0, -1).map((segment, i) => {
+              const ancestorPath = segments.slice(0, i + 1).join('/')
+              return (
+                <span key={ancestorPath} className="flex items-center gap-1">
+                  {i > 0 && <span className="text-muted-foreground/50">/</span>}
+                  <button
+                    type="button"
+                    className="hover:text-foreground hover:underline transition-colors"
+                    onClick={() => navigateToNamespace()}
+                  >
+                    {segment}
+                  </button>
+                </span>
+              )
+            })}
+            <span className="text-muted-foreground/50">/</span>
+            <span className="font-medium text-foreground">{segments[segments.length - 1]}</span>
+          </nav>
+        )
+      })()}
 
       {/* Aliases */}
       {(aliases.length > 0 || editingAliases) && (
