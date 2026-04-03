@@ -296,9 +296,11 @@ impl Materializer {
             // Process the received task FIRST — even if shutdown has been
             // signalled, the task was already dequeued and must not be lost.
             let pool_clone = pool.clone();
-            let result =
-                tokio::task::spawn(async move { handle_foreground_task(&pool_clone, &task).await })
-                    .await;
+            let metrics_clone = Arc::clone(&metrics);
+            let result = tokio::task::spawn(async move {
+                handle_foreground_task(&pool_clone, &task, &metrics_clone).await
+            })
+            .await;
 
             Self::log_consumer_result("fg", &result);
 
@@ -719,13 +721,18 @@ impl Materializer {
                 let elapsed_ms = now_ms.saturating_sub(last_ms);
 
                 if edits >= 500 || elapsed_ms >= 3_600_000 {
-                    self.try_enqueue_background(MaterializeTask::FtsOptimize)?;
-                    self.metrics
+                    // Atomically reset only if we're the one that crossed the threshold
+                    if self
+                        .metrics
                         .fts_edits_since_optimize
-                        .store(0, Ordering::Relaxed);
-                    self.metrics
-                        .fts_last_optimize_ms
-                        .store(now_ms, Ordering::Relaxed);
+                        .compare_exchange(edits, 0, Ordering::AcqRel, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        self.try_enqueue_background(MaterializeTask::FtsOptimize)?;
+                        self.metrics
+                            .fts_last_optimize_ms
+                            .store(now_ms, Ordering::Relaxed);
+                    }
                 }
             }
             "delete_block" => {
@@ -858,7 +865,11 @@ fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
 // Task handlers (stubs — filled in by later implementation batches)
 // ---------------------------------------------------------------------------
 
-async fn handle_foreground_task(pool: &SqlitePool, task: &MaterializeTask) -> Result<(), AppError> {
+async fn handle_foreground_task(
+    pool: &SqlitePool,
+    task: &MaterializeTask,
+    metrics: &QueueMetrics,
+) -> Result<(), AppError> {
     match task {
         MaterializeTask::ApplyOp(record) => {
             // Phase 4: apply remote ops to the blocks table.
@@ -873,6 +884,7 @@ async fn handle_foreground_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
                     error = %e,
                     "failed to apply remote op (continuing)"
                 );
+                metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
             }
             Ok(())
         }
@@ -885,6 +897,7 @@ async fn handle_foreground_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
                         error = %e,
                         "failed to apply remote op in batch (continuing)"
                     );
+                    metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
                 }
             }
             Ok(())
@@ -2202,7 +2215,8 @@ mod tests {
         );
 
         let task = MaterializeTask::ApplyOp(record);
-        let result = handle_foreground_task(&pool, &task).await;
+        let metrics = QueueMetrics::default();
+        let result = handle_foreground_task(&pool, &task, &metrics).await;
         assert!(result.is_ok(), "ApplyOp should return Ok after applying");
 
         // Verify the block content WAS modified — Phase 4 applies remote ops
@@ -2225,7 +2239,7 @@ mod tests {
         let notify = Arc::new(tokio::sync::Notify::new());
         let task = MaterializeTask::Barrier(Arc::clone(&notify));
 
-        let result = handle_foreground_task(&pool, &task).await;
+        let result = handle_foreground_task(&pool, &task, &QueueMetrics::default()).await;
         assert!(result.is_ok(), "Barrier task should return Ok");
 
         // Verify the Notify was signaled by checking if notified() resolves
@@ -2242,7 +2256,7 @@ mod tests {
     async fn handle_foreground_task_unexpected_non_apply_op_returns_ok() {
         let (pool, _dir) = test_pool().await;
         let task = MaterializeTask::RebuildTagsCache;
-        let result = handle_foreground_task(&pool, &task).await;
+        let result = handle_foreground_task(&pool, &task, &QueueMetrics::default()).await;
         assert!(
             result.is_ok(),
             "unexpected task in fg queue should return Ok"
@@ -2255,7 +2269,7 @@ mod tests {
         let task = MaterializeTask::ReindexBlockLinks {
             block_id: "01FAKE00000000000000000000".into(),
         };
-        let result = handle_foreground_task(&pool, &task).await;
+        let result = handle_foreground_task(&pool, &task, &QueueMetrics::default()).await;
         assert!(
             result.is_ok(),
             "unexpected ReindexBlockLinks in fg queue should return Ok"

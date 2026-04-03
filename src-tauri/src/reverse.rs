@@ -1593,4 +1593,216 @@ mod tests {
             other => panic!("Expected AddAttachment, got {:?}", other),
         }
     }
+
+    // ── Reserved property reversal tests ────────────────────────────────
+
+    /// Reversing the first set_property for a reserved key (`todo_state`)
+    /// should produce a DeleteProperty since no prior value exists.
+    #[tokio::test]
+    async fn reverse_set_reserved_property_todo_state() {
+        let (pool, _dir) = test_pool().await;
+
+        // Only one set_property with reserved key — no prior exists
+        let set1 = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_TS1"),
+            key: "todo_state".into(),
+            value_text: Some("TODO".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        let rec = append_op(&pool, set1, FIXED_TS).await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::DeleteProperty(ref p) => {
+                assert_eq!(p.block_id, "BLK_TS1", "block_id mismatch");
+                assert_eq!(p.key, "todo_state", "key should be todo_state");
+            }
+            _ => panic!(
+                "reverse of first set_property(todo_state) should be DeleteProperty, got: {reverse:?}"
+            ),
+        }
+    }
+
+    /// Reversing a set_property for `todo_state` when a prior value exists
+    /// should produce a SetProperty restoring the previous value.
+    #[tokio::test]
+    async fn reverse_set_reserved_property_todo_state_with_prior() {
+        let (pool, _dir) = test_pool().await;
+
+        // First set_property: todo_state = "TODO"
+        let set1 = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_TS2"),
+            key: "todo_state".into(),
+            value_text: Some("TODO".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        append_op(&pool, set1, "2025-01-15T12:00:00+00:00").await;
+
+        // Second set_property: todo_state = "DONE"
+        let set2 = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_TS2"),
+            key: "todo_state".into(),
+            value_text: Some("DONE".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        let rec = append_op(&pool, set2, "2025-01-15T12:01:00+00:00").await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::SetProperty(ref p) => {
+                assert_eq!(p.block_id, "BLK_TS2", "block_id mismatch");
+                assert_eq!(p.key, "todo_state", "key should be todo_state");
+                assert_eq!(
+                    p.value_text,
+                    Some("TODO".into()),
+                    "reverse should restore prior todo_state value"
+                );
+            }
+            _ => panic!(
+                "reverse of set_property(todo_state) with prior should be SetProperty, got: {reverse:?}"
+            ),
+        }
+    }
+
+    /// Reversing a delete_property for a reserved key (`todo_state`) should
+    /// produce a SetProperty restoring the prior value.
+    #[tokio::test]
+    async fn reverse_delete_reserved_property_todo_state() {
+        let (pool, _dir) = test_pool().await;
+
+        // set_property: todo_state = "DOING"
+        let set = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_TS3"),
+            key: "todo_state".into(),
+            value_text: Some("DOING".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        append_op(&pool, set, "2025-01-15T12:00:00+00:00").await;
+
+        // delete_property: todo_state
+        let del = OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: BlockId::test_id("BLK_TS3"),
+            key: "todo_state".into(),
+        });
+        let rec = append_op(&pool, del, "2025-01-15T12:01:00+00:00").await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::SetProperty(ref p) => {
+                assert_eq!(p.block_id, "BLK_TS3", "block_id mismatch");
+                assert_eq!(p.key, "todo_state", "key should be todo_state");
+                assert_eq!(
+                    p.value_text,
+                    Some("DOING".into()),
+                    "reverse should restore prior todo_state value"
+                );
+            }
+            _ => panic!(
+                "reverse of delete_property(todo_state) should be SetProperty, got: {reverse:?}"
+            ),
+        }
+    }
+
+    /// Reversing a set_property for `priority` (another reserved key) with a
+    /// prior value should restore the previous priority.
+    #[tokio::test]
+    async fn reverse_set_reserved_property_priority_with_prior() {
+        let (pool, _dir) = test_pool().await;
+
+        // First set_property: priority = "A"
+        let set1 = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_PR1"),
+            key: "priority".into(),
+            value_text: Some("A".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        append_op(&pool, set1, "2025-01-15T12:00:00+00:00").await;
+
+        // Second set_property: priority = "C"
+        let set2 = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_PR1"),
+            key: "priority".into(),
+            value_text: Some("C".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        let rec = append_op(&pool, set2, "2025-01-15T12:01:00+00:00").await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::SetProperty(ref p) => {
+                assert_eq!(p.block_id, "BLK_PR1", "block_id mismatch");
+                assert_eq!(p.key, "priority", "key should be priority");
+                assert_eq!(
+                    p.value_text,
+                    Some("A".into()),
+                    "reverse should restore prior priority value"
+                );
+            }
+            _ => panic!(
+                "reverse of set_property(priority) with prior should be SetProperty, got: {reverse:?}"
+            ),
+        }
+    }
+
+    /// Reversing a set_property for `due_date` (reserved key using value_date)
+    /// should restore the prior date value.
+    #[tokio::test]
+    async fn reverse_set_reserved_property_due_date_with_prior() {
+        let (pool, _dir) = test_pool().await;
+
+        // First set_property: due_date with value_text = "2025-06-15"
+        let set1 = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_DD1"),
+            key: "due_date".into(),
+            value_text: Some("2025-06-15".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        append_op(&pool, set1, "2025-01-15T12:00:00+00:00").await;
+
+        // Second set_property: due_date with value_text = "2025-12-31"
+        let set2 = OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::test_id("BLK_DD1"),
+            key: "due_date".into(),
+            value_text: Some("2025-12-31".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+        });
+        let rec = append_op(&pool, set2, "2025-01-15T12:01:00+00:00").await;
+
+        let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
+
+        match reverse {
+            OpPayload::SetProperty(ref p) => {
+                assert_eq!(p.block_id, "BLK_DD1", "block_id mismatch");
+                assert_eq!(p.key, "due_date", "key should be due_date");
+                assert_eq!(
+                    p.value_text,
+                    Some("2025-06-15".into()),
+                    "reverse should restore prior due_date value"
+                );
+            }
+            _ => panic!(
+                "reverse of set_property(due_date) with prior should be SetProperty, got: {reverse:?}"
+            ),
+        }
+    }
 }
