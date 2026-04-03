@@ -241,7 +241,7 @@ export function JournalPage({
     goToDateAndPanel,
   } = useJournalStore()
   const [pageMap, setPageMap] = useState<Map<string, string>>(new Map())
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   // Track per-day pageIds that were created by handleAddBlock so we can
   // immediately show BlockTree without waiting for a full refetch.
   const [createdPages, setCreatedPages] = useState<Map<string, string>>(new Map())
@@ -497,29 +497,66 @@ export function JournalPage({
   }, [agendaCursor])
 
   /** Add a new block under a specific day's page, creating the page if needed. */
-  async function handleAddBlock(dateStr: string) {
-    try {
-      let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
+  const handleAddBlock = useCallback(
+    async (dateStr: string, autoFocus = false) => {
+      try {
+        let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
 
-      if (!pageId) {
-        const page = await createBlock({ blockType: 'page', content: dateStr })
-        pageId = page.id
-        setCreatedPages((prev) => new Map(prev).set(dateStr, pageId as string))
-        setPageMap((prev) => new Map(prev).set(dateStr, pageId as string))
-        useResolveStore.getState().set(page.id, dateStr, false)
+        if (!pageId) {
+          const page = await createBlock({ blockType: 'page', content: dateStr })
+          pageId = page.id
+          setCreatedPages((prev) => new Map(prev).set(dateStr, pageId as string))
+          setPageMap((prev) => new Map(prev).set(dateStr, pageId as string))
+          useResolveStore.getState().set(page.id, dateStr, false)
+        }
+
+        const block = await createBlock({
+          blockType: 'content',
+          content: '',
+          parentId: pageId,
+        })
+
+        await load(pageId)
+
+        if (autoFocus && block.id) {
+          useBlockStore.setState({ focusedBlockId: block.id })
+        }
+      } catch {
+        toast.error(t('journal.addBlockFailed'))
       }
+    },
+    [createdPages, pageMap, load, t],
+  )
 
-      await createBlock({
-        blockType: 'content',
-        content: '',
-        parentId: pageId,
-      })
+  const autoCreatedRef = useRef(false)
 
-      await load(pageId)
-    } catch {
-      toast.error(t('journal.addBlockFailed'))
+  useEffect(() => {
+    if (loading) return
+    if (autoCreatedRef.current) return
+    if (mode !== 'daily') return
+    const todayStr = formatDate(new Date())
+    if (todayStr !== formatDate(currentDate)) return
+    if (createdPages.has(todayStr) || pageMap.has(todayStr)) return
+    autoCreatedRef.current = true
+    handleAddBlock(todayStr, true)
+  }, [loading, mode, currentDate, pageMap, createdPages, handleAddBlock])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (mode !== 'daily') return
+      const dateStr = formatDate(currentDate)
+      if (createdPages.has(dateStr) || pageMap.has(dateStr)) return
+      const target = e.target as HTMLElement
+      if (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
+        return
+      if (e.key === 'Enter' || e.key === 'n') {
+        e.preventDefault()
+        handleAddBlock(dateStr, true)
+      }
     }
-  }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [mode, currentDate, createdPages, pageMap, handleAddBlock])
 
   // ── Render helpers ──────────────────────────────────────────────────
 

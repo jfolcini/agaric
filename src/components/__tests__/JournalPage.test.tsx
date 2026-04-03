@@ -16,7 +16,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { addDays, addMonths, endOfWeek, format, startOfWeek, subDays } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1680,6 +1680,174 @@ describe('JournalPage', () => {
         expect(screen.getByLabelText('3 due items, click to view')).toBeInTheDocument()
         expect(screen.getByLabelText('5 references, click to view')).toBeInTheDocument()
       })
+    })
+  })
+
+  // ── Auto-create today's page (#629) ─────────────────────────────────
+
+  describe('auto-create today page (#629)', () => {
+    it("auto-creates today's page and focuses block on mount when no page exists", async () => {
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_blocks') {
+          return emptyPage
+        }
+        if (cmd === 'create_block') {
+          const params = args as { blockType: string }
+          if (params.blockType === 'page') {
+            return {
+              id: 'DP-AUTO',
+              block_type: 'page',
+              content: todayStr,
+              parent_id: null,
+              position: null,
+            }
+          }
+          if (params.blockType === 'content') {
+            return {
+              id: 'B-AUTO',
+              block_type: 'content',
+              content: '',
+              parent_id: 'DP-AUTO',
+              position: 0,
+            }
+          }
+        }
+        return emptyPage
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: todayStr,
+          parentId: null,
+          position: null,
+        })
+      })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'content',
+          content: '',
+          parentId: 'DP-AUTO',
+          position: null,
+        })
+      })
+    })
+
+    it("does NOT auto-create when today's page already exists", async () => {
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockResolvedValue({
+        items: [makeDailyPage('DP-TODAY', todayStr)],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('block-tree')).toHaveLength(1)
+      })
+
+      const createPageCalls = mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+      )
+      expect(createPageCalls).toHaveLength(0)
+    })
+  })
+
+  // ── Keyboard shortcut for new block (#633) ──────────────────────────
+
+  describe('keyboard shortcut for new block (#633)', () => {
+    it('Enter key creates page when empty state is shown in daily mode', async () => {
+      const yesterday = subDays(new Date(), 1)
+      const yesterdayStr = formatDate(yesterday)
+
+      useJournalStore.setState({ currentDate: yesterday, mode: 'daily' })
+
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      mockedInvoke
+        .mockResolvedValueOnce({
+          id: 'DP-KEY',
+          block_type: 'page',
+          content: yesterdayStr,
+          parent_id: null,
+          position: null,
+        })
+        .mockResolvedValueOnce({
+          id: 'B-KEY',
+          block_type: 'content',
+          content: '',
+          parent_id: 'DP-KEY',
+          position: 0,
+        })
+        .mockResolvedValueOnce({
+          items: [
+            {
+              id: 'B-KEY',
+              block_type: 'content',
+              content: '',
+              parent_id: 'DP-KEY',
+              position: 0,
+              deleted_at: null,
+              archived_at: null,
+              is_conflict: false,
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        })
+
+      fireEvent.keyDown(document, { key: 'Enter' })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: yesterdayStr,
+          parentId: null,
+          position: null,
+        })
+      })
+    })
+
+    it('does NOT fire when inside input/contentEditable', async () => {
+      const yesterday = subDays(new Date(), 1)
+
+      useJournalStore.setState({ currentDate: yesterday, mode: 'daily' })
+
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const input = document.createElement('input')
+      document.body.appendChild(input)
+      input.focus()
+
+      fireEvent.keyDown(input, { key: 'Enter' })
+
+      const createPageCalls = mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+      )
+      expect(createPageCalls).toHaveLength(0)
+
+      document.body.removeChild(input)
     })
   })
 })
