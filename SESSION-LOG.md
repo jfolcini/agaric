@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 96 — 2026-04-03 — Agenda Date Filters (#634)
+
+### All 6 dueDate filter presets now functional
+
+1 build subagent + 1 review subagent. Orchestrator fixed Biome formatting + removed stale v1 comment.
+
+| File | Change |
+|------|--------|
+| `JournalPage.tsx` | #634: Implemented 'This week' (Mon-Sun iteration), 'Overdue' (queryByProperty + client-side filter, excludes DONE), 'Next 7/14/30 days' (date iteration). Fixed timezone bug: `toISOString().slice(0,10)` → `formatDate()` (date-fns). Removed stale "v1" comment. |
+| `AgendaFilterBuilder.tsx` | #634: Added 'Next 14 days', 'Next 30 days' to dueDate choices (4 → 6 presets). |
+| `JournalPage.test.tsx` | #634: 2 new tests (Overdue filter logic, This week queries 7 days). |
+| `AgendaFilterBuilder.test.tsx` | #634: 1 new test (6 dueDate choices visible). |
+
+### Stats
+- Frontend: 2417 tests pass (2414 + 3 new)
+- Commit: `d8ee9bd`
+- REVIEW-LATER: 10 → 9 items (#634 resolved)
+
 ## Session 95 — 2026-04-03 — Outliner Enter Key (#636)
 
 ### Enter creates new sibling block (outliner-style) with empty-block cleanup
