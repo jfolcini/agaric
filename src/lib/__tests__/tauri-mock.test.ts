@@ -43,10 +43,12 @@ describe('seed data', () => {
     const result = invoke('list_blocks', { blockType: 'page' }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items).toHaveLength(3)
+    expect(result.items).toHaveLength(5)
     const titles = result.items.map((b) => b.content)
     expect(titles).toContain('Getting Started')
     expect(titles).toContain('Quick Notes')
+    expect(titles).toContain('Projects')
+    expect(titles).toContain('Meetings')
   })
 
   it('populates tags', () => {
@@ -80,7 +82,7 @@ describe('seed data', () => {
     const result = invoke('list_blocks', { parentId: SEED_IDS.PAGE_DAILY }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items).toHaveLength(2)
+    expect(result.items).toHaveLength(5)
     expect(result.items[0].content as string).toContain('standup')
   })
 
@@ -712,7 +714,8 @@ describe('query_by_tags', () => {
     const result = invoke('query_by_tags', { tagIds: [SEED_IDS.TAG_WORK] }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items).toHaveLength(2)
+    // 2 dynamically added + 3 seed associations (PROJ_1, PROJ_2, MTG_1) = 5
+    expect(result.items.length).toBeGreaterThanOrEqual(5)
     const ids = result.items.map((b) => b.id)
     expect(ids).toContain(SEED_IDS.BLOCK_GS_1)
     expect(ids).toContain(SEED_IDS.BLOCK_GS_2)
@@ -743,7 +746,9 @@ describe('query_by_tags', () => {
     const result = invoke('query_by_tags', { tagIds: [SEED_IDS.TAG_WORK] }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items).toHaveLength(0)
+    // BLOCK_GS_1 deleted, but seed associations (PROJ_1, PROJ_2, MTG_1) still there
+    const ids = result.items.map((b) => b.id)
+    expect(ids).not.toContain(SEED_IDS.BLOCK_GS_1)
   })
 
   it('returns PageResponse shape', () => {
@@ -1567,5 +1572,442 @@ describe('error injection', () => {
       unknown
     >
     expect(block.content).toBe('Getting Started')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Seed data — rich agenda / task data
+// ---------------------------------------------------------------------------
+
+describe('seed task blocks', () => {
+  it('daily page has TODO blocks with due dates', () => {
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_DAILY_3 }) as Record<
+      string,
+      unknown
+    >
+    expect(block.todo_state).toBe('TODO')
+    expect(block.priority).toBe('1')
+    expect(block.due_date).not.toBeNull()
+  })
+
+  it('daily page has DOING block', () => {
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_DAILY_4 }) as Record<
+      string,
+      unknown
+    >
+    expect(block.todo_state).toBe('DOING')
+    expect(block.priority).toBe('2')
+  })
+
+  it('daily page has DONE block', () => {
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_DAILY_5 }) as Record<
+      string,
+      unknown
+    >
+    expect(block.todo_state).toBe('DONE')
+  })
+
+  it('projects page has blocks with scheduled dates', () => {
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_PROJ_1 }) as Record<string, unknown>
+    expect(block.scheduled_date).not.toBeNull()
+    expect(block.due_date).not.toBeNull()
+  })
+
+  it('overdue block has yesterday due date', () => {
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_OVERDUE_1 }) as Record<
+      string,
+      unknown
+    >
+    expect(block.todo_state).toBe('TODO')
+    expect(block.due_date).not.toBeNull()
+    // Due date should be before today (string comparison works for YYYY-MM-DD)
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    expect((block.due_date as string) < todayStr).toBe(true)
+  })
+
+  it('seed properties include completed_at on DONE blocks', () => {
+    const props = invoke('get_properties', {
+      blockId: SEED_IDS.BLOCK_DAILY_5,
+    }) as Record<string, unknown>[]
+    expect(props.length).toBeGreaterThanOrEqual(1)
+    const completedAt = props.find((p) => p.key === 'completed_at')
+    expect(completedAt).toBeDefined()
+    expect(completedAt?.value_date).not.toBeNull()
+  })
+
+  it('seed properties include custom props on meeting blocks', () => {
+    const props = invoke('get_properties', {
+      blockId: SEED_IDS.BLOCK_MTG_1,
+    }) as Record<string, unknown>[]
+    expect(props).toHaveLength(2)
+    const keys = props.map((p) => p.key)
+    expect(keys).toContain('context')
+    expect(keys).toContain('project')
+  })
+
+  it('seed tag associations are in place', () => {
+    const tags = invoke('list_tags_for_block', {
+      blockId: SEED_IDS.BLOCK_PROJ_1,
+    }) as Array<Record<string, unknown>>
+    expect(tags).toHaveLength(1)
+    expect(tags[0].tag_id).toBe(SEED_IDS.TAG_WORK)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// list_blocks with agendaDate / agendaSource
+// ---------------------------------------------------------------------------
+
+describe('list_blocks with agendaDate', () => {
+  it('returns blocks due on the given date', () => {
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const result = invoke('list_blocks', { agendaDate: todayStr }) as {
+      items: Record<string, unknown>[]
+    }
+    // Should include blocks with due_date=today OR scheduled_date=today
+    expect(result.items.length).toBeGreaterThanOrEqual(1)
+    for (const item of result.items) {
+      expect(item.due_date === todayStr || item.scheduled_date === todayStr).toBe(true)
+    }
+  })
+
+  it('filters by agendaSource column:due_date', () => {
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const result = invoke('list_blocks', {
+      agendaDate: todayStr,
+      agendaSource: 'column:due_date',
+    }) as { items: Record<string, unknown>[] }
+    for (const item of result.items) {
+      expect(item.due_date).toBe(todayStr)
+    }
+  })
+
+  it('filters by agendaSource column:scheduled_date', () => {
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const result = invoke('list_blocks', {
+      agendaDate: todayStr,
+      agendaSource: 'column:scheduled_date',
+    }) as { items: Record<string, unknown>[] }
+    for (const item of result.items) {
+      expect(item.scheduled_date).toBe(todayStr)
+    }
+    // BLOCK_PROJ_1 is scheduled for today
+    const ids = result.items.map((b) => b.id)
+    expect(ids).toContain(SEED_IDS.BLOCK_PROJ_1)
+  })
+
+  it('returns empty for a date with no items', () => {
+    const result = invoke('list_blocks', { agendaDate: '1900-01-01' }) as {
+      items: Record<string, unknown>[]
+    }
+    expect(result.items).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// query_by_property with valueDate
+// ---------------------------------------------------------------------------
+
+describe('query_by_property with valueDate', () => {
+  it('filters by valueDate for completed_at', () => {
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const result = invoke('query_by_property', {
+      key: 'completed_at',
+      valueDate: todayStr,
+    }) as { items: Record<string, unknown>[] }
+    expect(result.items.length).toBeGreaterThanOrEqual(2)
+    const ids = result.items.map((b) => b.id)
+    expect(ids).toContain(SEED_IDS.BLOCK_DAILY_5)
+    expect(ids).toContain(SEED_IDS.BLOCK_PROJ_3)
+  })
+
+  it('returns empty for valueDate with no matches', () => {
+    const result = invoke('query_by_property', {
+      key: 'completed_at',
+      valueDate: '1900-01-01',
+    }) as { items: Record<string, unknown>[] }
+    expect(result.items).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// set_scheduled_date
+// ---------------------------------------------------------------------------
+
+describe('set_scheduled_date', () => {
+  it('sets scheduled_date on a block', () => {
+    const result = invoke('set_scheduled_date', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      date: '2026-07-01',
+    }) as Record<string, unknown>
+    expect(result.scheduled_date).toBe('2026-07-01')
+
+    const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
+    expect(block.scheduled_date).toBe('2026-07-01')
+  })
+
+  it('clears scheduled_date with null', () => {
+    invoke('set_scheduled_date', { blockId: SEED_IDS.BLOCK_GS_1, date: '2026-07-01' })
+    const result = invoke('set_scheduled_date', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      date: null,
+    }) as Record<string, unknown>
+    expect(result.scheduled_date).toBeNull()
+  })
+
+  it('throws for non-existent block', () => {
+    expect(() =>
+      invoke('set_scheduled_date', { blockId: 'NONEXISTENT', date: '2026-07-01' }),
+    ).toThrow('not found')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// count_agenda_batch
+// ---------------------------------------------------------------------------
+
+describe('count_agenda_batch', () => {
+  it('returns counts per date', () => {
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const result = invoke('count_agenda_batch', {
+      dates: [todayStr, '1900-01-01'],
+    }) as Record<string, number>
+    expect(result[todayStr]).toBeGreaterThanOrEqual(1)
+    expect(result['1900-01-01']).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// count_backlinks_batch
+// ---------------------------------------------------------------------------
+
+describe('count_backlinks_batch', () => {
+  it('returns backlink counts per page', () => {
+    const result = invoke('count_backlinks_batch', {
+      pageIds: [SEED_IDS.PAGE_GETTING_STARTED, SEED_IDS.TAG_IDEA],
+    }) as Record<string, number>
+    // BLOCK_QN_1 links to PAGE_GETTING_STARTED
+    expect(result[SEED_IDS.PAGE_GETTING_STARTED]).toBeGreaterThanOrEqual(1)
+    expect(result[SEED_IDS.TAG_IDEA]).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// list_backlinks_grouped
+// ---------------------------------------------------------------------------
+
+describe('list_backlinks_grouped', () => {
+  it('returns backlinks grouped by source page', () => {
+    const result = invoke('list_backlinks_grouped', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as { groups: Array<Record<string, unknown>>; total_count: number }
+    expect(result.groups.length).toBeGreaterThanOrEqual(1)
+    expect(result.total_count).toBeGreaterThanOrEqual(1)
+  })
+
+  it('returns GroupedBacklinkResponse shape', () => {
+    const result = invoke('list_backlinks_grouped', {
+      blockId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    expect(result).toHaveProperty('groups')
+    expect(result).toHaveProperty('next_cursor', null)
+    expect(result).toHaveProperty('has_more', false)
+    expect(result).toHaveProperty('total_count')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// list_unlinked_references
+// ---------------------------------------------------------------------------
+
+describe('list_unlinked_references', () => {
+  it('finds blocks mentioning page title as text without [[link]]', () => {
+    // Create a block that mentions "Quick Notes" as text but without [[ ]]
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'Check Quick Notes for details',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    const result = invoke('list_unlinked_references', {
+      pageId: SEED_IDS.PAGE_QUICK_NOTES,
+    }) as { groups: Array<Record<string, unknown>>; total_count: number }
+    expect(result.total_count).toBeGreaterThanOrEqual(1)
+  })
+
+  it('returns empty for page with no unlinked mentions', () => {
+    // Create a page with a unique title that doesn't appear elsewhere
+    const page = invoke('create_block', {
+      blockType: 'page',
+      content: 'Xyzzyspoon',
+    }) as Record<string, unknown>
+    const result = invoke('list_unlinked_references', {
+      pageId: page.id as string,
+    }) as { total_count: number }
+    expect(result.total_count).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// compute_edit_diff
+// ---------------------------------------------------------------------------
+
+describe('compute_edit_diff', () => {
+  it('returns diff spans for an edit_block op', () => {
+    invoke('edit_block', { blockId: SEED_IDS.BLOCK_GS_5, toText: 'New content here' })
+    const history = invoke('list_page_history', {}) as { items: Array<Record<string, unknown>> }
+    const editOp = history.items.find((o) => o.op_type === 'edit_block')
+    expect(editOp).toBeDefined()
+
+    const spans = invoke('compute_edit_diff', {
+      deviceId: editOp?.device_id,
+      seq: editOp?.seq,
+    }) as Array<Record<string, unknown>>
+    expect(spans.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('returns null for non-edit ops', () => {
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'diff-test',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    const history = invoke('list_page_history', {}) as { items: Array<Record<string, unknown>> }
+    const createOp = history.items.find((o) => o.op_type === 'create_block')
+
+    const result = invoke('compute_edit_diff', {
+      deviceId: createOp?.device_id,
+      seq: createOp?.seq,
+    })
+    expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Property definition commands
+// ---------------------------------------------------------------------------
+
+describe('property definition commands', () => {
+  it('list_property_defs returns seed definitions', () => {
+    const defs = invoke('list_property_defs') as Array<Record<string, unknown>>
+    expect(defs.length).toBeGreaterThanOrEqual(2)
+    const keys = defs.map((d) => d.key)
+    expect(keys).toContain('context')
+    expect(keys).toContain('project')
+  })
+
+  it('create_property_def adds a new definition', () => {
+    const def = invoke('create_property_def', {
+      key: 'effort',
+      valueType: 'number',
+      options: null,
+    }) as Record<string, unknown>
+    expect(def.key).toBe('effort')
+    expect(def.value_type).toBe('number')
+
+    const defs = invoke('list_property_defs') as Array<Record<string, unknown>>
+    expect(defs.some((d) => d.key === 'effort')).toBe(true)
+  })
+
+  it('update_property_def_options updates options', () => {
+    invoke('create_property_def', {
+      key: 'status',
+      valueType: 'select',
+      options: JSON.stringify(['open', 'closed']),
+    })
+    const updated = invoke('update_property_def_options', {
+      key: 'status',
+      options: JSON.stringify(['open', 'in-progress', 'closed']),
+    }) as Record<string, unknown>
+    expect(updated.options).toBe(JSON.stringify(['open', 'in-progress', 'closed']))
+  })
+
+  it('update_property_def_options throws for non-existent key', () => {
+    expect(() =>
+      invoke('update_property_def_options', { key: 'nonexistent', options: '[]' }),
+    ).toThrow('property definition not found')
+  })
+
+  it('delete_property_def removes a definition', () => {
+    invoke('create_property_def', { key: 'temp', valueType: 'text' })
+    invoke('delete_property_def', { key: 'temp' })
+    const defs = invoke('list_property_defs') as Array<Record<string, unknown>>
+    expect(defs.some((d) => d.key === 'temp')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Page alias commands
+// ---------------------------------------------------------------------------
+
+describe('page alias commands', () => {
+  it('get_page_aliases returns seed aliases', () => {
+    const aliases = invoke('get_page_aliases', {
+      pageId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as string[]
+    expect(aliases).toEqual(['gs', 'getting-started'])
+  })
+
+  it('set_page_aliases replaces existing aliases', () => {
+    invoke('set_page_aliases', {
+      pageId: SEED_IDS.PAGE_GETTING_STARTED,
+      aliases: ['intro', 'welcome'],
+    })
+    const aliases = invoke('get_page_aliases', {
+      pageId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as string[]
+    expect(aliases).toEqual(['intro', 'welcome'])
+  })
+
+  it('resolve_page_by_alias finds page by alias', () => {
+    const result = invoke('resolve_page_by_alias', { alias: 'gs' }) as
+      | [string, string | null]
+      | null
+    expect(result).not.toBeNull()
+    expect(result?.[0]).toBe(SEED_IDS.PAGE_GETTING_STARTED)
+    expect(result?.[1]).toBe('Getting Started')
+  })
+
+  it('resolve_page_by_alias is case-insensitive', () => {
+    const result = invoke('resolve_page_by_alias', { alias: 'GS' }) as
+      | [string, string | null]
+      | null
+    expect(result).not.toBeNull()
+    expect(result?.[0]).toBe(SEED_IDS.PAGE_GETTING_STARTED)
+  })
+
+  it('resolve_page_by_alias returns null for unknown alias', () => {
+    const result = invoke('resolve_page_by_alias', { alias: 'zzzzz' })
+    expect(result).toBeNull()
+  })
+
+  it('get_page_aliases returns empty for page with no aliases', () => {
+    const aliases = invoke('get_page_aliases', {
+      pageId: SEED_IDS.PAGE_DAILY,
+    }) as string[]
+    expect(aliases).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// export_page_markdown
+// ---------------------------------------------------------------------------
+
+describe('export_page_markdown', () => {
+  it('returns markdown with page title and child blocks', () => {
+    const md = invoke('export_page_markdown', {
+      pageId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as string
+    expect(md).toContain('# Getting Started')
+    expect(md).toContain('- Welcome to Agaric!')
+  })
+
+  it('throws for non-existent page', () => {
+    expect(() => invoke('export_page_markdown', { pageId: 'NONEXISTENT' })).toThrow('not found')
   })
 })

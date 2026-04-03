@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 93 — 2026-04-03 — Frontend Polish Batch (#628, #631, #635, #638)
+
+### Batch fix: 4 S-cost frontend items
+
+2 parallel build subagents + orchestrator direct fixes + 1 review subagent.
+
+| File | Change |
+|------|--------|
+| `useUndoShortcuts.ts` | #638: Added Ctrl+Shift+Z (and Cmd+Shift+Z) as alternative page-level redo shortcut alongside Ctrl+Y. |
+| `useUndoShortcuts.test.ts` | #638: 2 new tests (lowercase 'z' + uppercase 'Z' key variants). |
+| `SortableBlock.tsx` | #628: Clock icon size 14→16px to match GripVertical and Trash2 in gutter. |
+| `FormattingToolbar.tsx` | #631: New "Set scheduled date" toolbar button (CalendarCheck2 icon), dispatches `open-scheduled-date-picker` event. |
+| `BlockTree.tsx` | #631: Event listener for `open-scheduled-date-picker` → opens DatePicker in 'schedule' mode. #635: `handleCheckboxSyntax` callback wired to `useRovingEditor`. |
+| `i18n.ts` | #631: 2 new i18n keys (`toolbar.setScheduledDate`, `toolbar.scheduledDateTip`). |
+| `FormattingToolbar.test.tsx` | #631: 2 new tests (render + event dispatch). Button count 17→18. |
+| `checkbox-input-rule.ts` (new) | #635: TipTap InputRule extension — `- [ ] ` → TODO, `- [x] ` → DONE during live editing. |
+| `checkbox-input-rule.test.ts` (new) | #635: 15 tests (extension smoke + regex pattern matching). |
+| `use-roving-editor.ts` | #635: `onCheckbox` callback prop + CheckboxInputRule extension configured. |
+
+### Stats
+- Frontend: 2370 tests pass (2352 + 18 new)
+- Commit: `c66206b`
+- REVIEW-LATER: 17 → 13 items (#628, #631, #635, #638 resolved)
+
 ## Session 92 — 2026-04-03 — Phase 2: Commands/Reverse Deep Review + Fixes
 
 ### Deep code review of commands.rs + reverse.rs generating 5 new REVIEW-LATER items

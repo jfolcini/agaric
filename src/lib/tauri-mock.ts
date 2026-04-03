@@ -34,6 +34,12 @@ const properties: Map<string, Map<string, Record<string, unknown>>> = new Map()
 // Block-tag associations: block_id → Set<tag_id>
 const blockTags: Map<string, Set<string>> = new Map()
 
+// Property definitions store
+const propertyDefs: Map<string, Record<string, unknown>> = new Map()
+
+// Page aliases store: page_id → string[]
+const pageAliases: Map<string, string[]> = new Map()
+
 // Op log for undo/redo/history
 interface MockOpLogEntry {
   [key: string]: unknown
@@ -68,6 +74,12 @@ function todayDate(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+function offsetDate(days: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + days)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 /** Deterministic IDs for seed data so tests and components can reference them.
  *  Must be valid 26-char Crockford base32 ULIDs so [[id]] and #[id] tokens
  *  parse correctly through the markdown serializer. */
@@ -88,6 +100,19 @@ export const SEED_IDS = {
   TAG_PERSONAL: '000000000000000000000TAG02',
   TAG_IDEA: '000000000000000000000TAG03',
   CONFLICT_01: '0000000000000000CONFLICT01',
+  // -- Additional seed data for richer browser preview --
+  PAGE_PROJECTS: '00000000000000000000PAGE04',
+  PAGE_MEETINGS: '00000000000000000000PAGE05',
+  BLOCK_DAILY_3: '0000000000000000000BLOCK10',
+  BLOCK_DAILY_4: '0000000000000000000BLOCK11',
+  BLOCK_DAILY_5: '0000000000000000000BLOCK12',
+  BLOCK_PROJ_1: '0000000000000000000BLOCK13',
+  BLOCK_PROJ_2: '0000000000000000000BLOCK14',
+  BLOCK_PROJ_3: '0000000000000000000BLOCK15',
+  BLOCK_PROJ_4: '0000000000000000000BLOCK16',
+  BLOCK_MTG_1: '0000000000000000000BLOCK17',
+  BLOCK_MTG_2: '0000000000000000000BLOCK18',
+  BLOCK_OVERDUE_1: '0000000000000000000BLOCK19',
 } as const
 
 function makeBlock(
@@ -118,11 +143,16 @@ function seedBlocks(): void {
   blocks.clear()
   properties.clear()
   blockTags.clear()
+  propertyDefs.clear()
+  pageAliases.clear()
   counter = 0
   opLog.length = 0
   opSeqCounter = 0
 
   const today = todayDate()
+  const yesterday = offsetDate(-1)
+  const tomorrow = offsetDate(1)
+  const nextWeek = offsetDate(7)
 
   // Pages
   blocks.set(
@@ -134,6 +164,8 @@ function seedBlocks(): void {
     makeBlock(SEED_IDS.PAGE_QUICK_NOTES, 'page', 'Quick Notes', null, 1),
   )
   blocks.set(SEED_IDS.PAGE_DAILY, makeBlock(SEED_IDS.PAGE_DAILY, 'page', today, null, 2))
+  blocks.set(SEED_IDS.PAGE_PROJECTS, makeBlock(SEED_IDS.PAGE_PROJECTS, 'page', 'Projects', null, 3))
+  blocks.set(SEED_IDS.PAGE_MEETINGS, makeBlock(SEED_IDS.PAGE_MEETINGS, 'page', 'Meetings', null, 4))
 
   // Content blocks — children of "Getting Started"
   blocks.set(
@@ -187,7 +219,7 @@ function seedBlocks(): void {
     ),
   )
 
-  // Daily page children
+  // Daily page children — original seed blocks
   blocks.set(
     SEED_IDS.BLOCK_DAILY_1,
     makeBlock(
@@ -208,6 +240,115 @@ function seedBlocks(): void {
       1,
     ),
   )
+
+  // Daily page children — task blocks with due dates, states, priorities
+  const daily3 = makeBlock(
+    SEED_IDS.BLOCK_DAILY_3,
+    'content',
+    'Buy groceries',
+    SEED_IDS.PAGE_DAILY,
+    2,
+  )
+  daily3.todo_state = 'TODO'
+  daily3.priority = '1'
+  daily3.due_date = today
+  blocks.set(SEED_IDS.BLOCK_DAILY_3, daily3)
+
+  const daily4 = makeBlock(
+    SEED_IDS.BLOCK_DAILY_4,
+    'content',
+    'Review pull requests',
+    SEED_IDS.PAGE_DAILY,
+    3,
+  )
+  daily4.todo_state = 'DOING'
+  daily4.priority = '2'
+  daily4.due_date = today
+  blocks.set(SEED_IDS.BLOCK_DAILY_4, daily4)
+
+  const daily5 = makeBlock(
+    SEED_IDS.BLOCK_DAILY_5,
+    'content',
+    'Write documentation',
+    SEED_IDS.PAGE_DAILY,
+    4,
+  )
+  daily5.todo_state = 'DONE'
+  daily5.priority = '3'
+  daily5.due_date = today
+  blocks.set(SEED_IDS.BLOCK_DAILY_5, daily5)
+
+  // Projects page children — mixed states and dates
+  const proj1 = makeBlock(
+    SEED_IDS.BLOCK_PROJ_1,
+    'content',
+    'Ship v2.0 release',
+    SEED_IDS.PAGE_PROJECTS,
+    0,
+  )
+  proj1.todo_state = 'TODO'
+  proj1.priority = '1'
+  proj1.due_date = tomorrow
+  proj1.scheduled_date = today
+  blocks.set(SEED_IDS.BLOCK_PROJ_1, proj1)
+
+  const proj2 = makeBlock(
+    SEED_IDS.BLOCK_PROJ_2,
+    'content',
+    'Fix login bug',
+    SEED_IDS.PAGE_PROJECTS,
+    1,
+  )
+  proj2.todo_state = 'DOING'
+  proj2.priority = '1'
+  proj2.due_date = today
+  blocks.set(SEED_IDS.BLOCK_PROJ_2, proj2)
+
+  const proj3 = makeBlock(
+    SEED_IDS.BLOCK_PROJ_3,
+    'content',
+    'Update dependencies',
+    SEED_IDS.PAGE_PROJECTS,
+    2,
+  )
+  proj3.todo_state = 'DONE'
+  blocks.set(SEED_IDS.BLOCK_PROJ_3, proj3)
+
+  const proj4 = makeBlock(
+    SEED_IDS.BLOCK_PROJ_4,
+    'content',
+    'Design new dashboard',
+    SEED_IDS.PAGE_PROJECTS,
+    3,
+  )
+  proj4.todo_state = 'TODO'
+  proj4.priority = '2'
+  proj4.due_date = nextWeek
+  proj4.scheduled_date = tomorrow
+  blocks.set(SEED_IDS.BLOCK_PROJ_4, proj4)
+
+  // Meetings page children — with custom properties
+  blocks.set(
+    SEED_IDS.BLOCK_MTG_1,
+    makeBlock(SEED_IDS.BLOCK_MTG_1, 'content', 'Weekly standup notes', SEED_IDS.PAGE_MEETINGS, 0),
+  )
+  blocks.set(
+    SEED_IDS.BLOCK_MTG_2,
+    makeBlock(SEED_IDS.BLOCK_MTG_2, 'content', 'Design review feedback', SEED_IDS.PAGE_MEETINGS, 1),
+  )
+
+  // Overdue task — due yesterday, still TODO
+  const overdue1 = makeBlock(
+    SEED_IDS.BLOCK_OVERDUE_1,
+    'content',
+    'Submit report',
+    SEED_IDS.PAGE_PROJECTS,
+    4,
+  )
+  overdue1.todo_state = 'TODO'
+  overdue1.priority = '1'
+  overdue1.due_date = yesterday
+  blocks.set(SEED_IDS.BLOCK_OVERDUE_1, overdue1)
 
   // Tags
   blocks.set(SEED_IDS.TAG_WORK, makeBlock(SEED_IDS.TAG_WORK, 'tag', 'work', null, 0))
@@ -246,6 +387,75 @@ function seedBlocks(): void {
       1,
     ),
   )
+
+  // -- Seed properties for richer browser preview --
+
+  // completed_at property on DONE blocks
+  const setMockProp = (blockId: string, key: string, vals: Record<string, unknown>) => {
+    if (!properties.has(blockId)) properties.set(blockId, new Map())
+    properties.get(blockId)?.set(key, { key, ...vals })
+  }
+  setMockProp(SEED_IDS.BLOCK_DAILY_5, 'completed_at', {
+    value_text: null,
+    value_num: null,
+    value_date: today,
+    value_ref: null,
+  })
+  setMockProp(SEED_IDS.BLOCK_PROJ_3, 'completed_at', {
+    value_text: null,
+    value_num: null,
+    value_date: today,
+    value_ref: null,
+  })
+  // Custom properties on meeting blocks
+  setMockProp(SEED_IDS.BLOCK_MTG_1, 'context', {
+    value_text: '@office',
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+  })
+  setMockProp(SEED_IDS.BLOCK_MTG_1, 'project', {
+    value_text: 'alpha',
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+  })
+  setMockProp(SEED_IDS.BLOCK_MTG_2, 'context', {
+    value_text: '@remote',
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+  })
+  setMockProp(SEED_IDS.BLOCK_MTG_2, 'project', {
+    value_text: 'beta',
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+  })
+
+  // -- Seed tag associations --
+  blockTags.set(SEED_IDS.BLOCK_PROJ_1, new Set([SEED_IDS.TAG_WORK]))
+  blockTags.set(SEED_IDS.BLOCK_PROJ_2, new Set([SEED_IDS.TAG_WORK]))
+  blockTags.set(SEED_IDS.BLOCK_MTG_1, new Set([SEED_IDS.TAG_WORK]))
+  blockTags.set(SEED_IDS.BLOCK_DAILY_3, new Set([SEED_IDS.TAG_PERSONAL]))
+
+  // -- Seed property definitions --
+  propertyDefs.set('context', {
+    key: 'context',
+    value_type: 'text',
+    options: null,
+    created_at: new Date().toISOString(),
+  })
+  propertyDefs.set('project', {
+    key: 'project',
+    value_type: 'select',
+    options: JSON.stringify(['alpha', 'beta', 'gamma']),
+    created_at: new Date().toISOString(),
+  })
+
+  // -- Seed page aliases --
+  pageAliases.set(SEED_IDS.PAGE_GETTING_STARTED, ['gs', 'getting-started'])
+  pageAliases.set(SEED_IDS.PAGE_PROJECTS, ['proj'])
 }
 
 /** Reset mock state — clears and re-seeds the in-memory store. Useful for tests. */
@@ -279,6 +489,18 @@ export function setupMock(): void {
         }
         if (a.blockType) items = items.filter((b) => b.block_type === a.blockType)
         if (a.parentId) items = items.filter((b) => b.parent_id === a.parentId)
+        // Agenda date filtering — matches blocks by due_date or scheduled_date
+        if (a.agendaDate) {
+          const dateStr = a.agendaDate as string
+          const source = (a.agendaSource as string | null) ?? null
+          if (source === 'column:due_date') {
+            items = items.filter((b) => b.due_date === dateStr)
+          } else if (source === 'column:scheduled_date') {
+            items = items.filter((b) => b.scheduled_date === dateStr)
+          } else {
+            items = items.filter((b) => b.due_date === dateStr || b.scheduled_date === dateStr)
+          }
+        }
         // Sort by position for consistent ordering (matches real backend)
         items.sort((x, y) => ((x.position as number) ?? 0) - ((y.position as number) ?? 0))
         return { items, next_cursor: null, has_more: false }
@@ -519,6 +741,7 @@ export function setupMock(): void {
         const a = args as Record<string, unknown>
         const key = a.key as string
         const valueText = (a.valueText as string | null) ?? null
+        const valueDate = (a.valueDate as string | null) ?? null
         const items = [...blocks.values()].filter((b) => {
           if (b.deleted_at) return false
           const blockProps = properties.get(b.id as string)
@@ -526,6 +749,7 @@ export function setupMock(): void {
           const prop = blockProps.get(key)
           if (!prop) return false
           if (valueText !== null) return prop.value_text === valueText
+          if (valueDate !== null) return prop.value_date === valueDate
           return true
         })
         return { items, next_cursor: null, has_more: false }
@@ -851,6 +1075,243 @@ export function setupMock(): void {
         b.due_date = (a.date as string | null) ?? null
         pushOp('set_due_date', { block_id: a.blockId, date: b.due_date })
         return { ...b }
+      }
+
+      case 'set_scheduled_date': {
+        const a = args as Record<string, unknown>
+        const b = blocks.get(a.blockId as string)
+        if (!b) throw new Error('not found')
+        b.scheduled_date = (a.date as string | null) ?? null
+        pushOp('set_scheduled_date', { block_id: a.blockId, date: b.scheduled_date })
+        return { ...b }
+      }
+
+      // -----------------------------------------------------------------------
+      // Batch count commands
+      // -----------------------------------------------------------------------
+
+      case 'count_agenda_batch': {
+        const a = args as Record<string, unknown>
+        const dates = a.dates as string[]
+        const result: Record<string, number> = {}
+        for (const dateStr of dates) {
+          const count = [...blocks.values()].filter(
+            (b) =>
+              !(b.deleted_at as string | null) &&
+              (b.due_date === dateStr || b.scheduled_date === dateStr),
+          ).length
+          result[dateStr] = count
+        }
+        return result
+      }
+
+      case 'count_backlinks_batch': {
+        const a = args as Record<string, unknown>
+        const pageIds = a.pageIds as string[]
+        const LINK_RE_BATCH = /\[\[([0-9A-Z]{26})\]\]/g
+        const result: Record<string, number> = {}
+        for (const pid of pageIds) {
+          const count = [...blocks.values()].filter((b) => {
+            if (b.deleted_at) return false
+            const content = (b.content as string) ?? ''
+            for (const m of content.matchAll(LINK_RE_BATCH)) {
+              if (m[1] === pid) return true
+            }
+            return false
+          }).length
+          result[pid] = count
+        }
+        return result
+      }
+
+      // -----------------------------------------------------------------------
+      // Grouped backlinks + unlinked references
+      // -----------------------------------------------------------------------
+
+      case 'list_backlinks_grouped': {
+        const a = args as Record<string, unknown>
+        const targetId = a.blockId as string
+        const LINK_RE_G = /\[\[([0-9A-Z]{26})\]\]/g
+        const backlinkItems = [...blocks.values()].filter((b) => {
+          if (b.deleted_at) return false
+          const content = (b.content as string) ?? ''
+          for (const m of content.matchAll(LINK_RE_G)) {
+            if (m[1] === targetId) return true
+          }
+          return false
+        })
+        // Group by parent_id (source page)
+        const groupMap = new Map<string, Record<string, unknown>[]>()
+        for (const item of backlinkItems) {
+          const pid = (item.parent_id as string) ?? '__orphan__'
+          if (!groupMap.has(pid)) groupMap.set(pid, [])
+          groupMap.get(pid)?.push(item)
+        }
+        const groups = [...groupMap.entries()].map(([pageId, items]) => {
+          const page = blocks.get(pageId)
+          return {
+            page_id: pageId,
+            page_title: page ? ((page.content as string) ?? null) : null,
+            items,
+          }
+        })
+        return { groups, next_cursor: null, has_more: false, total_count: backlinkItems.length }
+      }
+
+      case 'list_unlinked_references': {
+        const a = args as Record<string, unknown>
+        const pageId = a.pageId as string
+        const page = blocks.get(pageId)
+        if (!page) return { groups: [], next_cursor: null, has_more: false, total_count: 0 }
+        const pageTitle = ((page.content as string) ?? '').toLowerCase()
+        if (!pageTitle) return { groups: [], next_cursor: null, has_more: false, total_count: 0 }
+        // Find blocks that mention the page title as text but don't have a [[link]]
+        const LINK_RE_UL = /\[\[([0-9A-Z]{26})\]\]/g
+        const unlinked = [...blocks.values()].filter((b) => {
+          if (b.deleted_at) return false
+          if (b.id === pageId) return false
+          if (b.parent_id === pageId) return false
+          const content = (b.content as string) ?? ''
+          if (!content.toLowerCase().includes(pageTitle)) return false
+          // Exclude if it already has a [[link]] to this page
+          for (const m of content.matchAll(LINK_RE_UL)) {
+            if (m[1] === pageId) return false
+          }
+          return true
+        })
+        const groupMap = new Map<string, Record<string, unknown>[]>()
+        for (const item of unlinked) {
+          const pid = (item.parent_id as string) ?? '__orphan__'
+          if (!groupMap.has(pid)) groupMap.set(pid, [])
+          groupMap.get(pid)?.push(item)
+        }
+        const groups = [...groupMap.entries()].map(([pid, items]) => {
+          const p = blocks.get(pid)
+          return {
+            page_id: pid,
+            page_title: p ? ((p.content as string) ?? null) : null,
+            items,
+          }
+        })
+        return { groups, next_cursor: null, has_more: false, total_count: unlinked.length }
+      }
+
+      // -----------------------------------------------------------------------
+      // Word-level diff for history display
+      // -----------------------------------------------------------------------
+
+      case 'compute_edit_diff': {
+        const a = args as Record<string, unknown>
+        const deviceId = a.deviceId as string
+        const seq = a.seq as number
+        const target = opLog.find((o) => o.device_id === deviceId && o.seq === seq)
+        if (!target || target.op_type !== 'edit_block') return null
+        const payload = JSON.parse(target.payload) as Record<string, unknown>
+        const fromText = ((payload.from_text as string) ?? '').split(/\s+/)
+        const toText = ((payload.to_text as string) ?? '').split(/\s+/)
+        // Simple word-level diff: mark all old as removed, all new as added
+        const spans: Array<Record<string, unknown>> = []
+        if (fromText.length > 0 && fromText[0] !== '') {
+          spans.push({ tag: 'delete', content: fromText.join(' ') })
+        }
+        if (toText.length > 0 && toText[0] !== '') {
+          spans.push({ tag: 'insert', content: toText.join(' ') })
+        }
+        return spans
+      }
+
+      // -----------------------------------------------------------------------
+      // Property definition commands
+      // -----------------------------------------------------------------------
+
+      case 'create_property_def': {
+        const a = args as Record<string, unknown>
+        const key = a.key as string
+        const def = {
+          key,
+          value_type: a.valueType as string,
+          options: (a.options as string | null) ?? null,
+          created_at: new Date().toISOString(),
+        }
+        propertyDefs.set(key, def)
+        return def
+      }
+
+      case 'list_property_defs': {
+        return [...propertyDefs.values()]
+      }
+
+      case 'update_property_def_options': {
+        const a = args as Record<string, unknown>
+        const key = a.key as string
+        const def = propertyDefs.get(key)
+        if (!def) throw new Error('property definition not found')
+        def.options = a.options as string
+        return { ...def }
+      }
+
+      case 'delete_property_def': {
+        const a = args as Record<string, unknown>
+        const key = a.key as string
+        propertyDefs.delete(key)
+        return undefined
+      }
+
+      // -----------------------------------------------------------------------
+      // Peer name update
+      // -----------------------------------------------------------------------
+
+      case 'update_peer_name': {
+        return undefined
+      }
+
+      // -----------------------------------------------------------------------
+      // Page alias commands
+      // -----------------------------------------------------------------------
+
+      case 'set_page_aliases': {
+        const a = args as Record<string, unknown>
+        const pid = a.pageId as string
+        const aliases = a.aliases as string[]
+        pageAliases.set(pid, aliases)
+        return aliases
+      }
+
+      case 'get_page_aliases': {
+        const a = args as Record<string, unknown>
+        const pid = a.pageId as string
+        return pageAliases.get(pid) ?? []
+      }
+
+      case 'resolve_page_by_alias': {
+        const a = args as Record<string, unknown>
+        const alias = (a.alias as string).toLowerCase()
+        for (const [pid, aliases] of pageAliases.entries()) {
+          if (aliases.some((al) => al.toLowerCase() === alias)) {
+            const page = blocks.get(pid)
+            return [pid, page ? ((page.content as string) ?? null) : null]
+          }
+        }
+        return null
+      }
+
+      // -----------------------------------------------------------------------
+      // Markdown export
+      // -----------------------------------------------------------------------
+
+      case 'export_page_markdown': {
+        const a = args as Record<string, unknown>
+        const pid = a.pageId as string
+        const page = blocks.get(pid)
+        if (!page) throw new Error('not found')
+        const children = [...blocks.values()]
+          .filter((b) => b.parent_id === pid && !(b.deleted_at as string | null))
+          .sort((x, y) => ((x.position as number) ?? 0) - ((y.position as number) ?? 0))
+        let md = `# ${(page.content as string) ?? 'Untitled'}\n\n`
+        for (const child of children) {
+          md += `- ${(child.content as string) ?? ''}\n`
+        }
+        return md
       }
 
       default:
