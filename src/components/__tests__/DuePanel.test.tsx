@@ -24,6 +24,7 @@ import { axe } from 'vitest-axe'
 vi.mock('../../lib/tauri', () => ({
   listBlocks: vi.fn(),
   batchResolve: vi.fn(),
+  listProjectedAgenda: vi.fn(),
 }))
 
 vi.mock('lucide-react', () => ({
@@ -44,11 +45,12 @@ vi.mock('@/components/ui/button', () => ({
 }))
 
 import type { BlockRow } from '../../lib/tauri'
-import { batchResolve, listBlocks } from '../../lib/tauri'
+import { batchResolve, listBlocks, listProjectedAgenda } from '../../lib/tauri'
 import { DuePanel } from '../DuePanel'
 
 const mockedListBlocks = vi.mocked(listBlocks)
 const mockedBatchResolve = vi.mocked(batchResolve)
+const mockedListProjectedAgenda = vi.mocked(listProjectedAgenda)
 
 function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
   return {
@@ -79,6 +81,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
+  mockedListProjectedAgenda.mockResolvedValue([])
 })
 
 describe('DuePanel', () => {
@@ -513,5 +516,100 @@ describe('DuePanel', () => {
     })
 
     expect(allBtn).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  // --- Projected agenda entries (repeating tasks) ---
+  describe('projected entries', () => {
+    it('renders projected entries section when projections exist', async () => {
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedListProjectedAgenda.mockResolvedValue([{
+        block: makeBlock({
+          id: 'PROJ1', content: 'Projected task',
+          parent_id: 'PAGE1', todo_state: 'TODO',
+          priority: '2', due_date: '2026-04-13',
+        }),
+        projected_date: '2026-04-13',
+        source: 'due_date',
+      }])
+
+      render(<DuePanel date="2026-04-13" />)
+
+      expect(await screen.findByText('Projected')).toBeInTheDocument()
+      expect(screen.getByText(/Projected task/)).toBeInTheDocument()
+    })
+
+    it('does not render projected section when no projections', async () => {
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedListProjectedAgenda.mockResolvedValue([])
+
+      render(<DuePanel date="2026-04-13" />)
+
+      // Wait for loading to finish
+      await waitFor(() => {
+        expect(screen.queryByText('Projected')).not.toBeInTheDocument()
+      })
+    })
+
+    it('projected entry navigates to parent page on click', async () => {
+      const onNavigate = vi.fn()
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedListProjectedAgenda.mockResolvedValue([{
+        block: makeBlock({
+          id: 'PROJ2', content: 'Navigate me',
+          parent_id: 'PAGE2', todo_state: 'TODO',
+          due_date: '2026-04-20',
+        }),
+        projected_date: '2026-04-20',
+        source: 'due_date',
+      }])
+      mockedBatchResolve.mockResolvedValue([
+        { id: 'PAGE2', title: 'My Page', block_type: 'page', deleted: false },
+      ])
+
+      const user = userEvent.setup()
+      render(<DuePanel date="2026-04-20" onNavigateToPage={onNavigate} />)
+
+      const item = await screen.findByText(/Navigate me/)
+      await user.click(item.closest('[role="button"]')!)
+
+      expect(onNavigate).toHaveBeenCalledWith('PAGE2', 'My Page', 'PROJ2')
+    })
+
+    it('projected entries show priority badge when priority is set', async () => {
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedListProjectedAgenda.mockResolvedValue([{
+        block: makeBlock({
+          id: 'PROJ3', content: 'Priority task',
+          parent_id: null, todo_state: 'TODO',
+          priority: '1', due_date: '2026-04-27',
+        }),
+        projected_date: '2026-04-27',
+        source: 'due_date',
+      }])
+
+      render(<DuePanel date="2026-04-27" />)
+
+      expect(await screen.findByText('P1')).toBeInTheDocument()
+    })
+
+    it('has no a11y violations with projected entries', async () => {
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedListProjectedAgenda.mockResolvedValue([{
+        block: makeBlock({
+          id: 'AXE1', content: 'Axe test task',
+          parent_id: null, todo_state: 'TODO',
+          due_date: '2026-04-13',
+        }),
+        projected_date: '2026-04-13',
+        source: 'due_date',
+      }])
+
+      const { container } = render(<DuePanel date="2026-04-13" />)
+
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
   })
 })

@@ -118,6 +118,8 @@ mod specta_tests {
             crate::commands::resolve_page_by_alias,
             // Markdown export (#519)
             crate::commands::export_page_markdown,
+            // Agenda projection (#644)
+            crate::commands::list_projected_agenda,
         ])
     }
 
@@ -280,6 +282,8 @@ pub fn run() {
         commands::resolve_page_by_alias,
         // Markdown export (#519)
         commands::export_page_markdown,
+        // Agenda projection (#644)
+        commands::list_projected_agenda,
     ]);
 
     tauri::Builder::default()

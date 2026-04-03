@@ -633,6 +633,18 @@ async exportPageMarkdown(pageId: string) : Promise<Result<string, { kind: string
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: list projected future occurrences of repeating tasks.
+ * Delegates to [`list_projected_agenda_inner`].
+ */
+async listProjectedAgenda(startDate: string, endDate: string, limit: number | null) : Promise<Result<ProjectedAgendaEntry[], { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_projected_agenda", { startDate, endDate, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -648,23 +660,23 @@ async exportPageMarkdown(pageId: string) : Promise<Result<string, { kind: string
 
 /**
  * Tagged union of filter predicates for backlink queries.
- *
+ * 
  * Filters are combined with AND semantics at the top level.
  * Use `And`/`Or`/`Not` variants for compound boolean logic.
  */
-export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } |
+export type BacklinkFilter = { type: "PropertyText"; key: string; op: CompareOp; value: string } | { type: "PropertyNum"; key: string; op: CompareOp; value: number } | { type: "PropertyDate"; key: string; op: CompareOp; value: string } | { type: "PropertyIsSet"; key: string } | { type: "PropertyIsEmpty"; key: string } | 
 /**
  * Filter blocks by todo_state column (direct, no block_properties join).
  */
-{ type: "TodoState"; state: string } |
+{ type: "TodoState"; state: string } | 
 /**
  * Filter blocks by priority column (direct, no block_properties join).
  */
-{ type: "Priority"; level: string } |
+{ type: "Priority"; level: string } | 
 /**
  * Filter blocks by due_date column with comparison operator.
  */
-{ type: "DueDate"; op: CompareOp; value: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } |
+{ type: "DueDate"; op: CompareOp; value: string } | { type: "HasTag"; tag_id: string } | { type: "HasTagPrefix"; prefix: string } | { type: "Contains"; query: string } | { type: "CreatedInRange"; after: string | null; before: string | null } | { type: "BlockType"; block_type: string } | 
 /**
  * Filter by source page — include/exclude blocks based on their root page ancestor.
  */
@@ -713,7 +725,7 @@ export type MoveResponse = { block_id: string; new_parent_id: string | null; new
 export type OpRef = { device_id: string; seq: number }
 /**
  * Paginated response.
- *
+ * 
  * `total_count` is intentionally omitted — see module docs.
  */
 export type PageResponse<T> = { items: T[]; next_cursor: string | null; has_more: boolean }
@@ -724,16 +736,34 @@ export type PairingInfo = { passphrase: string; qr_svg: string; port: number }
 /**
  * A row from the `peer_refs` table representing a remote sync peer.
  */
-export type PeerRef = { peer_id: string; last_hash: string | null; last_sent_hash: string | null; synced_at: string | null; reset_count: number; last_reset_at: string | null;
+export type PeerRef = { peer_id: string; last_hash: string | null; last_sent_hash: string | null; synced_at: string | null; reset_count: number; last_reset_at: string | null; 
 /**
  * SHA-256 hex of the peer's TLS certificate, observed during pairing.
  * Used for certificate pinning on reconnection.
  */
-cert_hash: string | null;
+cert_hash: string | null; 
 /**
  * Human-readable name/label for this peer (e.g. "Javier's Phone").
  */
 device_name: string | null }
+/**
+ * A projected future occurrence of a repeating block.
+ * 
+ * Not stored in the database — computed on-the-fly from repeat rules.
+ */
+export type ProjectedAgendaEntry = { 
+/**
+ * The source block (real, materialized block).
+ */
+block: BlockRow; 
+/**
+ * The projected date for this occurrence (YYYY-MM-DD).
+ */
+projected_date: string; 
+/**
+ * Which date column was used as the base for projection.
+ */
+source: string }
 /**
  * A property definition from the schema registry.
  */
@@ -743,7 +773,7 @@ export type PurgeResponse = { block_id: string; purged_count: number }
 /**
  * Lightweight metadata returned by [`batch_resolve_inner`].
  */
-export type ResolvedBlock = { id: string;
+export type ResolvedBlock = { id: string; 
 /**
  * `content` column — page title, tag name, or content text (truncated).
  */
@@ -755,7 +785,7 @@ export type RestoreResponse = { block_id: string; restored_count: number }
 export type SortDir = "Asc" | "Desc"
 /**
  * Serializable status snapshot of the materializer queues.
- *
+ * 
  * Built from [`QueueMetrics`] (atomic counters) and channel capacity info.
  * Exposed by the `get_status` command.
  */
@@ -772,19 +802,19 @@ export type TagResponse = { block_id: string; tag_id: string }
 /**
  * Result of an undo or redo operation.
  */
-export type UndoResult = {
+export type UndoResult = { 
 /**
  * The op that was reversed (the original op for undo, the undo-op for redo).
  */
-reversed_op: OpRef;
+reversed_op: OpRef; 
 /**
  * The newly appended reverse op.
  */
-new_op_ref: OpRef;
+new_op_ref: OpRef; 
 /**
  * The op_type of the newly appended op.
  */
-new_op_type: string;
+new_op_type: string; 
 /**
  * Whether this was a redo (true) or undo (false).
  */

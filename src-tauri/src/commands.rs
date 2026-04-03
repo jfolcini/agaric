@@ -34,7 +34,7 @@ use crate::op::{
     UndoResult,
 };
 use crate::op_log;
-use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
+use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse, ProjectedAgendaEntry};
 use crate::pairing::{generate_qr_svg, pairing_qr_payload, PairingSession};
 use crate::peer_refs::{self, PeerRef};
 #[cfg(test)]
@@ -3469,6 +3469,191 @@ pub(crate) async fn count_agenda_batch_inner(
         .collect())
 }
 
+/// Compute projected future agenda entries for repeating tasks.
+///
+/// Finds non-DONE blocks with a `repeat` property and at least one date
+/// (due_date or scheduled_date). Shifts dates forward using the repeat rule
+/// until the projected date exceeds `end_date` or end conditions are met.
+/// Only returns projections within [start_date, end_date].
+///
+/// Returns at most `limit` entries (default 200, max 500).
+pub async fn list_projected_agenda_inner(
+    pool: &SqlitePool,
+    start_date: String,
+    end_date: String,
+    limit: Option<i64>,
+) -> Result<Vec<ProjectedAgendaEntry>, AppError> {
+    validate_date_format(&start_date)?;
+    validate_date_format(&end_date)?;
+
+    let cap = limit.unwrap_or(200).clamp(1, 500) as usize;
+
+    // Parse date range boundaries
+    let range_start = chrono::NaiveDate::parse_from_str(&start_date, "%Y-%m-%d")
+        .map_err(|_| AppError::Validation("invalid start_date".into()))?;
+    let range_end = chrono::NaiveDate::parse_from_str(&end_date, "%Y-%m-%d")
+        .map_err(|_| AppError::Validation("invalid end_date".into()))?;
+
+    if range_start > range_end {
+        return Err(AppError::Validation("start_date must be <= end_date".into()));
+    }
+
+    // Find repeating blocks: non-DONE, non-deleted, has repeat property,
+    // has at least one date column.
+    let rows = sqlx::query_as!(
+        BlockRow,
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+                b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
+                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
+         FROM blocks b
+         JOIN block_properties bp ON bp.block_id = b.id AND bp.key = 'repeat'
+         WHERE b.deleted_at IS NULL
+           AND b.is_conflict = 0
+           AND (b.todo_state IS NULL OR b.todo_state != 'DONE')
+           AND bp.value_text IS NOT NULL
+           AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)"#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut entries: Vec<ProjectedAgendaEntry> = Vec::new();
+
+    for block in &rows {
+        if entries.len() >= cap {
+            break;
+        }
+
+        // Get the repeat rule
+        let rule: Option<String> = sqlx::query_scalar!(
+            "SELECT value_text FROM block_properties WHERE block_id = ?1 AND key = 'repeat'",
+            block.id,
+        )
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+
+        let rule = match rule {
+            Some(r) if !r.is_empty() => r,
+            _ => continue,
+        };
+
+        // Get end conditions
+        let repeat_until: Option<String> = sqlx::query_scalar!(
+            "SELECT value_date FROM block_properties WHERE block_id = ?1 AND key = 'repeat-until'",
+            block.id,
+        )
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+
+        let repeat_count: Option<f64> = sqlx::query_scalar!(
+            "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-count'",
+            block.id,
+        )
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+
+        let repeat_seq: Option<f64> = sqlx::query_scalar!(
+            "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-seq'",
+            block.id,
+        )
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+
+        let until_date = repeat_until.as_deref().and_then(|d| {
+            chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()
+        });
+
+        let remaining = match (repeat_count, repeat_seq) {
+            (Some(count), Some(seq)) if count > seq => Some((count - seq) as usize),
+            (Some(count), None) => Some(count as usize),
+            (Some(_), Some(_)) => Some(0usize), // already exhausted
+            _ => None, // no limit
+        };
+
+        // Parse mode and interval from rule
+        let trimmed = rule.trim().to_lowercase();
+        let (_mode, interval) = if let Some(rest) = trimmed.strip_prefix(".+") {
+            ("dot_plus", rest)
+        } else if let Some(rest) = trimmed.strip_prefix("++") {
+            ("plus_plus", rest)
+        } else {
+            ("default", trimmed.as_str())
+        };
+
+        // Project for each date source (due_date, scheduled_date)
+        let sources: Vec<(&str, &str)> = [
+            block.due_date.as_deref().map(|d| ("due_date", d)),
+            block.scheduled_date.as_deref().map(|d| ("scheduled_date", d)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        for (source_name, date_str) in sources {
+            if entries.len() >= cap {
+                break;
+            }
+
+            let base = match chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            let mut current = base;
+            let mut projected_count = 0usize;
+            let max_remaining = remaining.unwrap_or(usize::MAX);
+
+            // Safety limit to prevent infinite loops
+            for _ in 0..10_000 {
+                if entries.len() >= cap || projected_count >= max_remaining {
+                    break;
+                }
+
+                current = match shift_date_once(current, interval) {
+                    Some(d) => d,
+                    None => break,
+                };
+
+                // Check until-date end condition
+                if let Some(until) = until_date {
+                    if current > until {
+                        break;
+                    }
+                }
+
+                // Past end of range
+                if current > range_end {
+                    break;
+                }
+
+                // Within range — add entry
+                if current >= range_start {
+                    entries.push(ProjectedAgendaEntry {
+                        block: block.clone(),
+                        projected_date: current.format("%Y-%m-%d").to_string(),
+                        source: source_name.to_string(),
+                    });
+                    projected_count += 1;
+                }
+            }
+        }
+    }
+
+    // Sort by projected_date, then block_id for determinism
+    entries.sort_by(|a, b| {
+        a.projected_date.cmp(&b.projected_date)
+            .then_with(|| a.block.id.cmp(&b.block.id))
+    });
+
+    // Truncate to cap after sort
+    entries.truncate(cap);
+
+    Ok(entries)
+}
+
 /// Count backlinks per target page for a batch of page IDs in a single query.
 ///
 /// Returns a `HashMap<page_id, count>` for pages that have at least one
@@ -4650,6 +4835,22 @@ pub async fn export_page_markdown(
     page_id: String,
 ) -> Result<String, AppError> {
     export_page_markdown_inner(&read_pool.0, &page_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: list projected future occurrences of repeating tasks.
+/// Delegates to [`list_projected_agenda_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_projected_agenda(
+    pool: State<'_, ReadPool>,
+    start_date: String,
+    end_date: String,
+    limit: Option<i64>,
+) -> Result<Vec<ProjectedAgendaEntry>, AppError> {
+    list_projected_agenda_inner(&pool.0, start_date, end_date, limit)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -14214,5 +14415,354 @@ mod tests {
             matches!(result, Err(AppError::NotFound(_))),
             "should return NotFound for a nonexistent op, got: {result:?}"
         );
+    }
+
+    // ======================================================================
+    // list_projected_agenda — projected future occurrences (#644 task 8)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_returns_future_weekly_occurrences() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block with a due date and repeat rule
+        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Weekly task".into(), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set due date to 2026-04-06 (a Monday)
+        set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set repeat=weekly
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
+            Some("weekly".into()), None, None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set todo_state=TODO
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Project 4 weeks ahead
+        let entries = list_projected_agenda_inner(
+            &pool, "2026-04-07".into(), "2026-05-04".into(), None,
+        ).await.unwrap();
+
+        assert!(entries.len() >= 3, "should project at least 3 weekly occurrences, got {}", entries.len());
+        assert_eq!(entries[0].projected_date, "2026-04-13", "first projection");
+        assert_eq!(entries[1].projected_date, "2026-04-20", "second projection");
+        assert_eq!(entries[2].projected_date, "2026-04-27", "third projection");
+        assert_eq!(entries[0].source, "due_date");
+        assert_eq!(entries[0].block.id, resp.id);
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_respects_repeat_until_end_condition() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Limited task".into(), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
+            Some("weekly".into()), None, None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set repeat-until to 2026-04-20
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat-until".into(),
+            None, None, Some("2026-04-20".into()), None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        let entries = list_projected_agenda_inner(
+            &pool, "2026-04-07".into(), "2026-06-01".into(), None,
+        ).await.unwrap();
+
+        assert_eq!(entries.len(), 2, "should stop at repeat-until date: {entries:?}");
+        assert_eq!(entries[0].projected_date, "2026-04-13");
+        assert_eq!(entries[1].projected_date, "2026-04-20");
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_respects_repeat_count_end_condition() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Counted task".into(), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
+            Some("daily".into()), None, None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set repeat-count=3, repeat-seq=1 (1 occurrence done, 2 remaining)
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat-count".into(),
+            None, Some(3.0), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat-seq".into(),
+            None, Some(1.0), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        let entries = list_projected_agenda_inner(
+            &pool, "2026-04-07".into(), "2026-04-30".into(), None,
+        ).await.unwrap();
+
+        assert_eq!(entries.len(), 2, "should project only 2 remaining occurrences (count=3, seq=1)");
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_skips_done_blocks() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Done task".into(), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
+            Some("weekly".into()), None, None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Mark as DONE — should be excluded from projection
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("DONE".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        let entries = list_projected_agenda_inner(
+            &pool, "2026-04-07".into(), "2026-05-04".into(), None,
+        ).await.unwrap();
+
+        // The original block is DONE, but set_todo_state may have created a new
+        // TODO sibling with repeat. Filter to only entries from our block.
+        let from_original: Vec<_> = entries.iter().filter(|e| e.block.id == resp.id).collect();
+        assert!(from_original.is_empty(), "DONE blocks should not be projected");
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_validates_date_range() {
+        let (pool, _dir) = test_pool().await;
+
+        // Invalid date format
+        let result = list_projected_agenda_inner(
+            &pool, "not-a-date".into(), "2026-04-30".into(), None,
+        ).await;
+        assert!(matches!(result, Err(AppError::Validation(_))), "should reject invalid date");
+
+        // Start > end
+        let result = list_projected_agenda_inner(
+            &pool, "2026-05-01".into(), "2026-04-01".into(), None,
+        ).await;
+        assert!(matches!(result, Err(AppError::Validation(_))), "should reject start > end");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_empty_when_no_repeating_blocks() {
+        let (pool, _dir) = test_pool().await;
+
+        let entries = list_projected_agenda_inner(
+            &pool, "2026-04-01".into(), "2026-04-30".into(), None,
+        ).await.unwrap();
+
+        assert!(entries.is_empty(), "should return empty when no repeating blocks exist");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_dot_plus_mode_projects_from_today() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Water plants".into(), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Due date far in the past
+        set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2025-01-01".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // From-completion mode: shifts from today
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
+            Some(".+weekly".into()), None, None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Query a wide range that includes today + several weeks
+        let today = chrono::Local::now().date_naive();
+        let start = today.format("%Y-%m-%d").to_string();
+        let end = (today + chrono::Duration::days(60)).format("%Y-%m-%d").to_string();
+
+        let entries = list_projected_agenda_inner(
+            &pool, start, end, None,
+        ).await.unwrap();
+
+        // .+ mode shifts from today, so first projection should be ~today+7d
+        assert!(!entries.is_empty(), ".+ mode should produce projections");
+        let first_date = chrono::NaiveDate::parse_from_str(&entries[0].projected_date, "%Y-%m-%d").unwrap();
+        // First projection should be within 8 days of today (7 days for weekly + 1 day buffer)
+        assert!(
+            first_date <= today + chrono::Duration::days(8),
+            ".+ weekly first projection {first_date} should be near today+7d ({today})"
+        );
+        assert!(first_date > today, ".+ first projection should be in the future");
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_both_date_columns_produce_separate_entries() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Dual dates".into(), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_scheduled_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
+            Some("weekly".into()), None, None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        let entries = list_projected_agenda_inner(
+            &pool, "2026-04-07".into(), "2026-04-20".into(), None,
+        ).await.unwrap();
+
+        // Should have entries from both due_date and scheduled_date
+        let due_entries: Vec<_> = entries.iter().filter(|e| e.source == "due_date").collect();
+        let sched_entries: Vec<_> = entries.iter().filter(|e| e.source == "scheduled_date").collect();
+        assert!(!due_entries.is_empty(), "should have due_date projections");
+        assert!(!sched_entries.is_empty(), "should have scheduled_date projections");
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_exhausted_count_returns_zero() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Exhausted".into(), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
+            Some("daily".into()), None, None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // repeat-count=3, repeat-seq=3 → exhausted
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat-count".into(),
+            None, Some(3.0), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat-seq".into(),
+            None, Some(3.0), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        let entries = list_projected_agenda_inner(
+            &pool, "2026-04-07".into(), "2026-04-30".into(), None,
+        ).await.unwrap();
+
+        let from_block: Vec<_> = entries.iter().filter(|e| e.block.id == resp.id).collect();
+        assert!(from_block.is_empty(), "exhausted repeat-count should produce zero projections");
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_limit_caps_results() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Daily task".into(), None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
+            Some("daily".into()), None, None, None)
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
+            .await.unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Request 365 days of daily projections but limit to 5
+        let entries = list_projected_agenda_inner(
+            &pool, "2026-04-07".into(), "2027-04-06".into(), Some(5),
+        ).await.unwrap();
+
+        assert_eq!(entries.len(), 5, "limit should cap results to 5");
+
+        mat.shutdown();
     }
 }

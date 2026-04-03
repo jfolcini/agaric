@@ -61,6 +61,19 @@ pub struct BlockRow {
     pub scheduled_date: Option<String>,
 }
 
+/// A projected future occurrence of a repeating block.
+///
+/// Not stored in the database — computed on-the-fly from repeat rules.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ProjectedAgendaEntry {
+    /// The source block (real, materialized block).
+    pub block: BlockRow,
+    /// The projected date for this occurrence (YYYY-MM-DD).
+    pub projected_date: String,
+    /// Which date column was used as the base for projection.
+    pub source: String, // "due_date" or "scheduled_date"
+}
+
 /// Row returned by block history queries (op_log entries for a block).
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 pub struct HistoryEntry {

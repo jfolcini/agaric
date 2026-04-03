@@ -42,6 +42,12 @@ import type {
   TagResponse,
 } from './bindings'
 
+export interface ProjectedAgendaEntry {
+  block: BlockRow
+  projected_date: string
+  source: string // 'due_date' | 'scheduled_date'
+}
+
 // ---------------------------------------------------------------------------
 // Command wrappers — type-safe Tauri invoke layer
 // ---------------------------------------------------------------------------
@@ -104,6 +110,19 @@ export async function listBlocks(params?: {
     agendaSource: params?.agendaSource ?? null,
     cursor: params?.cursor ?? null,
     limit: params?.limit ?? null,
+  })
+}
+
+/** List projected future occurrences of repeating tasks for a date range. */
+export async function listProjectedAgenda(opts: {
+  startDate: string
+  endDate: string
+  limit?: number
+}): Promise<ProjectedAgendaEntry[]> {
+  return invoke('list_projected_agenda', {
+    startDate: opts.startDate,
+    endDate: opts.endDate,
+    limit: opts.limit ?? null,
   })
 }
 

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-count'",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_num",
+        "ordinal": 0,
+        "type_info": "Float"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "ce2a35cdc320559e72fcc12e18896c27742a2c93f53ff19ca18a2233574728a4"
+}

@@ -13,8 +13,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import type { BlockRow } from '../lib/tauri'
-import { batchResolve, listBlocks } from '../lib/tauri'
+import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
+import { batchResolve, listBlocks, listProjectedAgenda } from '../lib/tauri'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -55,6 +55,8 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   const [totalCount, setTotalCount] = useState(0)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
   const [sourceFilter, setSourceFilter] = useState<string | null>(null)
+  const [projectedEntries, setProjectedEntries] = useState<ProjectedAgendaEntry[]>([])
+  const [projectedLoading, setProjectedLoading] = useState(false)
 
   // Fetch blocks due on the given date
   const fetchBlocks = useCallback(
@@ -144,6 +146,41 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     }
   }, [date, sourceFilter])
 
+  // Fetch projected entries for repeating tasks
+  useEffect(() => {
+    let stale = false
+    setProjectedLoading(true)
+    listProjectedAgenda({ startDate: date, endDate: date, limit: 20 })
+      .then((entries) => {
+        if (!stale) {
+          setProjectedEntries(entries)
+          const parentIds = entries
+            .map((e) => e.block.parent_id)
+            .filter((id): id is string => id != null)
+          if (parentIds.length > 0) {
+            batchResolve(parentIds).then((resolved) => {
+              if (!stale) {
+                setPageTitles((prev) => {
+                  const next = new Map(prev)
+                  for (const r of resolved) {
+                    next.set(r.id, r.title ?? 'Untitled')
+                  }
+                  return next
+                })
+              }
+            }).catch(() => {})
+          }
+        }
+      })
+      .catch(() => {
+        if (!stale) setProjectedEntries([])
+      })
+      .finally(() => {
+        if (!stale) setProjectedLoading(false)
+      })
+    return () => { stale = true }
+  }, [date])
+
   const loadMore = useCallback(() => {
     if (nextCursor) {
       fetchBlocks(nextCursor)
@@ -189,7 +226,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   }).filter((g) => g.items.length > 0)
 
   // Empty state: hidden entirely
-  if (!loading && totalCount === 0 && blocks.length === 0) {
+  if (!loading && !projectedLoading && totalCount === 0 && blocks.length === 0 && projectedEntries.length === 0) {
     return null
   }
 
@@ -298,6 +335,52 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
               </ul>
             </div>
           ))}
+
+          {/* Projected future occurrences from repeating tasks */}
+          {projectedEntries.length > 0 && (
+            <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
+              <p className="text-xs font-medium text-muted-foreground mb-2">
+                {t('due.projected', { defaultValue: 'Projected' })}
+              </p>
+              <ul className="space-y-1">
+                {projectedEntries.map((entry) => (
+                  <li
+                    key={`projected-${entry.block.id}-${entry.source}`}
+                    className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 transition-colors"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      if (!entry.block.parent_id || !onNavigateToPage) return
+                      const title = pageTitles.get(entry.block.parent_id) ?? ''
+                      onNavigateToPage(entry.block.parent_id, title, entry.block.id)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter' && e.key !== ' ') return
+                      e.preventDefault()
+                      if (!entry.block.parent_id || !onNavigateToPage) return
+                      const title = pageTitles.get(entry.block.parent_id) ?? ''
+                      onNavigateToPage(entry.block.parent_id, title, entry.block.id)
+                    }}
+                  >
+                    <span className="text-xs font-mono opacity-60">
+                      {entry.source === 'due_date' ? '\u23F0' : '\uD83D\uDCC5'}
+                    </span>
+                    <span className="flex-1 truncate">
+                      {truncateContent(entry.block.content, 80)}
+                    </span>
+                    {entry.block.priority && (
+                      <span className={cn(
+                        'inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-[10px] font-bold leading-none',
+                        priorityColor(entry.block.priority),
+                      )}>
+                        P{entry.block.priority}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Load more */}
           {hasMore && (

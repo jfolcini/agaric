@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_text FROM block_properties WHERE block_id = ?1 AND key = 'repeat'",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_text",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "57b5c18fa8603b47c9b6150b23de5931623028407763fa78af9c929723f9db04"
+}

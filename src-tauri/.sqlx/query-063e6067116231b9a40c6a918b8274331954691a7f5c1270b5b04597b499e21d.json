@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-seq'",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_num",
+        "ordinal": 0,
+        "type_info": "Float"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "063e6067116231b9a40c6a918b8274331954691a7f5c1270b5b04597b499e21d"
+}
