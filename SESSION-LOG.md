@@ -1,5 +1,21 @@
 # Session Log
 
+## Session 118 — 2026-04-03 — Configurable Task Cycle + Template Warning (#658, #649-T3)
+
+### localStorage task cycle + duplicate journal template warning
+
+Orchestrator-applied changes (no subagents needed).
+
+| File | Change |
+|------|--------|
+| `useBlockProperties.ts` | #658: `TASK_CYCLE` now reads from `localStorage('task_cycle')` with graceful fallback. Users can customize cycle (e.g., add CANCELLED, WAITING). |
+| `template-utils.ts` | #649-T3: `loadJournalTemplate` queries limit=10, warns to console when multiple journal templates found. |
+
+### Stats
+- Frontend: ~2521 tests pass (no new tests — behavioral changes)
+- Commit: `dc24d49`
+- #658 frontend config resolved, #649-T3 resolved
+
 ## Session 117 — 2026-04-03 — Repeat Mode Prefixes + End Conditions (#644 sub-tasks 1+2)
 
 ### Backend recurrence: .+/++ modes + repeat-until/repeat-count
