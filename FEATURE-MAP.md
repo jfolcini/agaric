@@ -355,15 +355,18 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 
 ### 8.3 Pages (`pages`)
 
-**Component**: `PageBrowser.tsx` (~246 lines)
+**Component**: `PageBrowser.tsx` (~340 lines)
 **Sidebar icon**: FileText
 
 - Lists all page blocks (`block_type = 'page'`, non-deleted)
 - Default sort: ULID ascending (oldest first)
 - Cursor-based pagination
+- **Namespaced pages**: Pages with `/` in title auto-render as collapsible tree hierarchy (`buildPageTree` + `PageTreeItem`). Flat list preserved when no namespaces exist.
+- **Create under namespace**: `+` button on namespace folders (hover-visible) prefills input with `"namespace/"` and focuses it.
 - Create new page button (Ctrl+N)
 - Delete with confirmation dialog
 - Click to navigate to page (switches to page-editor view)
+- **PageHeader breadcrumbs**: Namespaced titles show clickable ancestor segments navigating to Pages view.
 
 ### 8.4 Tags (`tags`)
 

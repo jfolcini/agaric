@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 132 — 2026-04-03 — Namespaced pages breadcrumbs + create-under (#656)
+
+### Batch: PageHeader breadcrumbs + PageBrowser create-under namespace
+
+1 build subagent. Also discovered during exploration that #654 blockquotes are already fully implemented (TipTap extension, types, serializer, tests, slash command, toolbar) — updated REVIEW-LATER to reflect. #656 tree view was also already done — only breadcrumbs + create-under needed building.
+
+| File | Change |
+|------|--------|
+| `PageHeader.tsx` | Breadcrumb nav for namespaced titles: parse by `/`, clickable ancestor buttons navigate to Pages view, final segment non-clickable. Only renders when title contains `/`. |
+| `PageBrowser.tsx` | `+` button on namespace folders (hover-visible, stopPropagation). `handleCreateUnder` prefills input with `"namespace/"` + focuses via formRef. |
+| `PageHeader.test.tsx` | 4 new tests (breadcrumb render, no breadcrumb for flat title, ancestor navigation, a11y). |
+| `PageBrowser.test.tsx` | 3 new tests (+ button exists, prefills input, aria-label). |
+| `REVIEW-LATER.md` | Updated #654 (blockquotes already done, only tables remain). Updated #656 (breadcrumbs + create-under done, only search/filter hierarchy deferred). |
+| `FEATURE-MAP.md` | Updated Pages view section with namespaced pages, create-under, breadcrumbs. |
+
+### Stats
+- Frontend: 7 new tests (30/30 PageHeader, 34/34 PageBrowser)
+- Commit: `ee81627`
+- REVIEW-LATER: #654 updated (blockquotes done). #656 mostly done (search/filter deferred). 11 open items (unchanged count).
+
 ## Session 131 — 2026-04-03 — ConflictList type rendering + batch resolution (#651 C-2/C-8)
 
 ### Batch: type-specific conflict rendering + multi-select batch actions
