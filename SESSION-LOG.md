@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 138 — 2026-04-03 — Phase 2 review + fix selection bugs + query hardening (#662, #663)
+
+### Phase 2: Deep review of #655 + #657
+
+3 parallel review subagents (2 technical + 1 UX). Cross-validated 20+ raw findings into 13 confirmed items. Created #662 (selection bugs) and #663 (query hardening) in REVIEW-LATER. Immediately fixed both in Phase 1.
+
+### Phase 1: Fix #662 + #663
+
+2 parallel build subagents (non-overlapping files).
+
+| File | Change |
+|------|--------|
+| `blocks.ts` | #662: `remove()` clears deleted block from selectedBlockIds. `load()` clears selectedBlockIds on page navigation. |
+| `BlockTree.tsx` | #662: `batchInProgress` state guards concurrent batch ops (buttons disabled during operation). Escape handler checks `e.defaultPrevented`. `handleBatchDelete` filters descendant blocks. |
+| `KeyboardShortcuts.tsx` | #662: New "Block Selection" section with Ctrl+Click, Shift+Click, Ctrl+A, Escape shortcuts. |
+| `QueryResult.tsx` | #663: Validate `params.target` for backlinks, `params.key` for property queries, empty expression check. |
+| `blocks.test.ts` | 2 new tests (remove clears selection, load clears selection). 82/82 pass. |
+| `BlockTree.test.tsx` | 1 new test (batch buttons disabled). 170/170 pass. |
+| `QueryResult.test.tsx` | 5 new tests (property results, missing key, missing target, empty expr, backlinks results). 15/15 pass. |
+
+### Stats
+- Frontend: 8 new tests
+- Commit: `c8254a6`
+- REVIEW-LATER: #662 + #663 created and immediately resolved. 9 → 7 open items.
+
 ## Session 137 — 2026-04-03 — Created date filter dimension (#642)
 
 ### Direct edit: createdDate agenda filter
