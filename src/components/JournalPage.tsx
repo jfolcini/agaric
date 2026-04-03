@@ -473,6 +473,22 @@ export function JournalPage({
                       allBlocks.set(b.id, b)
                     }
                   }
+                } else if (value === 'This month') {
+                  const year = today.getFullYear()
+                  const month = today.getMonth()
+                  const daysInMonth = new Date(year, month + 1, 0).getDate()
+                  for (let d = 1; d <= daysInMonth; d++) {
+                    const dateStr = formatDate(new Date(year, month, d))
+                    const resp = await listBlocks({
+                      agendaDate: dateStr,
+                      agendaSource: 'column:due_date',
+                      limit: 500,
+                    })
+                    for (const b of resp.items) {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
                 } else if (value === 'Overdue') {
                   // Get all blocks with due_date < today
                   const resp = await queryByProperty({ key: 'due_date', limit: 500 })
@@ -525,6 +541,22 @@ export function JournalPage({
                     const date = new Date(today)
                     date.setDate(today.getDate() + mondayOffset + d)
                     const dateStr = formatDate(date)
+                    const resp = await listBlocks({
+                      agendaDate: dateStr,
+                      agendaSource: 'column:scheduled_date',
+                      limit: 500,
+                    })
+                    for (const b of resp.items) {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
+                } else if (value === 'This month') {
+                  const year = today.getFullYear()
+                  const month = today.getMonth()
+                  const daysInMonth = new Date(year, month + 1, 0).getDate()
+                  for (let d = 1; d <= daysInMonth; d++) {
+                    const dateStr = formatDate(new Date(year, month, d))
                     const resp = await listBlocks({
                       agendaDate: dateStr,
                       agendaSource: 'column:scheduled_date',
@@ -593,6 +625,18 @@ export function JournalPage({
                       allBlocks.set(b.id, b)
                     }
                   }
+                } else if (value === 'This month') {
+                  const year = today.getFullYear()
+                  const month = today.getMonth()
+                  const daysInMonth = new Date(year, month + 1, 0).getDate()
+                  for (let d = 1; d <= daysInMonth; d++) {
+                    const dateStr = formatDate(new Date(year, month, d))
+                    const resp = await queryByProperty({ key: 'completed_at', valueDate: dateStr, limit: 500 })
+                    for (const b of resp.items) {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
                 } else if (value === 'Last 7 days') {
                   for (let d = 0; d < 7; d++) {
                     const date = new Date(today)
@@ -635,6 +679,18 @@ export function JournalPage({
                     const date = new Date(today)
                     date.setDate(today.getDate() + mondayOffset + d)
                     const dateStr = formatDate(date)
+                    const resp = await queryByProperty({ key: 'created_at', valueDate: dateStr, limit: 500 })
+                    for (const b of resp.items) {
+                      ids.add(b.id)
+                      allBlocks.set(b.id, b)
+                    }
+                  }
+                } else if (value === 'This month') {
+                  const year = today.getFullYear()
+                  const month = today.getMonth()
+                  const daysInMonth = new Date(year, month + 1, 0).getDate()
+                  for (let d = 1; d <= daysInMonth; d++) {
+                    const dateStr = formatDate(new Date(year, month, d))
                     const resp = await queryByProperty({ key: 'created_at', valueDate: dateStr, limit: 500 })
                     for (const b of resp.items) {
                       ids.add(b.id)
