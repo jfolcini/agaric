@@ -114,10 +114,12 @@ vi.mock('../BlockContextMenu', () => ({
   ),
 }))
 
-// Mock tauri setProperty
+// Mock tauri setProperty and listPropertyDefs
 const mockSetProperty = vi.fn().mockResolvedValue({})
+const mockListPropertyDefs = vi.fn().mockResolvedValue([])
 vi.mock('../../lib/tauri', () => ({
   setProperty: (...args: unknown[]) => mockSetProperty(...args),
+  listPropertyDefs: (...args: unknown[]) => mockListPropertyDefs(...args),
 }))
 
 // Mock sonner toast
@@ -2592,5 +2594,166 @@ describe('SortableBlock property chip click-to-edit', () => {
     const input = screen.getByRole('textbox')
     expect(input).toBeInTheDocument()
     expect(input).toHaveValue('2h')
+  })
+
+  it('clicking a select-type property chip shows options dropdown', async () => {
+    const user = userEvent.setup()
+
+    // Mock listPropertyDefs to return a select-type definition for 'status'
+    mockListPropertyDefs.mockResolvedValue([
+      {
+        key: 'status',
+        value_type: 'select',
+        options: JSON.stringify(['Backlog', 'In Progress', 'Done']),
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ])
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'status', value: 'Backlog' }]}
+      />,
+    )
+
+    // No dropdown initially
+    expect(screen.queryByTestId('select-options-dropdown')).not.toBeInTheDocument()
+
+    // Click the property chip
+    const chip = screen.getByTestId('property-chip-status')
+    await user.click(chip)
+
+    // Wait for the select options dropdown to appear
+    await waitFor(() => {
+      expect(screen.getByTestId('select-options-dropdown')).toBeInTheDocument()
+    })
+
+    // Verify all options are rendered as buttons
+    expect(screen.getByRole('button', { name: 'Backlog' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'In Progress' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument()
+
+    // No text input should be shown
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  })
+
+  it('clicking a select option calls setProperty and closes dropdown', async () => {
+    const user = userEvent.setup()
+
+    mockListPropertyDefs.mockResolvedValue([
+      {
+        key: 'priority_level',
+        value_type: 'select',
+        options: JSON.stringify(['Low', 'Medium', 'High']),
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ])
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_42"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'priority_level', value: 'Low' }]}
+      />,
+    )
+
+    // Click the property chip to open the dropdown
+    const chip = screen.getByTestId('property-chip-priority_level')
+    await user.click(chip)
+
+    // Wait for the dropdown
+    await waitFor(() => {
+      expect(screen.getByTestId('select-options-dropdown')).toBeInTheDocument()
+    })
+
+    // Click the 'High' option
+    const highOption = screen.getByRole('button', { name: 'High' })
+    await user.click(highOption)
+
+    // setProperty should have been called with the selected value
+    expect(mockSetProperty).toHaveBeenCalledWith({
+      blockId: 'BLOCK_42',
+      key: 'priority_level',
+      valueText: 'High',
+    })
+
+    // Dropdown should be closed
+    expect(screen.queryByTestId('select-options-dropdown')).not.toBeInTheDocument()
+  })
+
+  it('highlights the currently selected option in the dropdown', async () => {
+    const user = userEvent.setup()
+
+    mockListPropertyDefs.mockResolvedValue([
+      {
+        key: 'category',
+        value_type: 'select',
+        options: JSON.stringify(['Bug', 'Feature', 'Chore']),
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ])
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'category', value: 'Feature' }]}
+      />,
+    )
+
+    const chip = screen.getByTestId('property-chip-category')
+    await user.click(chip)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('select-options-dropdown')).toBeInTheDocument()
+    })
+
+    // The currently selected option should have the highlight classes
+    const featureBtn = screen.getByRole('button', { name: 'Feature' })
+    expect(featureBtn.className).toContain('bg-accent')
+    expect(featureBtn.className).toContain('font-medium')
+
+    // Other options should NOT have the highlight classes
+    const bugBtn = screen.getByRole('button', { name: 'Bug' })
+    expect(bugBtn.className).not.toContain('font-medium')
+  })
+
+  it('shows text input for non-select property even when defs exist', async () => {
+    const user = userEvent.setup()
+
+    mockListPropertyDefs.mockResolvedValue([
+      {
+        key: 'status',
+        value_type: 'select',
+        options: JSON.stringify(['Backlog', 'Done']),
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ])
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        properties={[{ key: 'effort', value: '2h' }]}
+      />,
+    )
+
+    const chip = screen.getByTestId('property-chip-effort')
+    await user.click(chip)
+
+    // Should show text input, not dropdown, because 'effort' is not a select-type
+    await waitFor(() => {
+      expect(screen.getByRole('textbox')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('select-options-dropdown')).not.toBeInTheDocument()
   })
 })

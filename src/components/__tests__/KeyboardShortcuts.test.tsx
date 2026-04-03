@@ -18,14 +18,14 @@ describe('KeyboardShortcuts', () => {
   it('renders sheet content when open', () => {
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
-    expect(screen.getByText('Keyboard Shortcuts')).toBeInTheDocument()
-    expect(screen.getByText('Available keyboard shortcuts for the editor.')).toBeInTheDocument()
+    expect(screen.getByText('Quick Reference')).toBeInTheDocument()
+    expect(screen.getByText('Available keyboard shortcuts and syntax reference for the editor.')).toBeInTheDocument()
   })
 
   it('does not render sheet content when closed', () => {
     render(<KeyboardShortcuts open={false} onOpenChange={vi.fn()} />)
 
-    expect(screen.queryByText('Keyboard Shortcuts')).not.toBeInTheDocument()
+    expect(screen.queryByText('Quick Reference')).not.toBeInTheDocument()
   })
 
   it('shows all shortcut entries', () => {
@@ -49,7 +49,7 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText('Dedent block')).toBeInTheDocument()
     expect(screen.getByText('Tag picker')).toBeInTheDocument()
     expect(screen.getByText('Block link picker')).toBeInTheDocument()
-    expect(screen.getByText('Slash command menu')).toBeInTheDocument()
+    expect(screen.getAllByText('Slash command menu').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('Show keyboard shortcuts')).toBeInTheDocument()
     expect(screen.getByText('Close dialog / cancel editing')).toBeInTheDocument()
     expect(screen.getByText('Toggle code block')).toBeInTheDocument()
@@ -71,6 +71,39 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getAllByText('in editor').length).toBe(4)
     expect(screen.getByText('at start')).toBeInTheDocument()
     expect(screen.getByText('at end')).toBeInTheDocument()
+  })
+
+  it('renders syntax section with formatting entries', () => {
+    render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
+
+    // Verify the syntax section header
+    expect(screen.getByText('Syntax')).toBeInTheDocument()
+
+    // Verify syntax descriptions
+    expect(screen.getByText('Bold')).toBeInTheDocument()
+    expect(screen.getByText('Italic')).toBeInTheDocument()
+    expect(screen.getByText('Inline code')).toBeInTheDocument()
+    expect(screen.getByText('Strikethrough')).toBeInTheDocument()
+    expect(screen.getByText('Highlight')).toBeInTheDocument()
+    expect(screen.getByText('Heading (1-6 levels)')).toBeInTheDocument()
+    expect(screen.getByText('Blockquote')).toBeInTheDocument()
+    expect(screen.getByText('Code block')).toBeInTheDocument()
+    expect(screen.getByText('TODO checkbox')).toBeInTheDocument()
+    expect(screen.getByText('DONE checkbox')).toBeInTheDocument()
+    expect(screen.getByText('Tag reference')).toBeInTheDocument()
+    expect(screen.getByText('Page link')).toBeInTheDocument()
+
+    // Verify syntax entries are rendered in monospace code elements
+    const syntaxTable = screen.getByTestId('syntax-table')
+    const codeElements = syntaxTable.querySelectorAll('code')
+    expect(codeElements.length).toBe(13)
+
+    const codeTexts = Array.from(codeElements).map((el) => el.textContent)
+    expect(codeTexts).toContain('**text**')
+    expect(codeTexts).toContain('*text*')
+    expect(codeTexts).toContain('`text`')
+    expect(codeTexts).toContain('[[page]]')
+    expect(codeTexts).toContain('@tag')
   })
 
   it('opens sheet when ? key is pressed on document', () => {

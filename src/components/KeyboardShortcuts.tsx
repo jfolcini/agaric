@@ -7,6 +7,7 @@
 
 import { Keyboard } from 'lucide-react'
 import React, { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Sheet,
   SheetContent,
@@ -94,6 +95,27 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
   },
 ]
 
+interface SyntaxEntry {
+  syntax: string
+  description: string
+}
+
+const SYNTAX_ENTRIES: SyntaxEntry[] = [
+  { syntax: '**text**', description: 'Bold' },
+  { syntax: '*text*', description: 'Italic' },
+  { syntax: '`text`', description: 'Inline code' },
+  { syntax: '~~text~~', description: 'Strikethrough' },
+  { syntax: '==text==', description: 'Highlight' },
+  { syntax: '# Heading', description: 'Heading (1-6 levels)' },
+  { syntax: '> quote', description: 'Blockquote' },
+  { syntax: '```lang', description: 'Code block' },
+  { syntax: '- [ ] task', description: 'TODO checkbox' },
+  { syntax: '- [x] task', description: 'DONE checkbox' },
+  { syntax: '@tag', description: 'Tag reference' },
+  { syntax: '[[page]]', description: 'Page link' },
+  { syntax: '/command', description: 'Slash command menu' },
+]
+
 /** Render a keys string as styled <kbd> elements. Handles `+` combos and `/` alternatives. */
 function renderKeys(keys: string): React.ReactNode {
   const alternatives = keys.split(' / ')
@@ -127,6 +149,7 @@ export function KeyboardShortcuts({
   onOpenChange,
 }: KeyboardShortcutsProps): React.ReactElement {
   const [internalOpen, setInternalOpen] = useState(false)
+  const { t } = useTranslation()
 
   const isControlled = controlledOpen !== undefined
   const open = isControlled ? controlledOpen : internalOpen
@@ -170,10 +193,10 @@ export function KeyboardShortcuts({
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <Keyboard className="h-5 w-5" />
-            Keyboard Shortcuts
+            {t('shortcuts.title')}
           </SheetTitle>
           <SheetDescription id="shortcuts-description">
-            Available keyboard shortcuts for the editor.
+            Available keyboard shortcuts and syntax reference for the editor.
           </SheetDescription>
         </SheetHeader>
         <div className="overflow-y-auto px-4 pb-4" data-testid="shortcuts-table">
@@ -214,6 +237,26 @@ export function KeyboardShortcuts({
                     </tr>
                   ))}
                 </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+          <table className="w-full text-sm mt-6" data-testid="syntax-table">
+            <thead>
+              <tr className="border-b">
+                <th className="pb-2 text-left font-semibold text-foreground">{t('shortcuts.syntaxSection')}</th>
+                <th className="pb-2 text-left font-semibold text-foreground">Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              {SYNTAX_ENTRIES.map((entry) => (
+                <tr key={entry.syntax} className="border-b last:border-0">
+                  <td className="py-3 pr-4">
+                    <code className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+                      {entry.syntax}
+                    </code>
+                  </td>
+                  <td className="py-3 text-muted-foreground">{entry.description}</td>
+                </tr>
               ))}
             </tbody>
           </table>

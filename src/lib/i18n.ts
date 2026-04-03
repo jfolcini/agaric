@@ -386,6 +386,10 @@ const resources = {
       'tags.nameTooLong': 'Tag name must be under 100 characters',
       'tags.deleteWarning': 'Blocks using this tag will lose the reference.',
 
+      // Shortcuts / Quick Reference
+      'shortcuts.title': 'Quick Reference',
+      'shortcuts.syntaxSection': 'Syntax',
+
       // Conflict type tooltips
       'conflict.typeText': 'Text conflict — content edited on multiple devices',
       'conflict.typeProperty': 'Property conflict — property changed on multiple devices',

@@ -28,7 +28,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
-import { setProperty } from '../lib/tauri'
+import { listPropertyDefs, setProperty } from '../lib/tauri'
 import { cn } from '../lib/utils'
 import { BlockContextMenu } from './BlockContextMenu'
 import { EditableBlock } from './EditableBlock'
@@ -179,6 +179,7 @@ function SortableBlockInner({
   // ── Context menu state ───────────────────────────────────────────
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [editingProp, setEditingProp] = useState<{ key: string; value: string } | null>(null)
+  const [selectOptions, setSelectOptions] = useState<string[] | null>(null)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const touchStartPos = useRef<{ x: number; y: number } | null>(null)
   const blockRef = useRef<HTMLDivElement>(null)
@@ -200,6 +201,28 @@ function SortableBlockInner({
       clearLongPress()
     }
   }, [isDragging, clearLongPress])
+
+  // ── Load property definitions for select-type detection ──────────
+  useEffect(() => {
+    if (!editingProp) {
+      setSelectOptions(null)
+      return
+    }
+    listPropertyDefs()
+      .then((defs) => {
+        const def = defs.find((d) => d.key === editingProp.key)
+        if (def?.value_type === 'select' && def.options) {
+          try {
+            setSelectOptions(JSON.parse(def.options) as string[])
+          } catch {
+            setSelectOptions(null)
+          }
+        } else {
+          setSelectOptions(null)
+        }
+      })
+      .catch(() => setSelectOptions(null))
+  }, [editingProp])
 
   const openContextMenu = useCallback((x: number, y: number) => {
     setContextMenu({ x, y })
@@ -500,27 +523,52 @@ function SortableBlockInner({
         {/* ── Property edit popover ─────────────────────────────────── */}
         {editingProp && (
           <div className="absolute z-50 mt-1 rounded-md border bg-popover p-1 shadow-lg">
-            <input
-              type="text"
-              className="rounded border px-2 py-1 text-sm w-32"
-              defaultValue={editingProp.value}
-              autoFocus
-              onBlur={async (e) => {
-                const newValue = e.target.value.trim()
-                if (newValue !== editingProp.value) {
-                  try {
-                    await setProperty({ blockId, key: editingProp.key, valueText: newValue || null })
-                  } catch {
-                    toast.error('Failed to save property')
+            {selectOptions ? (
+              <div className="flex flex-col gap-0.5" data-testid="select-options-dropdown">
+                {selectOptions.map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    className={cn(
+                      'text-left rounded px-2 py-1 text-sm hover:bg-accent transition-colors',
+                      opt === editingProp.value && 'bg-accent font-medium',
+                    )}
+                    onClick={async () => {
+                      try {
+                        await setProperty({ blockId, key: editingProp.key, valueText: opt })
+                      } catch {
+                        toast.error('Failed to save property')
+                      }
+                      setEditingProp(null)
+                    }}
+                  >
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <input
+                type="text"
+                className="rounded border px-2 py-1 text-sm w-32"
+                defaultValue={editingProp.value}
+                autoFocus
+                onBlur={async (e) => {
+                  const newValue = e.target.value.trim()
+                  if (newValue !== editingProp.value) {
+                    try {
+                      await setProperty({ blockId, key: editingProp.key, valueText: newValue || null })
+                    } catch {
+                      toast.error('Failed to save property')
+                    }
                   }
-                }
-                setEditingProp(null)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                if (e.key === 'Escape') setEditingProp(null)
-              }}
-            />
+                  setEditingProp(null)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                  if (e.key === 'Escape') setEditingProp(null)
+                }}
+              />
+            )}
           </div>
         )}
 
