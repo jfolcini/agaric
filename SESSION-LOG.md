@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 112 — 2026-04-03 — Custom Task Keywords + Click-to-Edit (#658 partial, #645-5)
+
+### Backend validation relaxed + property chip editing
+
+2 parallel subagents (Rust + frontend).
+
+| File | Change |
+|------|--------|
+| `commands.rs` | #658: `set_todo_state_inner` validation relaxed — any non-empty string up to 50 chars (was hardcoded TODO/DOING/DONE). 3 new Rust tests. |
+| `PropertyChip.tsx` | #645-5: Changed from `<span>` to `<button>`. Added `onClick` prop with conditional hover styles. |
+| `PropertyChip.test.tsx` | #645-5: 4 new tests (button rendering, onClick callback, hover styles). |
+| `SortableBlock.tsx` | #645-5: Click-to-edit popover — `editingProp` state, text input with auto-focus, blur saves via `setProperty`, Escape dismisses. |
+| `SortableBlock.test.tsx` | #645-5: 1 new test (click shows edit input). |
+
+### Stats
+- Rust: 1479 tests pass (10 set_todo_state, 3 new)
+- Frontend: ~2497 tests pass (5 new)
+- Commit: `62a5d8b`
+- #658 backend slice resolved, #645-5 resolved
+
 ## Session 111 — 2026-04-03 — Template Picker + Conflict View Fixes (#649, #651 partial)
 
 ### S-cost slices from template and conflict items
