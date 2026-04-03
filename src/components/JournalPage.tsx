@@ -37,6 +37,7 @@ import {
 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
@@ -229,6 +230,7 @@ export function JournalPage({
   onBlockClick: _onBlockClick,
   onNavigateToPage,
 }: JournalPageProps): React.ReactElement {
+  const { t } = useTranslation()
   const {
     mode,
     currentDate,
@@ -515,7 +517,7 @@ export function JournalPage({
 
       await load(pageId)
     } catch {
-      toast.error('Failed to add block')
+      toast.error(t('journal.addBlockFailed'))
     }
   }
 
@@ -565,7 +567,9 @@ export function JournalPage({
                 entry.displayDate
               )}
               {isToday && (
-                <span className="ml-2 text-xs text-muted-foreground font-normal">(Today)</span>
+                <span className="ml-2 text-xs text-muted-foreground font-normal">
+                  ({t('journal.today')})
+                </span>
               )}
             </Heading>
             {/* Count badges for weekly/monthly modes */}
@@ -579,7 +583,7 @@ export function JournalPage({
                     aria-label={`${agendaCounts[entry.dateStr]} due items, click to view`}
                   >
                     {(agendaCounts[entry.dateStr] ?? 0) > 99 ? '99+' : agendaCounts[entry.dateStr]}{' '}
-                    due
+                    {t('journal.dueBadge')}
                   </button>
                 )}
                 {entry.pageId && (backlinkCounts[entry.pageId] ?? 0) > 0 && (
@@ -592,7 +596,7 @@ export function JournalPage({
                     {(backlinkCounts[entry.pageId] ?? 0) > 99
                       ? '99+'
                       : backlinkCounts[entry.pageId]}{' '}
-                    refs
+                    {t('journal.refsBadge')}
                   </button>
                 )}
               </>
@@ -620,7 +624,7 @@ export function JournalPage({
               onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
             >
               <ExternalLink className="h-3.5 w-3.5 mr-1" />
-              Open in page editor
+              {t('journal.openInEditor')}
             </Button>
           </div>
         )}
@@ -651,12 +655,12 @@ export function JournalPage({
               onClick={() => handleAddBlock(entry.dateStr)}
             >
               <Plus className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
-              Add block
+              {t('action.addBlock')}
             </button>
           ) : (
             <EmptyState
               icon={CalendarIcon}
-              message={`No blocks for ${entry.displayDate}.`}
+              message={t('journal.noBlocks', { date: entry.displayDate })}
               compact
               action={
                 <Button
@@ -666,7 +670,7 @@ export function JournalPage({
                   onClick={() => handleAddBlock(entry.dateStr)}
                 >
                   <Plus className="h-4 w-4" />
-                  Add your first block
+                  {t('journal.addFirstBlock')}
                 </Button>
               }
             />
@@ -682,7 +686,7 @@ export function JournalPage({
               onClick={() => handleAddBlock(entry.dateStr)}
             >
               <Plus className="h-4 w-4" />
-              Add block
+              {t('action.addBlock')}
             </Button>
           </div>
         )}
@@ -784,6 +788,7 @@ export function JournalPage({
 
 /** Journal mode/date controls — rendered in the App header for space efficiency. */
 export function JournalControls(): React.ReactElement {
+  const { t } = useTranslation()
   const { mode, currentDate, setMode, setCurrentDate, navigateToDate, goToDateAndScroll } =
     useJournalStore()
   const [calendarOpen, setCalendarOpen] = useState(false)
@@ -829,7 +834,7 @@ export function JournalControls(): React.ReactElement {
   const canGoNext = isBefore(currentDate, MAX_JOURNAL_DATE)
 
   function getDateDisplay(): string {
-    if (mode === 'agenda') return 'Tasks'
+    if (mode === 'agenda') return t('journal.tasks')
     if (mode === 'daily') return formatDateDisplay(currentDate)
     if (mode === 'weekly') return formatWeekRange(currentDate)
     return format(currentDate, 'MMMM yyyy')
@@ -837,27 +842,50 @@ export function JournalControls(): React.ReactElement {
 
   const navLabels = {
     prev:
-      mode === 'daily' ? 'Previous day' : mode === 'weekly' ? 'Previous week' : 'Previous month',
-    next: mode === 'daily' ? 'Next day' : mode === 'weekly' ? 'Next week' : 'Next month',
+      mode === 'daily'
+        ? t('journal.prevDay')
+        : mode === 'weekly'
+          ? t('journal.prevWeek')
+          : t('journal.prevMonth'),
+    next:
+      mode === 'daily'
+        ? t('journal.nextDay')
+        : mode === 'weekly'
+          ? t('journal.nextWeek')
+          : t('journal.nextMonth'),
   }
 
   return (
     <div className="flex flex-1 items-center gap-2">
       {/* Mode switcher */}
       <div className="flex items-center gap-0.5" role="tablist" aria-label="Journal view mode">
-        {(['daily', 'weekly', 'monthly', 'agenda'] as const).map((m) => (
-          <Button
-            key={m}
-            variant={mode === m ? 'secondary' : 'ghost'}
-            size="xs"
-            role="tab"
-            aria-selected={mode === m}
-            aria-label={`${m.charAt(0).toUpperCase() + m.slice(1)} view`}
-            onClick={() => setMode(m)}
-          >
-            {m === 'daily' ? 'Day' : m === 'weekly' ? 'Week' : m === 'monthly' ? 'Month' : 'Agenda'}
-          </Button>
-        ))}
+        {(['daily', 'weekly', 'monthly', 'agenda'] as const).map((m) => {
+          const tabLabels: Record<string, string> = {
+            daily: t('journal.dayTab'),
+            weekly: t('journal.weekTab'),
+            monthly: t('journal.monthTab'),
+            agenda: t('journal.agendaTab'),
+          }
+          const ariaLabels: Record<string, string> = {
+            daily: t('journal.dailyView'),
+            weekly: t('journal.weeklyView'),
+            monthly: t('journal.monthlyView'),
+            agenda: t('journal.agendaView'),
+          }
+          return (
+            <Button
+              key={m}
+              variant={mode === m ? 'secondary' : 'ghost'}
+              size="xs"
+              role="tab"
+              aria-selected={mode === m}
+              aria-label={ariaLabels[m]}
+              onClick={() => setMode(m)}
+            >
+              {tabLabels[m]}
+            </Button>
+          )
+        })}
       </div>
 
       <div className="flex-1" />
@@ -900,15 +928,15 @@ export function JournalControls(): React.ReactElement {
                 setCurrentDate(today)
               }
             }}
-            aria-label="Go to today"
+            aria-label={t('journal.goToToday')}
           >
-            Today
+            {t('journal.today')}
           </Button>
           <div className="relative">
             <Button
               variant="ghost"
               size="icon-xs"
-              aria-label="Open calendar picker"
+              aria-label={t('journal.openCalendar')}
               onClick={() => setCalendarOpen((o) => !o)}
             >
               <CalendarIcon className="h-4 w-4" />

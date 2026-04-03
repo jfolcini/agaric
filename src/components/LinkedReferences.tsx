@@ -9,6 +9,7 @@
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,7 @@ export function LinkedReferences({
   pageId,
   onNavigateToPage,
 }: LinkedReferencesProps): React.ReactElement | null {
+  const { t } = useTranslation()
   const [groups, setGroups] = useState<BacklinkGroup[]>([])
   const [loading, setLoading] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -113,12 +115,12 @@ export function LinkedReferences({
         setHasMore(resp.has_more)
         setTotalCount(resp.total_count)
       } catch {
-        toast.error('Failed to load references')
+        toast.error(t('references.loadFailed'))
       } finally {
         setLoading(false)
       }
     },
-    [pageId, filters, sort, sourcePageIncluded, sourcePageExcluded],
+    [pageId, filters, sort, sourcePageIncluded, sourcePageExcluded, t],
   )
 
   // Load property keys on mount
@@ -309,7 +311,8 @@ export function LinkedReferences({
     blockCount: g.blocks.length,
   }))
 
-  const headerLabel = totalCount === 1 ? '1 Reference' : `${totalCount} References`
+  const headerLabel =
+    totalCount === 1 ? t('references.headerOne') : t('references.header', { count: totalCount })
 
   return (
     <section className="linked-references" aria-label="References">
@@ -357,7 +360,7 @@ export function LinkedReferences({
               onClick={() => setShowAdvancedFilters((prev) => !prev)}
               aria-expanded={showAdvancedFilters}
             >
-              {showAdvancedFilters ? 'Hide filters' : 'More filters'}
+              {showAdvancedFilters ? t('references.hideFilters') : t('references.moreFilters')}
             </Button>
           </div>
 
@@ -391,13 +394,15 @@ export function LinkedReferences({
                 ) : (
                   <ChevronRight className="h-3.5 w-3.5 shrink-0" />
                 )}
-                {group.page_title ?? 'Untitled'} ({group.blocks.length})
+                {group.page_title ?? t('references.untitled')} ({group.blocks.length})
               </button>
 
               {groupExpanded[group.page_id] && (
                 <ul
                   className="linked-references-blocks ml-4 mt-1 space-y-1"
-                  aria-label={`Backlinks from ${group.page_title ?? 'Untitled'}`}
+                  aria-label={t('references.backlinksFrom', {
+                    title: group.page_title ?? t('references.untitled'),
+                  })}
                 >
                   {group.blocks.map((block) => (
                     <li
@@ -420,7 +425,7 @@ export function LinkedReferences({
                               resolveTagName,
                               resolveBlockStatus,
                             })
-                          : '(empty)'}
+                          : t('references.empty')}
                       </span>
                       <span className="linked-reference-item-id text-xs text-muted-foreground font-mono">
                         {block.id.slice(0, 8)}...
@@ -440,14 +445,14 @@ export function LinkedReferences({
               onClick={loadMore}
               disabled={loading}
               aria-busy={loading}
-              aria-label={loading ? 'Loading more references' : 'Load more references'}
+              aria-label={loading ? t('references.loadingMore') : t('references.loadMoreLabel')}
             >
               {loading ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+                  <Loader2 className="h-4 w-4 animate-spin" /> {t('references.loading')}
                 </>
               ) : (
-                'Load more'
+                t('references.loadMore')
               )}
             </Button>
           )}

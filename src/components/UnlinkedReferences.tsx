@@ -9,6 +9,7 @@
 import { ChevronDown, ChevronRight, Link2, Loader2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import type { BacklinkGroup } from '../lib/tauri'
@@ -30,6 +31,7 @@ export function UnlinkedReferences({
   pageTitle,
   onNavigateToPage,
 }: UnlinkedReferencesProps): React.ReactElement | null {
+  const { t } = useTranslation()
   const [groups, setGroups] = useState<BacklinkGroup[]>([])
   const [collapsed, setCollapsed] = useState(true)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
@@ -68,12 +70,12 @@ export function UnlinkedReferences({
         setHasMore(resp.has_more)
         setTotalCount(resp.total_count)
       } catch {
-        toast.error('Failed to load unlinked references')
+        toast.error(t('unlinkedRefs.loadFailed'))
       } finally {
         setLoading(false)
       }
     },
-    [pageId],
+    [pageId, t],
   )
 
   // Fetch on expand or when pageId changes — lazy load
@@ -111,10 +113,10 @@ export function UnlinkedReferences({
         )
         setTotalCount((prev) => prev - 1)
       } catch {
-        toast.error('Failed to link reference')
+        toast.error(t('unlinkedRefs.linkFailed'))
       }
     },
-    [pageId, pageTitle],
+    [pageId, pageTitle, t],
   )
 
   const toggleCollapsed = useCallback(() => {
@@ -141,10 +143,10 @@ export function UnlinkedReferences({
 
   const headerLabel =
     totalCount === 0
-      ? 'No Unlinked References'
+      ? t('unlinkedRefs.headerNone')
       : totalCount === 1
-        ? '1 Unlinked Reference'
-        : `${totalCount} Unlinked References`
+        ? t('unlinkedRefs.headerOne')
+        : t('unlinkedRefs.header', { count: totalCount })
 
   return (
     <section className="unlinked-references" aria-label="Unlinked references">
@@ -172,13 +174,13 @@ export function UnlinkedReferences({
               aria-busy="true"
               role="status"
             >
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+              <Loader2 className="h-4 w-4 animate-spin" /> {t('unlinkedRefs.loading')}
             </div>
           )}
 
           {/* Empty state */}
           {!loading && totalCount === 0 && groups.length === 0 && (
-            <p className="px-3 py-2 text-sm text-muted-foreground">No unlinked references found.</p>
+            <p className="px-3 py-2 text-sm text-muted-foreground">{t('unlinkedRefs.noResults')}</p>
           )}
 
           {/* Group list */}
@@ -198,13 +200,15 @@ export function UnlinkedReferences({
                   ) : (
                     <ChevronRight className="h-3.5 w-3.5 shrink-0" />
                   )}
-                  {group.page_title ?? 'Untitled'} ({group.blocks.length})
+                  {group.page_title ?? t('unlinkedRefs.untitled')} ({group.blocks.length})
                 </button>
 
                 {!isGroupCollapsed && (
                   <ul
                     className="unlinked-references-blocks ml-4 mt-1 space-y-1"
-                    aria-label={`Unlinked mentions from ${group.page_title ?? 'Untitled'}`}
+                    aria-label={t('unlinkedRefs.mentionsFrom', {
+                      title: group.page_title ?? t('unlinkedRefs.untitled'),
+                    })}
                   >
                     {group.blocks.map((block) => (
                       <li
@@ -217,12 +221,12 @@ export function UnlinkedReferences({
                           onClick={() =>
                             onNavigateToPage?.(
                               group.page_id,
-                              group.page_title ?? 'Untitled',
+                              group.page_title ?? t('unlinkedRefs.untitled'),
                               block.id,
                             )
                           }
                         >
-                          {block.content || '(empty)'}
+                          {block.content || t('unlinkedRefs.empty')}
                         </button>
                         <Button
                           variant="ghost"
@@ -232,7 +236,7 @@ export function UnlinkedReferences({
                           aria-label={`Link it: replace mention in block ${block.id.slice(0, 8)}`}
                         >
                           <Link2 className="h-3.5 w-3.5 mr-1" />
-                          Link it
+                          {t('unlinkedRefs.linkIt')}
                         </Button>
                       </li>
                     ))}
@@ -251,16 +255,14 @@ export function UnlinkedReferences({
               onClick={loadMore}
               disabled={loading}
               aria-busy={loading}
-              aria-label={
-                loading ? 'Loading more unlinked references' : 'Load more unlinked references'
-              }
+              aria-label={loading ? t('unlinkedRefs.loadingMore') : t('unlinkedRefs.loadMoreLabel')}
             >
               {loading ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+                  <Loader2 className="h-4 w-4 animate-spin" /> {t('unlinkedRefs.loadingDots')}
                 </>
               ) : (
-                'Load more'
+                t('unlinkedRefs.loadMore')
               )}
             </Button>
           )}

@@ -10,6 +10,7 @@
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { BlockRow } from '../lib/tauri'
@@ -30,11 +31,6 @@ function priorityKey(p: string | null): number {
   return 4
 }
 
-/** Label for a todo_state group. */
-function groupLabel(state: string | null): string {
-  return state ?? 'Other'
-}
-
 /** Badge color class by priority level. */
 function priorityColor(p: string): string {
   if (p === '1') return 'bg-red-500 text-white'
@@ -50,6 +46,7 @@ function truncateContent(content: string | null, max = 120): string {
 }
 
 export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.ReactElement | null {
+  const { t } = useTranslation()
   const [blocks, setBlocks] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
@@ -179,11 +176,16 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   )
 
   // Group blocks by todo_state in the defined order, sorted by priority within
+  const groupLabels: Record<string, string> = {
+    DOING: t('duePanel.groupDoing'),
+    TODO: t('duePanel.groupTodo'),
+    DONE: t('duePanel.groupDone'),
+  }
   const grouped = GROUP_ORDER.map((state) => {
     const items = blocks
       .filter((b) => b.todo_state === state)
       .sort((a, b) => priorityKey(a.priority) - priorityKey(b.priority))
-    return { state, label: groupLabel(state), items }
+    return { state, label: state ? (groupLabels[state] ?? state) : t('duePanel.groupOther'), items }
   }).filter((g) => g.items.length > 0)
 
   // Empty state: hidden entirely
@@ -191,7 +193,8 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     return null
   }
 
-  const headerLabel = totalCount === 1 ? '1 Due' : `${totalCount} Due`
+  const headerLabel =
+    totalCount === 1 ? t('duePanel.headerOne') : t('duePanel.header', { count: totalCount })
 
   return (
     <section className="due-panel" aria-label="Due items">
@@ -213,9 +216,9 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
       {!collapsed && (
         <div className="due-panel-filters flex items-center gap-1 px-2 py-1">
           {[
-            { label: 'All', value: null },
-            { label: 'Due', value: 'column:due_date' },
-            { label: 'Scheduled', value: 'column:scheduled_date' },
+            { label: t('duePanel.filterAll'), value: null },
+            { label: t('duePanel.filterDue'), value: 'column:due_date' },
+            { label: t('duePanel.filterScheduled'), value: 'column:scheduled_date' },
           ].map((opt) => (
             <button
               key={opt.label}
@@ -247,7 +250,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
               role="status"
             >
               <Loader2 className="h-4 w-4 animate-spin" data-testid="loader-spinner" />
-              <span className="text-sm text-muted-foreground">Loading...</span>
+              <span className="text-sm text-muted-foreground">{t('duePanel.loading')}</span>
             </div>
           )}
 
@@ -286,7 +289,8 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                     {/* Source page breadcrumb */}
                     {block.parent_id && (
                       <span className="due-panel-breadcrumb text-xs text-muted-foreground shrink-0">
-                        → {pageTitles.get(block.parent_id) ?? 'Untitled'}
+                        {t('duePanel.breadcrumbArrow')}{' '}
+                        {pageTitles.get(block.parent_id) ?? t('duePanel.untitled')}
                       </span>
                     )}
                   </li>
@@ -304,14 +308,14 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
               onClick={loadMore}
               disabled={loading}
               aria-busy={loading}
-              aria-label={loading ? 'Loading more due items' : 'Load more due items'}
+              aria-label={loading ? t('duePanel.loadingMore') : t('duePanel.loadMoreLabel')}
             >
               {loading ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+                  <Loader2 className="h-4 w-4 animate-spin" /> {t('duePanel.loading')}
                 </>
               ) : (
-                'Load more'
+                t('duePanel.loadMore')
               )}
             </Button>
           )}
