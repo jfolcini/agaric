@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 120 — 2026-04-03 — Select Dropdown + Quick Reference (#645-7, #661)
+
+### Click-to-edit select properties + syntax reference panel
+
+2 parallel build subagents.
+
+| File | Change |
+|------|--------|
+| `SortableBlock.tsx` | #645-7: Select-type property chips show options dropdown (from property_definitions) instead of text input. Current value highlighted. Falls back to text input for non-select properties. |
+| `SortableBlock.test.tsx` | #645-7: 4 new tests (dropdown renders, option click saves, current highlighted, text fallback). |
+| `KeyboardShortcuts.tsx` | #661: Renamed to "Quick Reference". Added 13-entry syntax section (Markdown formatting, block types, special tokens) with monospace code styling. |
+| `KeyboardShortcuts.test.tsx` | #661: 1 new test (syntax section entries). Updated existing title assertions. |
+| `i18n.ts` | 2 new keys (shortcuts.title, shortcuts.syntaxSection). |
+
+### Stats
+- Frontend: ~2530 tests pass (5 new)
+- Commit: `d10e4a3`
+- #645-7 resolved, #661 resolved
+
 ## Session 119 — 2026-04-03 — Completed Date Agenda Filter (#642 partial)
 
 ### completedDate dimension with past-oriented presets
