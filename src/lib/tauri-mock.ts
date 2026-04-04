@@ -757,13 +757,37 @@ export function setupMock(): void {
 
       case 'query_by_tags': {
         const a = args as Record<string, unknown>
-        const tagIds = a.tagIds as string[]
-        // Find blocks that have ALL the specified tags
+        const tagIds = (a.tagIds as string[]) ?? []
+        const prefixes = (a.prefixes as string[] | null) ?? []
+        const mode = ((a.mode as string) ?? 'and').toLowerCase()
+
+        // Resolve prefixes to tag IDs by matching tag block content
+        const resolvedFromPrefix: string[] = []
+        for (const prefix of prefixes) {
+          const lp = prefix.toLowerCase()
+          for (const [, b] of blocks) {
+            if (
+              b.block_type === 'tag' &&
+              !b.deleted_at &&
+              ((b.content as string) ?? '').toLowerCase().startsWith(lp)
+            ) {
+              resolvedFromPrefix.push(b.id as string)
+            }
+          }
+        }
+
+        const allTagIds = [...tagIds, ...resolvedFromPrefix]
+
         const items = [...blocks.values()].filter((b) => {
           if (b.deleted_at) return false
           const tags = blockTags.get(b.id as string)
-          if (!tags) return false
-          return tagIds.every((tid) => tags.has(tid))
+          if (!tags || tags.size === 0) return false
+          if (allTagIds.length === 0) return false
+          if (mode === 'or') {
+            return allTagIds.some((tid) => tags.has(tid))
+          }
+          // Default: AND — block must have ALL specified tags
+          return allTagIds.every((tid) => tags.has(tid))
         })
         return { items, next_cursor: null, has_more: false }
       }
