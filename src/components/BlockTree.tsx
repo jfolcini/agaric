@@ -42,6 +42,7 @@ import {
   getBatchProperties,
   getBlock,
   listBlocks,
+  listPropertyKeys,
   setDueDate as setDueDateCmd,
   setPriority as setPriorityCmd,
   setProperty,
@@ -689,12 +690,27 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     ],
   )
 
+  const searchPropertyKeys = useCallback(
+    async (query: string): Promise<PickerItem[]> => {
+      try {
+        const keys = await listPropertyKeys()
+        const q = query.toLowerCase()
+        const filtered = q ? keys.filter((k) => k.toLowerCase().includes(q)) : keys
+        return filtered.map((k) => ({ id: k, label: k }))
+      } catch {
+        return []
+      }
+    },
+    [],
+  )
+
   // ── Roving editor ──────────────────────────────────────────────────
   // handleNavigate and handleSlashCommand are defined below but referenced
   // via ref to avoid circular dependency with rovingEditor.
   const handleNavigateRef = useRef<(id: string) => void>(() => {})
   const handleSlashCommandRef = useRef<(item: PickerItem) => void>(() => {})
   const handleCheckboxRef = useRef<(state: 'TODO' | 'DONE') => void>(() => {})
+  const handlePropertySelectRef = useRef<(item: PickerItem) => void>(() => {})
 
   // ── Context-aware placeholder for the editor ────────────────────────
   const editorPlaceholder = useMemo(() => {
@@ -722,6 +738,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     searchSlashCommands,
     onSlashCommand: (item: PickerItem) => handleSlashCommandRef.current(item),
     onCheckbox: (state: 'TODO' | 'DONE') => handleCheckboxRef.current(state),
+    searchPropertyKeys,
+    onPropertySelect: (item: PickerItem) => handlePropertySelectRef.current(item),
     ...(editorPlaceholder ? { placeholder: editorPlaceholder } : {}),
   })
 
@@ -1330,6 +1348,18 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   )
 
   handleCheckboxRef.current = handleCheckboxSyntax
+
+  const handlePropertySelect = useCallback(
+    (item: PickerItem) => {
+      if (!focusedBlockId) return
+      setProperty({ blockId: focusedBlockId, key: item.label, valueText: '' }).catch(() =>
+        toast.error('Failed to set property'),
+      )
+    },
+    [focusedBlockId],
+  )
+
+  handlePropertySelectRef.current = handlePropertySelect
 
   const handleFocusPrev = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
