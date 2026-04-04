@@ -1,5 +1,22 @@
 # Session Log
 
+## Session 176 — 2026-04-04 — Phase 1 batch 29: sync serialization tests + agenda E2E (TL-4, TL-8)
+
+### Phase 1 (batch 29): Sync message tests + agenda advanced E2E (TL-4, TL-8)
+
+2 parallel subagents (Rust sync tests + E2E agenda spec).
+
+| File | Change |
+|------|--------|
+| `sync_protocol.rs` | TL-4: 30 new tests — 13 serde roundtrips (all SyncMessage variants + DeviceHead + OpTransfer), 7 JSON shape/wire format stability tests, 10 edge cases (unicode, 500-op batch, 100KB payload, u64::MAX, empty strings). |
+| `e2e/agenda-advanced.spec.ts` | TL-8: 20 new E2E tests — due/scheduled date filtering, task state cycling (TODO→DOING→DONE), overdue tasks with priority badges, date navigation (prev/next/today), view mode interactions (daily/weekly/monthly/agenda switching). |
+
+### Stats
+- Rust: 30 new tests (all pass)
+- E2E: 20 new tests
+- Commits: `698d7e0` (TL-4), `17804da` (TL-8)
+- REVIEW-LATER: TL-4, TL-8 resolved. 16 -> **14 open items**. TEST-LOW tier now empty.
+
 ## Session 175 — 2026-04-04 — Phase 1 batch 28: E2E templates + import/export (TH-3, TH-4)
 
 ### Phase 1 (batch 28): E2E test coverage for templates and import/export (TH-3, TH-4)
