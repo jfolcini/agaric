@@ -218,14 +218,14 @@ pub async fn list_children(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_pos, cursor_id): (Option<i64>, i64, String) = match page.after.as_ref()
+    let (cursor_flag, cursor_pos, cursor_id): (Option<i64>, i64, &str) = match page.after.as_ref()
     {
         Some(c) => (
             Some(1),
             c.position.unwrap_or(NULL_POSITION_SENTINEL),
-            c.id.clone(),
+            &c.id,
         ),
-        None => (None, 0, String::new()),
+        None => (None, 0, ""),
     };
 
     // ?6 = NULL_POSITION_SENTINEL, reused in IFNULL() for ORDER BY + keyset.
@@ -271,9 +271,9 @@ pub async fn list_by_type(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_id): (Option<i64>, String) = match page.after.as_ref() {
-        Some(c) => (Some(1), c.id.clone()),
-        None => (None, String::new()),
+    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
+        Some(c) => (Some(1), &c.id),
+        None => (None, ""),
     };
 
     let rows = sqlx::query_as!(
@@ -313,15 +313,15 @@ pub async fn list_trash(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_del, cursor_id): (Option<i64>, String, String) =
+    let (cursor_flag, cursor_del, cursor_id): (Option<i64>, &str, &str) =
         match page.after.as_ref() {
             Some(c) => {
-                let del = c.deleted_at.clone().ok_or_else(|| {
+                let del = c.deleted_at.as_deref().ok_or_else(|| {
                     AppError::Validation("cursor missing deleted_at for trash query".into())
                 })?;
-                (Some(1), del, c.id.clone())
+                (Some(1), del, &c.id)
             }
-            None => (None, String::new(), String::new()),
+            None => (None, "", ""),
         };
 
     let rows = sqlx::query_as!(
@@ -364,9 +364,9 @@ pub async fn list_by_tag(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_id): (Option<i64>, String) = match page.after.as_ref() {
-        Some(c) => (Some(1), c.id.clone()),
-        None => (None, String::new()),
+    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
+        Some(c) => (Some(1), &c.id),
+        None => (None, ""),
     };
 
     let rows = sqlx::query_as!(
@@ -414,9 +414,9 @@ pub async fn query_by_property(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_id): (Option<i64>, String) = match page.after.as_ref() {
-        Some(c) => (Some(1), c.id.clone()),
-        None => (None, String::new()),
+    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
+        Some(c) => (Some(1), &c.id),
+        None => (None, ""),
     };
 
     let rows = if is_reserved_property_key(key) {
@@ -449,7 +449,7 @@ pub async fn query_by_property(
         sqlx::query_as::<_, BlockRow>(&sql)
             .bind(filter_value)
             .bind(cursor_flag)
-            .bind(&cursor_id)
+            .bind(cursor_id)
             .bind(fetch_limit)
             .fetch_all(pool)
             .await?
@@ -503,9 +503,9 @@ pub async fn list_agenda(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_id): (Option<i64>, String) = match page.after.as_ref() {
-        Some(c) => (Some(1), c.id.clone()),
-        None => (None, String::new()),
+    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
+        Some(c) => (Some(1), &c.id),
+        None => (None, ""),
     };
 
     let rows = sqlx::query_as!(
@@ -549,9 +549,9 @@ pub async fn list_backlinks(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_id): (Option<i64>, String) = match page.after.as_ref() {
-        Some(c) => (Some(1), c.id.clone()),
-        None => (None, String::new()),
+    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
+        Some(c) => (Some(1), &c.id),
+        None => (None, ""),
     };
 
     let rows = sqlx::query_as!(
@@ -604,10 +604,10 @@ pub async fn list_block_history(
 
     // `id` in the cursor stores `device_id` for history queries — it is the
     // tie-breaker because the op_log PK is `(device_id, seq)`.
-    let (cursor_flag, cursor_seq, cursor_device_id): (Option<i64>, i64, String) =
+    let (cursor_flag, cursor_seq, cursor_device_id): (Option<i64>, i64, &str) =
         match page.after.as_ref() {
-            Some(c) => (Some(1), c.seq.unwrap_or(0), c.id.clone()),
-            None => (None, 0, String::new()),
+            Some(c) => (Some(1), c.seq.unwrap_or(0), &c.id),
+            None => (None, 0, ""),
         };
 
     let rows = sqlx::query_as!(
@@ -658,17 +658,17 @@ pub async fn list_page_history(
     // Cursor: reuse `deleted_at` field for `created_at` and `seq` + `id` for device_id
     let (cursor_flag, cursor_created_at, cursor_seq, cursor_device_id): (
         Option<i64>,
-        String,
+        &str,
         i64,
-        String,
+        &str,
     ) = match page.after.as_ref() {
         Some(c) => {
-            let created_at = c.deleted_at.clone().ok_or_else(|| {
+            let created_at = c.deleted_at.as_deref().ok_or_else(|| {
                 AppError::Validation("cursor missing created_at for page history query".into())
             })?;
-            (Some(1), created_at, c.seq.unwrap_or(0), c.id.clone())
+            (Some(1), created_at, c.seq.unwrap_or(0), &c.id)
         }
-        None => (None, String::new(), 0, String::new()),
+        None => (None, "", 0, ""),
     };
 
     let rows = sqlx::query_as!(
@@ -718,9 +718,9 @@ pub async fn list_conflicts(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_id): (Option<i64>, String) = match page.after.as_ref() {
-        Some(c) => (Some(1), c.id.clone()),
-        None => (None, String::new()),
+    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
+        Some(c) => (Some(1), &c.id),
+        None => (None, ""),
     };
 
     let rows = sqlx::query_as!(

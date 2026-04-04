@@ -1,0 +1,7 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": ["src/App.tsx"],
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignore": ["src/lib/bindings.ts", "src/vitest-axe.d.ts"],
+  "ignoreDependencies": ["tailwindcss"]
+}

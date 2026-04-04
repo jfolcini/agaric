@@ -87,10 +87,21 @@ repo = "local"
 [[repos.hooks]]
 id = "depcheck"
 name = "depcheck"
-entry = "npx depcheck --ignores='tailwindcss,@vitest/coverage-v8,better-npm-audit,depcheck,license-checker'"
+entry = "npx depcheck --ignores='tailwindcss,@vitest/coverage-v8,better-npm-audit,depcheck,knip,license-checker'"
 language = "system"
 pass_filenames = false
 files = "(^package\\.json$|^package-lock\\.json$)"
+
+# JS: knip (dead export detection)
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "knip"
+name = "knip"
+entry = "npx knip --no-exit-code"
+language = "system"
+pass_filenames = false
+types = ["ts", "tsx"]
 
 # Rust: cargo fmt
 [[repos]]
