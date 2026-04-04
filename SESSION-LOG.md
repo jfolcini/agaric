@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 169 — 2026-04-04 — Phase 1 batch 22: multi-property queries + E2E drag helper
+
+### Phase 1 (batch 22): Multi-property query builder + E2E drag helper (F-5, TM-4)
+
+2 parallel subagents (QueryResult frontend, E2E refactoring).
+
+| File | Change |
+|------|--------|
+| `QueryResult.tsx` + test | F-5: Extended inline query syntax — `property:key=value` and `tag:prefix` tokens with AND composition. Parser, filter builder, client-side intersection. 14 new tests. |
+| `e2e/helpers.ts` | TM-4: New `dragBlock()` helper encapsulating dnd-kit pointer sequence (350ms delay + 20-step moves). |
+| `e2e/toolbar-and-blocks.spec.ts` | TM-4: Replaced ~30 lines inline drag logic with `dragBlock()` call. |
+
+### Stats
+- Frontend: 14 new tests (40/40 QueryResult pass)
+- E2E: ~28 lines inline code extracted to shared helper
+- Commit: `cdee6f5`
+- REVIEW-LATER: F-5, TM-4 resolved. 31 → **29 open items**.
+
 ## Session 168 — 2026-04-04 — Phase 1 batch 20-21: LWW conflicts + query table + dead code
 
 ### Phase 1 (batch 20): LWW conflicts + import benchmarks (F-21, TM-9)
