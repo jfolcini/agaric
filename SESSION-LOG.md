@@ -1,5 +1,34 @@
 # Session Log
 
+## Session 179 — 2026-04-04 — Phase 1 batch 32: recurrence module + range query (F-20, M-13)
+
+### Phase 1 (batch 32): Recurrence extraction + date range query (F-20, M-13)
+
+2 parallel subagents (Rust recurrence + full-stack range query).
+
+| File | Change |
+|------|--------|
+| `recurrence.rs` | F-20: New module — `shift_date`, `shift_date_once`, `days_in_month`, `handle_recurrence` (full state machine). 5 new unit tests. |
+| `commands.rs` | F-20: Removed ~260 lines (recurrence logic). `set_todo_state_inner` delegates to `handle_recurrence()`. Made `create_block_in_tx`, `set_property_in_tx`, `is_valid_iso_date` pub(crate). |
+| `lib.rs` | F-20: Added `pub mod recurrence;`. |
+| `pagination.rs` | M-13: New `list_agenda_range` function — BETWEEN query with keyset pagination. |
+| `commands.rs` | M-13: `DateRange` struct, `list_blocks_inner` gains `agenda_date_start`/`agenda_date_end` params (11 total). 4 new tests. |
+| `command_integration_tests.rs` | M-13: Updated all 29 call sites (9→11 params). |
+| `integration_tests.rs` | M-13: Updated all 9 call sites. |
+| `.sqlx/` | M-13: Regenerated prepared queries. |
+| `bindings.ts` | M-13: Auto-regenerated — exports `DateRange`, updated `listBlocks`. |
+| `tauri.ts` | M-13: Added `agendaDateRange?: DateRange` to `listBlocks` wrapper. |
+| `AgendaView.tsx` | M-13: "This week" 7→1 call, "This month" 28-31→1 call, "Next N days" N→1 call (both due + scheduled). |
+| `JournalPage.test.tsx` | M-13: Updated week filter test to expect 1 range call. |
+
+Op grouping (M-12 fix) deferred — F-20 was module extraction only.
+
+### Stats
+- Rust: 9 new tests (5 recurrence + 4 range query), all pass
+- Frontend: 75 JournalPage tests pass
+- Commits: `4b0b323` (F-20), `9104d1e` (M-13)
+- REVIEW-LATER: F-20, M-13 resolved. 10 -> **8 open items**.
+
 ## Session 178 — 2026-04-04 — Phase 1 batch 31: BlockTree split + E2E timeout cleanup (F-22, TM-1)
 
 ### Phase 1 (batch 31): BlockTree component split + E2E timeout cleanup (F-22, TM-1)
