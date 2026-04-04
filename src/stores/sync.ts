@@ -8,7 +8,7 @@
 
 import { create } from 'zustand'
 
-export type SyncState = 'idle' | 'discovering' | 'pairing' | 'syncing' | 'error'
+export type SyncState = 'idle' | 'discovering' | 'pairing' | 'syncing' | 'error' | 'offline'
 
 export interface PeerInfo {
   peerId: string

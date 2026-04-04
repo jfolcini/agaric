@@ -428,4 +428,45 @@ describe('useSyncTrigger', () => {
     // Restore
     Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
   })
+
+  it('sets offline state when navigator.onLine is false (#667)', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true })
+
+    const { result } = renderHook(() => useSyncTrigger())
+
+    await act(async () => {
+      await result.current.syncAll()
+    })
+
+    const state = useSyncStore.getState()
+    expect(state.state).toBe('offline')
+
+    // Restore
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
+  })
+
+  it('triggers sync when online event fires (#667)', async () => {
+    mockListPeerRefs.mockResolvedValue([
+      {
+        peer_id: 'PEER1',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
+      },
+    ])
+
+    renderHook(() => useSyncTrigger())
+
+    // Fire the online event
+    await act(async () => {
+      window.dispatchEvent(new Event('online'))
+    })
+
+    expect(mockListPeerRefs).toHaveBeenCalled()
+    expect(mockStartSync).toHaveBeenCalledWith('PEER1')
+  })
 })

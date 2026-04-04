@@ -479,11 +479,11 @@ async fn run_sync_session(
 
         let incoming: SyncMessage = conn.recv_json().await?;
         let response = tokio::time::timeout(
-            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(120),
             orch.handle_message(incoming),
         )
         .await
-        .map_err(|_| AppError::InvalidOperation("handle_message timed out after 60s".into()))??;
+        .map_err(|_| AppError::InvalidOperation("handle_message timed out after 120s".into()))??;
         match response {
             Some(response) => {
                 conn.send_json(&response).await?;
@@ -580,11 +580,11 @@ async fn handle_incoming_sync(
     while !orch.is_terminal() {
         let incoming: SyncMessage = conn.recv_json().await?;
         let response = tokio::time::timeout(
-            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(120),
             orch.handle_message(incoming),
         )
         .await
-        .map_err(|_| AppError::InvalidOperation("handle_message timed out after 60s".into()))??;
+        .map_err(|_| AppError::InvalidOperation("handle_message timed out after 120s".into()))??;
 
         match response {
             Some(resp) => {

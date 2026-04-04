@@ -23,8 +23,9 @@ export function useSyncTrigger() {
   const setState = useSyncStore((s) => s.setState)
 
   const syncAll = useCallback(async () => {
-    // Skip sync when offline — no error, no toast (#429)
+    // Skip sync when offline — set state so UI can reflect it (#429, #667)
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setState('offline')
       return
     }
     if (syncInProgressRef.current) return
@@ -105,6 +106,15 @@ export function useSyncTrigger() {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
   }, [syncAll, scheduleNext])
+
+  // Trigger immediate sync when coming back online (#667)
+  useEffect(() => {
+    const handleOnline = () => {
+      syncAll()
+    }
+    window.addEventListener('online', handleOnline)
+    return () => window.removeEventListener('online', handleOnline)
+  }, [syncAll])
 
   return { syncing, syncAll }
 }
