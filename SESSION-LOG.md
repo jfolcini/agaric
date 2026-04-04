@@ -120,6 +120,23 @@
 - Commit: `175b905`
 - REVIEW-LATER: L-7, L-10, TL-6, TL-7 resolved. L-5 orphan row removed. 87 → **82 open items**.
 
+### Phase 1 (batch 8): UX-HIGH fixes (UX-H1, UX-H2, UX-H3, UX-H5, UX-H13)
+
+5 parallel build subagents (sidebar, LinkEditPopover, editor, SortableBlock, catch blocks).
+
+| File | Change |
+|------|--------|
+| `sidebar.tsx` | UX-H1: Converted mouse events → pointer events for resize handle. Added `[@media(pointer:coarse)]:w-8` touch sizing. |
+| `LinkEditPopover.tsx` + test | UX-H2: Changed `onMouseDown` → `onPointerDown` on 2 buttons. Updated 2 tests. |
+| `use-roving-editor.ts` | UX-H3: Added `CodeWithShortcut` extending Code with `Mod-e` → `toggleCode()`. |
+| `SortableBlock.tsx` | UX-H5: Converted repeat indicator chip from `<span role="img">` → `<button type="button">`. |
+| 5 components | UX-H13: Replaced 9 silent `.catch(() => {})` with `toast.error()` in PageHeader, DuePanel, JournalPage, PairingDialog, LinkedReferences. |
+
+### Stats
+- Frontend: All component tests pass (2778 total), 37/37 LinkEditPopover, 150/150 SortableBlock, 169/169 BlockTree
+- Commit: `717002c`
+- REVIEW-LATER: UX-H1, UX-H2, UX-H3, UX-H5, UX-H13 resolved. 82 → **77 open items**.
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system
