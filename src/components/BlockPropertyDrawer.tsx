@@ -4,9 +4,12 @@
  * Follows the HistorySheet pattern: a Sheet component controlled from BlockTree
  * state. Displays property rows with inline editing, deletion, and an
  * AddPropertySection for adding new properties from existing definitions.
+ *
+ * Built-in block fields (due_date, scheduled_date) are shown as read-only
+ * summary rows at the top, sourced from the block store for reactivity.
  */
 
-import { Plus, X } from 'lucide-react'
+import { CalendarCheck2, CalendarClock, Plus, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -17,7 +20,15 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { announce } from '../lib/announcer'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
-import { deleteProperty, getProperties, listPropertyDefs, setProperty } from '../lib/tauri'
+import {
+  deleteProperty,
+  getProperties,
+  listPropertyDefs,
+  setDueDate as setDueDateCmd,
+  setProperty,
+  setScheduledDate as setScheduledDateCmd,
+} from '../lib/tauri'
+import { useBlockStore } from '../stores/blocks'
 
 export interface BlockPropertyDrawerProps {
   blockId: string | null
@@ -34,6 +45,12 @@ export function BlockPropertyDrawer({
   const [loading, setLoading] = useState(true)
   const [properties, setProperties] = useState<PropertyRow[]>([])
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
+
+  // Subscribe to built-in date fields from the block store so the drawer
+  // updates reactively when dates are set via toolbar (H-12).
+  const block = useBlockStore((s) => (blockId ? s.blocks.find((b) => b.id === blockId) : undefined))
+  const dueDate = block?.due_date ?? null
+  const scheduledDate = block?.scheduled_date ?? null
 
   // Load properties + definitions when blockId changes or drawer opens
   useEffect(() => {
@@ -101,6 +118,50 @@ export function BlockPropertyDrawer({
     [definitions],
   )
 
+  // Clear a built-in date field (due_date or scheduled_date)
+  const handleClearBuiltinDate = useCallback(
+    async (field: 'due_date' | 'scheduled_date') => {
+      if (!blockId) return
+      try {
+        if (field === 'due_date') {
+          await setDueDateCmd(blockId, null)
+        } else {
+          await setScheduledDateCmd(blockId, null)
+        }
+        useBlockStore.setState((s) => ({
+          blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, [field]: null } : b)),
+        }))
+        announce('Date cleared')
+      } catch {
+        toast.error(t('property.saveFailed'))
+      }
+    },
+    [blockId, t],
+  )
+
+  // Update a built-in date field
+  const handleSaveBuiltinDate = useCallback(
+    async (field: 'due_date' | 'scheduled_date', value: string) => {
+      if (!blockId || !value) return
+      try {
+        if (field === 'due_date') {
+          await setDueDateCmd(blockId, value)
+        } else {
+          await setScheduledDateCmd(blockId, value)
+        }
+        useBlockStore.setState((s) => ({
+          blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, [field]: value } : b)),
+        }))
+        announce('Date updated')
+      } catch {
+        toast.error(t('property.saveFailed'))
+      }
+    },
+    [blockId, t],
+  )
+
+  const hasBuiltinDates = dueDate !== null || scheduledDate !== null
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-80">
@@ -108,9 +169,68 @@ export function BlockPropertyDrawer({
           <SheetTitle>{t('property.drawerTitle')}</SheetTitle>
         </SheetHeader>
         <div className="mt-4 space-y-3 px-4">
+          {/* Built-in date fields from the blocks table (H-12) */}
+          {!loading && hasBuiltinDates && (
+            <>
+              {dueDate !== null && (
+                <div className="flex items-center gap-2">
+                  <span
+                    className="text-xs font-medium text-muted-foreground w-20 truncate flex items-center gap-1"
+                    title={t('property.dueDate')}
+                  >
+                    <CalendarCheck2 size={12} />
+                    {t('property.dueDate')}
+                  </span>
+                  <Input
+                    className="flex-1 h-7 text-sm"
+                    type="date"
+                    defaultValue={dueDate}
+                    key={`due-${dueDate}`}
+                    onBlur={(e) => handleSaveBuiltinDate('due_date', e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-destructive p-0.5"
+                    aria-label={t('property.clearDueDate')}
+                    onClick={() => handleClearBuiltinDate('due_date')}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+              {scheduledDate !== null && (
+                <div className="flex items-center gap-2">
+                  <span
+                    className="text-xs font-medium text-muted-foreground w-20 truncate flex items-center gap-1"
+                    title={t('property.scheduledDate')}
+                  >
+                    <CalendarClock size={12} />
+                    {t('property.scheduledDate')}
+                  </span>
+                  <Input
+                    className="flex-1 h-7 text-sm"
+                    type="date"
+                    defaultValue={scheduledDate}
+                    key={`sched-${scheduledDate}`}
+                    onBlur={(e) => handleSaveBuiltinDate('scheduled_date', e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-destructive p-0.5"
+                    aria-label={t('property.clearScheduledDate')}
+                    onClick={() => handleClearBuiltinDate('scheduled_date')}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+              {properties.length > 0 && <div className="border-t border-border/40" />}
+            </>
+          )}
+
           {loading ? (
             <p className="text-sm text-muted-foreground">{t('property.loading')}</p>
-          ) : properties.length === 0 ? (
+          ) : properties.length === 0 && !hasBuiltinDates ? (
             <p className="text-sm text-muted-foreground">{t('property.noProperties')}</p>
           ) : (
             properties.map((prop) => (
@@ -126,8 +246,7 @@ export function BlockPropertyDrawer({
                   defaultValue={
                     prop.value_text ??
                     prop.value_date ??
-                    (prop.value_num != null ? String(prop.value_num) : '') ??
-                    ''
+                    (prop.value_num != null ? String(prop.value_num) : '')
                   }
                   onBlur={(e) => handleSave(prop.key, e.target.value, getType(prop.key))}
                   onKeyDown={(e) => {

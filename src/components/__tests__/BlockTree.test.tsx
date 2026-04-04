@@ -9,6 +9,7 @@
  *  - a11y compliance
  */
 
+import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -5361,5 +5362,132 @@ describe('BlockTree container mousedown (UX-M9)', () => {
     fireEvent.mouseDown(block)
 
     expect(useBlockStore.getState().focusedBlockId).toBe('A')
+  })
+})
+
+// ── H-9: Auto-create first block on empty pages ───────────────────────
+
+describe('H-9: auto-create first block on empty page', () => {
+  it('calls create_block when page loads with zero blocks', async () => {
+    const newBlock = makeBlock({
+      id: 'NEW_BLOCK_1',
+      content: '',
+      parent_id: 'PAGE_1',
+    })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_block') return newBlock
+      return emptyPage
+    })
+
+    render(<BlockTree parentId="PAGE_1" />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+        blockType: 'content',
+        content: '',
+        parentId: 'PAGE_1',
+        position: 0,
+      })
+    })
+  })
+
+  it('sets the new block in the store and focuses it', async () => {
+    const newBlock = makeBlock({
+      id: 'NEW_BLOCK_1',
+      content: '',
+      parent_id: 'PAGE_1',
+    })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_block') return newBlock
+      return emptyPage
+    })
+
+    await act(async () => {
+      render(<BlockTree parentId="PAGE_1" />)
+    })
+
+    // Flush the resolved promise microtask chain (create_block .then)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    const { blocks, focusedBlockId } = useBlockStore.getState()
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]?.id).toBe('NEW_BLOCK_1')
+    expect(focusedBlockId).toBe('NEW_BLOCK_1')
+  })
+
+  it('does not auto-create when blocks already exist', async () => {
+    const existing = makeBlock({ id: 'EXISTING', content: 'Hello', parent_id: 'PAGE_1' })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      const a = args as Record<string, unknown> | undefined
+      if (cmd === 'list_blocks' && a?.parentId === 'PAGE_1')
+        return { items: [existing], next_cursor: null, has_more: false }
+      return emptyPage
+    })
+
+    render(<BlockTree parentId="PAGE_1" />)
+
+    // Wait for load to complete
+    await waitFor(() => {
+      expect(useBlockStore.getState().blocks.length).toBeGreaterThan(0)
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({ content: '' }),
+    )
+  })
+
+  it('does not auto-create while loading', async () => {
+    // Use a never-resolving promise for list_blocks to keep loading=true
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return new Promise(() => {})
+      return emptyPage
+    })
+
+    render(<BlockTree parentId="PAGE_1" />)
+
+    // Wait a tick to give effects a chance to fire
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({ content: '' }),
+    )
+  })
+
+  it('does not auto-create when rootParentId is null', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    // Wait a tick to give effects a chance to fire
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({ content: '' }),
+    )
+  })
+
+  it('shows toast on create_block failure', async () => {
+    const { toast } = await import('sonner')
+    const mockedToastError = vi.mocked(toast.error)
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_block') throw new Error('DB error')
+      return emptyPage
+    })
+
+    render(<BlockTree parentId="PAGE_1" />)
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalled()
+    })
   })
 })

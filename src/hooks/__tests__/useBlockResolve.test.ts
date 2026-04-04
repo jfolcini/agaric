@@ -1332,38 +1332,44 @@ describe('onCreatePage', () => {
   })
 })
 
-// ── Error propagation (no try/catch in hook) ────────────────────────────
+// ── Error handling (H-10 fix: catch in hook, return []) ─────────────────
 
-describe('error propagation', () => {
-  it('searchTags propagates listTagsByPrefix rejection', async () => {
+describe('error handling', () => {
+  it('searchTags returns [] when listTagsByPrefix rejects', async () => {
     mockedListTagsByPrefix.mockRejectedValue(new Error('IPC: tags unavailable'))
 
     const { result } = renderHook(() => useBlockResolve())
 
+    let items: unknown
     await act(async () => {
-      await expect(result.current.searchTags('test')).rejects.toThrow('IPC: tags unavailable')
+      items = await result.current.searchTags('test')
     })
+    expect(items).toEqual([])
   })
 
-  it('searchPages propagates searchBlocks rejection (long query)', async () => {
+  it('searchPages returns [] when searchBlocks rejects (long query)', async () => {
     mockedSearchBlocks.mockRejectedValue(new Error('FTS index corrupt'))
 
     const { result } = renderHook(() => useBlockResolve())
 
+    let items: unknown
     await act(async () => {
-      await expect(result.current.searchPages('long query')).rejects.toThrow('FTS index corrupt')
+      items = await result.current.searchPages('long query')
     })
+    expect(items).toEqual([])
   })
 
-  it('searchPages propagates listBlocks rejection (short query, empty cache)', async () => {
+  it('searchPages returns [] when listBlocks rejects (short query, empty cache)', async () => {
     mockedListBlocks.mockRejectedValue(new Error('DB connection lost'))
 
     const { result } = renderHook(() => useBlockResolve())
     // pagesListRef is empty by default, so it will fall back to listBlocks
 
+    let items: unknown
     await act(async () => {
-      await expect(result.current.searchPages('ab')).rejects.toThrow('DB connection lost')
+      items = await result.current.searchPages('ab')
     })
+    expect(items).toEqual([])
   })
 
   it('onCreatePage propagates createBlock rejection', async () => {

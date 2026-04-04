@@ -649,6 +649,36 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     setZoomedBlockId(null)
   }, [load, parentId])
 
+  // ── H-9: Auto-create first block on empty pages ─────────────────────
+  // When a page loads with no child blocks, auto-create an empty content
+  // block so the user can immediately start typing.  Uses a ref to prevent
+  // double-creation on the same page.
+  const autoCreatedForRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (loading || blocks.length > 0 || !rootParentId) return
+    if (autoCreatedForRef.current === rootParentId) return
+    autoCreatedForRef.current = rootParentId
+
+    createBlock({ blockType: 'content', content: '', parentId: rootParentId, position: 0 })
+      .then((result) => {
+        // Only apply if we're still on the same page
+        if (useBlockStore.getState().rootParentId !== rootParentId) return
+        useBlockStore.setState({
+          blocks: [
+            {
+              ...result,
+              depth: 0,
+            },
+          ],
+          focusedBlockId: result.id,
+        })
+      })
+      .catch(() => {
+        toast.error(t('blockTree.createFirstBlockFailed'))
+      })
+  }, [loading, blocks.length, rootParentId, t])
+
   // Scan loaded blocks for [[ULID]] tokens not yet in the resolve cache
   // and batch-fetch them.  Pages + tags are already preloaded by App.tsx
   // via useResolveStore.preload(); this effect only handles block-link
@@ -1894,8 +1924,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                 </div>
               )
             })}
-            {blocks.length === 0 && (
-              <EmptyState message="No blocks yet. Click + Add block below to start writing." />
+            {blocks.length === 0 && !loading && (
+              <EmptyState
+                message={rootParentId ? t('blockTree.emptyPage') : t('blockTree.noBlocks')}
+              />
             )}
           </div>
         </SortableContext>

@@ -15,6 +15,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
+import { useBlockStore } from '../../stores/blocks'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -48,12 +49,21 @@ function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
     if (cmd === 'list_property_defs') return defs
     if (cmd === 'set_property') return undefined
     if (cmd === 'delete_property') return undefined
+    if (cmd === 'set_due_date') return { id: 'BLOCK_1', block_type: 'content' }
+    if (cmd === 'set_scheduled_date') return { id: 'BLOCK_1', block_type: 'content' }
     return null
   })
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useBlockStore.setState({
+    blocks: [],
+    rootParentId: null,
+    focusedBlockId: null,
+    loading: false,
+    selectedBlockIds: [],
+  })
 })
 
 describe('BlockPropertyDrawer', () => {
@@ -156,5 +166,183 @@ describe('BlockPropertyDrawer', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // ── H-12: Built-in date fields from block store ───────────────────────
+
+  it('shows due_date from the block store', async () => {
+    useBlockStore.setState({
+      blocks: [
+        {
+          id: 'BLOCK_1',
+          block_type: 'content',
+          content: 'test',
+          parent_id: 'PAGE_1',
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: '2026-06-15',
+          scheduled_date: null,
+          depth: 0,
+        },
+      ],
+    })
+    setupMock()
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByTitle('Due')).toBeInTheDocument()
+    })
+    const dateInput = screen.getByDisplayValue('2026-06-15')
+    expect(dateInput).toBeInTheDocument()
+  })
+
+  it('shows scheduled_date from the block store', async () => {
+    useBlockStore.setState({
+      blocks: [
+        {
+          id: 'BLOCK_1',
+          block_type: 'content',
+          content: 'test',
+          parent_id: 'PAGE_1',
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: '2026-07-01',
+          depth: 0,
+        },
+      ],
+    })
+    setupMock()
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByTitle('Scheduled')).toBeInTheDocument()
+    })
+    const dateInput = screen.getByDisplayValue('2026-07-01')
+    expect(dateInput).toBeInTheDocument()
+  })
+
+  it('does not show "No properties set" when block has built-in dates', async () => {
+    useBlockStore.setState({
+      blocks: [
+        {
+          id: 'BLOCK_1',
+          block_type: 'content',
+          content: 'test',
+          parent_id: 'PAGE_1',
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: '2026-06-15',
+          scheduled_date: null,
+          depth: 0,
+        },
+      ],
+    })
+    setupMock([], [])
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByTitle('Due')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('No properties set')).not.toBeInTheDocument()
+  })
+
+  it('clear due date button calls set_due_date with null', async () => {
+    const user = userEvent.setup()
+    useBlockStore.setState({
+      blocks: [
+        {
+          id: 'BLOCK_1',
+          block_type: 'content',
+          content: 'test',
+          parent_id: 'PAGE_1',
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: '2026-06-15',
+          scheduled_date: null,
+          depth: 0,
+        },
+      ],
+    })
+    setupMock()
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByTitle('Due')).toBeInTheDocument()
+    })
+
+    const clearBtn = screen.getByRole('button', { name: 'Clear due date' })
+    await user.click(clearBtn)
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_due_date', {
+      blockId: 'BLOCK_1',
+      date: null,
+    })
+  })
+
+  it('updates reactively when block store due_date changes', async () => {
+    useBlockStore.setState({
+      blocks: [
+        {
+          id: 'BLOCK_1',
+          block_type: 'content',
+          content: 'test',
+          parent_id: 'PAGE_1',
+          position: 0,
+          deleted_at: null,
+          archived_at: null,
+          is_conflict: false,
+          conflict_type: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+          depth: 0,
+        },
+      ],
+    })
+    setupMock()
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    // Initially no date shown
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
+    })
+    expect(screen.queryByTitle('Due')).not.toBeInTheDocument()
+
+    // Simulate toolbar setting a due date
+    useBlockStore.setState((s) => ({
+      blocks: s.blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, due_date: '2026-08-20' } : b)),
+    }))
+
+    await waitFor(() => {
+      expect(screen.getByTitle('Due')).toBeInTheDocument()
+    })
+    expect(screen.getByDisplayValue('2026-08-20')).toBeInTheDocument()
   })
 })

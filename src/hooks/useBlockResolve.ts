@@ -75,136 +75,158 @@ export function useBlockResolve(): UseBlockResolveReturn {
 
   // ── Picker callbacks ────────────────────────────────────────────────
   const searchTags = useCallback(async (query: string): Promise<PickerItem[]> => {
-    // Strip trailing ] so @tag] resolves to "tag", not "tag]"
-    const q = query.replace(/\]+$/, '').toLowerCase().trim()
+    try {
+      // Strip trailing ] so @tag] resolves to "tag", not "tag]"
+      const q = query.replace(/\]+$/, '').toLowerCase().trim()
 
-    const tags = await listTagsByPrefix({ prefix: q })
-    // Populate the resolve cache so tag_ref nodes can resolve the name
-    // after the block is saved (serialized as #[ULID]) and reloaded.
-    if (tags.length > 0) {
-      useResolveStore
-        .getState()
-        .batchSet(tags.map((t) => ({ id: t.tag_id, title: t.name, deleted: false })))
-    }
-    const result: PickerItem[] = tags.map((tag) => ({
-      id: tag.tag_id,
-      label: tag.name,
-    }))
-
-    // Append a "Create new tag" option when the query doesn't exactly match an existing tag
-    if (q.length > 0) {
-      const exactMatch = tags.some((t) => t.name.toLowerCase() === q)
-      if (!exactMatch) {
-        result.push({ id: '__create__', label: query.replace(/\]+$/, '').trim(), isCreate: true })
+      const tags = await listTagsByPrefix({ prefix: q })
+      // Populate the resolve cache so tag_ref nodes can resolve the name
+      // after the block is saved (serialized as #[ULID]) and reloaded.
+      if (tags.length > 0) {
+        useResolveStore
+          .getState()
+          .batchSet(tags.map((t) => ({ id: t.tag_id, title: t.name, deleted: false })))
       }
+      const result: PickerItem[] = tags.map((tag) => ({
+        id: tag.tag_id,
+        label: tag.name,
+      }))
+
+      // Append a "Create new tag" option when the query doesn't exactly match an existing tag
+      if (q.length > 0) {
+        const exactMatch = tags.some((t) => t.name.toLowerCase() === q)
+        if (!exactMatch) {
+          result.push({ id: '__create__', label: query.replace(/\]+$/, '').trim(), isCreate: true })
+        }
+      }
+      return result
+    } catch {
+      // Never reject — the TipTap Suggestion plugin has no error handling
+      // for async items callbacks.  A rejection silently prevents the popup
+      // from opening (H-10 / H-11).
+      return []
     }
-    return result
   }, [])
 
   const searchPages = useCallback(async (query: string): Promise<PickerItem[]> => {
-    // Strip trailing ]] so [[text]] resolves to "text", not "text]]"
-    const q = query.replace(/\]+$/, '').toLowerCase().trim()
+    try {
+      // Strip trailing ]] so [[text]] resolves to "text", not "text]]"
+      const q = query.replace(/\]+$/, '').toLowerCase().trim()
 
-    // For short/empty queries, use the preloaded pages cache for instant results.
-    // For longer queries, use FTS5 server-side search for relevance-ranked results.
-    let matches: PickerItem[]
+      // For short/empty queries, use the preloaded pages cache for instant results.
+      // For longer queries, use FTS5 server-side search for relevance-ranked results.
+      let matches: PickerItem[]
 
-    if (q.length <= 2) {
-      // Short query — use cache (substring match)
-      let source = pagesListRef.current
-      if (source.length === 0) {
-        const resp = await listBlocks({ blockType: 'page', limit: 500 })
-        source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
-        pagesListRef.current = source
-      }
-      matches = source
-        .filter((p) => !q || p.title.toLowerCase().includes(q))
-        .slice(0, 20)
-        .map((p) => ({ id: p.id, label: p.title }))
-    } else {
-      // Longer query — use FTS5 search, filter to pages
-      const resp = await searchBlocks({ query: q, limit: 20 })
-      matches = resp.items
-        .filter((b) => b.block_type === 'page')
-        .map((b) => ({ id: b.id, label: b.content ?? 'Untitled' }))
-
-      // If FTS returns few results, supplement from cache
-      if (matches.length < 5 && pagesListRef.current.length > 0) {
-        const ftsIds = new Set(matches.map((m) => m.id))
-        const cacheMatches = pagesListRef.current
-          .filter((p) => p.title.toLowerCase().includes(q) && !ftsIds.has(p.id))
-          .slice(0, 10)
-          .map((p) => ({ id: p.id, label: p.title }))
-        matches = [...matches, ...cacheMatches].slice(0, 20)
-      }
-    }
-
-    // Populate resolve cache so page links show titles instead of raw ULIDs
-    if (matches.length > 0) {
-      useResolveStore
-        .getState()
-        .batchSet(
-          matches
-            .filter((m) => !m.isCreate)
-            .map((m) => ({ id: m.id, title: m.label, deleted: false })),
-        )
-    }
-
-    // Try to find a page by alias and prepend it if not already present
-    if (q.length > 0) {
-      try {
-        const aliasMatch = await resolvePageByAlias(q)
-        if (aliasMatch) {
-          const [pageId, title] = aliasMatch
-          if (!matches.some((m) => m.id === pageId)) {
-            matches.unshift({
-              id: pageId,
-              label: `${title ?? 'Untitled'} (alias: ${q})`,
-            })
-          }
+      if (q.length <= 2) {
+        // Short query — use cache (substring match)
+        let source = pagesListRef.current
+        if (source.length === 0) {
+          const resp = await listBlocks({ blockType: 'page', limit: 500 })
+          source = resp.items.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
+          pagesListRef.current = source
         }
-      } catch {
-        // Alias lookup failed — ignore silently
-      }
-    }
+        matches = source
+          .filter((p) => !q || p.title.toLowerCase().includes(q))
+          .slice(0, 20)
+          .map((p) => ({ id: p.id, label: p.title }))
+      } else {
+        // Longer query — use FTS5 search, filter to pages
+        const resp = await searchBlocks({ query: q, limit: 20 })
+        matches = resp.items
+          .filter((b) => b.block_type === 'page')
+          .map((b) => ({ id: b.id, label: b.content ?? 'Untitled' }))
 
-    // Append a "Create new" option when the query doesn't exactly match an existing page
-    if (q.length > 0) {
-      const allSource = pagesListRef.current.length > 0 ? pagesListRef.current : matches
-      const exactMatch = allSource.some(
-        (p) => ('title' in p ? p.title : p.label).toLowerCase() === q,
-      )
-      if (!exactMatch) {
-        matches.push({ id: '__create__', label: query.replace(/\]+$/, '').trim(), isCreate: true })
+        // If FTS returns few results, supplement from cache
+        if (matches.length < 5 && pagesListRef.current.length > 0) {
+          const ftsIds = new Set(matches.map((m) => m.id))
+          const cacheMatches = pagesListRef.current
+            .filter((p) => p.title.toLowerCase().includes(q) && !ftsIds.has(p.id))
+            .slice(0, 10)
+            .map((p) => ({ id: p.id, label: p.title }))
+          matches = [...matches, ...cacheMatches].slice(0, 20)
+        }
       }
+
+      // Populate resolve cache so page links show titles instead of raw ULIDs
+      if (matches.length > 0) {
+        useResolveStore
+          .getState()
+          .batchSet(
+            matches
+              .filter((m) => !m.isCreate)
+              .map((m) => ({ id: m.id, title: m.label, deleted: false })),
+          )
+      }
+
+      // Try to find a page by alias and prepend it if not already present
+      if (q.length > 0) {
+        try {
+          const aliasMatch = await resolvePageByAlias(q)
+          if (aliasMatch) {
+            const [pageId, title] = aliasMatch
+            if (!matches.some((m) => m.id === pageId)) {
+              matches.unshift({
+                id: pageId,
+                label: `${title ?? 'Untitled'} (alias: ${q})`,
+              })
+            }
+          }
+        } catch {
+          // Alias lookup failed — ignore silently
+        }
+      }
+
+      // Append a "Create new" option when the query doesn't exactly match an existing page
+      if (q.length > 0) {
+        const allSource = pagesListRef.current.length > 0 ? pagesListRef.current : matches
+        const exactMatch = allSource.some(
+          (p) => ('title' in p ? p.title : p.label).toLowerCase() === q,
+        )
+        if (!exactMatch) {
+          matches.push({
+            id: '__create__',
+            label: query.replace(/\]+$/, '').trim(),
+            isCreate: true,
+          })
+        }
+      }
+      return matches
+    } catch {
+      // Never reject — the TipTap Suggestion plugin has no error handling
+      // for async items callbacks.  A rejection silently prevents the popup
+      // from opening (H-10 / H-11).
+      return []
     }
-    return matches
   }, [])
 
   const searchBlockRefs = useCallback(async (query: string): Promise<PickerItem[]> => {
-    const q = query.replace(/\)+$/, '').trim()
-    if (q.length < 2) return []
+    try {
+      const q = query.replace(/\)+$/, '').trim()
+      if (q.length < 2) return []
 
-    const resp = await searchBlocks({ query: q, limit: 20 })
-    const results: PickerItem[] = resp.items
-      .filter((b) => b.deleted_at === null)
-      .map((b) => {
-        const content = b.content ?? 'Untitled'
-        const firstLine = content.split('\n')[0] as string
-        const label = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine
-        return { id: b.id, label }
-      })
+      const resp = await searchBlocks({ query: q, limit: 20 })
+      const results: PickerItem[] = resp.items
+        .filter((b) => b.deleted_at === null)
+        .map((b) => {
+          const content = b.content ?? 'Untitled'
+          const firstLine = content.split('\n')[0] as string
+          const label = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine
+          return { id: b.id, label }
+        })
 
-    // Populate resolve cache
-    if (results.length > 0) {
-      useResolveStore.getState().batchSet(
-        results.map((r) => {
-          const block = resp.items.find((b) => b.id === r.id)
-          return { id: r.id, title: block?.content ?? 'Untitled', deleted: false }
-        }),
-      )
+      // Populate resolve cache
+      if (results.length > 0) {
+        useResolveStore.getState().batchSet(
+          results.map((r) => {
+            const block = resp.items.find((b) => b.id === r.id)
+            return { id: r.id, title: block?.content ?? 'Untitled', deleted: false }
+          }),
+        )
+      }
+      return results
+    } catch {
+      return []
     }
-    return results
   }, [])
 
   const onCreatePage = useCallback(async (label: string): Promise<string> => {

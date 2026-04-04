@@ -431,6 +431,10 @@ const resources = {
       'property.deleteConfirm': 'Delete this property?',
       'property.deleteConfirmDesc': 'This will remove the property from the block.',
       'property.createDefFailed': 'Failed to create property definition',
+      'property.dueDate': 'Due',
+      'property.scheduledDate': 'Scheduled',
+      'property.clearDueDate': 'Clear due date',
+      'property.clearScheduledDate': 'Clear scheduled date',
 
       // Properties view
       'sidebar.properties': 'Properties',
@@ -824,6 +828,9 @@ const resources = {
       'blockTree.attachFileFailed': 'Failed to attach file',
       'blockTree.cannotDeleteLastBlock': 'Cannot delete the last block on a page',
       'blockTree.mergeBlocksFailed': 'Failed to merge blocks',
+      'blockTree.noBlocks': 'No blocks yet. Click + Add block below to start writing.',
+      'blockTree.emptyPage': 'Creating first block\u2026',
+      'blockTree.createFirstBlockFailed': 'Failed to create first block',
     },
   },
 }
