@@ -29,6 +29,8 @@ Anytype, faster than Logseq.
 17. [Android Platform](#17-android-platform)
 18. [Sync & Networking](#18-sync--networking)
 19. [Planned Features](#19-planned-features)
+20. [Tauri Command API](#20-tauri-command-api)
+21. [Rust Backend Modules](#21-rust-backend-modules)
 
 ---
 
@@ -398,7 +400,7 @@ heading        := '#'{1,6} ' ' span+              -- # H1 through ###### H6
 code_block     := '```' language? '\n' text '\n' '```'
 blockquote     := ('> ' span+ '\n')+               -- consecutive > lines
 table          := header_row '\n' separator '\n' data_row+
-header_row     := '|' (cell '|')+ 
+header_row     := '|' (cell '|')+
 separator      := '|' ('-'+  '|')+                 -- e.g. |---|---|
 data_row       := '|' (cell '|')+
 cell           := span*
@@ -734,16 +736,61 @@ BlockTree's concerns are decomposed into focused hooks:
 | `useBlockDnD` | DnD state, handlers, and tree-aware depth projection |
 | `useBlockResolve` | ULID → title resolution, tag/page search, page creation |
 | `useBlockProperties` | Property state, TODO/priority cycling |
+| `useBlockTags` | Load/add/remove/create tags for a block |
+| `useBlockKeyboard` | Block-level keyboard handling (Enter, Backspace, Tab, arrow keys, shortcuts) |
+| `useRovingEditor` | TipTap instance management (mount/unmount/serialize) |
 | `useUndoShortcuts` | Global Ctrl+Z / Ctrl+Y (outside editor contentEditable) |
 | `useViewportObserver` | IntersectionObserver for off-screen block placeholders |
-| `useMobile` | Responsive breakpoint detection for mobile layout |
+| `useIsMobile` | Responsive breakpoint detection for mobile layout (\<768px) |
 | `usePaginatedQuery` | Cursor-based pagination with stale response detection and auto-refetch |
 | `usePollingQuery` | Fixed-interval polling with optional refetch-on-focus |
+
+Sync hooks (`useSyncTrigger`, `useSyncEvents`, `useOnlineStatus`) are documented in
+[§18 Frontend sync integration](#18-sync--networking).
 
 `usePaginatedQuery` and `usePollingQuery` replace per-component boilerplate across
 PageBrowser, TrashView, ConflictList, BacklinksPanel, HistoryView, StatusPanel, and
 `useHasConflicts`. The caller stabilises `queryFn` with `useCallback`; when its identity
 changes the hook re-fetches page 1 (paginated) or restarts polling.
+
+### Component inventory (43 domain + 14 shadcn/ui + 1 editor = 58 total)
+
+**Page-level**: PageEditor, PageHeader, PageBrowser, JournalPage (with JournalControls), SearchPanel, TagList, TagFilterPanel, TrashView, ConflictList, HistoryView, StatusPanel, PropertiesView
+
+**Block rendering**: BlockTree, SortableBlock, EditableBlock, StaticBlock, FormattingToolbar, BlockContextMenu
+
+**References**: LinkedReferences, UnlinkedReferences, BacklinkFilterBuilder, SourcePageFilter, LinkEditPopover, QueryResult
+
+**Properties**: PagePropertyTable, DiffDisplay, PropertyChip, BlockPropertyDrawer
+
+**Agenda**: AgendaResults, AgendaFilterBuilder (with AgendaSortGroupControls), DonePanel, DuePanel
+
+**History**: HistoryPanel, HistorySheet
+
+**Sync**: DeviceManagement, PairingDialog, QrScanner, UnpairConfirmDialog
+
+**Shell/UI**: BootGate, ErrorBoundary, KeyboardShortcuts, RenameDialog, EmptyState
+
+**Editor**: SuggestionList
+
+**shadcn/ui**: alert-dialog, badge, button, calendar, card, input, popover, scroll-area, separator, sheet, sidebar, skeleton, sonner, tooltip
+
+### Utility modules (src/lib/)
+
+- `tauri.ts` — Hand-written wrappers with object-style APIs for all 60 commands
+- `bindings.ts` — Auto-generated from Rust types via specta
+- `tauri-mock.ts` — In-memory backend mock (activates when Tauri absent)
+- `tree-utils.ts` — Flat tree manipulation (depth, descendants, DnD projection)
+- `announcer.ts` — Screen reader announcements (aria-live)
+- `format.ts` — Formatting utilities
+- `parse-date.ts` — Date parsing helpers
+- `open-url.ts` — URL opening utilities
+- `i18n.ts` — i18next setup (scaffolded, not fully implemented)
+- `utils.ts` — cn() classname utility (clsx + tailwind-merge)
+- `agenda-sort.ts` — Agenda sorting/grouping (sortAgendaBlocks, groupByDate/priority/state)
+- `export-graph.ts` — Export all pages as ZIP of markdown files
+- `repeat-utils.ts` — Repeat/recurrence formatting (formatRepeatLabel)
+- `template-utils.ts` — Journal template loading (loadJournalTemplate, insertTemplateBlocks)
 
 ---
 
@@ -1292,3 +1339,119 @@ See [REVIEW-LATER.md](REVIEW-LATER.md) for full details on all planned items.
 
 All completed features use existing schema, op types, and materializer infrastructure. No
 architectural changes were required.
+
+---
+
+## 20. Tauri Command API
+
+55 core + 5 sync = 60 total commands. Each has an `inner_*` function taking `&SqlitePool` for
+testability. All use cursor-based pagination where applicable.
+
+### Block Operations (9)
+
+| Command | Purpose |
+|---------|---------|
+| `create_block` | Create block (content/tag/page). Max content: 256KB. Max depth: 20. |
+| `edit_block` | Edit content. IMMEDIATE tx for TOCTOU safety. prev_edit for conflict detection. |
+| `delete_block` | Soft-delete + cascade descendants via recursive CTE. |
+| `restore_block` | Un-delete with deleted_at_ref as optimistic concurrency guard. |
+| `purge_block` | Physical delete + all related rows. Non-reversible. Deferred FK checks. |
+| `move_block` | Reparent. Cycle detection via ancestor-walking CTE. Depth validation. |
+| `list_blocks` | Paginated list with exclusive filters (parent, type, tag, deleted, agenda). |
+| `get_block` | Fetch single block including soft-deleted. |
+| `batch_resolve` | Batch metadata lookup via json_each(). Silent omit for missing. |
+
+### Tag Operations (4)
+
+| Command | Purpose |
+|---------|---------|
+| `add_tag` | Associate tag with block. Validates tag type and no duplicate. |
+| `remove_tag` | Dissociate tag. |
+| `list_tags_by_prefix` | Case-insensitive prefix search on tags_cache. |
+| `list_tags_for_block` | Get all tag IDs for a block. |
+
+### Query Operations (8)
+
+| Command | Purpose |
+|---------|---------|
+| `search_blocks` | FTS5 full-text search with cursor pagination. |
+| `query_by_tags` | Boolean tag query (AND/OR). TagExpr from IDs + prefixes. |
+| `query_by_property` | Filter blocks by property key/value. |
+| `query_backlinks_filtered` | Advanced backlink query with 17 filter types + sort. |
+| `list_backlinks_grouped` | Backlinks grouped by source page. |
+| `list_unlinked_references` | Blocks mentioning a page but not linked. |
+| `get_backlinks` | Simple backlink list. |
+| `list_projected_agenda` | Compute virtual future occurrences for repeating tasks within a date range. |
+
+### Property Operations (9)
+
+| Command | Purpose |
+|---------|---------|
+| `set_property` | Upsert property. Key format: alphanum + hyphens/underscores, 1-64 chars. |
+| `delete_property` | Remove property by key. |
+| `get_properties` | Fetch all properties for a block. |
+| `get_batch_properties` | Batch fetch for multiple blocks via json_each(). |
+| `list_property_keys` | List all distinct property keys in use. |
+| `create_property_def` | Create schema definition (text/number/date/select). |
+| `list_property_defs` | List all property definitions. |
+| `update_property_def_options` | Update select-type options. |
+| `delete_property_def` | Delete property definition. |
+
+### Fixed-Column Properties (4)
+
+| Command | Purpose |
+|---------|---------|
+| `set_todo_state` | Set todo state (null/TODO/DOING/DONE). Recurrence support on done transition: creates sibling with shifted dates, sets `repeat-origin` ref to original block. |
+| `set_priority` | Set priority (null/1/2/3). |
+| `set_due_date` | Set due date (YYYY-MM-DD or null). |
+| `set_scheduled_date` | Set scheduled date (YYYY-MM-DD or null). |
+
+### History & Undo/Redo (6)
+
+| Command | Purpose |
+|---------|---------|
+| `get_block_history` | List op_log entries for a block. |
+| `list_page_history` | Ops affecting page + descendants. Optional op_type filter. |
+| `undo_page_op` | Undo N-th most recent op. Computes reverse, appends, applies. |
+| `redo_page_op` | Redo previously undone op. |
+| `revert_ops` | Batch revert multiple ops. |
+| `compute_edit_diff` | Word-level diff (word_diff.rs) for edit_block ops. |
+
+### Sync & Pairing (5 + 6 peer management)
+
+| Command | Purpose |
+|---------|---------|
+| `start_pairing` | Generate passphrase + QR SVG, store session. |
+| `confirm_pairing` | Validate passphrase, store peer_ref + cert_hash. |
+| `cancel_pairing` | Clear pairing session. |
+| `start_sync` | Trigger sync via daemon. Checks backoff, acquires peer lock. |
+| `cancel_sync` | Set cancel flag (checked in message loop). |
+| `get_device_id` | Return persistent device UUID. |
+| `list_peer_refs` | List all paired peers. |
+| `get_peer_ref` | Fetch single peer. |
+| `delete_peer_ref` | Unpair a peer. |
+| `update_peer_name` | Set human-readable peer name. |
+| `set_peer_address` | Set manual sync address for a peer. |
+
+### Batch, Export & System (9)
+
+| Command | Purpose |
+|---------|---------|
+| `count_agenda_batch` | Count agenda items per date (batch). |
+| `count_backlinks_batch` | Count backlinks per page (batch). |
+| `set_page_aliases` | Replace page's aliases. |
+| `get_page_aliases` | List aliases for a page. |
+| `resolve_page_by_alias` | Look up page by alias (case-insensitive). |
+| `export_page_markdown` | Export as Markdown with resolved `#[ULID]` and `[[ULID]]` + YAML frontmatter. |
+| `get_status` | Materializer queue metrics. |
+| `get_conflicts` | List conflict-copy blocks. |
+| `import_markdown` | Import Logseq/Markdown file as page + blocks. |
+
+---
+
+## 21. Rust Backend Modules (31)
+
+backlink_query, cache, commands, dag, db, device, draft, error, fts, hash, import, materializer,
+merge, op, op_log, pagination, pairing, peer_refs, recovery, reverse, snapshot, soft_delete,
+sync_cert, sync_daemon, sync_events, sync_net, sync_protocol, sync_scheduler, tag_query, ulid,
+word_diff

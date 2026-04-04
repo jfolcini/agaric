@@ -1,6 +1,6 @@
-# Agaric (Agaric)
+# Agaric
 
-A local-first, block-based note-taking app for **Linux**, **Windows**, **macOS**, and **Android**. Inspired by Org-mode and Logseq — journal-first, with powerful tagging and emergent structure. No cloud, no accounts. Your data lives on your machine.
+A local-first, block-based note-taking app for **Linux** (primary), **Windows**, **macOS**, and **Android**. Inspired by Org-mode and Logseq — journal-first, with powerful tagging and emergent structure. No cloud, no accounts. Your data lives on your machine, syncs over local WiFi.
 
 ## What is it?
 
@@ -8,7 +8,7 @@ Agaric treats everything as a **block** — paragraphs, headings, code snippets,
 
 Think Logseq or Notion, but:
 - **Local-first** — SQLite database on your filesystem, no server required
-- **Offline-first** — works without internet, syncs over local WiFi (planned)
+- **Offline-first** — works without internet, syncs peer-to-peer over local WiFi
 - **Fast** — Rust backend, instant search via FTS5, sub-millisecond operations
 - **Private** — no telemetry, no cloud, filesystem-level encryption
 
@@ -16,15 +16,15 @@ Think Logseq or Notion, but:
 
 ### Blocks and Pages
 
-Everything is a block. A **page** is just a special block type that acts as a container. Blocks nest via parent-child relationships with drag-and-drop reordering.
+Everything is a block. A **page** is just a special block type that acts as a container. Blocks nest via parent-child relationships with drag-and-drop reordering. Pages support namespaced titles (`work/meetings/standup`) with breadcrumb navigation.
 
 ### Journal
 
 The default view is a **daily journal** — one page per day, created automatically. Four viewing modes:
 - **Day** — single day with full editing
-- **Week** — Mon–Sun overview, click any day heading to jump to its daily view
-- **Month** — all days in the month, stacked
-- **Agenda** — task panels grouped by TODO / DOING / DONE status
+- **Week** — Mon-Sun overview, click any day heading to jump to its daily view
+- **Month** — calendar grid with content indicators; click a day to switch to daily view
+- **Agenda** — tasks grouped by date (Overdue / Today / Tomorrow / future) with sort and group controls
 
 ### Tags and Links
 
@@ -34,19 +34,37 @@ The default view is a **daily journal** — one page per day, created automatica
 
 ### Properties
 
-Blocks can have typed properties (text, number, date, reference). A built-in **priority** property shows color-coded badges. Properties are queryable — the agenda view uses them to find tasks.
+Blocks can have typed properties (text, number, date, select, reference). A built-in **priority** property shows color-coded badges. Properties panel for inline editing. Properties are queryable — the agenda view uses them to find and filter tasks across five dimensions (status, priority, due date, scheduled date, tag).
 
 ### Editor
 
 WYSIWYG editing powered by TipTap. A single roving editor instance mounts into whichever block you click — all other blocks render as static text. Supports:
-- Markdown bold (`**`), italic (`*`), inline code (`` ` ``), headings, code blocks
+- Markdown bold (`**`), italic (`*`), inline code (`` ` ``), headings, code blocks, tables
 - Tag picker (`#` in editor) and block link picker (`[[`)
-- Task cycling (`Ctrl+Enter`: TODO → DOING → DONE → none)
+- Task cycling (`Ctrl+Enter`: TODO -> DOING -> DONE -> none), custom task keywords
 - Indent/dedent (`Tab` / `Shift+Tab`)
+- Templates with dynamic variables (via `/template` slash command)
+- Inline queries (`{{query ...}}` syntax)
+- Multi-selection with batch operations (Ctrl+Click / Shift+Click)
 
-### Sync (Planned)
+### Sync
 
-Append-only operation log with CRDT-style conflict resolution. Designed for peer-to-peer sync over local WiFi — no cloud server needed.
+Peer-to-peer sync over local WiFi — no cloud server needed. Append-only operation log with three-way merge conflict resolution.
+
+- **Discovery** — mDNS automatic peer discovery on the local network
+- **Pairing** — QR code or 4-word passphrase, per-session ephemeral keys
+- **Transport** — TLS WebSocket with self-signed ECDSA certificates, certificate pinning
+- **Merge** — three-way text merge via `diffy`, LWW for properties and moves, conflict copies for overlapping edits
+- **Conflicts view** — review and resolve merge conflicts inline
+- **Auto-sync** — background daemon with change-triggered and periodic sync, exponential backoff on failure
+
+### More Features
+
+- **History view** — browse the operation log for any block
+- **Status panel** — materializer queue stats, FTS health, sync state
+- **Attachments** — attach files to any block
+- **Import / Export** — Logseq/Markdown import, data export
+- **Trash** — soft delete with 30-day auto-purge, restore at any time
 
 ## Tech Stack
 
@@ -55,14 +73,14 @@ Append-only operation log with CRDT-style conflict resolution. Designed for peer
 | Desktop shell | [Tauri 2](https://v2.tauri.app/) |
 | Frontend | React 18 + Vite + TipTap + Tailwind CSS 4 |
 | Backend | Rust + SQLite (via sqlx) |
-| Database | SQLite in WAL mode, 13 tables + FTS5 |
+| Database | SQLite in WAL mode, 14 tables + 1 FTS5 virtual table, 19 indexes |
 | State | Zustand stores |
 | Linting | Biome (no ESLint/Prettier) |
 | Testing | Vitest + vitest-axe + fast-check (frontend), cargo-nextest + insta (backend) |
 
 ## Development
 
-See **[BUILD.md](BUILD.md)** for the complete build guide — prerequisites, platform-specific setup, Android signing, CI pipeline, and troubleshooting.
+See **[BUILD.md](BUILD.md)** for the complete build guide — prerequisites, platform-specific setup, Android signing, CI pipeline, and troubleshooting. See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the architecture deep-dive.
 
 ### Quick Start
 
@@ -74,8 +92,8 @@ cargo tauri dev              # Launch app with hot reload
 ### Testing
 
 ```bash
-npm test                     # Frontend tests (2063 tests, Vitest)
-cd src-tauri && cargo nextest run   # Rust tests (~1300 tests)
+npm test                     # Frontend tests (~3200+ tests, Vitest)
+cd src-tauri && cargo nextest run   # Rust tests (~850+ tests)
 npx playwright test          # E2E tests (Playwright + Chromium)
 ```
 
@@ -99,21 +117,25 @@ Both debug and release APKs build and run successfully. Release APKs are 24 MB (
 ### Project Structure
 
 ```
-├── src/                    # React frontend
-│   ├── components/         # UI components (JournalPage, BlockTree, etc.)
-│   ├── editor/             # TipTap editor setup and extensions
-│   ├── stores/             # Zustand state stores
-│   ├── lib/                # Tauri API wrappers and bindings
-│   └── index.css           # Tailwind theme (Agaric color scheme)
-├── src-tauri/              # Rust backend
-│   ├── src/                # Commands, database, materializer, sync
-│   ├── migrations/         # SQLite migrations (auto-run on startup)
-│   ├── icons/              # App icons (all platforms)
-│   └── tauri.conf.json     # Tauri configuration
-├── public/                 # Static assets (agaric.svg icon)
-├── BUILD.md                # Complete build guide
-├── AGENTS.md               # Developer conventions
-└── ARCHITECTURE.md         # Architecture deep-dive
+src/                         # React frontend
+  components/                #   UI components (JournalPage, BlockTree, etc.)
+  editor/                    #   TipTap editor setup and extensions
+  stores/                    #   Zustand state stores
+  hooks/                     #   Custom React hooks (sync, online status, etc.)
+  lib/                       #   Tauri API wrappers and bindings
+  index.css                  #   Tailwind theme (Agaric color scheme)
+src-tauri/                   # Rust backend
+  src/                       #   Commands, database, materializer, sync, merge
+  migrations/                #   SQLite migrations (auto-run on startup)
+  tests/                     #   Integration tests
+  benches/                   #   Benchmarks
+  icons/                     #   App icons (all platforms)
+  tauri.conf.json            #   Tauri configuration
+e2e/                         # Playwright E2E tests
+public/                      # Static assets (agaric.svg icon)
+BUILD.md                     # Complete build guide
+AGENTS.md                    # Developer conventions
+ARCHITECTURE.md              # Architecture deep-dive
 ```
 
 ## Database

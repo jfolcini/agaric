@@ -109,7 +109,7 @@ repo = "local"
 [[repos.hooks]]
 id = "cargo-clippy"
 name = "cargo clippy"
-entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo clippy -- -D warnings -A dead_code'"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo clippy -- -D warnings'"
 language = "system"
 pass_filenames = false
 types = ["rust"]
