@@ -9,9 +9,9 @@
  * Props: open (boolean), onOpenChange (callback), triggerRef (optional).
  */
 
-import { Loader2, Smartphone, X } from 'lucide-react'
+import { Camera, Loader2, Smartphone, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -29,6 +29,11 @@ import {
 } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
 import { UnpairConfirmDialog } from './UnpairConfirmDialog'
+
+// Lazy-load QrScanner to avoid bundling html5-qrcode on desktop
+const LazyQrScanner = lazy(() =>
+  import('./QrScanner').then((m) => ({ default: m.QrScanner })),
+)
 
 interface PairingDialogProps {
   open: boolean
@@ -55,6 +60,7 @@ export function PairingDialog({
   const [error, setError] = useState<string | null>(null)
   const [unpairPeerId, setUnpairPeerId] = useState<string | null>(null)
   const [countdown, setCountdown] = useState<number | null>(null)
+  const [entryMode, setEntryMode] = useState<'manual' | 'scan'>('manual')
 
   const dialogRef = useRef<HTMLDivElement>(null)
   const retryBtnRef = useRef<HTMLButtonElement>(null)
@@ -210,6 +216,31 @@ export function PairingDialog({
     [handlePair, getWordInputs],
   )
 
+  // Handle QR scan result: parse passphrase and auto-fill word inputs
+  const handleQrScan = useCallback((data: string) => {
+    // QR data may be JSON with a passphrase field or a plain passphrase string
+    let passphrase = data
+    try {
+      const obj = JSON.parse(data)
+      if (obj && typeof obj.passphrase === 'string') {
+        passphrase = obj.passphrase
+      }
+    } catch {
+      // Not JSON — use raw text as passphrase
+    }
+
+    const parts = passphrase.trim().toLowerCase().split(/\s+/)
+    const newWords: [string, string, string, string] = [
+      parts[0] ?? '',
+      parts[1] ?? '',
+      parts[2] ?? '',
+      parts[3] ?? '',
+    ]
+    setWords(newWords)
+    setEntryMode('manual') // Switch back so user can verify before confirming
+    toast.success('QR code scanned — verify and tap Pair')
+  }, [])
+
   const handleCancel = useCallback(async () => {
     try {
       await cancelPairing()
@@ -220,6 +251,7 @@ export function PairingDialog({
     setWords(['', '', '', ''])
     setError(null)
     setCountdown(null)
+    setEntryMode('manual')
     onOpenChange(false)
     // #288: Return focus to trigger element
     triggerRef?.current?.focus()
@@ -407,25 +439,66 @@ export function PairingDialog({
             <div className="relative my-4">
               <Separator />
               <span className="pairing-separator absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-background px-2 text-xs text-muted-foreground">
-                OR enter passphrase
+                OR
               </span>
             </div>
 
-            {/* Word inputs — #295: responsive grid */}
-            <div className="pairing-word-inputs grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-              {(['first', 'second', 'third', 'fourth'] as const).map((slot, i) => (
-                <Input
-                  key={slot}
-                  value={words[i]}
-                  onChange={(e) => handleWordChange(i, e.target.value)}
-                  onKeyDown={(e) => handleWordKeyDown(i, e)}
-                  placeholder={`${['1st', '2nd', '3rd', '4th'][i]} word`}
-                  aria-label={`Passphrase word ${i + 1}`}
-                  className="text-center [@media(pointer:coarse)]:min-h-[44px]"
-                  disabled={pairLoading || isExpired}
-                />
-              ))}
+            {/* Entry mode toggle: manual passphrase vs QR scan */}
+            <div className="pairing-entry-toggle flex gap-2 mb-4 justify-center">
+              <Button
+                variant={entryMode === 'manual' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setEntryMode('manual')}
+                className="[@media(pointer:coarse)]:min-h-[44px]"
+              >
+                Type Passphrase
+              </Button>
+              <Button
+                variant={entryMode === 'scan' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setEntryMode('scan')}
+                className="[@media(pointer:coarse)]:min-h-[44px]"
+              >
+                <Camera className="h-4 w-4 mr-1" />
+                Scan QR Code
+              </Button>
             </div>
+
+            {/* Conditional: manual word inputs or QR scanner */}
+            {entryMode === 'manual' ? (
+              <div className="pairing-word-inputs grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+                {(['first', 'second', 'third', 'fourth'] as const).map((slot, i) => (
+                  <Input
+                    key={slot}
+                    value={words[i]}
+                    onChange={(e) => handleWordChange(i, e.target.value)}
+                    onKeyDown={(e) => handleWordKeyDown(i, e)}
+                    placeholder={`${['1st', '2nd', '3rd', '4th'][i]} word`}
+                    aria-label={`Passphrase word ${i + 1}`}
+                    className="text-center [@media(pointer:coarse)]:min-h-[44px]"
+                    disabled={pairLoading || isExpired}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="pairing-qr-scanner mb-4">
+                <Suspense
+                  fallback={
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      <span className="ml-2 text-sm text-muted-foreground">
+                        Loading scanner...
+                      </span>
+                    </div>
+                  }
+                >
+                  <LazyQrScanner
+                    onScan={handleQrScan}
+                    onError={(err) => setError(`Camera error: ${err}`)}
+                  />
+                </Suspense>
+              </div>
+            )}
 
             {/* Action buttons */}
             <div className="flex justify-between gap-2 mb-4">

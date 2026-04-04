@@ -80,6 +80,23 @@ jobs:
         working-directory: src-tauri
         run: cargo sqlx prepare --check
 
+      - name: npm audit (security)
+        run: npx better-npm-audit audit
+
+      - name: License check (npm)
+        run: npx license-checker --onlyAllow 'MIT;ISC;Apache-2.0;BSD-3-Clause;BSD-2-Clause;MPL-2.0;MIT-0;CC0-1.0;Python-2.0;BlueOak-1.0.0;CC-BY-3.0;CC-BY-4.0;0BSD' --excludePackages 'agaric@0.1.0' --production
+
+      - name: Depcheck (unused npm deps)
+        run: npx depcheck --ignores='tailwindcss,@vitest/coverage-v8,better-npm-audit,depcheck,license-checker'
+
+      - name: Cargo deny (advisories + licenses)
+        working-directory: src-tauri
+        run: cargo deny check
+
+      - name: Cargo machete (unused Rust deps)
+        working-directory: src-tauri
+        run: cargo machete
+
   # ---------------------------------------------------------------------------
   # Desktop build matrix — Linux (.deb, .AppImage), Windows (.msi, .nsis),
   # macOS (.dmg, .app). Ensures the app compiles and bundles on all platforms.

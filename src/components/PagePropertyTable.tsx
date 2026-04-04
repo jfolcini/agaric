@@ -7,7 +7,7 @@
  * creating new definitions.
  */
 
-import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Pencil, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -33,6 +33,7 @@ import {
   getProperties,
   listPropertyDefs,
   setProperty,
+  updatePropertyDefOptions,
 } from '../lib/tauri'
 
 interface PagePropertyTableProps {
@@ -200,6 +201,11 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
                   def={def}
                   onSave={(rawValue) => handleSaveProperty(prop.key, def, rawValue)}
                   onDelete={() => setDeleteTarget(prop.key)}
+                  onDefUpdated={(updatedDef) => {
+                    setDefinitions((prev) =>
+                      prev.map((d) => (d.key === updatedDef.key ? updatedDef : d)),
+                    )
+                  }}
                 />
               )
             })}
@@ -313,9 +319,10 @@ interface PropertyRowEditorProps {
   def: PropertyDefinition | undefined
   onSave: (rawValue: string) => void
   onDelete: () => void
+  onDefUpdated?: (updatedDef: PropertyDefinition) => void
 }
 
-function PropertyRowEditor({ prop, def, onSave, onDelete }: PropertyRowEditorProps) {
+function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: PropertyRowEditorProps) {
   const valueType = def?.value_type ?? 'text'
 
   const currentValue = (() => {
@@ -347,9 +354,6 @@ function PropertyRowEditor({ prop, def, onSave, onDelete }: PropertyRowEditorPro
     [onSave],
   )
 
-  // TODO: PR-16 — Allow editing select property options via updatePropertyDefOptions.
-  // After a select property's options are created, users should be able to modify them
-  // (e.g., an "Edit options" button that opens a popover with an editable options list).
   const selectOptions: string[] = (() => {
     if (valueType !== 'select' || !def?.options) return []
     try {
@@ -359,6 +363,39 @@ function PropertyRowEditor({ prop, def, onSave, onDelete }: PropertyRowEditorPro
       return []
     }
   })()
+
+  // --- Edit select options popover state ---
+  const [editOptionsOpen, setEditOptionsOpen] = useState(false)
+  const [editingOptions, setEditingOptions] = useState<string[]>([])
+  const [newOptionInput, setNewOptionInput] = useState('')
+
+  const handleOpenEditOptions = useCallback(() => {
+    setEditingOptions([...selectOptions])
+    setNewOptionInput('')
+    setEditOptionsOpen(true)
+  }, [selectOptions])
+
+  const handleRemoveOption = useCallback((opt: string) => {
+    setEditingOptions((prev) => prev.filter((o) => o !== opt))
+  }, [])
+
+  const handleAddOption = useCallback(() => {
+    const trimmed = newOptionInput.trim()
+    if (!trimmed) return
+    setEditingOptions((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]))
+    setNewOptionInput('')
+  }, [newOptionInput])
+
+  const handleSaveOptions = useCallback(async () => {
+    if (!def) return
+    try {
+      const updatedDef = await updatePropertyDefOptions(def.key, JSON.stringify(editingOptions))
+      onDefUpdated?.(updatedDef)
+      setEditOptionsOpen(false)
+    } catch {
+      toast.error('Failed to update options')
+    }
+  }, [def, editingOptions, onDefUpdated])
 
   return (
     <div className="property-row flex items-center gap-2 text-sm">
@@ -391,6 +428,59 @@ function PropertyRowEditor({ prop, def, onSave, onDelete }: PropertyRowEditorPro
           />
         )}
       </div>
+      {valueType === 'select' && (
+        <Popover open={editOptionsOpen} onOpenChange={setEditOptionsOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="shrink-0 text-muted-foreground"
+              onClick={handleOpenEditOptions}
+              aria-label={`Edit options for ${prop.key}`}
+            >
+              <Pencil className="h-3 w-3" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-56 space-y-2 p-3" aria-label={`Edit options for ${prop.key}`}>
+            <div className="max-h-32 space-y-1 overflow-y-auto">
+              {editingOptions.map((opt) => (
+                <div key={opt} className="flex items-center justify-between gap-1 rounded px-1 py-0.5 text-sm hover:bg-accent">
+                  <span className="truncate">{opt}</span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                    onClick={() => handleRemoveOption(opt)}
+                    aria-label={`Remove option ${opt}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-1">
+              <Input
+                className="h-7 flex-1 text-xs"
+                placeholder="New option..."
+                value={newOptionInput}
+                onChange={(e) => setNewOptionInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    handleAddOption()
+                  }
+                }}
+                aria-label="New option value"
+              />
+              <Button variant="ghost" size="xs" onClick={handleAddOption} aria-label="Add option">
+                <Plus className="h-3 w-3" />
+              </Button>
+            </div>
+            <Button size="sm" className="w-full" onClick={handleSaveOptions}>
+              Save options
+            </Button>
+          </PopoverContent>
+        </Popover>
+      )}
       <Button
         variant="ghost"
         size="icon-xs"

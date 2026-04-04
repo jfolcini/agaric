@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 
-// Placeholder QR scanner component.
-// Full implementation requires html5-qrcode integration + camera permissions.
-// See docs/SYNC-PLATFORM-NOTES.md #220 for implementation plan.
+// QR scanner component — production-ready implementation.
+// Uses html5-qrcode for camera access and QR code detection.
+// See docs/SYNC-PLATFORM-NOTES.md #220 for original implementation plan.
 
 interface QrScannerProps {
   onScan: (data: string) => void

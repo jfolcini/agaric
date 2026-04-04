@@ -544,7 +544,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       { id: 'repeat', label: 'REPEAT — Set recurrence (daily/weekly/monthly/+Nd)' },
       { id: 'template', label: 'TEMPLATE — Insert block template' },
       { id: 'quote', label: 'QUOTE — Insert blockquote' },
-      { id: 'table', label: 'TABLE — Insert table' },
+      { id: 'table', label: 'TABLE — Insert table (e.g. /table 4x6)' },
       { id: 'query', label: 'QUERY — Insert embedded query block' },
     ],
     [],
@@ -652,7 +652,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       const effortResults = EFFORT_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       const assigneeResults = ASSIGNEE_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       const locationResults = LOCATION_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-      return [
+
+      // Detect /table NxM pattern — inject a parameterized table item
+      const tableMatch = q.match(/^table\s+(\d+)\s*x\s*(\d+)$/i)
+      let results = [
         ...baseResults,
         ...priorityResults,
         ...headingResults,
@@ -662,6 +665,17 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         ...assigneeResults,
         ...locationResults,
       ]
+      if (tableMatch) {
+        const rows = Number.parseInt(tableMatch[1], 10)
+        const cols = Number.parseInt(tableMatch[2], 10)
+        // Replace the default table item with the parameterized one
+        results = results.filter((r) => r.id !== 'table')
+        results.unshift({
+          id: `table:${rows}:${cols}`,
+          label: `TABLE ${rows}\u00d7${cols} — Insert ${rows}\u00d7${cols} table`,
+        })
+      }
+      return results
     },
     [
       SLASH_COMMANDS,
@@ -965,11 +979,18 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         return
       }
 
-      if (item.id === 'table') {
+      if (item.id === 'table' || item.id.startsWith('table:')) {
+        let rows = 3
+        let cols = 3
+        const dimMatch = item.id.match(/^table:(\d+):(\d+)$/)
+        if (dimMatch) {
+          rows = Number.parseInt(dimMatch[1], 10)
+          cols = Number.parseInt(dimMatch[2], 10)
+        }
         rovingEditor.editor
           ?.chain()
           .focus()
-          .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+          .insertTable({ rows, cols, withHeaderRow: true })
           .run()
         return
       }

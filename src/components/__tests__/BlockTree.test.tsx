@@ -30,6 +30,7 @@ let capturedOnSlashCommand: ((item: PickerItem) => void) | undefined
 // Mock editor that tracks chain calls for slash command handler tests
 const mockInsertContent = vi.fn()
 const mockToggleCodeBlock = vi.fn()
+const mockInsertTable = vi.fn()
 const mockRun = vi.fn()
 const mockChain = {
   focus: vi.fn(() => mockChain),
@@ -39,6 +40,10 @@ const mockChain = {
   }),
   toggleCodeBlock: vi.fn(() => {
     mockToggleCodeBlock()
+    return mockChain
+  }),
+  insertTable: vi.fn((opts: { rows: number; cols: number; withHeaderRow: boolean }) => {
+    mockInsertTable(opts)
     return mockChain
   }),
   run: mockRun,
@@ -1486,6 +1491,112 @@ describe('BlockTree slash command wiring', () => {
     const results = await capturedSearchSlashCommands?.('query')
 
     expect(results?.some((r) => r.id === 'query')).toBe(true)
+  })
+
+  it('searchSlashCommands returns parameterized table item for "table 4x6" query', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('table 4x6')
+
+    expect(results?.some((r) => r.id === 'table:4:6')).toBe(true)
+    // The default 'table' item should be replaced
+    expect(results?.some((r) => r.id === 'table')).toBe(false)
+    // The parameterized item should be first
+    expect(results?.[0].id).toBe('table:4:6')
+    expect(results?.[0].label).toContain('4\u00d76')
+  })
+
+  it('searchSlashCommands returns default table for "table" query without dimensions', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('table')
+
+    expect(results?.some((r) => r.id === 'table')).toBe(true)
+    // No parameterized item
+    expect(results?.every((r) => !r.id.startsWith('table:'))).toBe(true)
+  })
+
+  it('searchSlashCommands handles "table 2x2" with small dimensions', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('table 2x2')
+
+    expect(results?.[0].id).toBe('table:2:2')
+  })
+
+  it('onSlashCommand for /table with no dimensions inserts 3x3 table', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+    useMockEditor = true
+
+    render(<BlockTree />)
+
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'table', label: 'TABLE — Insert table (e.g. /table 4x6)' })
+    })
+
+    expect(mockInsertTable).toHaveBeenCalledWith({ rows: 3, cols: 3, withHeaderRow: true })
+  })
+
+  it('onSlashCommand for /table 4x6 inserts 4x6 table', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+    useMockEditor = true
+
+    render(<BlockTree />)
+
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'table:4:6', label: 'TABLE 4\u00d76 — Insert 4\u00d76 table' })
+    })
+
+    expect(mockInsertTable).toHaveBeenCalledWith({ rows: 4, cols: 6, withHeaderRow: true })
+  })
+
+  it('onSlashCommand for /table 10x2 inserts 10x2 table', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+    useMockEditor = true
+
+    render(<BlockTree />)
+
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'table:10:2', label: 'TABLE 10\u00d72 — Insert 10\u00d72 table' })
+    })
+
+    expect(mockInsertTable).toHaveBeenCalledWith({ rows: 10, cols: 2, withHeaderRow: true })
   })
 })
 

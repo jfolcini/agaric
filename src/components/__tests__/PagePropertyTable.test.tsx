@@ -22,6 +22,7 @@ const mockedInvoke = vi.mocked(invoke)
 vi.mock('lucide-react', () => ({
   ChevronDown: () => <svg data-testid="chevron-down" />,
   ChevronRight: () => <svg data-testid="chevron-right" />,
+  Pencil: () => <svg data-testid="pencil-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
   X: () => <svg data-testid="x-icon" />,
 }))
@@ -66,6 +67,10 @@ function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
     if (cmd === 'delete_property') return undefined
     if (cmd === 'create_property_def') {
       return makeDef(args?.key ?? 'new', args?.valueType ?? 'text')
+    }
+    if (cmd === 'update_property_def_options') {
+      const d = defs.find((def) => def.key === args?.key)
+      return { ...d, key: args?.key, options: args?.options }
     }
     // PageHeader also calls these in integration
     if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
@@ -613,5 +618,161 @@ describe('PagePropertyTable validation and confirmation', () => {
       expect(screen.queryByText(/Delete this property\?/i)).not.toBeInTheDocument()
     })
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_property', expect.anything())
+  })
+})
+
+describe('PagePropertyTable edit select options', () => {
+  it('shows edit options (pencil) button for select properties', async () => {
+    const user = userEvent.setup()
+    setupMock(
+      [makeProp('stage', { value_text: 'TODO' })],
+      [makeDef('stage', 'select', '["TODO","DOING","DONE"]')],
+    )
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
+    })
+  })
+
+  it('does not show edit options button for non-select properties', async () => {
+    const user = userEvent.setup()
+    setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('author value')).toBeInTheDocument()
+    })
+    expect(screen.queryByLabelText(/Edit options for/)).not.toBeInTheDocument()
+  })
+
+  it('opens popover with current options listed', async () => {
+    const user = userEvent.setup()
+    setupMock(
+      [makeProp('stage', { value_text: 'TODO' })],
+      [makeDef('stage', 'select', '["TODO","DOING","DONE"]')],
+    )
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByLabelText('Edit options for stage'))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('New option value')).toBeInTheDocument()
+      // All three options should be listed in the popover
+      expect(screen.getByLabelText('Remove option TODO')).toBeInTheDocument()
+      expect(screen.getByLabelText('Remove option DOING')).toBeInTheDocument()
+      expect(screen.getByLabelText('Remove option DONE')).toBeInTheDocument()
+    })
+  })
+
+  it('can add a new option and save', async () => {
+    const user = userEvent.setup()
+    setupMock(
+      [makeProp('stage', { value_text: 'TODO' })],
+      [makeDef('stage', 'select', '["TODO","DOING"]')],
+    )
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByLabelText('Edit options for stage'))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('New option value')).toBeInTheDocument()
+    })
+
+    await user.type(screen.getByLabelText('New option value'), 'DONE')
+    await user.click(screen.getByLabelText('Add option'))
+
+    // Click Save
+    await user.click(screen.getByRole('button', { name: /save options/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+        key: 'stage',
+        options: '["TODO","DOING","DONE"]',
+      })
+    })
+  })
+
+  it('can remove an option and save', async () => {
+    const user = userEvent.setup()
+    setupMock(
+      [makeProp('stage', { value_text: 'TODO' })],
+      [makeDef('stage', 'select', '["TODO","DOING","DONE"]')],
+    )
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByLabelText('Edit options for stage'))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Remove option DOING')).toBeInTheDocument()
+    })
+
+    // Remove "DOING"
+    await user.click(screen.getByLabelText('Remove option DOING'))
+
+    // Click Save
+    await user.click(screen.getByRole('button', { name: /save options/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
+        key: 'stage',
+        options: '["TODO","DONE"]',
+      })
+    })
+  })
+
+  it('shows error toast when save fails', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_properties')
+        return [makeProp('stage', { value_text: 'TODO' })]
+      if (cmd === 'list_property_defs')
+        return [makeDef('stage', 'select', '["TODO","DOING"]')]
+      if (cmd === 'update_property_def_options') throw new Error('backend error')
+      if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_tags_for_block') return []
+      return null
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Edit options for stage')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByLabelText('Edit options for stage'))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /save options/i })).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /save options/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to update options')
+    })
   })
 })
