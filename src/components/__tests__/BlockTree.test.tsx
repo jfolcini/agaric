@@ -220,7 +220,7 @@ vi.mock('@dnd-kit/sortable', () => ({
 }))
 
 import { announce } from '../../lib/announcer'
-import { BlockTree, processCheckboxSyntax } from '../BlockTree'
+import { BlockTree, guessMimeType, processCheckboxSyntax } from '../BlockTree'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -1315,7 +1315,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(17)
+    expect(results).toHaveLength(18)
     expect(results?.map((r) => r.id)).toEqual([
       'todo',
       'doing',
@@ -1334,6 +1334,7 @@ describe('BlockTree slash command wiring', () => {
       'quote',
       'table',
       'query',
+      'attach',
     ])
   })
 
@@ -3923,6 +3924,242 @@ describe('BlockTree link/tag/code slash commands', () => {
     })
 
     expect(mockInsertContent).toHaveBeenCalledWith('{{query type:tag expr:}}')
+  })
+})
+
+// =========================================================================
+// Attach slash command tests (F-9)
+// =========================================================================
+
+describe('BlockTree /attach slash command', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+    useMockEditor = false
+  })
+
+  it('/attach appears in the slash command list', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedSearchSlashCommands).toBeDefined()
+    })
+
+    const results = await capturedSearchSlashCommands?.('attach')
+    expect(results?.length).toBeGreaterThanOrEqual(1)
+    expect(results?.find((r) => r.id === 'attach')).toBeDefined()
+  })
+
+  it('/attach creates a hidden file input and clicks it', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    // Spy on document.createElement to intercept the file input
+    const clickSpy = vi.fn()
+    const origCreateElement = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: ElementCreationOptions) => {
+      const el = origCreateElement(tag, options)
+      if (tag === 'input') {
+        vi.spyOn(el as HTMLInputElement, 'click').mockImplementation(clickSpy)
+      }
+      return el
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'attach', label: 'ATTACH — Attach file to block' })
+    })
+
+    expect(clickSpy).toHaveBeenCalled()
+
+    vi.restoreAllMocks()
+  })
+
+  it('/attach calls addAttachment on file selection with path', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue({ id: 'att-1', block_id: 'A', filename: 'test.pdf', mime_type: 'application/pdf', size_bytes: 1024, fs_path: '/tmp/test.pdf', created_at: '2025-01-01' })
+
+    // Capture the file input so we can simulate file selection
+    let capturedInput: HTMLInputElement | null = null
+    const origCreateElement = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: ElementCreationOptions) => {
+      const el = origCreateElement(tag, options)
+      if (tag === 'input') {
+        capturedInput = el as HTMLInputElement
+        vi.spyOn(capturedInput, 'click').mockImplementation(() => {})
+      }
+      return el
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'attach', label: 'ATTACH — Attach file to block' })
+    })
+
+    expect(capturedInput).not.toBeNull()
+
+    // Simulate a file selection with a Tauri-style File that has a .path property
+    const mockFile = new File(['content'], 'test.pdf', { type: 'application/pdf' })
+    Object.defineProperty(mockFile, 'path', { value: '/tmp/test.pdf' })
+    Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
+
+    await act(async () => {
+      capturedInput!.onchange?.(new Event('change'))
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment', {
+      blockId: 'A',
+      filename: 'test.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 7,
+      fsPath: '/tmp/test.pdf',
+    })
+
+    vi.restoreAllMocks()
+  })
+
+  it('/attach shows error toast when file has no path', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue([])
+
+    let capturedInput: HTMLInputElement | null = null
+    const origCreateElement = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: ElementCreationOptions) => {
+      const el = origCreateElement(tag, options)
+      if (tag === 'input') {
+        capturedInput = el as HTMLInputElement
+        vi.spyOn(capturedInput, 'click').mockImplementation(() => {})
+      }
+      return el
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'attach', label: 'ATTACH — Attach file to block' })
+    })
+
+    // Simulate a file selection WITHOUT .path (regular browser environment)
+    const mockFile = new File(['content'], 'test.pdf', { type: 'application/pdf' })
+    Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
+
+    await act(async () => {
+      capturedInput!.onchange?.(new Event('change'))
+    })
+
+    // Should NOT call add_attachment since there's no fsPath
+    expect(mockedInvoke).not.toHaveBeenCalledWith('add_attachment', expect.anything())
+
+    vi.restoreAllMocks()
+  })
+
+  it('/attach uses guessMimeType when file.type is empty', async () => {
+    const tree = [makeBlock('A', null, 0, 'Block')]
+    useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
+
+    mockedInvoke.mockResolvedValue({ id: 'att-2', block_id: 'A', filename: 'photo.png', mime_type: 'image/png', size_bytes: 2048, fs_path: '/tmp/photo.png', created_at: '2025-01-01' })
+
+    let capturedInput: HTMLInputElement | null = null
+    const origCreateElement = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: ElementCreationOptions) => {
+      const el = origCreateElement(tag, options)
+      if (tag === 'input') {
+        capturedInput = el as HTMLInputElement
+        vi.spyOn(capturedInput, 'click').mockImplementation(() => {})
+      }
+      return el
+    })
+
+    render(<BlockTree />)
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'attach', label: 'ATTACH — Attach file to block' })
+    })
+
+    // File with no type — guessMimeType should be used
+    const mockFile = new File(['data'], 'photo.png', { type: '' })
+    Object.defineProperty(mockFile, 'path', { value: '/tmp/photo.png' })
+    Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
+
+    await act(async () => {
+      capturedInput!.onchange?.(new Event('change'))
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment', {
+      blockId: 'A',
+      filename: 'photo.png',
+      mimeType: 'image/png',
+      sizeBytes: 4,
+      fsPath: '/tmp/photo.png',
+    })
+
+    vi.restoreAllMocks()
+  })
+})
+
+// =========================================================================
+// guessMimeType unit tests (F-9)
+// =========================================================================
+
+describe('guessMimeType', () => {
+  it('returns correct MIME for common image extensions', () => {
+    expect(guessMimeType('photo.jpg')).toBe('image/jpeg')
+    expect(guessMimeType('photo.jpeg')).toBe('image/jpeg')
+    expect(guessMimeType('photo.png')).toBe('image/png')
+    expect(guessMimeType('photo.gif')).toBe('image/gif')
+    expect(guessMimeType('icon.svg')).toBe('image/svg+xml')
+    expect(guessMimeType('image.webp')).toBe('image/webp')
+  })
+
+  it('returns correct MIME for document extensions', () => {
+    expect(guessMimeType('doc.pdf')).toBe('application/pdf')
+    expect(guessMimeType('notes.txt')).toBe('text/plain')
+    expect(guessMimeType('README.md')).toBe('text/markdown')
+    expect(guessMimeType('data.json')).toBe('application/json')
+  })
+
+  it('returns correct MIME for archive extensions', () => {
+    expect(guessMimeType('archive.zip')).toBe('application/zip')
+    expect(guessMimeType('backup.tar')).toBe('application/x-tar')
+  })
+
+  it('returns application/octet-stream for unknown extensions', () => {
+    expect(guessMimeType('file.xyz')).toBe('application/octet-stream')
+    expect(guessMimeType('file.docx')).toBe('application/octet-stream')
+  })
+
+  it('handles files with no extension', () => {
+    expect(guessMimeType('Makefile')).toBe('application/octet-stream')
+  })
+
+  it('is case-insensitive for extension matching', () => {
+    expect(guessMimeType('PHOTO.JPG')).toBe('image/jpeg')
+    expect(guessMimeType('Doc.PDF')).toBe('application/pdf')
   })
 })
 

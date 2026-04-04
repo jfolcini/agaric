@@ -34,6 +34,7 @@ import { announce } from '../lib/announcer'
 import { parseDate } from '../lib/parse-date'
 import { formatRepeatLabel } from '../lib/repeat-utils'
 import {
+  addAttachment,
   batchResolve,
   createBlock,
   deleteBlock,
@@ -277,6 +278,26 @@ export function processCheckboxSyntax(content: string): {
     return { cleanContent: content.slice(6), todoState: 'DONE' }
   }
   return { cleanContent: content, todoState: null }
+}
+
+/** Simple extension-based MIME type guesser for attachment uploads. */
+export function guessMimeType(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() || ''
+  const mimeMap: Record<string, string> = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+    svg: 'image/svg+xml',
+    webp: 'image/webp',
+    pdf: 'application/pdf',
+    txt: 'text/plain',
+    md: 'text/markdown',
+    json: 'application/json',
+    zip: 'application/zip',
+    tar: 'application/x-tar',
+  }
+  return mimeMap[ext] || 'application/octet-stream'
 }
 
 interface BlockTreeProps {
@@ -547,6 +568,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       { id: 'quote', label: 'QUOTE — Insert blockquote' },
       { id: 'table', label: 'TABLE — Insert table (e.g. /table 4x6)' },
       { id: 'query', label: 'QUERY — Insert embedded query block' },
+      { id: 'attach', label: 'ATTACH — Attach file to block' },
     ],
     [],
   )
@@ -1210,6 +1232,38 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         } catch {
           toast.error(t('slash.templateLoadFailed'))
         }
+        return
+      }
+
+      if (item.id === 'attach') {
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.onchange = async () => {
+          const file = input.files?.[0]
+          if (!file) return
+          const filename = file.name
+          const sizeBytes = file.size
+          const mimeType = file.type || guessMimeType(filename)
+          // In Tauri webview, File objects expose a .path property with the real FS path
+          const fsPath = (file as File & { path?: string }).path
+          if (!fsPath) {
+            toast.error('Could not read file path — use drag & drop instead')
+            return
+          }
+          try {
+            await addAttachment({
+              blockId: focusedBlockId,
+              filename,
+              mimeType,
+              sizeBytes,
+              fsPath,
+            })
+            toast.success(`Attached "${filename}"`)
+          } catch {
+            toast.error('Failed to attach file')
+          }
+        }
+        input.click()
         return
       }
     },
