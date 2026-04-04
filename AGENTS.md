@@ -24,7 +24,7 @@ See **[BUILD.md](BUILD.md)** for the full build guide (prerequisites, platform-s
 # Quick reference
 cargo tauri dev              # Dev mode with hot reload
 cargo tauri build            # Production build (per-platform)
-npm run test                 # Vitest (2063 tests)
+npm run test                 # Vitest (~3200+ tests)
 cd src-tauri && cargo nextest run   # Rust tests
 npx playwright test          # E2E tests
 cargo tauri android build --target x86_64 --debug   # Android debug APK
@@ -56,8 +56,8 @@ The architecture is mature and robust. **Do not introduce significant architectu
 - **File:** `notes.db` in `~/.local/share/com.agaric.app/` (Linux) or app data dir (Android)
 - **WAL mode**, foreign keys ON on every connection
 - **Pool:** 1 writer + 4 readers (5 total)
-- **Migrations:** `src-tauri/migrations/` (10 files) — auto-run on pool init
-- **Schema:** 12 tables + 1 FTS5 virtual table (trigram tokenizer), 13 indexes, 2 triggers
+- **Migrations:** `src-tauri/migrations/` (17 files) — auto-run on pool init
+- **Schema:** 14 tables + 1 FTS5 virtual table (trigram tokenizer), 19 indexes, 2 triggers
 
 ## Frontend Architecture
 
@@ -72,7 +72,7 @@ The architecture is mature and robust. **Do not introduce significant architectu
 - **Error handling:** `AppError` enum (11 variants) serializes to `{ kind, message }` for Tauri 2 IPC. Specta-derived TS bindings.
 - **Undo/redo:** Two-tier model. In-editor: TipTap/ProseMirror history (cleared on blur). Page-level: `reverse.rs` computes inverse ops from op log. Non-reversible: `purge_block`, `delete_attachment`.
 - **Materializer:** Foreground queue (256 cap, core tables + `BatchApplyOps`) + background queue (1024 cap, caches/FTS). Auto-dedup, silent drop on backpressure.
-- **Commands:** 41 Tauri command handlers in `commands.rs` (36 core + 5 sync). Each has an `inner_*` function taking `&SqlitePool` for testability.
+- **Commands:** 60 Tauri command handlers in `commands.rs` (55 core + 5 sync). Each has an `inner_*` function taking `&SqlitePool` for testability.
 - **Sync daemon:** `sync_daemon.rs` — background task with mDNS discovery, TLS WebSocket server, initiator-side sync via `SyncOrchestrator`. Per-peer backoff via `SyncScheduler`.
 - **Sync cert:** `sync_cert.rs` — persistent TLS certificate (generate-once-then-load pattern). `PersistedCert` managed state.
 
