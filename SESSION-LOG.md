@@ -68,6 +68,23 @@
 - Commit: `516763b`
 - REVIEW-LATER: F-19, TM-7 resolved. 39 → **37 open items**.
 
+### Phase 1 (batch 19): Attachment list + snapshot benchmarks (F-8, TM-8)
+
+2 parallel subagents (frontend component, Rust bench).
+
+| File | Change |
+|------|--------|
+| `AttachmentList.tsx` + test | F-8: New component — filename, MIME icon, size, timestamp, delete, empty/loading states. 12 tests (2 axe). |
+| `SortableBlock.tsx` + test | F-8: Attachment count badge + collapsible AttachmentList section. |
+| `i18n.ts` | F-8: 10 new i18n keys for attachment UI. |
+| `snapshot_bench.rs` | TM-8: create_snapshot + apply_snapshot at 10/100/1000 blocks with Throughput::Elements. |
+
+### Stats
+- Frontend: 12 new tests (12/12 AttachmentList pass, 150/150 SortableBlock pass)
+- Backend: 2 new benchmarks compile cleanly
+- Commit: `4bef94e`
+- REVIEW-LATER: F-8, TM-8 resolved. 37 → **35 open items**.
+
 ## Session 166 — 2026-04-04 — Phase 1 undo/redo batch (H-8, L-15, TL-5)
 
 ### Phase 1: Fix 3 undo/redo items
