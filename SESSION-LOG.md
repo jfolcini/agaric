@@ -1,5 +1,22 @@
 # Session Log
 
+## Session 167 — 2026-04-04 — Phase 1 batch 15: FTS batch reindex + journal commands
+
+### Phase 1: Fix H-2, TH-6
+
+2 parallel Rust subagents (fts.rs, commands.rs + integration tests).
+
+| File | Change |
+|------|--------|
+| `fts.rs` | H-2: Refactored `reindex_fts_references` — pre-loads tag/page name maps via new `load_ref_maps` helper, batches DELETE+INSERT in single tx using `strip_for_fts_with_maps`. O(N×3) → O(2+N). 1 new test. |
+| `commands.rs` | TH-6: Implemented `today_journal_inner` + `navigate_journal_inner` (find-or-create by date). |
+| `command_integration_tests.rs` | TH-6: 5 new tests (create, idempotent, navigate, different dates). |
+
+### Stats
+- Backend: 6 new tests (84/84 FTS pass, 6/6 journal pass)
+- Commit: `13d6a0b`
+- REVIEW-LATER: H-2, TH-6 resolved. 45 → **43 open items**. Only 1 HIGH item remains (H-1).
+
 ## Session 166 — 2026-04-04 — Phase 1 undo/redo batch (H-8, L-15, TL-5)
 
 ### Phase 1: Fix 3 undo/redo items
