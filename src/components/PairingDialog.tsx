@@ -155,7 +155,7 @@ export function PairingDialog({
         setWords((prev) => {
           const next = [...prev] as [string, string, string, string]
           for (let i = 0; i < parts.length && index + i < 4; i++) {
-            next[index + i] = parts[i]!
+            next[index + i] = parts[i] ?? ''
           }
           return next
         })
@@ -287,18 +287,18 @@ export function PairingDialog({
           'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
         )
         if (focusable.length === 0) return
-        const first = focusable[0]!
-        const last = focusable[focusable.length - 1]!
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
 
         if (e.shiftKey) {
           if (document.activeElement === first) {
             e.preventDefault()
-            last.focus()
+            last?.focus()
           }
         } else {
           if (document.activeElement === last) {
             e.preventDefault()
-            first.focus()
+            first?.focus()
           }
         }
       }
@@ -335,7 +335,7 @@ export function PairingDialog({
       />
       <div
         ref={dialogRef}
-        className="pairing-dialog fixed top-[50%] left-[50%] z-50 w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] rounded-lg border bg-background p-6 shadow-lg sm:max-w-lg"
+        className="pairing-dialog fixed top-[50%] left-[50%] z-50 w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-4rem)] overflow-y-auto translate-x-[-50%] translate-y-[-50%] rounded-lg border bg-background p-6 shadow-lg sm:max-w-lg"
         role="dialog"
         aria-labelledby="pairing-dialog-title"
         aria-modal="true"
@@ -388,7 +388,7 @@ export function PairingDialog({
             <div className="flex flex-col sm:flex-row [@media(pointer:coarse)]:flex-col gap-4 items-center mb-4">
               {/* #290: Use backend QR SVG instead of react-qr-code */}
               <div
-                className="pairing-qr shrink-0 max-w-full rounded-lg border bg-white p-3"
+                className="pairing-qr shrink-0 w-[200px] max-w-full rounded-lg border bg-white p-3 [&_svg]:w-full [&_svg]:h-auto"
                 role="img"
                 aria-label={t('pairing.qrCodeLabel')}
                 data-testid="pairing-qr-code"
@@ -399,7 +399,7 @@ export function PairingDialog({
                 <span className="text-sm font-medium text-muted-foreground">
                   {t('pairing.passphraseLabel')}
                 </span>
-                <p className="pairing-passphrase text-lg font-mono font-semibold">
+                <p className="pairing-passphrase text-lg font-mono font-semibold break-words">
                   {pairingInfo.passphrase}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
@@ -542,7 +542,7 @@ export function PairingDialog({
               {peers.length === 0 ? (
                 <p className="text-sm text-muted-foreground">{t('pairing.noPairedDevices')}</p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-2 max-h-48 overflow-y-auto">
                   {peers.map((peer) => (
                     <Card key={peer.peer_id} className="pairing-peer-item p-3">
                       <div className="flex items-center justify-between">

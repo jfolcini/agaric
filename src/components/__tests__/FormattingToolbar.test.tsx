@@ -503,7 +503,7 @@ describe('FormattingToolbar', () => {
       expect(prevented).toBe(true)
     })
 
-    it('priority buttons render P1/P2/P3 badge-style labels', () => {
+    it('priority buttons render P1/P2/P3 with dot indicators', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const p1 = screen.getByRole('button', { name: 'Priority 1 (high)' })
       const p2 = screen.getByRole('button', { name: 'Priority 2 (medium)' })
@@ -512,16 +512,24 @@ describe('FormattingToolbar', () => {
       expect(p1).toHaveTextContent('P1')
       expect(p2).toHaveTextContent('P2')
       expect(p3).toHaveTextContent('P3')
-      // Badge colors
-      const badge1 = p1.querySelector('span')
-      const badge2 = p2.querySelector('span')
-      const badge3 = p3.querySelector('span')
-      expect(badge1?.className).toContain('bg-red-500')
-      expect(badge1?.className).toContain('text-white')
-      expect(badge2?.className).toContain('bg-yellow-500')
-      expect(badge2?.className).toContain('text-white')
-      expect(badge3?.className).toContain('bg-blue-500')
-      expect(badge3?.className).toContain('text-white')
+      // Dot indicators with colors
+      const dot1 = p1.querySelector('.rounded-full')
+      const dot2 = p2.querySelector('.rounded-full')
+      const dot3 = p3.querySelector('.rounded-full')
+      expect(dot1?.className).toContain('bg-red-500')
+      expect(dot2?.className).toContain('bg-yellow-500')
+      expect(dot3?.className).toContain('bg-blue-500')
+    })
+
+    it('priority buttons use dot indicators instead of pill badges', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const p1 = screen.getByRole('button', { name: 'Priority 1 (high)' })
+      // Should contain a small colored dot, not a full colored background span
+      const dot = p1.querySelector('.rounded-full')
+      expect(dot).toBeInTheDocument()
+      expect(dot?.className).toContain('bg-red-500')
+      // Text should still say P1
+      expect(p1.textContent).toContain('P1')
     })
 
     it('date button prevents default to preserve editor focus', () => {
@@ -687,7 +695,7 @@ describe('FormattingToolbar', () => {
       // The popover content is always rendered in our mock
       const popoverContents = screen.getAllByTestId('popover-content')
       // The heading popover is the second popover-content (after the link popover)
-      const headingPopover = popoverContents[1]!
+      const headingPopover = popoverContents[1] as HTMLElement
       expect(headingPopover).toBeInTheDocument()
       for (let i = 1; i <= 6; i++) {
         expect(headingPopover.textContent).toContain(`H${i}`)

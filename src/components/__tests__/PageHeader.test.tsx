@@ -603,6 +603,30 @@ describe('PageHeader alias display', () => {
       })
     })
   })
+
+  it('alias badges use the same styling pattern as tag badges', async () => {
+    setupTagMock(['TAG_1'], ['alias-1'])
+
+    render(<PageHeader pageId="PAGE_1" title="Test" />)
+
+    // Wait for both alias and tag badges to render
+    await waitFor(() => {
+      expect(screen.getByText('alias-1')).toBeInTheDocument()
+      expect(screen.getByText('urgent')).toBeInTheDocument()
+    })
+
+    // Alias badges should use Badge component (has data-slot="badge")
+    const aliasBadge = screen.getByText('alias-1').closest('[data-slot="badge"]')
+    expect(aliasBadge).toBeInTheDocument()
+
+    // Tag badges should also use Badge component
+    const tagBadge = screen.getByText('urgent').closest('[data-slot="badge"]')
+    expect(tagBadge).toBeInTheDocument()
+
+    // Both should have the same variant
+    expect(aliasBadge).toHaveAttribute('data-variant', 'secondary')
+    expect(tagBadge).toHaveAttribute('data-variant', 'secondary')
+  })
 })
 
 // ── Page-level undo / redo buttons ────────────────────────────────────────

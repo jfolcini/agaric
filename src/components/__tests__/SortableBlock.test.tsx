@@ -909,6 +909,41 @@ describe('SortableBlock task marker', () => {
 
     expect(container.querySelector('.line-through')).not.toBeInTheDocument()
   })
+
+  it('does not apply DONE strikethrough/opacity when block is focused', () => {
+    render(
+      <SortableBlock
+        blockId="B1"
+        content="done task"
+        isFocused={true}
+        depth={0}
+        rovingEditor={makeRovingEditor()}
+        todoState="DONE"
+      />,
+    )
+    // The content wrapper should NOT have line-through when focused
+    const editableBlock = screen.getByTestId('editable-block-B1')
+    const contentWrapper = editableBlock.parentElement
+    expect(contentWrapper?.className).not.toContain('line-through')
+    expect(contentWrapper?.className).not.toContain('opacity-50')
+  })
+
+  it('applies DONE strikethrough/opacity when block is not focused', () => {
+    render(
+      <SortableBlock
+        blockId="B1"
+        content="done task"
+        isFocused={false}
+        depth={0}
+        rovingEditor={makeRovingEditor()}
+        todoState="DONE"
+      />,
+    )
+    const editableBlock = screen.getByTestId('editable-block-B1')
+    const contentWrapper = editableBlock.parentElement
+    expect(contentWrapper?.className).toContain('line-through')
+    expect(contentWrapper?.className).toContain('opacity-50')
+  })
 })
 
 describe('gutter alignment', () => {
@@ -2600,6 +2635,28 @@ describe('SortableBlock property chips', () => {
     const inlineControls = container.querySelector('.inline-controls')
     const chip = inlineControls?.querySelector('.property-chip')
     expect(chip).toBeInTheDocument()
+  })
+
+  it('does not render created_at or completed_at as inline property chips', () => {
+    render(
+      <SortableBlock
+        blockId="B1"
+        content="test block"
+        isFocused={false}
+        depth={0}
+        rovingEditor={makeRovingEditor()}
+        properties={[
+          { key: 'created_at', value: '2024-01-01' },
+          { key: 'completed_at', value: '2024-01-02' },
+          { key: 'effort', value: '2h' },
+        ]}
+      />,
+    )
+    // created_at and completed_at should be filtered out
+    expect(screen.queryByTestId('property-chip-created_at')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('property-chip-completed_at')).not.toBeInTheDocument()
+    // Other properties should still render
+    expect(screen.getByTestId('property-chip-effort')).toBeInTheDocument()
   })
 })
 

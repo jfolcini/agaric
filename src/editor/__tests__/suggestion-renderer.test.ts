@@ -44,7 +44,7 @@ describe('createSuggestionRenderer', () => {
 
     expect(mockReactRenderer).toHaveBeenCalled()
     const lastCall = mockReactRenderer.mock.calls[mockReactRenderer.mock.calls.length - 1]
-    expect(lastCall![1].props.label).toBe('Tags')
+    expect(lastCall?.[1].props.label).toBe('Tags')
 
     // Clean up popup
     renderer.onExit()
@@ -76,7 +76,7 @@ describe('positioning', () => {
     }
   })
 
-  it('positions popup at rect.right for multi-char triggers like [[', () => {
+  it('positions popup at rect.left for multi-char triggers like [[', () => {
     const renderer = createSuggestionRenderer()
     const mockRect = { left: 50, right: 70, top: 80, bottom: 100, width: 20, height: 20 }
 
@@ -95,8 +95,8 @@ describe('positioning', () => {
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
     expect(popup).toBeTruthy()
-    // Should use rect.right (70) since width > 1
-    expect(popup.style.left).toBe('70px')
+    // Should use rect.left (50) - left-aligned with trigger start
+    expect(popup.style.left).toBe('50px')
   })
 
   it('positions popup at rect.left for caret-width triggers', () => {
@@ -208,7 +208,7 @@ describe('positioning', () => {
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
-    expect(popup.style.left).toBe('70px')
+    expect(popup.style.left).toBe('50px')
 
     // Update with new position
     const mockRect2 = { left: 200, right: 220, top: 80, bottom: 100, width: 20, height: 20 }
@@ -225,7 +225,7 @@ describe('positioning', () => {
       // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
     } as any)
 
-    expect(popup.style.left).toBe('220px')
+    expect(popup.style.left).toBe('200px')
   })
 
   it('does not throw when clientRect returns null', () => {
@@ -373,8 +373,31 @@ describe('positioning', () => {
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
     expect(popup).toBeTruthy()
-    // Should fall back to clientRect: rect.right (70) since width > 1
-    expect(popup.style.left).toBe('70px')
+    // Should fall back to clientRect: rect.left (50) - left-aligned with trigger
+    expect(popup.style.left).toBe('50px')
+
+    renderer.onExit()
+  })
+
+  it('left-aligns popup for all trigger types regardless of width', () => {
+    const renderer = createSuggestionRenderer()
+    const mockRect = { left: 80, right: 100, top: 80, bottom: 100, width: 20, height: 20 }
+
+    renderer.onStart({
+      items: [],
+      command: vi.fn(),
+      clientRect: () => mockRect as DOMRect,
+      editor: {} as any,
+      query: '',
+      range: { from: 0, to: 2 },
+      text: '((',
+      decorationNode: null,
+    } as any)
+
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    expect(popup).toBeTruthy()
+    // Should always use rect.left regardless of trigger width
+    expect(popup.style.left).toBe('80px')
 
     renderer.onExit()
   })

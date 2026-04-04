@@ -49,11 +49,10 @@ function updatePosition(
     top = rect.top - popupHeight - 4
   }
 
-  // When using clientRect fallback, position at the end of the trigger text.
-  // For multi-char triggers like [[, clientRect spans the trigger — we want
-  // the right edge so the popup appears where the user is typing.
+  // Position popup with left edge aligned to trigger start character,
+  // matching standard desktop autocomplete convention (VS Code, Notion, etc.).
   // When using coordsAtPos the rect is already 1px wide at the cursor.
-  let left = rect.width > 1 ? rect.right : rect.left
+  let left = rect.left
   const popupWidth = el.offsetWidth || 240
   if (left + popupWidth > viewportWidth - 8) {
     left = viewportWidth - popupWidth - 8

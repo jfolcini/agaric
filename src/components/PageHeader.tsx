@@ -402,15 +402,15 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
 
       {/* Aliases */}
       {(aliases.length > 0 || editingAliases) && (
-        <div className="flex flex-wrap items-center gap-1 px-1 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-1.5 px-1">
           <span className="font-medium">{t('pageHeader.aliases')}</span>
           {aliases.map((alias) => (
-            <span key={alias} className="rounded-md bg-muted px-1.5 py-0.5">
+            <Badge key={alias} variant="secondary" className="gap-1">
               {alias}
               {editingAliases && (
                 <button
                   type="button"
-                  className="ml-1 text-destructive hover:text-destructive/80"
+                  className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
                   onClick={() => {
                     const next = aliases.filter((a) => a !== alias)
                     setAliases(next)
@@ -420,10 +420,10 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                   }}
                   aria-label={t('pageHeader.removeAlias', { alias })}
                 >
-                  ×
+                  <X className="h-3 w-3" />
                 </button>
               )}
-            </span>
+            </Badge>
           ))}
           {editingAliases ? (
             <form
@@ -440,40 +440,48 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                 }
               }}
             >
-              <input
+              <Input
                 type="text"
-                className="w-24 [@media(pointer:coarse)]:w-full rounded border px-1 py-0.5 text-xs"
+                className="w-24 [@media(pointer:coarse)]:w-full h-7 text-xs"
                 placeholder={t('pageHeader.newAliasPlaceholder')}
                 value={aliasInput}
                 onChange={(e) => setAliasInput(e.target.value)}
                 aria-label={t('pageHeader.newAliasInput')}
               />
-              <button type="submit" className="text-xs text-primary">
+              <Button type="submit" variant="ghost" size="xs">
                 {t('pageHeader.add')}
-              </button>
-              <button type="button" className="text-xs" onClick={() => setEditingAliases(false)}>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={() => setEditingAliases(false)}
+              >
                 {t('pageHeader.done')}
-              </button>
+              </Button>
             </form>
           ) : (
-            <button
-              type="button"
-              className="text-xs text-primary hover:underline"
+            <Button
+              variant="ghost"
+              size="xs"
+              className="gap-1 text-muted-foreground"
               onClick={() => setEditingAliases(true)}
             >
               {aliases.length > 0 ? t('pageHeader.edit') : t('pageHeader.addAlias')}
-            </button>
+            </Button>
           )}
         </div>
       )}
       {aliases.length === 0 && !editingAliases && (
-        <button
-          type="button"
-          className="text-xs text-muted-foreground hover:text-primary px-1"
+        <Button
+          variant="ghost"
+          size="xs"
+          className="gap-1 text-muted-foreground"
           onClick={() => setEditingAliases(true)}
         >
+          <Plus className="h-3.5 w-3.5" />
           {t('pageHeader.addAlias')}
-        </button>
+        </Button>
       )}
 
       {/* Tag badges row */}

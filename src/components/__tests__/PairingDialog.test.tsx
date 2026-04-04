@@ -181,10 +181,10 @@ describe('PairingDialog', () => {
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox')
-    await user.type(inputs[0]!, 'echo')
-    await user.type(inputs[1]!, 'foxtrot')
-    await user.type(inputs[2]!, 'golf')
-    await user.type(inputs[3]!, 'hotel')
+    await user.type(inputs[0] as HTMLElement, 'echo')
+    await user.type(inputs[1] as HTMLElement, 'foxtrot')
+    await user.type(inputs[2] as HTMLElement, 'golf')
+    await user.type(inputs[3] as HTMLElement, 'hotel')
 
     const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
     await user.click(pairBtn)
@@ -281,7 +281,7 @@ describe('PairingDialog', () => {
 
     // Click first Unpair button
     const unpairBtns = screen.getAllByRole('button', { name: /Unpair/i })
-    await user.click(unpairBtns[0]!)
+    await user.click(unpairBtns[0] as HTMLElement)
 
     // Confirmation dialog appears
     expect(screen.getByText('Unpair device?')).toBeInTheDocument()
@@ -334,10 +334,10 @@ describe('PairingDialog', () => {
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox')
-    await user.type(inputs[0]!, 'echo')
-    await user.type(inputs[1]!, 'foxtrot')
-    await user.type(inputs[2]!, 'golf')
-    await user.type(inputs[3]!, 'hotel')
+    await user.type(inputs[0] as HTMLElement, 'echo')
+    await user.type(inputs[1] as HTMLElement, 'foxtrot')
+    await user.type(inputs[2] as HTMLElement, 'golf')
+    await user.type(inputs[3] as HTMLElement, 'hotel')
 
     const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
     await user.click(pairBtn)
@@ -460,14 +460,14 @@ describe('PairingDialog', () => {
 
     // Simulate pasting "echo foxtrot golf hotel" into the first input
     // userEvent.paste triggers onChange with the full text
-    await user.click(inputs[0]!)
+    await user.click(inputs[0] as HTMLElement)
     await user.paste('echo foxtrot golf hotel')
 
     await waitFor(() => {
-      expect(inputs[0]).toHaveValue('echo')
-      expect(inputs[1]).toHaveValue('foxtrot')
-      expect(inputs[2]).toHaveValue('golf')
-      expect(inputs[3]).toHaveValue('hotel')
+      expect(inputs[0] as HTMLElement).toHaveValue('echo')
+      expect(inputs[1] as HTMLElement).toHaveValue('foxtrot')
+      expect(inputs[2] as HTMLElement).toHaveValue('golf')
+      expect(inputs[3] as HTMLElement).toHaveValue('hotel')
     })
   })
 
@@ -484,15 +484,15 @@ describe('PairingDialog', () => {
     const inputs = screen.getAllByRole('textbox')
 
     // Type a word in the first input
-    await user.click(inputs[0]!)
-    await user.type(inputs[0]!, 'echo', { skipClick: true })
+    await user.click(inputs[0] as HTMLElement)
+    await user.type(inputs[0] as HTMLElement, 'echo', { skipClick: true })
 
     // Fire Space keydown directly on the focused input
-    fireEvent.keyDown(inputs[0]!, { key: ' ' })
+    fireEvent.keyDown(inputs[0] as HTMLElement, { key: ' ' })
 
     // Focus should be on the second input
     await waitFor(() => {
-      expect(document.activeElement).toBe(inputs[1])
+      expect(document.activeElement).toBe(inputs[1] as HTMLElement)
     })
   })
 
@@ -508,10 +508,10 @@ describe('PairingDialog', () => {
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox')
-    await user.type(inputs[0]!, 'echo')
-    await user.type(inputs[1]!, 'foxtrot')
-    await user.type(inputs[2]!, 'golf')
-    await user.type(inputs[3]!, 'hotel')
+    await user.type(inputs[0] as HTMLElement, 'echo')
+    await user.type(inputs[1] as HTMLElement, 'foxtrot')
+    await user.type(inputs[2] as HTMLElement, 'golf')
+    await user.type(inputs[3] as HTMLElement, 'hotel')
 
     // Press Enter on the last input
     await user.keyboard('{Enter}')
@@ -663,10 +663,10 @@ describe('PairingDialog', () => {
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox')
-    await user.type(inputs[0]!, 'echo')
-    await user.type(inputs[1]!, 'foxtrot')
-    await user.type(inputs[2]!, 'golf')
-    await user.type(inputs[3]!, 'hotel')
+    await user.type(inputs[0] as HTMLElement, 'echo')
+    await user.type(inputs[1] as HTMLElement, 'foxtrot')
+    await user.type(inputs[2] as HTMLElement, 'golf')
+    await user.type(inputs[3] as HTMLElement, 'hotel')
 
     const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
     await user.click(pairBtn)
@@ -710,6 +710,23 @@ describe('PairingDialog', () => {
     expect(document.activeElement).toBe(retryBtn)
 
     vi.useRealTimers()
+  })
+
+  it('dialog body has overflow-y-auto for small screens', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'start_pairing')
+        return { passphrase: 'word1 word2 word3 word4', qr_svg: '<svg></svg>', port: 8080 }
+      if (cmd === 'list_peer_refs') return []
+      return null
+    })
+
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    await waitFor(() => {
+      const dialog = document.querySelector('.pairing-dialog')
+      expect(dialog).toBeInTheDocument()
+      expect(dialog?.className).toContain('overflow-y-auto')
+      expect(dialog?.className).toContain('max-h-[calc(100dvh-4rem)]')
+    })
   })
 
   it('moves focus to Retry button when error occurs (#430)', async () => {

@@ -364,7 +364,8 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
               document.dispatchEvent(new CustomEvent('set-priority-1'))
             }}
           >
-            <span className="rounded bg-red-500 px-1.5 py-0.5 text-xs font-bold leading-none text-white">
+            <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
+              <span className="h-2 w-2 rounded-full bg-red-500" />
               P1
             </span>
           </Button>
@@ -379,7 +380,8 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
               document.dispatchEvent(new CustomEvent('set-priority-2'))
             }}
           >
-            <span className="rounded bg-yellow-500 px-1.5 py-0.5 text-xs font-bold leading-none text-white">
+            <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
+              <span className="h-2 w-2 rounded-full bg-yellow-500" />
               P2
             </span>
           </Button>
@@ -394,7 +396,8 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
               document.dispatchEvent(new CustomEvent('set-priority-3'))
             }}
           >
-            <span className="rounded bg-blue-500 px-1.5 py-0.5 text-xs font-bold leading-none text-white">
+            <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
+              <span className="h-2 w-2 rounded-full bg-blue-500" />
               P3
             </span>
           </Button>

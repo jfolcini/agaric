@@ -217,7 +217,11 @@ function SortableBlockInner({
   }, [blockId])
 
   const filteredProperties = useMemo(
-    () => (properties ?? []).filter((p) => p.key !== 'repeat'),
+    () =>
+      (properties ?? []).filter(
+        (p) =>
+          !['repeat', 'created_at', 'completed_at', 'repeat-seq', 'repeat-origin'].includes(p.key),
+      ),
     [properties],
   )
 
@@ -787,7 +791,12 @@ function SortableBlockInner({
         )}
 
         {/* ── Block content ─────────────────────────────────────────── */}
-        <div className={cn('flex-1 min-w-0', todoState === 'DONE' && 'line-through opacity-50')}>
+        <div
+          className={cn(
+            'flex-1 min-w-0',
+            todoState === 'DONE' && !isFocused && 'line-through opacity-50',
+          )}
+        >
           <EditableBlock
             blockId={blockId}
             content={content}
