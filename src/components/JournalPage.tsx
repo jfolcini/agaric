@@ -16,25 +16,14 @@ import {
   addDays,
   addMonths,
   addWeeks,
-  eachDayOfInterval,
-  endOfMonth,
-  endOfWeek,
   format,
   isAfter,
   isBefore,
-  startOfMonth,
-  startOfWeek,
   subDays,
   subMonths,
   subWeeks,
 } from 'date-fns'
-import {
-  Calendar as CalendarIcon,
-  ChevronLeft,
-  ChevronRight,
-  ExternalLink,
-  Plus,
-} from 'lucide-react'
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -42,36 +31,27 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn } from '@/lib/utils'
-import type { AgendaGroupBy, AgendaSortBy } from '../lib/agenda-sort'
-import type { BlockRow } from '../lib/tauri'
+import type { DayEntry } from '../lib/date-utils'
 import {
-  batchResolve,
-  countAgendaBatch,
-  countBacklinksBatch,
-  createBlock,
-  listBlocks,
-  queryByProperty,
-} from '../lib/tauri'
+  formatDate,
+  formatDateDisplay,
+  formatWeekRange,
+  MAX_JOURNAL_DATE,
+  MIN_JOURNAL_DATE,
+} from '../lib/date-utils'
+import { createBlock, listBlocks } from '../lib/tauri'
 import { insertTemplateBlocks, loadJournalTemplate } from '../lib/template-utils'
 import { useBlockStore } from '../stores/blocks'
 import { useJournalStore } from '../stores/journal'
 import { useResolveStore } from '../stores/resolve'
-import type { AgendaFilter } from './AgendaFilterBuilder'
-import { AgendaFilterBuilder, AgendaSortGroupControls } from './AgendaFilterBuilder'
-import { AgendaResults } from './AgendaResults'
-import { BlockTree } from './BlockTree'
-import { DonePanel } from './DonePanel'
-import { DuePanel } from './DuePanel'
-import { EmptyState } from './EmptyState'
-import { LinkedReferences } from './LinkedReferences'
+import { AgendaView } from './journal/AgendaView'
+import { DailyView } from './journal/DailyView'
+import { MonthlyView } from './journal/MonthlyView'
+import { WeeklyView } from './journal/WeeklyView'
 
-interface DayEntry {
-  date: Date
-  dateStr: string
-  displayDate: string
-  pageId: string | null
-}
+export type { DayEntry } from '../lib/date-utils'
+// Re-export for backward compatibility
+export { MAX_JOURNAL_DATE, MIN_JOURNAL_DATE } from '../lib/date-utils'
 
 interface JournalPageProps {
   /** Called when a block is clicked — navigates to block editor. */
@@ -80,51 +60,210 @@ interface JournalPageProps {
   onNavigateToPage?: (pageId: string, title?: string) => void
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────
+// ── Component ─────────────────────────────────────────────────────────
 
-const WEEK_OPTIONS = { weekStartsOn: 1 as const }
+export function JournalPage({
+  onBlockClick: _onBlockClick,
+  onNavigateToPage,
+}: JournalPageProps): React.ReactElement {
+  const { t } = useTranslation()
+  const { mode, currentDate, scrollToDate, scrollToPanel, clearScrollTarget } = useJournalStore()
+  const [pageMap, setPageMap] = useState<Map<string, string>>(new Map())
+  const [loading, setLoading] = useState(true)
+  // Track per-day pageIds that were created by handleAddBlock so we can
+  // immediately show BlockTree without waiting for a full refetch.
+  const [createdPages, setCreatedPages] = useState<Map<string, string>>(new Map())
+  const load = useBlockStore((s) => s.load)
 
-/** Earliest navigable journal date. */
-export const MIN_JOURNAL_DATE = new Date(2020, 0, 1)
+  /** Fetch all pages and build a dateStr->pageId lookup. */
+  const fetchPages = useCallback(async () => {
+    setLoading(true)
+    try {
+      const resp = await listBlocks({ blockType: 'page', limit: 500 })
+      const map = new Map<string, string>()
+      for (const b of resp.items) {
+        if (b.content && /^\d{4}-\d{2}-\d{2}$/.test(b.content)) {
+          map.set(b.content, b.id)
+        }
+      }
+      setPageMap(map)
+    } catch {
+      setPageMap(new Map())
+    }
+    setLoading(false)
+  }, [])
 
-/** Latest navigable journal date (1 year from today). */
-export const MAX_JOURNAL_DATE = addMonths(new Date(), 12)
+  // Fetch pages on mount
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only run on mount
+  useEffect(() => {
+    fetchPages()
+  }, [])
 
-/** Format a Date as YYYY-MM-DD. */
-function formatDate(d: Date): string {
-  return format(d, 'yyyy-MM-dd')
-}
+  // Scroll to a specific day section when requested (e.g., Today button in weekly/monthly)
+  useEffect(() => {
+    if (!scrollToDate) return
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`journal-${scrollToDate}`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+      clearScrollTarget()
+    })
+  }, [scrollToDate, clearScrollTarget])
 
-/** Format a Date as a readable string (e.g., "Mon, Jan 15 2025"). */
-function formatDateDisplay(d: Date): string {
-  return d.toLocaleDateString('en-US', {
-    weekday: 'short',
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  })
-}
+  // Scroll to a specific panel (due/references/done) when requested from badges
+  useEffect(() => {
+    if (!scrollToPanel) return
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`journal-${scrollToPanel}-panel`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+      clearScrollTarget()
+    })
+  }, [scrollToPanel, clearScrollTarget])
 
-/** Get the Monday-start week range for a given date. */
-function getWeekRange(d: Date): { start: Date; end: Date } {
-  return {
-    start: startOfWeek(d, WEEK_OPTIONS),
-    end: endOfWeek(d, WEEK_OPTIONS),
-  }
-}
+  /** Build a DayEntry from a Date. */
+  const makeDayEntry = useCallback(
+    (d: Date): DayEntry => {
+      const dateStr = formatDate(d)
+      return {
+        date: d,
+        dateStr,
+        displayDate: formatDateDisplay(d),
+        pageId: createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null,
+      }
+    },
+    [pageMap, createdPages],
+  )
 
-/** Build the 7 day range for a week (Mon-Sun). */
-function getWeekDays(d: Date): Date[] {
-  const { start, end } = getWeekRange(d)
-  return eachDayOfInterval({ start, end })
-}
+  /** Add a new block under a specific day's page, creating the page if needed. */
+  const handleAddBlock = useCallback(
+    async (dateStr: string, autoFocus = false) => {
+      try {
+        let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
+        const isNewPage = !pageId
 
-/** Format the week range for display: "Mar 24 - Mar 30, 2025" */
-function formatWeekRange(d: Date): string {
-  const { start, end } = getWeekRange(d)
-  const startStr = format(start, 'MMM d')
-  const endStr = format(end, 'MMM d, yyyy')
-  return `${startStr} - ${endStr}`
+        if (!pageId) {
+          const page = await createBlock({ blockType: 'page', content: dateStr })
+          pageId = page.id
+          setCreatedPages((prev) => new Map(prev).set(dateStr, pageId as string))
+          setPageMap((prev) => new Map(prev).set(dateStr, pageId as string))
+          useResolveStore.getState().set(page.id, dateStr, false)
+        }
+
+        if (isNewPage) {
+          const { template: journalTemplate, duplicateWarning } = await loadJournalTemplate()
+          if (duplicateWarning) {
+            toast.warning(duplicateWarning)
+          }
+          if (journalTemplate) {
+            const ids = await insertTemplateBlocks(journalTemplate.id, pageId, {
+              pageTitle: dateStr,
+            })
+            await load(pageId)
+            if (autoFocus && ids.length > 0) {
+              useBlockStore.setState({ focusedBlockId: ids[0] })
+            }
+          } else {
+            const block = await createBlock({
+              blockType: 'content',
+              content: '',
+              parentId: pageId,
+            })
+            await load(pageId)
+            if (autoFocus && block.id) {
+              useBlockStore.setState({ focusedBlockId: block.id })
+            }
+          }
+        } else {
+          const block = await createBlock({
+            blockType: 'content',
+            content: '',
+            parentId: pageId,
+          })
+          await load(pageId)
+          if (autoFocus && block.id) {
+            useBlockStore.setState({ focusedBlockId: block.id })
+          }
+        }
+      } catch {
+        toast.error(t('journal.addBlockFailed'))
+      }
+    },
+    [createdPages, pageMap, load, t],
+  )
+
+  // Auto-create today's page on mount in daily mode
+  const autoCreatedRef = useRef(false)
+
+  useEffect(() => {
+    if (loading) return
+    if (autoCreatedRef.current) return
+    if (mode !== 'daily') return
+    const todayStr = formatDate(new Date())
+    if (todayStr !== formatDate(currentDate)) return
+    if (createdPages.has(todayStr) || pageMap.has(todayStr)) return
+    autoCreatedRef.current = true
+    handleAddBlock(todayStr, true)
+  }, [loading, mode, currentDate, pageMap, createdPages, handleAddBlock])
+
+  // Keyboard shortcut for new block in daily mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (mode !== 'daily') return
+      const dateStr = formatDate(currentDate)
+      if (createdPages.has(dateStr) || pageMap.has(dateStr)) return
+      const target = e.target as HTMLElement
+      if (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
+        return
+      if (e.key === 'Enter' || e.key === 'n') {
+        e.preventDefault()
+        handleAddBlock(dateStr, true)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [mode, currentDate, createdPages, pageMap, handleAddBlock])
+
+  // ── Main render ─────────────────────────────────────────────────────
+
+  return (
+    <div className="space-y-4">
+      {/* Loading indicator on initial fetch */}
+      {loading && (
+        <div className="space-y-1" data-testid="loading-skeleton">
+          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-8 w-full rounded-lg" />
+        </div>
+      )}
+
+      {/* View content */}
+      {!loading && mode === 'daily' && (
+        <DailyView
+          entry={makeDayEntry(currentDate)}
+          onNavigateToPage={onNavigateToPage}
+          onAddBlock={handleAddBlock}
+        />
+      )}
+      {!loading && mode === 'weekly' && (
+        <WeeklyView
+          makeDayEntry={makeDayEntry}
+          onNavigateToPage={onNavigateToPage}
+          onAddBlock={handleAddBlock}
+        />
+      )}
+      {!loading && mode === 'monthly' && (
+        <MonthlyView
+          makeDayEntry={makeDayEntry}
+          onNavigateToPage={onNavigateToPage}
+          onAddBlock={handleAddBlock}
+        />
+      )}
+      {!loading && mode === 'agenda' && <AgendaView onNavigateToPage={onNavigateToPage} />}
+    </div>
+  )
 }
 
 // ── Viewport-aware calendar dropdown ──────────────────────────────────
@@ -226,997 +365,6 @@ function JournalCalendarDropdown({
   )
 }
 
-// ── Component ─────────────────────────────────────────────────────────
-
-export function JournalPage({
-  onBlockClick: _onBlockClick,
-  onNavigateToPage,
-}: JournalPageProps): React.ReactElement {
-  const { t } = useTranslation()
-  const {
-    mode,
-    currentDate,
-    navigateToDate,
-    scrollToDate,
-    scrollToPanel,
-    clearScrollTarget,
-    goToDateAndPanel,
-  } = useJournalStore()
-  const [pageMap, setPageMap] = useState<Map<string, string>>(new Map())
-  const [loading, setLoading] = useState(true)
-  // Track per-day pageIds that were created by handleAddBlock so we can
-  // immediately show BlockTree without waiting for a full refetch.
-  const [createdPages, setCreatedPages] = useState<Map<string, string>>(new Map())
-  const [agendaCounts, setAgendaCounts] = useState<Record<string, number>>({})
-  const [backlinkCounts, setBacklinkCounts] = useState<Record<string, number>>({})
-  const load = useBlockStore((s) => s.load)
-
-  // ── Agenda filter state ────────────────────────────────────────────
-  const [agendaFilters, setAgendaFilters] = useState<AgendaFilter[]>([])
-  const [filteredBlocks, setFilteredBlocks] = useState<BlockRow[]>([])
-  const [agendaLoading, setAgendaLoading] = useState(false)
-  const [agendaHasMore, setAgendaHasMore] = useState(false)
-  const [agendaCursor, setAgendaCursor] = useState<string | null>(null)
-  const [agendaPageTitles, setAgendaPageTitles] = useState<Map<string, string>>(new Map())
-
-  // ── Agenda sort/group state (persisted in localStorage) ─────────────
-  const [agendaGroupBy, setAgendaGroupBy] = useState<AgendaGroupBy>(() => {
-    try {
-      const stored = localStorage.getItem('agaric:agenda:groupBy')
-      if (stored === 'date' || stored === 'priority' || stored === 'state' || stored === 'none')
-        return stored
-    } catch {
-      /* ignore */
-    }
-    return 'date'
-  })
-  const [agendaSortBy, setAgendaSortBy] = useState<AgendaSortBy>(() => {
-    try {
-      const stored = localStorage.getItem('agaric:agenda:sortBy')
-      if (stored === 'date' || stored === 'priority' || stored === 'state') return stored
-    } catch {
-      /* ignore */
-    }
-    return 'date'
-  })
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('agaric:agenda:groupBy', agendaGroupBy)
-    } catch {
-      /* ignore */
-    }
-  }, [agendaGroupBy])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('agaric:agenda:sortBy', agendaSortBy)
-    } catch {
-      /* ignore */
-    }
-  }, [agendaSortBy])
-
-  /** Fetch all pages and build a dateStr->pageId lookup. */
-  const fetchPages = useCallback(async () => {
-    setLoading(true)
-    try {
-      const resp = await listBlocks({ blockType: 'page', limit: 500 })
-      const map = new Map<string, string>()
-      for (const b of resp.items) {
-        if (b.content && /^\d{4}-\d{2}-\d{2}$/.test(b.content)) {
-          map.set(b.content, b.id)
-        }
-      }
-      setPageMap(map)
-    } catch {
-      setPageMap(new Map())
-    }
-    setLoading(false)
-  }, [])
-
-  // Fetch pages on mount
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only run on mount
-  useEffect(() => {
-    fetchPages()
-  }, [])
-
-  // Scroll to a specific day section when requested (e.g., Today button in weekly/monthly)
-  useEffect(() => {
-    if (!scrollToDate) return
-    requestAnimationFrame(() => {
-      const el = document.getElementById(`journal-${scrollToDate}`)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
-      clearScrollTarget()
-    })
-  }, [scrollToDate, clearScrollTarget])
-
-  // Scroll to a specific panel (due/references/done) when requested from badges
-  useEffect(() => {
-    if (!scrollToPanel) return
-    requestAnimationFrame(() => {
-      const el = document.getElementById(`journal-${scrollToPanel}-panel`)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
-      clearScrollTarget()
-    })
-  }, [scrollToPanel, clearScrollTarget])
-
-  /** Build a DayEntry from a Date. */
-  const makeDayEntry = useCallback(
-    (d: Date): DayEntry => {
-      const dateStr = formatDate(d)
-      return {
-        date: d,
-        dateStr,
-        displayDate: formatDateDisplay(d),
-        pageId: createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null,
-      }
-    },
-    [pageMap, createdPages],
-  )
-
-  /** Entries for the current view (weekly/monthly) — used for badge count fetching. */
-  const entries = useMemo(() => {
-    if (mode === 'daily' || mode === 'agenda') return []
-    const days =
-      mode === 'weekly'
-        ? getWeekDays(currentDate)
-        : eachDayOfInterval({ start: startOfMonth(currentDate), end: endOfMonth(currentDate) })
-    return days.map(makeDayEntry)
-  }, [mode, currentDate, makeDayEntry])
-
-  // Fetch badge counts for weekly/monthly views
-  useEffect(() => {
-    if (mode === 'daily' || mode === 'agenda') return
-    const dates = entries.map((e) => e.dateStr)
-    const pageIds = entries.filter((e) => e.pageId).map((e) => e.pageId as string)
-
-    let cancelled = false
-    async function fetchCounts() {
-      const [agenda, backlinks] = await Promise.all([
-        countAgendaBatch({ dates }),
-        pageIds.length > 0
-          ? countBacklinksBatch({ pageIds })
-          : Promise.resolve({} as Record<string, number>),
-      ])
-      if (!cancelled) {
-        setAgendaCounts(agenda)
-        setBacklinkCounts(backlinks)
-      }
-    }
-    fetchCounts().catch(() => toast.error(t('journal.loadCountsFailed')))
-    return () => {
-      cancelled = true
-    }
-  }, [mode, entries])
-
-  // ── Agenda filter execution ────────────────────────────────────────
-  useEffect(() => {
-    if (mode !== 'agenda') return
-
-    let cancelled = false
-    setAgendaLoading(true)
-
-    async function executeFilters() {
-      try {
-        let blocks: BlockRow[] = []
-
-        if (agendaFilters.length === 0) {
-          // Default: blocks with due_date or scheduled_date (dated tasks only)
-          const [dueResp, schedResp] = await Promise.all([
-            queryByProperty({ key: 'due_date', limit: 500 }),
-            queryByProperty({ key: 'scheduled_date', limit: 500 }),
-          ])
-          // Merge and deduplicate by id
-          const seen = new Set<string>()
-          const merged: BlockRow[] = []
-          for (const b of [...dueResp.items, ...schedResp.items]) {
-            if (!seen.has(b.id)) {
-              seen.add(b.id)
-              merged.push(b)
-            }
-          }
-          blocks = merged
-          setAgendaHasMore(false) // merged set doesn't support cursor pagination
-          setAgendaCursor(null)
-        } else {
-          // Execute each filter dimension and intersect
-          const resultSets: Set<string>[] = []
-          const allBlocks = new Map<string, BlockRow>()
-
-          for (const filter of agendaFilters) {
-            const ids = new Set<string>()
-
-            if (filter.dimension === 'status') {
-              for (const value of filter.values) {
-                const resp = await queryByProperty({
-                  key: 'todo_state',
-                  valueText: value,
-                  limit: 500,
-                })
-                for (const b of resp.items) {
-                  ids.add(b.id)
-                  allBlocks.set(b.id, b)
-                }
-              }
-            } else if (filter.dimension === 'priority') {
-              for (const value of filter.values) {
-                const resp = await queryByProperty({
-                  key: 'priority',
-                  valueText: value,
-                  limit: 500,
-                })
-                for (const b of resp.items) {
-                  ids.add(b.id)
-                  allBlocks.set(b.id, b)
-                }
-              }
-            } else if (filter.dimension === 'dueDate') {
-              // Map filter values to actual dates
-              const today = new Date()
-              const todayStr = formatDate(today)
-              for (const value of filter.values) {
-                if (value === 'Today') {
-                  const resp = await listBlocks({
-                    agendaDate: todayStr,
-                    agendaSource: 'column:due_date',
-                    limit: 500,
-                  })
-                  for (const b of resp.items) {
-                    ids.add(b.id)
-                    allBlocks.set(b.id, b)
-                  }
-                } else if (value === 'This week') {
-                  const day = today.getDay()
-                  const mondayOffset = day === 0 ? -6 : 1 - day
-                  for (let d = 0; d < 7; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() + mondayOffset + d)
-                    const dateStr = formatDate(date)
-                    const resp = await listBlocks({
-                      agendaDate: dateStr,
-                      agendaSource: 'column:due_date',
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'This month') {
-                  const year = today.getFullYear()
-                  const month = today.getMonth()
-                  const daysInMonth = new Date(year, month + 1, 0).getDate()
-                  for (let d = 1; d <= daysInMonth; d++) {
-                    const dateStr = formatDate(new Date(year, month, d))
-                    const resp = await listBlocks({
-                      agendaDate: dateStr,
-                      agendaSource: 'column:due_date',
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'Overdue') {
-                  // Get all blocks with due_date < today
-                  const resp = await queryByProperty({ key: 'due_date', limit: 500 })
-                  for (const b of resp.items) {
-                    if (b.due_date && b.due_date < todayStr && b.todo_state !== 'DONE') {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (
-                  value === 'Next 7 days' ||
-                  value === 'Next 14 days' ||
-                  value === 'Next 30 days'
-                ) {
-                  const numDays = value === 'Next 7 days' ? 7 : value === 'Next 14 days' ? 14 : 30
-                  for (let d = 0; d < numDays; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() + d)
-                    const dateStr = formatDate(date)
-                    const resp = await listBlocks({
-                      agendaDate: dateStr,
-                      agendaSource: 'column:due_date',
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                }
-              }
-            } else if (filter.dimension === 'scheduledDate') {
-              const today = new Date()
-              const todayStr = formatDate(today)
-              for (const value of filter.values) {
-                if (value === 'Today') {
-                  const resp = await listBlocks({
-                    agendaDate: todayStr,
-                    agendaSource: 'column:scheduled_date',
-                    limit: 500,
-                  })
-                  for (const b of resp.items) {
-                    ids.add(b.id)
-                    allBlocks.set(b.id, b)
-                  }
-                } else if (value === 'This week') {
-                  const day = today.getDay()
-                  const mondayOffset = day === 0 ? -6 : 1 - day
-                  for (let d = 0; d < 7; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() + mondayOffset + d)
-                    const dateStr = formatDate(date)
-                    const resp = await listBlocks({
-                      agendaDate: dateStr,
-                      agendaSource: 'column:scheduled_date',
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'This month') {
-                  const year = today.getFullYear()
-                  const month = today.getMonth()
-                  const daysInMonth = new Date(year, month + 1, 0).getDate()
-                  for (let d = 1; d <= daysInMonth; d++) {
-                    const dateStr = formatDate(new Date(year, month, d))
-                    const resp = await listBlocks({
-                      agendaDate: dateStr,
-                      agendaSource: 'column:scheduled_date',
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'Overdue') {
-                  const resp = await queryByProperty({ key: 'scheduled_date', limit: 500 })
-                  for (const b of resp.items) {
-                    if (
-                      b.scheduled_date &&
-                      b.scheduled_date < todayStr &&
-                      b.todo_state !== 'DONE'
-                    ) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (
-                  value === 'Next 7 days' ||
-                  value === 'Next 14 days' ||
-                  value === 'Next 30 days'
-                ) {
-                  const numDays = value === 'Next 7 days' ? 7 : value === 'Next 14 days' ? 14 : 30
-                  for (let d = 0; d < numDays; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() + d)
-                    const dateStr = formatDate(date)
-                    const resp = await listBlocks({
-                      agendaDate: dateStr,
-                      agendaSource: 'column:scheduled_date',
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                }
-              }
-            } else if (filter.dimension === 'completedDate') {
-              // completed_at is a custom property — use queryByProperty with valueDate per day
-              const today = new Date()
-              const todayStr = formatDate(today)
-              for (const value of filter.values) {
-                if (value === 'Today') {
-                  const resp = await queryByProperty({
-                    key: 'completed_at',
-                    valueDate: todayStr,
-                    limit: 500,
-                  })
-                  for (const b of resp.items) {
-                    ids.add(b.id)
-                    allBlocks.set(b.id, b)
-                  }
-                } else if (value === 'This week') {
-                  const day = today.getDay()
-                  const mondayOffset = day === 0 ? -6 : 1 - day
-                  for (let d = 0; d < 7; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() + mondayOffset + d)
-                    const dateStr = formatDate(date)
-                    const resp = await queryByProperty({
-                      key: 'completed_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'This month') {
-                  const year = today.getFullYear()
-                  const month = today.getMonth()
-                  const daysInMonth = new Date(year, month + 1, 0).getDate()
-                  for (let d = 1; d <= daysInMonth; d++) {
-                    const dateStr = formatDate(new Date(year, month, d))
-                    const resp = await queryByProperty({
-                      key: 'completed_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'Last 7 days') {
-                  for (let d = 0; d < 7; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() - d)
-                    const dateStr = formatDate(date)
-                    const resp = await queryByProperty({
-                      key: 'completed_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'Last 30 days') {
-                  for (let d = 0; d < 30; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() - d)
-                    const dateStr = formatDate(date)
-                    const resp = await queryByProperty({
-                      key: 'completed_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                }
-              }
-            } else if (filter.dimension === 'createdDate') {
-              // created_at is a custom property — same pattern as completedDate
-              const today = new Date()
-              const todayStr = formatDate(today)
-              for (const value of filter.values) {
-                if (value === 'Today') {
-                  const resp = await queryByProperty({
-                    key: 'created_at',
-                    valueDate: todayStr,
-                    limit: 500,
-                  })
-                  for (const b of resp.items) {
-                    ids.add(b.id)
-                    allBlocks.set(b.id, b)
-                  }
-                } else if (value === 'This week') {
-                  const day = today.getDay()
-                  const mondayOffset = day === 0 ? -6 : 1 - day
-                  for (let d = 0; d < 7; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() + mondayOffset + d)
-                    const dateStr = formatDate(date)
-                    const resp = await queryByProperty({
-                      key: 'created_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'This month') {
-                  const year = today.getFullYear()
-                  const month = today.getMonth()
-                  const daysInMonth = new Date(year, month + 1, 0).getDate()
-                  for (let d = 1; d <= daysInMonth; d++) {
-                    const dateStr = formatDate(new Date(year, month, d))
-                    const resp = await queryByProperty({
-                      key: 'created_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'Last 7 days') {
-                  for (let d = 0; d < 7; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() - d)
-                    const dateStr = formatDate(date)
-                    const resp = await queryByProperty({
-                      key: 'created_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'Last 30 days') {
-                  for (let d = 0; d < 30; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() - d)
-                    const dateStr = formatDate(date)
-                    const resp = await queryByProperty({
-                      key: 'created_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                }
-              }
-            } else if (filter.dimension === 'tag') {
-              for (const value of filter.values) {
-                const resp = await listBlocks({ tagId: value, limit: 500 })
-                for (const b of resp.items) {
-                  ids.add(b.id)
-                  allBlocks.set(b.id, b)
-                }
-              }
-            } else if (filter.dimension === 'property') {
-              for (const filterValue of filter.values) {
-                const colonIdx = filterValue.indexOf(':')
-                const key = colonIdx > 0 ? filterValue.slice(0, colonIdx) : filterValue
-                const value = colonIdx > 0 ? filterValue.slice(colonIdx + 1) : undefined
-                const resp = await queryByProperty({
-                  key,
-                  valueText: value ?? undefined,
-                  limit: 500,
-                })
-                for (const b of resp.items) {
-                  ids.add(b.id)
-                  allBlocks.set(b.id, b)
-                }
-              }
-            }
-
-            resultSets.push(ids)
-          }
-
-          // Intersect all result sets
-          if (resultSets.length > 0) {
-            let intersection = resultSets[0]
-            for (let i = 1; i < resultSets.length; i++) {
-              intersection = new Set([...intersection].filter((id) => resultSets[i].has(id)))
-            }
-            blocks = [...intersection].map((id) => allBlocks.get(id) as BlockRow).filter(Boolean)
-          }
-
-          setAgendaHasMore(false) // Client-side intersection doesn't support pagination
-          setAgendaCursor(null)
-        }
-
-        if (!cancelled) {
-          setFilteredBlocks(blocks.slice(0, 200))
-          setAgendaLoading(false)
-
-          // Resolve page titles for breadcrumbs
-          const parentIds = [...new Set(blocks.map((b) => b.parent_id).filter(Boolean))] as string[]
-          if (parentIds.length > 0) {
-            const resolved = await batchResolve(parentIds)
-            const titleMap = new Map<string, string>()
-            for (const r of resolved) {
-              titleMap.set(r.id, r.title ?? 'Untitled')
-            }
-            if (!cancelled) setAgendaPageTitles(titleMap)
-          }
-        }
-      } catch {
-        if (!cancelled) {
-          setFilteredBlocks([])
-          setAgendaLoading(false)
-        }
-      }
-    }
-
-    executeFilters()
-    return () => {
-      cancelled = true
-    }
-  }, [mode, agendaFilters])
-
-  /** Load the next page of agenda results (used for default unfiltered view). */
-  const loadMoreAgenda = useCallback(async () => {
-    if (!agendaCursor) return
-    setAgendaLoading(true)
-    try {
-      const resp = await queryByProperty({ key: 'todo_state', cursor: agendaCursor, limit: 200 })
-      setFilteredBlocks((prev) => [...prev, ...resp.items])
-      setAgendaHasMore(resp.has_more)
-      setAgendaCursor(resp.next_cursor)
-    } catch {
-      // ignore
-    }
-    setAgendaLoading(false)
-  }, [agendaCursor])
-
-  /** Add a new block under a specific day's page, creating the page if needed. */
-  const handleAddBlock = useCallback(
-    async (dateStr: string, autoFocus = false) => {
-      try {
-        let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
-        const isNewPage = !pageId
-
-        if (!pageId) {
-          const page = await createBlock({ blockType: 'page', content: dateStr })
-          pageId = page.id
-          setCreatedPages((prev) => new Map(prev).set(dateStr, pageId as string))
-          setPageMap((prev) => new Map(prev).set(dateStr, pageId as string))
-          useResolveStore.getState().set(page.id, dateStr, false)
-        }
-
-        if (isNewPage) {
-          const { template: journalTemplate, duplicateWarning } = await loadJournalTemplate()
-          if (duplicateWarning) {
-            toast.warning(duplicateWarning)
-          }
-          if (journalTemplate) {
-            const ids = await insertTemplateBlocks(journalTemplate.id, pageId, {
-              pageTitle: dateStr,
-            })
-            await load(pageId)
-            if (autoFocus && ids.length > 0) {
-              useBlockStore.setState({ focusedBlockId: ids[0] })
-            }
-          } else {
-            const block = await createBlock({
-              blockType: 'content',
-              content: '',
-              parentId: pageId,
-            })
-            await load(pageId)
-            if (autoFocus && block.id) {
-              useBlockStore.setState({ focusedBlockId: block.id })
-            }
-          }
-        } else {
-          const block = await createBlock({
-            blockType: 'content',
-            content: '',
-            parentId: pageId,
-          })
-          await load(pageId)
-          if (autoFocus && block.id) {
-            useBlockStore.setState({ focusedBlockId: block.id })
-          }
-        }
-      } catch {
-        toast.error(t('journal.addBlockFailed'))
-      }
-    },
-    [createdPages, pageMap, load, t],
-  )
-
-  const autoCreatedRef = useRef(false)
-
-  useEffect(() => {
-    if (loading) return
-    if (autoCreatedRef.current) return
-    if (mode !== 'daily') return
-    const todayStr = formatDate(new Date())
-    if (todayStr !== formatDate(currentDate)) return
-    if (createdPages.has(todayStr) || pageMap.has(todayStr)) return
-    autoCreatedRef.current = true
-    handleAddBlock(todayStr, true)
-  }, [loading, mode, currentDate, pageMap, createdPages, handleAddBlock])
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (mode !== 'daily') return
-      const dateStr = formatDate(currentDate)
-      if (createdPages.has(dateStr) || pageMap.has(dateStr)) return
-      const target = e.target as HTMLElement
-      if (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
-        return
-      if (e.key === 'Enter' || e.key === 'n') {
-        e.preventDefault()
-        handleAddBlock(dateStr, true)
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [mode, currentDate, createdPages, pageMap, handleAddBlock])
-
-  // ── Render helpers ──────────────────────────────────────────────────
-
-  const todayStr = formatDate(new Date())
-
-  /** Render a single day section with heading + BlockTree or compact empty state. */
-  function renderDaySection(
-    entry: DayEntry,
-    headingLevel: 'h2' | 'h3' = 'h3',
-    options?: { hideHeading?: boolean; compact?: boolean },
-  ) {
-    const isToday = entry.dateStr === todayStr
-    const Heading = headingLevel === 'h2' ? 'h2' : 'h3'
-    const compact = options?.compact ?? false
-    const isClickable = mode !== 'daily'
-
-    return (
-      <section
-        key={entry.dateStr}
-        id={`journal-${entry.dateStr}`}
-        aria-label={`Journal for ${entry.displayDate}`}
-        className={cn(isToday && 'bg-accent/[0.04] rounded-lg px-3 py-2 -mx-3')}
-      >
-        {/* Day heading — hidden in daily mode since header shows the date */}
-        {!options?.hideHeading && (
-          <div className="flex items-center gap-2 mb-2">
-            <Heading
-              className={cn(
-                headingLevel === 'h2'
-                  ? 'text-base font-medium'
-                  : 'text-sm font-medium text-muted-foreground',
-                isToday && headingLevel === 'h3' && 'text-foreground',
-              )}
-            >
-              {isClickable ? (
-                <button
-                  type="button"
-                  className="hover:text-primary hover:underline underline-offset-2 cursor-pointer transition-colors"
-                  onClick={() => navigateToDate(entry.date, 'daily')}
-                  aria-label={`Go to daily view for ${entry.displayDate}`}
-                >
-                  {entry.displayDate}
-                </button>
-              ) : (
-                entry.displayDate
-              )}
-              {isToday && (
-                <span className="ml-2 text-xs text-muted-foreground font-normal">
-                  ({t('journal.today')})
-                </span>
-              )}
-            </Heading>
-            {/* Count badges for weekly/monthly modes */}
-            {mode !== 'daily' && mode !== 'agenda' && (
-              <>
-                {(agendaCounts[entry.dateStr] ?? 0) > 0 && (
-                  <button
-                    type="button"
-                    className="inline-flex items-center rounded-full bg-orange-100 px-1.5 py-0.5 text-xs font-medium text-orange-800 dark:bg-orange-900/30 dark:text-orange-300 hover:bg-orange-200 dark:hover:bg-orange-900/50"
-                    onClick={() => goToDateAndPanel(entry.date, 'due')}
-                    aria-label={`${agendaCounts[entry.dateStr]} due items, click to view`}
-                  >
-                    {(agendaCounts[entry.dateStr] ?? 0) > 99 ? '99+' : agendaCounts[entry.dateStr]}{' '}
-                    {t('journal.dueBadge')}
-                  </button>
-                )}
-                {entry.pageId && (backlinkCounts[entry.pageId] ?? 0) > 0 && (
-                  <button
-                    type="button"
-                    className="inline-flex items-center rounded-full bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50"
-                    onClick={() => goToDateAndPanel(entry.date, 'references')}
-                    aria-label={`${backlinkCounts[entry.pageId]} references, click to view`}
-                  >
-                    {(backlinkCounts[entry.pageId] ?? 0) > 99
-                      ? '99+'
-                      : backlinkCounts[entry.pageId]}{' '}
-                    {t('journal.refsBadge')}
-                  </button>
-                )}
-              </>
-            )}
-            {entry.pageId && onNavigateToPage && (
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={`Open ${entry.dateStr} in editor`}
-                onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-              </Button>
-            )}
-          </div>
-        )}
-        {/* In daily mode (heading hidden), still show the "open in editor" link */}
-        {options?.hideHeading && entry.pageId && onNavigateToPage && (
-          <div className="flex items-center gap-2 mb-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              aria-label={`Open ${entry.dateStr} in editor`}
-              onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
-            >
-              <ExternalLink className="h-3.5 w-3.5 mr-1" />
-              {t('journal.openInEditor')}
-            </Button>
-          </div>
-        )}
-
-        {entry.pageId && <BlockTree parentId={entry.pageId} onNavigateToPage={onNavigateToPage} />}
-
-        {/* DuePanel + LinkedReferences — only in daily mode */}
-        {mode === 'daily' && entry.pageId && (
-          <>
-            <div id="journal-due-panel">
-              <DuePanel date={entry.dateStr} onNavigateToPage={onNavigateToPage} />
-            </div>
-            <div id="journal-references-panel">
-              <LinkedReferences pageId={entry.pageId} onNavigateToPage={onNavigateToPage} />
-            </div>
-            <div id="journal-done-panel">
-              <DonePanel date={entry.dateStr} onNavigateToPage={onNavigateToPage} />
-            </div>
-          </>
-        )}
-
-        {/* Empty state: compact for multi-day views, full for daily */}
-        {!entry.pageId &&
-          (compact ? (
-            <button
-              type="button"
-              className="w-full rounded-md border border-dashed px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent/50 transition-colors"
-              onClick={() => handleAddBlock(entry.dateStr)}
-            >
-              <Plus className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
-              {t('action.addBlock')}
-            </button>
-          ) : (
-            <EmptyState
-              icon={CalendarIcon}
-              message={t('journal.noBlocks', { date: entry.displayDate })}
-              compact
-              action={
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-3 mx-auto flex items-center gap-1"
-                  onClick={() => handleAddBlock(entry.dateStr)}
-                >
-                  <Plus className="h-4 w-4" />
-                  {t('journal.addFirstBlock')}
-                </Button>
-              }
-            />
-          ))}
-
-        {/* "Add block" button — only shown when there IS content (otherwise the empty state has the CTA) */}
-        {entry.pageId && (
-          <div className="mt-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              onClick={() => handleAddBlock(entry.dateStr)}
-            >
-              <Plus className="h-4 w-4" />
-              {t('action.addBlock')}
-            </Button>
-          </div>
-        )}
-      </section>
-    )
-  }
-
-  /** Render daily view — single day, heading hidden (header shows date). */
-  function renderDaily() {
-    const entry = makeDayEntry(currentDate)
-    return <div className="space-y-4">{renderDaySection(entry, 'h2', { hideHeading: true })}</div>
-  }
-
-  /** Render weekly view — Mon-Sun, each day as a compact section with separator. */
-  function renderWeekly() {
-    const days = getWeekDays(currentDate)
-    return (
-      <div className="space-y-1">
-        {days.map((d, i) => {
-          const entry = makeDayEntry(d)
-          const isToday = entry.dateStr === todayStr
-          return (
-            <div key={entry.dateStr}>
-              {i > 0 && <div className="border-t border-border my-4" />}
-              {renderDaySection(entry, isToday ? 'h2' : 'h3', { compact: true })}
-            </div>
-          )
-        })}
-      </div>
-    )
-  }
-
-  /** Render monthly view — stacked day sections for the whole month (compact, with separators). */
-  function renderMonthly() {
-    const monthStart = startOfMonth(currentDate)
-    const monthEnd = endOfMonth(currentDate)
-    const days = eachDayOfInterval({ start: monthStart, end: monthEnd })
-
-    return (
-      <div className="space-y-1">
-        {days.map((d, i) => {
-          const entry = makeDayEntry(d)
-          const isToday = entry.dateStr === todayStr
-          return (
-            <div key={entry.dateStr}>
-              {i > 0 && <div className="border-t border-border my-4" />}
-              {renderDaySection(entry, isToday ? 'h2' : 'h3', { compact: true })}
-            </div>
-          )
-        })}
-      </div>
-    )
-  }
-
-  /** Render agenda view — filter builder + sort/group controls + flat results list. */
-  function renderAgenda() {
-    return (
-      <div className="agenda-view space-y-4">
-        <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
-        <AgendaSortGroupControls
-          groupBy={agendaGroupBy}
-          onGroupByChange={setAgendaGroupBy}
-          sortBy={agendaSortBy}
-          onSortByChange={setAgendaSortBy}
-        />
-        <AgendaResults
-          blocks={filteredBlocks}
-          loading={agendaLoading}
-          hasMore={agendaHasMore}
-          onLoadMore={loadMoreAgenda}
-          onNavigateToPage={onNavigateToPage}
-          hasActiveFilters={agendaFilters.length > 0}
-          onClearFilters={() => setAgendaFilters([])}
-          pageTitles={agendaPageTitles}
-          groupBy={agendaGroupBy}
-          sortBy={agendaSortBy}
-        />
-      </div>
-    )
-  }
-
-  // ── Highlighted days for the floating calendar picker ────────────────
-
-  // ── Main render ─────────────────────────────────────────────────────
-
-  return (
-    <div className="space-y-4">
-      {/* Loading indicator on initial fetch */}
-      {loading && (
-        <div className="space-y-1" data-testid="loading-skeleton">
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-8 w-full rounded-lg" />
-        </div>
-      )}
-
-      {/* View content */}
-      {!loading && mode === 'daily' && renderDaily()}
-      {!loading && mode === 'weekly' && renderWeekly()}
-      {!loading && mode === 'monthly' && renderMonthly()}
-      {!loading && mode === 'agenda' && renderAgenda()}
-    </div>
-  )
-}
-
 // ── Journal Controls (rendered in App header bar) ─────────────────────
 
 /** Journal mode/date controls — rendered in the App header for space efficiency. */
@@ -1228,6 +376,7 @@ export function JournalControls(): React.ReactElement {
   const [pageMap, setPageMap] = useState<Set<string>>(new Set())
 
   // Fetch page map for calendar highlighting
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only run on mount
   useEffect(() => {
     listBlocks({ blockType: 'page', limit: 500 })
       .then((resp) => {
