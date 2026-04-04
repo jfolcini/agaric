@@ -344,3 +344,17 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **Import**: Logseq/Markdown files as pages + blocks
 - **Export page**: Markdown with resolved tag names and page titles, YAML frontmatter for properties
 - **Export all**: ZIP of all pages as Markdown files
+
+## 10. Shared Components & Utilities
+
+### Shared UI Components
+- **ConfirmDialog** (`src/components/ConfirmDialog.tsx`): Wraps AlertDialog primitives with title/description/cancel/action props, optional `children` slot, `actionVariant` (default/destructive), `loading` spinner. Used by 8 components.
+- **LoadMoreButton** (`src/components/LoadMoreButton.tsx`): Cursor-paginated load-more button with `loading`/`hasMore`/`onLoadMore` props and Loader2 spinner. Used by 6 components.
+- **LoadingSkeleton** (`src/components/LoadingSkeleton.tsx`): Skeleton loading placeholder with `count`/`height` props. Used by 7 components.
+- **PropertyRow** (`src/components/BlockPropertyDrawer.tsx`): Extracted sub-component for property rows with badge+input+remove layout. Supports optional icon, date/text input types.
+
+### Shared Hooks
+- **useBlockNavigation** (`src/hooks/useBlockNavigation.ts`): Returns `{ handleBlockClick, handleBlockKeyDown }` for block click + keyboard (Enter/Space) navigation. Used by AgendaResults, DonePanel, DuePanel.
+
+### CSS Utilities
+- **`.touch-target-44`** (`src/index.css`): Utility class for `@media(pointer:coarse)` min-height 44px touch targets. Used across 19+ components.
