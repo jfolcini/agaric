@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 151 — 2026-04-03 — Dynamic template variables (#639)
+
+### Build: expandTemplateVariables + context passing
+
+1 build subagent. Found that most of #639's template infrastructure was already implemented (template pages, journal templates, /template command, subtree insertion). Added the missing piece: dynamic variable expansion.
+
+| File | Change |
+|------|--------|
+| `template-utils.ts` | New `expandTemplateVariables()`: replaces `<% today %>`, `<% time %>`, `<% datetime %>`, `<% page title %>`. Updated `insertTemplateBlocks()` to accept context + expand variables. |
+| `template-utils.test.ts` | 10 new tests (all variable types + edge cases). 24/24 pass. |
+| `JournalPage.tsx` | Passes `{ pageTitle: dateStr }` to insertTemplateBlocks. |
+| `BlockTree.tsx` | Passes `{ pageTitle }` from resolve store to insertTemplateBlocks. |
+| `REVIEW-LATER.md` | Updated #639 (core done, kebab menu + "Save as template" remain). |
+
+### Stats
+- Frontend: 10 new tests (24/24 template-utils pass)
+- Commit: `1253e9b`
+- REVIEW-LATER: #639 partially resolved (dynamic variables done). 3 open items (unchanged count).
+
 ## Session 150 — 2026-04-03 — Overdue rollover in DuePanel (#641)
 
 ### Build: overdue tasks shown on today's view
