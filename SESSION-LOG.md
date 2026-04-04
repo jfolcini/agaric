@@ -1,5 +1,37 @@
 # Session Log
 
+## Session 201 — 2026-04-04 — Batch 55: Refactoring extractions (R-2, R-4, R-9, R-13, R-16)
+
+### Summary
+Extracted 5 duplicated patterns into shared utilities/hooks/config-driven components via 5 parallel subagents. 28 new tests, 3177/3179 pass (2 pre-existing date flakes). One bug fix in HistoryView (missing error recovery on diff fetch failure).
+
+### Batch 55
+
+**Commit:** 1d92935
+
+| Area | Change |
+|------|--------|
+| FormattingToolbar.tsx | R-2: Config-driven toolbar — 17 buttons collapsed from inline JSX to `ToolbarButtonConfig` arrays + shared `Tip` renderer. 3 special buttons (link, highlight color, text color) remain inline. ~517 → ~330 lines. |
+| text-utils.ts (NEW) | R-4: `truncateContent` utility — strips `[[...]]` and markdown chars, truncates with `…`. Configurable `max` (default 120). 9 tests. |
+| DonePanel.tsx | R-4: Replaced local `truncateContent` with shared import. |
+| DuePanel.tsx | R-4: Replaced local `truncateContent` with shared import. |
+| AgendaResults.tsx | R-4: Replaced local `truncateContent` with shared import. |
+| QueryResult.tsx | R-4: Renamed local `truncate` → `truncateContent` import with `max=80`. |
+| history-utils.ts (NEW) | R-9: `getPayloadPreview` utility — extracts display-worthy text from op log payloads. 10 tests. |
+| useHistoryDiffToggle.ts (NEW) | R-9: Generic hook managing expandedKeys + diffCache + loadingDiffs state with `computeEditDiff` integration. Includes error recovery (missing in HistoryView — bug fix). 9 tests. |
+| HistoryPanel.tsx | R-9: Replaced inline diff toggle state with `useHistoryDiffToggle` hook. Replaced local `getPayloadPreview` with shared import. |
+| HistoryView.tsx | R-9: Same replacement. **Bug fix:** Added error recovery on failed diff fetch (was missing, causing loading spinner to persist indefinitely). |
+| SortableBlock.tsx | R-13: Extracted `TaskCheckbox` config-driven component with `TASK_CHECKBOX_STYLES` map. Replaces 5 conditional checkbox branches. `CheckboxStyle` interface + `EMPTY_STYLE` fallback for type safety. |
+| AgendaFilterBuilder.tsx | R-16: Extracted `DropdownSelector` component replacing two nearly identical Group By / Sort By popover selectors. |
+
+**Review:** 5 parallel build subagents + 5 review subagents. Blocking issues found and fixed: (1) biome import ordering in AgendaFilterBuilder.tsx, history-utils.test.ts; (2) biome formatting (multi-line `<ul>` collapsed to single line); (3) TS errors in SortableBlock.tsx (`style` possibly undefined — added `EMPTY_STYLE` fallback) and useHistoryDiffToggle.test.ts (`DiffSpan.text` → `DiffSpan.value`); (4) corrupted trailing content in AgendaFilterBuilder.tsx; (5) non-null assertion in test file.
+
+**Stats:** 15 files changed (6 new + 9 modified), 779 insertions, 493 deletions. 3177/3179 frontend tests pass (2 pre-existing date-dependent flakes in template-utils.test.ts). Biome + TypeScript clean.
+
+**Resolved:** R-2, R-4, R-9, R-13, R-16 (5 items). 40 open items remain.
+
+---
+
 ## Session 200 — 2026-04-04 — Batch 54: Refactoring extractions (R-5, R-6, R-7, R-10, R-12, R-15)
 
 ### Summary
