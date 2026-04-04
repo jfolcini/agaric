@@ -1,10 +1,12 @@
 # Session Log
 
-## Session 192 — 2026-04-04 — Batches 44-45: UX-M27..M37 (PairingDialog, EmptyState, spacing/padding/typography)
+## Session 192 — 2026-04-04 — Batches 44-47: UX-M27..M50 (all remaining UX-MED items)
 
 ### Summary
 Batch 44: Refactored PairingDialog from custom overlay/dialog to shadcn Dialog (removing ~50 lines of manual focus trap + Escape handling). Consolidated 5 components onto shared EmptyState. Standardized AgendaResults spacing.
 Batch 45: Standardized spacing, padding, and typography across 6 components (LinkedReferences, DuePanel, DeviceManagement, PageHeader, HistoryPanel, PropertyChip).
+Batch 46: Typography alignment (modal titles, section headers), focus ring consistency (Button, Calendar), touch targets (RenameDialog, UnpairConfirmDialog, SortableBlock badges).
+Batch 47: Hover state consistency (PageBrowser), design system alignment (tooltip, sidebar, skeleton), i18n consistency (breadcrumb arrows). FormattingToolbar heading size confirmed intentional.
 
 ### Batch 44 — UX-M27..M31
 
@@ -35,15 +37,48 @@ Batch 45: Standardized spacing, padding, and typography across 6 components (Lin
 | src/components/HistoryPanel.tsx | UX-M36: Added `gap-2` to history items to match HistoryView |
 | src/components/PropertyChip.tsx | UX-M37: `text-[10px]`→`text-xs` to match design system |
 
+### Batch 46 — UX-M39..M44
+
+**Commit:** e335199
+
+| Area | Change |
+|------|--------|
+| src/components/SearchPanel.tsx | UX-M39: Section header `text-xs`→`text-sm` to match TagFilterPanel |
+| src/components/ui/alert-dialog.tsx | UX-M40: AlertDialogTitle add `leading-none tracking-tight` |
+| src/components/ui/sheet.tsx | UX-M40: SheetTitle add `text-lg leading-none tracking-tight` |
+| src/components/ui/button.tsx | UX-M41: Focus ring `ring-2`→`ring-[3px]` to match Input/Badge |
+| src/components/ui/calendar.tsx | UX-M42: WeekNumber + CaptionLabel buttons add `ring-offset-2` |
+| src/components/RenameDialog.tsx | UX-M43: AlertDialogCancel/Action add `[@media(pointer:coarse)]:min-h-[44px]` |
+| src/components/UnpairConfirmDialog.tsx | UX-M43: AlertDialogCancel/Action add `[@media(pointer:coarse)]:min-h-[44px]` |
+| src/components/SortableBlock.tsx | UX-M44: Priority badges add `[@media(pointer:coarse)]:px-2.5/py-1` |
+
+### Batch 47 — UX-M45..M50
+
+**Commit:** f477844
+
+| Area | Change |
+|------|--------|
+| src/components/PageBrowser.tsx | UX-M45: Leaf pages `hover:bg-accent`→`hover:bg-accent/50` to match folders |
+| src/components/ui/tooltip.tsx | UX-M46: Arrow `rounded-[2px]`→`rounded-sm` |
+| src/components/ui/sidebar.tsx | UX-M47: Outline variant `shadow-[0_0_0_1px]`→`border border-sidebar-border` |
+| FormattingToolbar.tsx | UX-M48: `size="xs"` confirmed intentional (shows text "H1") — no change |
+| src/components/LinkedReferences.tsx | UX-M49: Skeleton `rounded-md`→`rounded-lg` |
+| src/components/PagePropertyTable.tsx | UX-M49: Skeleton `rounded`→`rounded-lg` |
+| src/components/DonePanel.tsx | UX-M50: Hardcoded `→`→`t('donePanel.breadcrumbArrow')` |
+| src/components/AgendaResults.tsx | UX-M50: Hardcoded `&rarr;`→`t('agenda.breadcrumbArrow')` |
+| src/lib/i18n.ts | UX-M50: Added `donePanel.breadcrumbArrow` and `agenda.breadcrumbArrow` keys |
+
 ### Stats
-- 15 files changed across batches 44+45
+- 30+ files changed across batches 44-47
 - 3088 frontend tests pass
 - All prek hooks pass
 
 ### REVIEW-LATER removals
 - Batch 44: UX-M27, UX-M28, UX-M29, UX-M31 (4 items)
 - Batch 45: UX-M32, UX-M33, UX-M34, UX-M35, UX-M36, UX-M37 (6 items)
-- Open items: 14 (was 24)
+- Batch 46: UX-M39, UX-M40, UX-M41, UX-M42, UX-M43, UX-M44 (6 items)
+- Batch 47: UX-M45, UX-M46, UX-M47, UX-M48, UX-M49, UX-M50 (6 items)
+- Open items: 2 (was 24) — F-14, M-22 remain (both blocked)
 
 ---
 
