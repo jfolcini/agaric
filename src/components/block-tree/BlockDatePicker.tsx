@@ -82,7 +82,7 @@ export function BlockDatePicker({
         role="dialog"
         aria-modal="true"
         aria-label="Date picker"
-        className="date-picker-popup fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 max-[479px]:left-2 max-[479px]:right-2 max-[479px]:translate-x-0 max-[479px]:max-h-[70vh] max-[479px]:overflow-y-auto"
+        className="date-picker-popup fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 max-w-[calc(100vw-2rem)] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0 max-sm:max-h-[70vh] max-sm:overflow-y-auto"
         data-testid="date-picker-popup"
       >
         <div className="px-3 pb-2">

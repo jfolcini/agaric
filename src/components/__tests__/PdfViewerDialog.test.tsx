@@ -286,4 +286,25 @@ describe('PdfViewerDialog', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  it('pdf navigation buttons use Button component for touch sizing', async () => {
+    render(
+      <PdfViewerDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        fileUrl="http://example.com/test.pdf"
+        filename="test.pdf"
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+    })
+
+    const prevBtn = screen.getByRole('button', { name: 'Previous page' })
+    const nextBtn = screen.getByRole('button', { name: 'Next page' })
+
+    expect(prevBtn).toBeInTheDocument()
+    expect(nextBtn).toBeInTheDocument()
+  })
 })

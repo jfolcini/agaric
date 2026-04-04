@@ -1085,4 +1085,31 @@ describe('DeviceManagement', () => {
       expect(hint?.textContent).toContain('mDNS discovery')
     })
   })
+
+  it('edit address button uses icon-xs size for touch sizing', async () => {
+    mockInvokeByCommand({
+      get_device_id: mockDeviceId,
+      list_peer_refs: [{ ...mockPeers[0], last_address: null }],
+    })
+
+    const { container } = render(<DeviceManagement />)
+
+    await screen.findByText('peer-abc-123...')
+    const editBtn = container.querySelector('.peer-address-edit')
+    expect(editBtn).toBeTruthy()
+    expect(editBtn?.className).toContain('peer-address-edit')
+  })
+
+  it('peer action buttons container has flex-wrap', async () => {
+    mockInvokeByCommand({
+      get_device_id: mockDeviceId,
+      list_peer_refs: mockPeers,
+    })
+
+    const { container } = render(<DeviceManagement />)
+
+    await screen.findByText('peer-abc-123...')
+    const syncBtn = container.querySelector('.device-sync-btn')
+    expect(syncBtn?.parentElement?.className).toContain('flex-wrap')
+  })
 })

@@ -438,7 +438,7 @@ export function JournalControls(): React.ReactElement {
   }
 
   return (
-    <div className="flex flex-1 items-center gap-2">
+    <div className="flex flex-1 items-center gap-2 flex-wrap">
       {/* Mode switcher */}
       <div className="flex items-center gap-0.5" role="tablist" aria-label="Journal view mode">
         {(['daily', 'weekly', 'monthly', 'agenda'] as const).map((m) => {
@@ -485,7 +485,7 @@ export function JournalControls(): React.ReactElement {
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span
-            className="min-w-[140px] text-center text-sm font-medium"
+            className="min-w-[100px] sm:min-w-[140px] text-center text-sm font-medium"
             data-testid="date-display"
           >
             {getDateDisplay()}

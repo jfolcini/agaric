@@ -13,6 +13,7 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog'
 
 // Set worker path — served from public/
@@ -182,27 +183,27 @@ export function PdfViewerDialog({
 
         {!loading && !error && numPages > 0 && (
           <div className="flex items-center justify-center gap-4 pt-2" data-testid="pdf-nav">
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="icon-sm"
               onClick={goToPrev}
               disabled={currentPage <= 1}
-              className="inline-flex items-center justify-center rounded-md border border-border bg-background p-1.5 text-sm transition-colors hover:bg-accent disabled:opacity-50 disabled:pointer-events-none"
               aria-label="Previous page"
             >
               <ChevronLeft className="h-4 w-4" />
-            </button>
+            </Button>
             <span className="text-sm text-muted-foreground" data-testid="pdf-page-indicator">
               Page {currentPage} / {numPages}
             </span>
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="icon-sm"
               onClick={goToNext}
               disabled={currentPage >= numPages}
-              className="inline-flex items-center justify-center rounded-md border border-border bg-background p-1.5 text-sm transition-colors hover:bg-accent disabled:opacity-50 disabled:pointer-events-none"
               aria-label="Next page"
             >
               <ChevronRight className="h-4 w-4" />
-            </button>
+            </Button>
           </div>
         )}
       </DialogContent>

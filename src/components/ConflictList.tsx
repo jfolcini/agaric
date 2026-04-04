@@ -602,7 +602,7 @@ export function ConflictList(): React.ReactElement {
                 </div>
                 {renderConflictContent(conflictType, block, original, isExpanded, t)}
               </button>
-              <div className="conflict-item-actions flex items-center gap-2 ml-2 shrink-0">
+              <div className="conflict-item-actions flex items-center gap-2 ml-2 shrink-0 flex-wrap">
                 {block.parent_id && (
                   <Button
                     variant="ghost"

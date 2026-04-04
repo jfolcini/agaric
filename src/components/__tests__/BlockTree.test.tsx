@@ -1583,6 +1583,135 @@ describe('BlockTree slash command wiring', () => {
 
     expect(mockInsertTable).toHaveBeenCalledWith({ rows: 10, cols: 2, withHeaderRow: true })
   })
+
+  it('slash command dialog uses standard max-sm breakpoint', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+    useMockEditor = true
+
+    render(<BlockTree />)
+
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    // Mock query_by_property → returns one template page
+    // Then list_blocks → returns one child (for preview)
+    mockedInvoke
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 'TPL_01',
+            block_type: 'page',
+            content: 'My Template',
+            parent_id: null,
+            position: 0,
+            deleted_at: null,
+            is_conflict: false,
+            conflict_type: null,
+            todo_state: null,
+            priority: null,
+            due_date: null,
+            scheduled_date: null,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 'CHILD_01',
+            block_type: 'content',
+            content: 'Template preview text',
+            parent_id: 'TPL_01',
+            position: 0,
+            deleted_at: null,
+            is_conflict: false,
+            conflict_type: null,
+            todo_state: null,
+            priority: null,
+            due_date: null,
+            scheduled_date: null,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'template', label: 'TEMPLATE' })
+    })
+
+    const dialog = await screen.findByRole('dialog')
+    const classes = dialog.className
+
+    expect(classes).not.toContain('max-[479px]')
+    expect(classes).toContain('max-sm:')
+  })
+
+  it('slash command dialog has responsive max-width', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+    useMockEditor = true
+
+    render(<BlockTree />)
+
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
+
+    await waitFor(() => {
+      expect(capturedOnSlashCommand).toBeDefined()
+    })
+
+    mockedInvoke
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 'TPL_01',
+            block_type: 'page',
+            content: 'My Template',
+            parent_id: null,
+            position: 0,
+            deleted_at: null,
+            is_conflict: false,
+            conflict_type: null,
+            todo_state: null,
+            priority: null,
+            due_date: null,
+            scheduled_date: null,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 'CHILD_01',
+            block_type: 'content',
+            content: 'Template preview text',
+            parent_id: 'TPL_01',
+            position: 0,
+            deleted_at: null,
+            is_conflict: false,
+            conflict_type: null,
+            todo_state: null,
+            priority: null,
+            due_date: null,
+            scheduled_date: null,
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+    await act(async () => {
+      capturedOnSlashCommand?.({ id: 'template', label: 'TEMPLATE' })
+    })
+
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.className).toContain('max-w-[calc(100vw-2rem)]')
+  })
 })
 
 // =========================================================================

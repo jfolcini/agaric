@@ -2141,4 +2141,21 @@ describe('ConflictList', () => {
 
     expect(await screen.findByText(/From: This device/)).toBeInTheDocument()
   })
+
+  it('conflict action buttons container has flex-wrap for mobile', async () => {
+    const page = {
+      items: [makeConflict({ id: 'C1', content: 'wrap test' })],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockInvokeByCommand({ get_conflicts: page, get_block: originalBlock })
+
+    render(<ConflictList />)
+
+    await screen.findByText('wrap test')
+
+    const actionsContainer = document.querySelector('.conflict-item-actions')
+    expect(actionsContainer).not.toBeNull()
+    expect(actionsContainer?.className).toContain('flex-wrap')
+  })
 })

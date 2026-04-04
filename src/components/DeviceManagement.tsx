@@ -321,8 +321,8 @@ export function DeviceManagement(): React.ReactElement {
                               </span>
                               <Button
                                 variant="ghost"
-                                size="sm"
-                                className="peer-address-edit h-5 w-5 p-0"
+                                size="icon-xs"
+                                className="peer-address-edit"
                                 onClick={() => {
                                   const addr = prompt(
                                     'Enter peer address (host:port):',
@@ -348,7 +348,7 @@ export function DeviceManagement(): React.ReactElement {
                             </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap">
                           <Button
                             variant="ghost"
                             size="sm"

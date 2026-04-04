@@ -2302,4 +2302,36 @@ describe('JournalPage', () => {
       document.body.removeChild(input)
     })
   })
+
+  // ── Mobile responsiveness ───────────────────────────────────────────
+
+  describe('mobile responsiveness', () => {
+    it('journal header has flex-wrap for mobile responsiveness', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const tablist = screen.getByRole('tablist')
+      const parent = tablist.parentElement as HTMLElement
+      expect(parent.className).toContain('flex-wrap')
+    })
+
+    it('date display uses responsive min-width', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const dateDisplay = screen.getByTestId('date-display')
+      expect(dateDisplay.className).toContain('min-w-[100px]')
+      expect(dateDisplay.className).toContain('sm:min-w-[140px]')
+    })
+  })
 })

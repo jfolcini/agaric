@@ -438,6 +438,21 @@ describe('TrashView', () => {
 
   // ── a11y ────────────────────────────────────────────────────────────
 
+  it('trash items use responsive stacking for mobile', async () => {
+    const page = {
+      items: [makeBlock('B1', 'responsive item', '2025-01-15T00:00:00Z')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<TrashView />)
+
+    const trashItem = await screen.findByTestId('trash-item')
+    expect(trashItem.className).toContain('flex-col')
+    expect(trashItem.className).toContain('sm:flex-row')
+  })
+
   it('has no a11y violations', async () => {
     const page = {
       items: [makeBlock('B1', 'accessible item', '2025-01-15T00:00:00Z')],
