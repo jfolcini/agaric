@@ -117,15 +117,10 @@ pub async fn append_local_op_in_tx(
     // or null for the genesis op.
     let parent_seqs: Option<String> = if seq > 1 {
         let prev_seq = seq - 1;
-        // Sorted by (device_id, seq) for deterministic blake3 hashes.
-        // The sort is on (&str, i64) tuples — str sorts lexicographically,
-        // i64 sorts numerically. This is correct and intentional: i64's Ord
-        // impl gives us numeric order (not stringified), which is what we want
-        // for sequence numbers. Phase 1 has exactly one parent; Phase 4
-        // multi-parent DAG will extend this to multiple entries.
-        let mut parents = vec![(device_id, prev_seq)];
-        parents.sort();
-        Some(serde_json::to_string(&parents)?)
+        // Phase 1 has exactly one parent; Phase 4 multi-parent DAG will
+        // extend this to multiple entries with proper sorting.
+        // Construct JSON directly to avoid Vec allocation + sort overhead.
+        Some(format!(r#"[["{}",{}]]"#, device_id, prev_seq))
     } else {
         None
     };

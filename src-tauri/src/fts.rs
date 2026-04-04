@@ -39,6 +39,14 @@ static ITALIC_RE: LazyLock<Regex> =
 static CODE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"`(.+?)`").expect("invalid code regex"));
 
+/// Matches strikethrough markdown: `~~text~~`
+static STRIKE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"~~(.+?)~~").expect("invalid strikethrough regex"));
+
+/// Matches highlight markdown: `==text==`
+static HIGHLIGHT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"==(.+?)==").expect("invalid highlight regex"));
+
 /// Matches tag references: `#[ULID]`
 pub(crate) static TAG_REF_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"#\[([0-9A-Z]{26})\]").expect("invalid tag ref regex"));
@@ -64,6 +72,8 @@ pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, A
     let mut result = BOLD_RE.replace_all(content, "$1").to_string();
     result = ITALIC_RE.replace_all(&result, "$1").to_string();
     result = CODE_RE.replace_all(&result, "$1").to_string();
+    result = STRIKE_RE.replace_all(&result, "$1").to_string();
+    result = HIGHLIGHT_RE.replace_all(&result, "$1").to_string();
 
     // Step 4: Batch-fetch tag names and replace
     let tag_ids: Vec<String> = TAG_REF_RE
@@ -121,8 +131,12 @@ pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, A
             .to_string();
     }
 
-    // Step 6: Unescape backslash sequences (\* -> *, \` -> `)
-    result = result.replace("\\*", "*").replace("\\`", "`");
+    // Step 6: Unescape backslash sequences (\* -> *, \` -> `, \~ -> ~, \= -> =)
+    result = result
+        .replace("\\*", "*")
+        .replace("\\`", "`")
+        .replace("\\~", "~")
+        .replace("\\=", "=");
 
     Ok(result)
 }
@@ -140,6 +154,8 @@ fn strip_for_fts_with_maps(
     let mut result = BOLD_RE.replace_all(content, "$1").to_string();
     result = ITALIC_RE.replace_all(&result, "$1").to_string();
     result = CODE_RE.replace_all(&result, "$1").to_string();
+    result = STRIKE_RE.replace_all(&result, "$1").to_string();
+    result = HIGHLIGHT_RE.replace_all(&result, "$1").to_string();
 
     // Step 4: Replace tag references
     result = TAG_REF_RE
@@ -157,8 +173,12 @@ fn strip_for_fts_with_maps(
         })
         .to_string();
 
-    // Step 6: Unescape backslash sequences (\* -> *, \` -> `)
-    result = result.replace("\\*", "*").replace("\\`", "`");
+    // Step 6: Unescape backslash sequences (\* -> *, \` -> `, \~ -> ~, \= -> =)
+    result = result
+        .replace("\\*", "*")
+        .replace("\\`", "`")
+        .replace("\\~", "~")
+        .replace("\\=", "=");
 
     result
 }
@@ -497,22 +517,28 @@ pub async fn search_fts(
     })?;
 
     let has_more = rows.len() as i64 > effective_limit;
+    let cursor_data = if has_more {
+        let last = &rows[effective_limit as usize - 1];
+        Some((last.id.clone(), last.search_rank))
+    } else {
+        None
+    };
     let mut block_rows: Vec<BlockRow> = rows
-        .iter()
+        .into_iter()
         .map(|r| BlockRow {
-            id: r.id.clone(),
-            block_type: r.block_type.clone(),
-            content: r.content.clone(),
-            parent_id: r.parent_id.clone(),
+            id: r.id,
+            block_type: r.block_type,
+            content: r.content,
+            parent_id: r.parent_id,
             position: r.position,
-            deleted_at: r.deleted_at.clone(),
-            archived_at: r.archived_at.clone(),
+            deleted_at: r.deleted_at,
+            archived_at: r.archived_at,
             is_conflict: r.is_conflict,
-            conflict_type: r.conflict_type.clone(),
-            todo_state: r.todo_state.clone(),
-            priority: r.priority.clone(),
-            due_date: r.due_date.clone(),
-            scheduled_date: r.scheduled_date.clone(),
+            conflict_type: r.conflict_type,
+            todo_state: r.todo_state,
+            priority: r.priority,
+            due_date: r.due_date,
+            scheduled_date: r.scheduled_date,
         })
         .collect();
 
@@ -521,14 +547,14 @@ pub async fn search_fts(
     }
 
     let next_cursor = if has_more {
-        let last_fts = &rows[effective_limit as usize - 1];
+        let (cursor_id, cursor_rank) = cursor_data.unwrap();
         Some(
             Cursor {
-                id: last_fts.id.clone(),
+                id: cursor_id,
                 position: None,
                 deleted_at: None,
                 seq: None,
-                rank: Some(last_fts.search_rank),
+                rank: Some(cursor_rank),
             }
             .encode()?,
         )
@@ -655,12 +681,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn strip_strikethrough() {
+        let (pool, _dir) = test_pool().await;
+        let result = strip_for_fts("~~deleted~~", &pool).await.unwrap();
+        assert_eq!(result, "deleted");
+    }
+
+    #[tokio::test]
+    async fn strip_highlight() {
+        let (pool, _dir) = test_pool().await;
+        let result = strip_for_fts("==important==", &pool).await.unwrap();
+        assert_eq!(result, "important");
+    }
+
+    #[tokio::test]
     async fn strip_mixed_formatting() {
         let (pool, _dir) = test_pool().await;
         let result = strip_for_fts("**bold** and *italic* and `code`", &pool)
             .await
             .unwrap();
         assert_eq!(result, "bold and italic and code");
+    }
+
+    #[tokio::test]
+    async fn strip_mixed_with_strike_and_highlight() {
+        let (pool, _dir) = test_pool().await;
+        let result = strip_for_fts("**bold** and ~~deleted~~ and ==highlighted==", &pool)
+            .await
+            .unwrap();
+        assert_eq!(result, "bold and deleted and highlighted");
     }
 
     #[tokio::test]
@@ -1445,6 +1494,19 @@ mod tests {
         // Use a single \* (unpaired) so ITALIC_RE doesn't consume it.
         let result = strip_for_fts_with_maps(r"**bold** `code` \*args", &tag_names, &page_titles);
         assert_eq!(result, "bold code *args");
+    }
+
+    #[test]
+    fn strip_with_maps_handles_strike_and_highlight() {
+        let tag_names = HashMap::new();
+        let page_titles = HashMap::new();
+
+        let result = strip_for_fts_with_maps(
+            "**bold** and ~~deleted~~ and ==highlighted==",
+            &tag_names,
+            &page_titles,
+        );
+        assert_eq!(result, "bold and deleted and highlighted");
     }
 
     // ======================================================================
