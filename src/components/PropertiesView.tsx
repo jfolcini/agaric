@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
+import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition } from '../lib/tauri'
 import {
   createPropertyDef,
@@ -323,7 +324,7 @@ export function PropertiesView(): React.ReactElement {
               key={def.key}
               className="group flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-accent/50"
             >
-              <span className="font-medium text-sm">{def.key}</span>
+              <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
               <Badge variant="secondary">{def.value_type}</Badge>
               {def.value_type === 'select' && (
                 <Popover

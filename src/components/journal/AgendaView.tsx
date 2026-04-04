@@ -525,6 +525,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
         sortBy={agendaSortBy}
         onSortByChange={setAgendaSortBy}
       />
+      <div className="border-t border-border/40" />
       <AgendaResults
         blocks={filteredBlocks}
         loading={agendaLoading}

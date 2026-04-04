@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
+import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import {
   createPropertyDef,
@@ -250,7 +251,7 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
                       className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-accent"
                       onClick={() => handleAddFromDef(def)}
                     >
-                      <span className="flex-1">{def.key}</span>
+                      <span className="flex-1">{formatPropertyName(def.key)}</span>
                       <Badge variant="outline" className="font-mono text-xs">
                         {def.value_type}
                       </Badge>
@@ -410,7 +411,7 @@ function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: Proper
   return (
     <div className="property-row flex items-center gap-2 text-sm">
       <Badge variant="outline" className="shrink-0 font-mono text-xs">
-        {prop.key}
+        {formatPropertyName(prop.key)}
       </Badge>
       <div className="flex-1">
         {valueType === 'select' ? (

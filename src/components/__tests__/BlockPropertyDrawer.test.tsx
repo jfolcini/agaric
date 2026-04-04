@@ -357,7 +357,7 @@ describe('BlockPropertyDrawer', () => {
     render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.getByText('created_at')).toBeInTheDocument()
+      expect(screen.getByText('Created At')).toBeInTheDocument()
     })
 
     expect(screen.queryByRole('button', { name: 'Delete property' })).not.toBeInTheDocument()
@@ -383,9 +383,71 @@ describe('BlockPropertyDrawer', () => {
     render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.getByText('repeat')).toBeInTheDocument()
+      expect(screen.getByText('Repeat')).toBeInTheDocument()
     })
 
     expect(screen.queryByRole('button', { name: 'Delete property' })).not.toBeInTheDocument()
+  })
+
+  // ── UX-H1: Consistent built-in property rendering ────────────────────
+
+  it('renders built-in property (created_at) with icon and formatted name', async () => {
+    const props = [makeProp('created_at', { value_text: '2026-01-01' })]
+    setupMock(props, [makeDef('created_at')])
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Created At')).toBeInTheDocument()
+    })
+
+    // Badge should have the formatted name as title
+    const badge = screen.getByTitle('Created At')
+    expect(badge).toBeInTheDocument()
+
+    // Badge should have icon styling (flex items-center gap-1) and NOT font-mono
+    expect(badge).toHaveClass('flex', 'items-center', 'gap-1')
+    expect(badge).not.toHaveClass('font-mono')
+
+    // Should contain an SVG icon
+    const svg = badge.querySelector('svg')
+    expect(svg).toBeInTheDocument()
+  })
+
+  it('renders built-in property (effort) with icon and formatted name', async () => {
+    const props = [makeProp('effort', { value_num: 30 })]
+    setupMock(props, [makeDef('effort', 'number')])
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Effort')).toBeInTheDocument()
+    })
+
+    const badge = screen.getByTitle('Effort')
+    expect(badge).toHaveClass('flex', 'items-center', 'gap-1')
+    expect(badge).not.toHaveClass('font-mono')
+
+    const svg = badge.querySelector('svg')
+    expect(svg).toBeInTheDocument()
+  })
+
+  it('renders custom properties with font-mono and raw key', async () => {
+    const props = [makeProp('my_custom', { value_text: 'hello' })]
+    setupMock(props, [makeDef('my_custom')])
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('my_custom')).toBeInTheDocument()
+    })
+
+    // Custom properties keep font-mono and raw key as title
+    const badge = screen.getByTitle('my_custom')
+    expect(badge).toHaveClass('font-mono')
+
+    // No icon for custom properties
+    const svg = badge.querySelector('svg')
+    expect(svg).not.toBeInTheDocument()
   })
 })

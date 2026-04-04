@@ -29,12 +29,20 @@ const emptyPage = { items: [], next_cursor: null, has_more: false }
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
+  CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
+  CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
+  CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
+  CheckCircle2: () => <svg data-testid="check-circle2-icon" />,
   ChevronDown: () => <svg data-testid="chevron-down" />,
   ChevronRight: () => <svg data-testid="chevron-right" />,
+  Clock: () => <svg data-testid="clock-icon" />,
+  MapPin: () => <svg data-testid="map-pin-icon" />,
   MoreVertical: () => <svg data-testid="more-vertical-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
   Redo2: () => <svg data-testid="redo2-icon" />,
+  Repeat: () => <svg data-testid="repeat-icon" />,
   Undo2: () => <svg data-testid="undo2-icon" />,
+  User: () => <svg data-testid="user-icon" />,
   X: () => <svg data-testid="x-icon" />,
 }))
 
@@ -599,6 +607,56 @@ describe('PageHeader alias display', () => {
         aliases: ['alias-b'],
       })
     })
+  })
+
+  it('renders only one "Add Alias" button when no aliases exist', async () => {
+    setupTagMock([])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await waitFor(() => {
+      const addAliasButtons = screen.getAllByRole('button', { name: /add alias/i })
+      expect(addAliasButtons).toHaveLength(1)
+    })
+  })
+
+  it('shows "Edit" button (not "Add Alias") when aliases exist', async () => {
+    setupTagMock([], ['my-alias'])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('my-alias')).toBeInTheDocument()
+    })
+
+    expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /add alias/i })).not.toBeInTheDocument()
+  })
+
+  it('shows Plus icon only when there are no aliases', async () => {
+    setupTagMock([], [])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    // With no aliases, the "Add Alias" button should contain a Plus icon
+    await waitFor(() => {
+      const addAliasBtn = screen.getByRole('button', { name: /add alias/i })
+      expect(addAliasBtn.querySelector('[data-testid="plus-icon"]')).not.toBeNull()
+    })
+  })
+
+  it('does not show Plus icon when aliases exist', async () => {
+    setupTagMock([], ['some-alias'])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('some-alias')).toBeInTheDocument()
+    })
+
+    // The Edit button should NOT contain a Plus icon
+    const editButton = screen.getByRole('button', { name: /edit/i })
+    expect(editButton.querySelector('[data-testid="plus-icon"]')).toBeNull()
   })
 
   it('alias badges use the same styling pattern as tag badges', async () => {

@@ -20,10 +20,18 @@ import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
 const mockedInvoke = vi.mocked(invoke)
 
 vi.mock('lucide-react', () => ({
+  CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
+  CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
+  CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
+  CheckCircle2: () => <svg data-testid="check-circle2-icon" />,
   ChevronDown: () => <svg data-testid="chevron-down" />,
   ChevronRight: () => <svg data-testid="chevron-right" />,
+  Clock: () => <svg data-testid="clock-icon" />,
+  MapPin: () => <svg data-testid="map-pin-icon" />,
   Pencil: () => <svg data-testid="pencil-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
+  Repeat: () => <svg data-testid="repeat-icon" />,
+  User: () => <svg data-testid="user-icon" />,
   X: () => <svg data-testid="x-icon" />,
 }))
 
@@ -332,8 +340,8 @@ describe('PagePropertyTable add property flow', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
-      expect(screen.getByText('status')).toBeInTheDocument()
-      expect(screen.getByText('priority')).toBeInTheDocument()
+      expect(screen.getByText('Status')).toBeInTheDocument()
+      expect(screen.getByText('Priority')).toBeInTheDocument()
     })
   })
 
@@ -357,8 +365,8 @@ describe('PagePropertyTable add property flow', () => {
     await user.type(screen.getByLabelText('Search definitions'), 'stat')
 
     await waitFor(() => {
-      expect(screen.getByText('status')).toBeInTheDocument()
-      expect(screen.queryByText('priority')).not.toBeInTheDocument()
+      expect(screen.getByText('Status')).toBeInTheDocument()
+      expect(screen.queryByText('Priority')).not.toBeInTheDocument()
     })
   })
 
@@ -376,10 +384,10 @@ describe('PagePropertyTable add property flow', () => {
     await user.click(screen.getByRole('button', { name: /add property/i }))
 
     await waitFor(() => {
-      expect(screen.getByText('status')).toBeInTheDocument()
+      expect(screen.getByText('Status')).toBeInTheDocument()
     })
 
-    await user.click(screen.getByText('status'))
+    await user.click(screen.getByText('Status'))
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
@@ -459,6 +467,27 @@ describe('PagePropertyTable add property flow', () => {
         valueDate: null,
         valueRef: null,
       })
+    })
+  })
+  it('displays formatted property names in the add-property popover', async () => {
+    const user = userEvent.setup()
+    setupMock([], [makeDef('created_at', 'date'), makeDef('my_custom_prop', 'text')])
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /add property/i })).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /add property/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Created At')).toBeInTheDocument()
+      expect(screen.getByText('My Custom Prop')).toBeInTheDocument()
+      // Raw keys should NOT appear
+      expect(screen.queryByText('created_at')).not.toBeInTheDocument()
+      expect(screen.queryByText('my_custom_prop')).not.toBeInTheDocument()
     })
   })
 })
@@ -802,10 +831,10 @@ describe('PagePropertyTable task-only property filtering', () => {
       expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
     })
 
-    expect(screen.queryByText('effort')).not.toBeInTheDocument()
-    expect(screen.queryByText('assignee')).not.toBeInTheDocument()
-    expect(screen.queryByText('location')).not.toBeInTheDocument()
-    expect(screen.getByText('due_date')).toBeInTheDocument()
-    expect(screen.getByText('custom_prop')).toBeInTheDocument()
+    expect(screen.queryByText('Effort')).not.toBeInTheDocument()
+    expect(screen.queryByText('Assignee')).not.toBeInTheDocument()
+    expect(screen.queryByText('Location')).not.toBeInTheDocument()
+    expect(screen.getByText('Due Date')).toBeInTheDocument()
+    expect(screen.getByText('Custom Prop')).toBeInTheDocument()
   })
 })

@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { announce } from '../lib/announcer'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import {
@@ -257,41 +258,49 @@ export function BlockPropertyDrawer({
           ) : properties.length === 0 && !hasBuiltinDates ? (
             <p className="text-sm text-muted-foreground">{t('property.noProperties')}</p>
           ) : (
-            properties.map((prop) => (
-              <div key={prop.key} className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
-                <Badge
-                  variant="outline"
-                  className="shrink-0 font-mono text-xs max-w-[120px] truncate"
-                  title={prop.key}
-                >
-                  {prop.key}
-                </Badge>
-                <Input
-                  className="flex-1 h-7 text-xs"
-                  aria-label={t('property.valueLabel', { key: prop.key })}
-                  defaultValue={
-                    prop.value_text ??
-                    prop.value_date ??
-                    (prop.value_num != null ? String(prop.value_num) : '')
-                  }
-                  onBlur={(e) => handleSave(prop.key, e.target.value, getType(prop.key))}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                  }}
-                />
-                {!BUILTIN_PROPERTY_KEYS.has(prop.key) && (
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="shrink-0 text-muted-foreground hover:text-destructive"
-                    aria-label={t('property.delete')}
-                    onClick={() => handleDelete(prop.key)}
+            properties.map((prop) => {
+              const Icon = BUILTIN_PROPERTY_ICONS[prop.key]
+              return (
+                <div key={prop.key} className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
+                  <Badge
+                    variant="outline"
+                    className={
+                      Icon
+                        ? 'shrink-0 text-xs max-w-[120px] truncate flex items-center gap-1'
+                        : 'shrink-0 font-mono text-xs max-w-[120px] truncate'
+                    }
+                    title={Icon ? formatPropertyName(prop.key) : prop.key}
                   >
-                    <X className="h-3 w-3" />
-                  </Button>
-                )}
-              </div>
-            ))
+                    {Icon && <Icon size={12} />}
+                    {Icon ? formatPropertyName(prop.key) : prop.key}
+                  </Badge>
+                  <Input
+                    className="flex-1 h-7 text-xs"
+                    aria-label={t('property.valueLabel', { key: prop.key })}
+                    defaultValue={
+                      prop.value_text ??
+                      prop.value_date ??
+                      (prop.value_num != null ? String(prop.value_num) : '')
+                    }
+                    onBlur={(e) => handleSave(prop.key, e.target.value, getType(prop.key))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                    }}
+                  />
+                  {!BUILTIN_PROPERTY_KEYS.has(prop.key) && (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                      aria-label={t('property.delete')}
+                      onClick={() => handleDelete(prop.key)}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+              )
+            })
           )}
           {/* Add property from definitions */}
           {!loading && (

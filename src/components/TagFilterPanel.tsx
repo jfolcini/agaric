@@ -302,7 +302,7 @@ export function TagFilterPanel(): React.ReactElement {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 gap-1 px-2"
+                  className="gap-1 px-2"
                   onClick={() => handleAddTag(tag)}
                 >
                   <Plus className="h-3 w-3" />

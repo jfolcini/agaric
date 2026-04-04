@@ -1198,6 +1198,26 @@ describe('JournalPage', () => {
       })
     })
 
+    it('renders a visual separator between controls and results', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
+      await user.click(agendaTab)
+
+      await waitFor(() => {
+        const agendaView = screen.getByTestId('agenda-view')
+        const separator = agendaView.querySelector('.border-t')
+        expect(separator).toBeInTheDocument()
+      })
+    })
+
     it('default agenda loads dated tasks via queryByProperty with due_date and scheduled_date', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {

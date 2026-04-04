@@ -1,4 +1,5 @@
 import type React from 'react'
+import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { cn } from '@/lib/utils'
 
 interface PropertyChipProps {
@@ -16,19 +17,31 @@ export function PropertyChip({
   onClick,
   onKeyClick,
 }: PropertyChipProps): React.ReactElement {
+  const Icon = BUILTIN_PROPERTY_ICONS[propKey]
+  const displayName = formatPropertyName(propKey)
+
   const keyLabel = onKeyClick ? (
     <button
       type="button"
-      className={cn('property-key-label opacity-60 hover:underline cursor-pointer')}
+      className={cn(
+        'property-key-label opacity-60 hover:underline cursor-pointer',
+        Icon && 'inline-flex items-center gap-0.5',
+      )}
       onClick={(e) => {
         e.stopPropagation()
         onKeyClick()
       }}
     >
-      {propKey}:
+      {Icon && <Icon size={10} className="shrink-0" />}
+      {displayName}:
     </button>
   ) : (
-    <span className="property-key-label opacity-60">{propKey}:</span>
+    <span
+      className={cn('property-key-label opacity-60', Icon && 'inline-flex items-center gap-0.5')}
+    >
+      {Icon && <Icon size={10} className="shrink-0" />}
+      {displayName}:
+    </span>
   )
 
   return (

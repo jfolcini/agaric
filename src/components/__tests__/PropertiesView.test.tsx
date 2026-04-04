@@ -71,10 +71,10 @@ describe('PropertiesView', () => {
 
     render(<PropertiesView />)
 
-    // Property key names
-    expect(await screen.findByText('status')).toBeInTheDocument()
-    expect(screen.getByText('priority')).toBeInTheDocument()
-    expect(screen.getByText('due')).toBeInTheDocument()
+    // Property key names (formatted via formatPropertyName)
+    expect(await screen.findByText('Status')).toBeInTheDocument()
+    expect(screen.getByText('Priority')).toBeInTheDocument()
+    expect(screen.getByText('Due')).toBeInTheDocument()
 
     // Type badges exist (values also appear in the dropdown, so use getAllByText)
     // Each type appears at least twice: once in the <option> and once in the badge
@@ -113,8 +113,8 @@ describe('PropertiesView', () => {
     const createBtn = screen.getByRole('button', { name: /Create/i })
     await user.click(createBtn)
 
-    // New definition should appear
-    expect(await screen.findByText('my-prop')).toBeInTheDocument()
+    // New definition should appear (formatted as "My Prop")
+    expect(await screen.findByText('My Prop')).toBeInTheDocument()
 
     // Verify invoke was called correctly
     expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
@@ -136,7 +136,7 @@ describe('PropertiesView', () => {
 
     render(<PropertiesView />)
 
-    expect(await screen.findByText('to-delete')).toBeInTheDocument()
+    expect(await screen.findByText('To Delete')).toBeInTheDocument()
 
     // Click the trash icon
     const deleteBtn = screen.getByRole('button', { name: /Delete property to-delete/i })
@@ -159,7 +159,7 @@ describe('PropertiesView', () => {
 
     render(<PropertiesView />)
 
-    expect(await screen.findByText('to-delete')).toBeInTheDocument()
+    expect(await screen.findByText('To Delete')).toBeInTheDocument()
 
     // Mock deletePropertyDef
     mockedInvoke.mockResolvedValueOnce(undefined)
@@ -174,7 +174,7 @@ describe('PropertiesView', () => {
 
     // Definition should be removed
     await waitFor(() => {
-      expect(screen.queryByText('to-delete')).not.toBeInTheDocument()
+      expect(screen.queryByText('To Delete')).not.toBeInTheDocument()
     })
 
     // Success toast
@@ -191,19 +191,19 @@ describe('PropertiesView', () => {
 
     render(<PropertiesView />)
 
-    // Wait for all definitions to appear
-    expect(await screen.findByText('status')).toBeInTheDocument()
-    expect(screen.getByText('priority')).toBeInTheDocument()
-    expect(screen.getByText('due-date')).toBeInTheDocument()
+    // Wait for all definitions to appear (formatted via formatPropertyName)
+    expect(await screen.findByText('Status')).toBeInTheDocument()
+    expect(screen.getByText('Priority')).toBeInTheDocument()
+    expect(screen.getByText('Due Date')).toBeInTheDocument()
 
     // Type in the search
     const searchInput = screen.getByPlaceholderText('Search properties...')
     await user.type(searchInput, 'pri')
 
-    // Only 'priority' should be visible
-    expect(screen.getByText('priority')).toBeInTheDocument()
-    expect(screen.queryByText('status')).not.toBeInTheDocument()
-    expect(screen.queryByText('due-date')).not.toBeInTheDocument()
+    // Only 'priority' should be visible (displayed as 'Priority')
+    expect(screen.getByText('Priority')).toBeInTheDocument()
+    expect(screen.queryByText('Status')).not.toBeInTheDocument()
+    expect(screen.queryByText('Due Date')).not.toBeInTheDocument()
   })
 
   it('shows edit options button for select-type properties', async () => {
@@ -214,7 +214,7 @@ describe('PropertiesView', () => {
 
     render(<PropertiesView />)
 
-    expect(await screen.findByText('status')).toBeInTheDocument()
+    expect(await screen.findByText('Status')).toBeInTheDocument()
 
     // Edit options button should be visible for select type
     expect(screen.getByRole('button', { name: /Edit options/i })).toBeInTheDocument()
@@ -260,7 +260,7 @@ describe('PropertiesView', () => {
     render(<PropertiesView />)
 
     await waitFor(() => {
-      expect(screen.getByText('status')).toBeInTheDocument()
+      expect(screen.getByText('Status')).toBeInTheDocument()
     })
 
     const keyInput = screen.getByPlaceholderText('Property key')
@@ -277,7 +277,7 @@ describe('PropertiesView', () => {
     render(<PropertiesView />)
 
     await waitFor(() => {
-      expect(screen.getByText('status')).toBeInTheDocument()
+      expect(screen.getByText('Status')).toBeInTheDocument()
     })
 
     const keyInput = screen.getByPlaceholderText('Property key')
@@ -293,7 +293,7 @@ describe('PropertiesView', () => {
     render(<PropertiesView />)
 
     await waitFor(() => {
-      expect(screen.getByText('status')).toBeInTheDocument()
+      expect(screen.getByText('Status')).toBeInTheDocument()
     })
 
     const keyInput = screen.getByPlaceholderText('Property key')
@@ -301,5 +301,21 @@ describe('PropertiesView', () => {
 
     const createBtn = screen.getByRole('button', { name: /Create/i })
     expect(createBtn).toBeEnabled()
+  })
+
+  it('displays formatted property names in the definitions list', async () => {
+    mockedInvoke.mockResolvedValueOnce([
+      makePropDef('created_at', 'date'),
+      makePropDef('my_custom_prop', 'text'),
+    ])
+
+    render(<PropertiesView />)
+
+    // Formatted names should appear
+    expect(await screen.findByText('Created At')).toBeInTheDocument()
+    expect(screen.getByText('My Custom Prop')).toBeInTheDocument()
+    // Raw keys should NOT appear
+    expect(screen.queryByText('created_at')).not.toBeInTheDocument()
+    expect(screen.queryByText('my_custom_prop')).not.toBeInTheDocument()
   })
 })

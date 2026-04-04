@@ -196,7 +196,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   useEffect(() => {
     if (!pageId) return
     getPageAliases(pageId)
-      .then(setAliases)
+      .then((result) => setAliases(Array.isArray(result) ? result : []))
       .catch(() => toast.error(t('pageHeader.loadAliasesFailed')))
   }, [pageId, t])
 
@@ -401,88 +401,76 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         })()}
 
       {/* Aliases */}
-      {(aliases.length > 0 || editingAliases) && (
-        <div className="flex flex-wrap items-center gap-1.5 px-1">
-          <span className="font-medium">{t('pageHeader.aliases')}</span>
-          {aliases.map((alias) => (
-            <Badge key={alias} variant="secondary" className="gap-1">
-              {alias}
-              {editingAliases && (
-                <button
-                  type="button"
-                  className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
-                  onClick={() => {
-                    const next = aliases.filter((a) => a !== alias)
-                    setAliases(next)
-                    setPageAliases(pageId, next).catch(() =>
-                      toast.error(t('pageHeader.aliasUpdateFailed')),
-                    )
-                  }}
-                  aria-label={t('pageHeader.removeAlias', { alias })}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </Badge>
-          ))}
-          {editingAliases ? (
-            <form
-              className="flex items-center gap-1"
-              onSubmit={(e) => {
-                e.preventDefault()
-                if (aliasInput.trim()) {
-                  const next = [...aliases, aliasInput.trim()]
+      <div className="flex flex-wrap items-center gap-1.5 px-1">
+        {aliases.length > 0 && <span className="font-medium">{t('pageHeader.aliases')}</span>}
+        {aliases.map((alias) => (
+          <Badge key={alias} variant="secondary" className="gap-1">
+            {alias}
+            {editingAliases && (
+              <button
+                type="button"
+                className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
+                onClick={() => {
+                  const next = aliases.filter((a) => a !== alias)
                   setAliases(next)
                   setPageAliases(pageId, next).catch(() =>
                     toast.error(t('pageHeader.aliasUpdateFailed')),
                   )
-                  setAliasInput('')
-                }
-              }}
-            >
-              <Input
-                type="text"
-                className="w-24 [@media(pointer:coarse)]:w-full h-7 text-xs"
-                placeholder={t('pageHeader.newAliasPlaceholder')}
-                value={aliasInput}
-                onChange={(e) => setAliasInput(e.target.value)}
-                aria-label={t('pageHeader.newAliasInput')}
-              />
-              <Button type="submit" variant="ghost" size="xs">
-                {t('pageHeader.add')}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                onClick={() => setEditingAliases(false)}
+                }}
+                aria-label={t('pageHeader.removeAlias', { alias })}
               >
-                {t('pageHeader.done')}
-              </Button>
-            </form>
-          ) : (
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </Badge>
+        ))}
+        {editingAliases ? (
+          <form
+            className="flex items-center gap-1"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (aliasInput.trim()) {
+                const next = [...aliases, aliasInput.trim()]
+                setAliases(next)
+                setPageAliases(pageId, next).catch(() =>
+                  toast.error(t('pageHeader.aliasUpdateFailed')),
+                )
+                setAliasInput('')
+              }
+            }}
+          >
+            <Input
+              type="text"
+              className="w-24 [@media(pointer:coarse)]:w-full h-7 text-xs"
+              placeholder={t('pageHeader.newAliasPlaceholder')}
+              value={aliasInput}
+              onChange={(e) => setAliasInput(e.target.value)}
+              aria-label={t('pageHeader.newAliasInput')}
+            />
+            <Button type="submit" variant="ghost" size="xs">
+              {t('pageHeader.add')}
+            </Button>
             <Button
+              type="button"
               variant="ghost"
               size="xs"
-              className="gap-1 text-muted-foreground"
-              onClick={() => setEditingAliases(true)}
+              onClick={() => setEditingAliases(false)}
             >
-              {aliases.length > 0 ? t('pageHeader.edit') : t('pageHeader.addAlias')}
+              {t('pageHeader.done')}
             </Button>
-          )}
-        </div>
-      )}
-      {aliases.length === 0 && !editingAliases && (
-        <Button
-          variant="ghost"
-          size="xs"
-          className="gap-1 text-muted-foreground"
-          onClick={() => setEditingAliases(true)}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          {t('pageHeader.addAlias')}
-        </Button>
-      )}
+          </form>
+        ) : (
+          <Button
+            variant="ghost"
+            size="xs"
+            className="gap-1 text-muted-foreground"
+            onClick={() => setEditingAliases(true)}
+          >
+            {aliases.length === 0 && <Plus className="h-3.5 w-3.5" />}
+            {aliases.length > 0 ? t('pageHeader.edit') : t('pageHeader.addAlias')}
+          </Button>
+        )}
+      </div>
 
       {/* Tag badges row */}
       <div className="flex flex-wrap items-center gap-1.5">

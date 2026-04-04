@@ -8,7 +8,7 @@ describe('PropertyChip', () => {
   it('renders key and value text', () => {
     render(<PropertyChip propKey="effort" value="2h" />)
 
-    expect(screen.getByText('effort:')).toBeInTheDocument()
+    expect(screen.getByText('Effort:')).toBeInTheDocument()
     expect(screen.getByText('2h')).toBeInTheDocument()
   })
 
@@ -46,7 +46,7 @@ describe('PropertyChip', () => {
   it('key label has opacity-60 class', () => {
     render(<PropertyChip propKey="repeat" value="weekly" />)
 
-    const keySpan = screen.getByText('repeat:')
+    const keySpan = screen.getByText('Repeat:')
     expect(keySpan.className).toContain('opacity-60')
   })
 
@@ -115,7 +115,7 @@ describe('PropertyChip', () => {
       />,
     )
 
-    const keyLabel = screen.getByText('effort:')
+    const keyLabel = screen.getByText('Effort:')
     await user.click(keyLabel)
 
     expect(handleKeyClick).toHaveBeenCalledOnce()
@@ -126,7 +126,7 @@ describe('PropertyChip', () => {
   it('key label has hover:underline class when onKeyClick is provided', () => {
     render(<PropertyChip propKey="effort" value="2h" onKeyClick={() => {}} />)
 
-    const keyLabel = screen.getByText('effort:')
+    const keyLabel = screen.getByText('Effort:')
     expect(keyLabel.className).toContain('hover:underline')
     expect(keyLabel.className).toContain('cursor-pointer')
   })
@@ -134,7 +134,45 @@ describe('PropertyChip', () => {
   it('key label does not have hover:underline class when onKeyClick is not provided', () => {
     render(<PropertyChip propKey="effort" value="2h" />)
 
-    const keyLabel = screen.getByText('effort:')
+    const keyLabel = screen.getByText('Effort:')
     expect(keyLabel.className).not.toContain('hover:underline')
+  })
+
+  it('renders built-in property with formatted name and icon', () => {
+    const { container } = render(<PropertyChip propKey="due_date" value="2025-01-01" />)
+
+    expect(screen.getByText('Due Date:')).toBeInTheDocument()
+    const keyLabel = container.querySelector('.property-key-label')
+    expect(keyLabel?.querySelector('svg')).toBeInTheDocument()
+  })
+
+  it('renders custom property with formatted name and no icon', () => {
+    const { container } = render(<PropertyChip propKey="my_prop" value="hello" />)
+
+    expect(screen.getByText('My Prop:')).toBeInTheDocument()
+    const keyLabel = container.querySelector('.property-key-label')
+    expect(keyLabel?.querySelector('svg')).toBeNull()
+  })
+
+  it('renders formatted name and icon for clickable built-in key', () => {
+    const { container } = render(
+      <PropertyChip propKey="due_date" value="2025-01-01" onKeyClick={() => {}} />,
+    )
+
+    expect(screen.getByText('Due Date:')).toBeInTheDocument()
+    const keyLabel = container.querySelector('.property-key-label')
+    expect(keyLabel?.tagName.toLowerCase()).toBe('button')
+    expect(keyLabel?.querySelector('svg')).toBeInTheDocument()
+  })
+
+  it('renders formatted name without icon for clickable custom key', () => {
+    const { container } = render(
+      <PropertyChip propKey="my_prop" value="hello" onKeyClick={() => {}} />,
+    )
+
+    expect(screen.getByText('My Prop:')).toBeInTheDocument()
+    const keyLabel = container.querySelector('.property-key-label')
+    expect(keyLabel?.tagName.toLowerCase()).toBe('button')
+    expect(keyLabel?.querySelector('svg')).toBeNull()
   })
 })
