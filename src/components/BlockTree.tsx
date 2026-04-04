@@ -12,9 +12,9 @@
  * and depth.
  */
 
-import { closestCenter, DndContext, DragOverlay, MeasuringStrategy } from '@dnd-kit/core'
+import { closestCenter, DndContext, MeasuringStrategy } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { ChevronRight, Home, Trash2, X } from 'lucide-react'
+import { ChevronRight, Home } from 'lucide-react'
 import type React from 'react'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -31,7 +31,6 @@ import { useBlockProperties } from '../hooks/useBlockProperties'
 import { useBlockResolve } from '../hooks/useBlockResolve'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import { announce } from '../lib/announcer'
-import { parseDate } from '../lib/parse-date'
 import { formatRepeatLabel } from '../lib/repeat-utils'
 import {
   addAttachment,
@@ -56,136 +55,14 @@ import { cn } from '../lib/utils'
 import { useBlockStore } from '../stores/blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
+import { BlockContextMenu } from './block-tree/BlockContextMenu'
+import { BlockDatePicker } from './block-tree/BlockDatePicker'
+import { BlockDndOverlay } from './block-tree/BlockDndOverlay'
 import { BlockPropertyDrawer } from './BlockPropertyDrawer'
 import { EmptyState } from './EmptyState'
 import { HistorySheet } from './HistorySheet'
 import { SortableBlock } from './SortableBlock'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from './ui/alert-dialog'
-import { Button } from './ui/button'
-import { Calendar } from './ui/calendar'
 import { Skeleton } from './ui/skeleton'
-
-// ── Floating date picker with Escape + viewport centering ─────────────
-
-function DatePickerOverlay({
-  onSelect,
-  onClose,
-}: {
-  onSelect: (day: Date | undefined) => void
-  onClose: () => void
-}): React.ReactElement {
-  const dialogRef = useRef<HTMLDivElement>(null)
-  const [dateTextInput, setDateTextInput] = useState('')
-  const [dateTextPreview, setDateTextPreview] = useState<string | null>(null)
-
-  /** Convert a parsed YYYY-MM-DD string to a Date and call onSelect. */
-  const handleDateSelected = useCallback(
-    (dateStr: string) => {
-      const [y, m, d] = dateStr.split('-').map(Number)
-      const date = new Date(y, m - 1, d)
-      onSelect(date)
-    },
-    [onSelect],
-  )
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose()
-      }
-      // Focus trap: keep Tab within the dialog
-      if (e.key === 'Tab') {
-        const dialog = dialogRef.current
-        if (!dialog) return
-        const focusable = dialog.querySelectorAll<HTMLElement>(
-          'a[href], input, select, textarea, button:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        )
-        if (focusable.length === 0) return
-        const first = focusable[0]
-        const last = focusable[focusable.length - 1]
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault()
-          last.focus()
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault()
-          first.focus()
-        }
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
-
-  // Auto-focus the text input on mount
-  useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    const input = dialog.querySelector<HTMLElement>('input')
-    input?.focus()
-  }, [])
-
-  return (
-    <>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Date picker"
-        className="date-picker-popup fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 max-[479px]:left-2 max-[479px]:right-2 max-[479px]:translate-x-0 max-[479px]:max-h-[70vh] max-[479px]:overflow-y-auto"
-      >
-        <div className="px-3 pb-2">
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              className="flex-1 rounded border px-2 py-1 text-sm"
-              placeholder="Type a date... (today, +3d, Apr 15)"
-              value={dateTextInput}
-              onChange={(e) => {
-                setDateTextInput(e.target.value)
-                const parsed = parseDate(e.target.value)
-                setDateTextPreview(parsed)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && dateTextPreview) {
-                  e.preventDefault()
-                  handleDateSelected(dateTextPreview)
-                  setDateTextInput('')
-                  setDateTextPreview(null)
-                }
-              }}
-              aria-label="Type a date"
-            />
-          </div>
-          {dateTextInput && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {dateTextPreview ? (
-                <>
-                  Parsed: <strong>{dateTextPreview}</strong> (press Enter to apply)
-                </>
-              ) : (
-                <span className="text-destructive">Could not parse date</span>
-              )}
-            </p>
-          )}
-        </div>
-        <Calendar mode="single" weekStartsOn={1} showOutsideDays onSelect={onSelect} />
-      </div>
-    </>
-  )
-}
 
 function TemplatePicker({
   templatePages,
@@ -1881,68 +1758,15 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           ))}
         </nav>
       )}
-      {selectedBlockIds.length > 0 && (
-        <div className="batch-toolbar sticky top-0 z-10 flex items-center gap-2 rounded-lg border bg-background/95 backdrop-blur px-3 py-2 mb-2 shadow-sm">
-          <span className="text-sm font-medium tabular-nums">
-            {selectedBlockIds.length} selected
-          </span>
-
-          <div className="flex-1" />
-
-          <div className="flex items-center gap-1">
-            {[
-              { state: null as string | null, label: 'Clear' },
-              { state: 'TODO', label: 'TODO' },
-              { state: 'DOING', label: 'DOING' },
-              { state: 'DONE', label: 'DONE' },
-            ].map(({ state, label }) => (
-              <Button
-                key={label}
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                disabled={batchInProgress}
-                onClick={() => handleBatchSetTodo(state)}
-              >
-                {label}
-              </Button>
-            ))}
-          </div>
-
-          <Button
-            variant="destructive"
-            size="sm"
-            disabled={batchInProgress}
-            onClick={() => setBatchDeleteConfirm(true)}
-          >
-            <Trash2 className="h-3.5 w-3.5 mr-1" />
-            Delete
-          </Button>
-
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => clearSelected()}
-            aria-label="Clear selection"
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      )}
-      <AlertDialog open={batchDeleteConfirm} onOpenChange={setBatchDeleteConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete {selectedBlockIds.length} block(s)?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will soft-delete the selected blocks. They can be restored from the trash.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleBatchDelete}>Yes, delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <BlockContextMenu
+        selectedBlockIds={selectedBlockIds}
+        batchInProgress={batchInProgress}
+        batchDeleteConfirm={batchDeleteConfirm}
+        onBatchSetTodo={handleBatchSetTodo}
+        onBatchDelete={handleBatchDelete}
+        onSetBatchDeleteConfirm={setBatchDeleteConfirm}
+        onClearSelection={clearSelected}
+      />
       <DndContext
         sensors={dnd.sensors}
         collisionDetection={closestCenter}
@@ -2028,28 +1852,16 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
             )}
           </div>
         </SortableContext>
-        {/* SR announcement for DnD projected drop position */}
-        {dnd.activeId && dnd.projected && (
-          <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-            {`Moving to depth ${dnd.projected.depth}`}
-          </div>
-        )}
-        {/* Drag overlay: floating preview of the dragged block */}
-        <DragOverlay dropAnimation={null}>
-          {activeBlock ? (
-            <div
-              className="sortable-block-overlay rounded border bg-background/90 px-3 py-1.5 shadow-lg text-sm opacity-80"
-              style={{ maxWidth: 320 }}
-            >
-              {(activeBlock.content ?? '').slice(0, 80) || 'Empty block'}
-            </div>
-          ) : null}
-        </DragOverlay>
+        <BlockDndOverlay
+          activeBlock={activeBlock}
+          projected={dnd.projected}
+          activeId={dnd.activeId}
+        />
       </DndContext>
 
       {/* Floating date picker for /DATE slash command */}
       {datePickerOpen && (
-        <DatePickerOverlay
+        <BlockDatePicker
           onSelect={(day) => day && handleDatePick(day)}
           onClose={() => setDatePickerOpen(false)}
         />
