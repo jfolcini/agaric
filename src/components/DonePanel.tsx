@@ -14,18 +14,12 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, queryByProperty } from '../lib/tauri'
+import { truncateContent } from '../lib/text-utils'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 
 export interface DonePanelProps {
   date: string // YYYY-MM-DD
   onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
-}
-
-/** Truncate content to plain text. */
-function truncateContent(content: string | null, max = 120): string {
-  if (!content) return '(empty)'
-  const plain = content.replace(/\[\[([^\]]*)\]\]/g, '$1').replace(/[#*_~`]/g, '')
-  return plain.length > max ? `${plain.slice(0, max)}...` : plain
 }
 
 export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.ReactElement | null {

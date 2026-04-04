@@ -22,9 +22,11 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { formatTimestamp } from '../lib/format'
-import type { DiffSpan, HistoryEntry } from '../lib/tauri'
-import { computeEditDiff, editBlock, getBlockHistory } from '../lib/tauri'
+import { getPayloadPreview } from '../lib/history-utils'
+import type { HistoryEntry } from '../lib/tauri'
+import { editBlock, getBlockHistory } from '../lib/tauri'
 import { DiffDisplay } from './DiffDisplay'
 import { EmptyState } from './EmptyState'
 
@@ -40,9 +42,9 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   const [hasMore, setHasMore] = useState(false)
   const [restoringSeq, setRestoringSeq] = useState<number | null>(null)
   const [confirmEntry, setConfirmEntry] = useState<HistoryEntry | null>(null)
-  const [expandedSeqs, setExpandedSeqs] = useState<Set<number>>(new Set())
-  const [diffCache, setDiffCache] = useState<Map<number, DiffSpan[]>>(new Map())
-  const [loadingDiffs, setLoadingDiffs] = useState<Set<number>>(new Set())
+  const { expandedKeys, diffCache, loadingDiffs, handleToggleDiff } = useHistoryDiffToggle<number>(
+    (entry) => entry.seq,
+  )
 
   const loadHistory = useCallback(
     async (cursor?: string) => {
@@ -99,56 +101,6 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     [blockId],
   )
 
-  const handleToggleDiff = useCallback(
-    async (entry: HistoryEntry) => {
-      const seq = entry.seq
-      if (expandedSeqs.has(seq)) {
-        setExpandedSeqs((prev) => {
-          const next = new Set(prev)
-          next.delete(seq)
-          return next
-        })
-        return
-      }
-      setExpandedSeqs((prev) => new Set(prev).add(seq))
-      if (diffCache.has(seq)) return
-      setLoadingDiffs((prev) => new Set(prev).add(seq))
-      try {
-        const diff = await computeEditDiff({ deviceId: entry.device_id, seq })
-        if (diff) {
-          setDiffCache((prev) => new Map(prev).set(seq, diff))
-        }
-      } catch {
-        toast.error('Failed to load diff')
-        setExpandedSeqs((prev) => {
-          const next = new Set(prev)
-          next.delete(seq)
-          return next
-        })
-      }
-      setLoadingDiffs((prev) => {
-        const next = new Set(prev)
-        next.delete(seq)
-        return next
-      })
-    },
-    [expandedSeqs, diffCache],
-  )
-
-  /** Extract a preview from the payload for edit_block ops. */
-  function getPayloadPreview(entry: HistoryEntry): string | null {
-    try {
-      const parsed = JSON.parse(entry.payload) as { to_text?: string }
-      if (parsed.to_text != null) {
-        const text = parsed.to_text
-        return text.length > 100 ? `${text.slice(0, 100)}...` : text
-      }
-    } catch {
-      // Invalid JSON — return null
-    }
-    return null
-  }
-
   if (!blockId) {
     return <EmptyState message="Select a block to see history" compact />
   }
@@ -204,7 +156,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                   >
                     {loadingDiffs.has(entry.seq) ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : expandedSeqs.has(entry.seq) ? (
+                    ) : expandedKeys.has(entry.seq) ? (
                       <ChevronDown className="h-3.5 w-3.5" />
                     ) : (
                       <ChevronRight className="h-3.5 w-3.5" />
@@ -229,7 +181,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                   </Button>
                 )}
               </div>
-              {expandedSeqs.has(entry.seq) && diffCache.has(entry.seq) && (
+              {expandedKeys.has(entry.seq) && diffCache.has(entry.seq) && (
                 <div className="diff-container mt-2 w-full">
                   <DiffDisplay spans={diffCache.get(entry.seq) ?? []} />
                 </div>

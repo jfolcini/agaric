@@ -14,6 +14,7 @@
 
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
+import type { LucideIcon } from 'lucide-react'
 import {
   AtSign,
   Bold,
@@ -36,7 +37,7 @@ import {
   X,
 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LinkEditPopover } from './LinkEditPopover'
 import { Button } from './ui/button'
@@ -50,6 +51,15 @@ interface FormattingToolbarProps {
   blockId?: string
   /** Current priority of the focused block (null, '1', '2', '3'). */
   currentPriority?: string | null
+}
+
+interface ToolbarButtonConfig {
+  icon: LucideIcon
+  label: string
+  tip: string
+  activeKey?: string
+  disabledWhenFalse?: string
+  action: () => void
 }
 
 function Tip({
@@ -66,6 +76,41 @@ function Tip({
         {label}
       </TooltipContent>
     </Tooltip>
+  )
+}
+
+function ToolbarButtonGroup({
+  buttons,
+  state,
+  t,
+}: {
+  buttons: ToolbarButtonConfig[]
+  state: Record<string, unknown>
+  t: (key: string) => string
+}): React.ReactElement {
+  return (
+    <>
+      {buttons.map((btn) => (
+        <Tip key={btn.label} label={t(btn.tip)}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t(btn.label)}
+            aria-pressed={btn.activeKey ? (state[btn.activeKey] as boolean) : undefined}
+            disabled={btn.disabledWhenFalse ? !state[btn.disabledWhenFalse] : undefined}
+            className={
+              btn.activeKey && state[btn.activeKey] ? 'bg-accent text-accent-foreground' : ''
+            }
+            onPointerDown={(e) => {
+              e.preventDefault()
+              btn.action()
+            }}
+          >
+            <btn.icon size={14} />
+          </Button>
+        </Tip>
+      ))}
+    </>
   )
 }
 
@@ -123,6 +168,143 @@ export function FormattingToolbar({
     setLinkPopoverOpen(false)
   }, [])
 
+  // ── Button config groups ─────────────────────────────────────────────
+
+  const markToggles: ToolbarButtonConfig[] = useMemo(
+    () => [
+      {
+        icon: Bold,
+        label: 'toolbar.bold',
+        tip: 'toolbar.boldTip',
+        activeKey: 'bold',
+        action: () => editor.chain().focus().toggleBold().run(),
+      },
+      {
+        icon: Italic,
+        label: 'toolbar.italic',
+        tip: 'toolbar.italicTip',
+        activeKey: 'italic',
+        action: () => editor.chain().focus().toggleItalic().run(),
+      },
+      {
+        icon: Code,
+        label: 'toolbar.code',
+        tip: 'toolbar.codeTip',
+        activeKey: 'code',
+        action: () => editor.chain().focus().toggleCode().run(),
+      },
+      {
+        icon: Strikethrough,
+        label: 'toolbar.strikethrough',
+        tip: 'toolbar.strikethroughTip',
+        activeKey: 'strike',
+        action: () => editor.chain().focus().toggleStrike().run(),
+      },
+      {
+        icon: Highlighter,
+        label: 'toolbar.highlight',
+        tip: 'toolbar.highlightTip',
+        activeKey: 'highlight',
+        action: () => editor.chain().focus().toggleHighlight().run(),
+      },
+    ],
+    [editor],
+  )
+
+  const refsAndBlocks: ToolbarButtonConfig[] = useMemo(
+    () => [
+      {
+        icon: FileSymlink,
+        label: 'toolbar.internalLink',
+        tip: 'toolbar.pageLinkTip',
+        action: () => editor.chain().focus().insertContent('[[').run(),
+      },
+      {
+        icon: AtSign,
+        label: 'toolbar.insertTag',
+        tip: 'toolbar.tagTip',
+        action: () => editor.chain().focus().insertContent('@').run(),
+      },
+      {
+        icon: FileCode2,
+        label: 'toolbar.codeBlock',
+        tip: 'toolbar.codeBlockTip',
+        activeKey: 'codeBlock',
+        action: () => editor.chain().focus().toggleCodeBlock().run(),
+      },
+      {
+        icon: Quote,
+        label: 'toolbar.blockquote',
+        tip: 'toolbar.blockquoteTip',
+        activeKey: 'blockquote',
+        action: () => editor.chain().focus().toggleBlockquote().run(),
+      },
+    ],
+    [editor],
+  )
+
+  const metadataButtons: ToolbarButtonConfig[] = useMemo(
+    () => [
+      {
+        icon: CalendarDays,
+        label: 'toolbar.insertDate',
+        tip: 'toolbar.insertDateTip',
+        action: () => document.dispatchEvent(new CustomEvent('open-date-picker')),
+      },
+      {
+        icon: CalendarClock,
+        label: 'toolbar.setDueDate',
+        tip: 'toolbar.dueDateTip',
+        action: () => document.dispatchEvent(new CustomEvent('open-due-date-picker')),
+      },
+      {
+        icon: CalendarCheck2,
+        label: 'toolbar.setScheduledDate',
+        tip: 'toolbar.scheduledDateTip',
+        action: () => document.dispatchEvent(new CustomEvent('open-scheduled-date-picker')),
+      },
+      {
+        icon: CheckSquare,
+        label: 'toolbar.todoToggle',
+        tip: 'toolbar.todoToggleTip',
+        action: () => document.dispatchEvent(new CustomEvent('toggle-todo-state')),
+      },
+      {
+        icon: Settings2,
+        label: 'toolbar.properties',
+        tip: 'toolbar.propertiesTip',
+        action: () => document.dispatchEvent(new CustomEvent('open-block-properties')),
+      },
+    ],
+    [],
+  )
+
+  const historyButtons: ToolbarButtonConfig[] = useMemo(
+    () => [
+      {
+        icon: Undo2,
+        label: 'toolbar.undo',
+        tip: 'toolbar.undoTip',
+        disabledWhenFalse: 'canUndo',
+        action: () => editor.chain().focus().undo().run(),
+      },
+      {
+        icon: Redo2,
+        label: 'toolbar.redo',
+        tip: 'toolbar.redoTip',
+        disabledWhenFalse: 'canRedo',
+        action: () => editor.chain().focus().redo().run(),
+      },
+      {
+        icon: X,
+        label: 'toolbar.discard',
+        tip: 'toolbar.discardTip',
+        action: () => document.dispatchEvent(new CustomEvent('discard-block-edit')),
+      },
+    ],
+    [editor],
+  )
+
   return (
     <TooltipProvider delayDuration={200}>
       <div
@@ -132,81 +314,7 @@ export function FormattingToolbar({
         className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px overflow-x-auto"
         data-testid="formatting-toolbar"
       >
-        <Tip label={t('toolbar.boldTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.bold')}
-            aria-pressed={state.bold}
-            className={state.bold ? 'bg-accent text-accent-foreground' : ''}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              editor.chain().focus().toggleBold().run()
-            }}
-          >
-            <Bold size={14} />
-          </Button>
-        </Tip>
-        <Tip label={t('toolbar.italicTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.italic')}
-            aria-pressed={state.italic}
-            className={state.italic ? 'bg-accent text-accent-foreground' : ''}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              editor.chain().focus().toggleItalic().run()
-            }}
-          >
-            <Italic size={14} />
-          </Button>
-        </Tip>
-        <Tip label={t('toolbar.codeTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.code')}
-            aria-pressed={state.code}
-            className={state.code ? 'bg-accent text-accent-foreground' : ''}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              editor.chain().focus().toggleCode().run()
-            }}
-          >
-            <Code size={14} />
-          </Button>
-        </Tip>
-        <Tip label={t('toolbar.strikethroughTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.strikethrough')}
-            aria-pressed={state.strike}
-            className={state.strike ? 'bg-accent text-accent-foreground' : ''}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              editor.chain().focus().toggleStrike().run()
-            }}
-          >
-            <Strikethrough size={14} />
-          </Button>
-        </Tip>
-        <Tip label={t('toolbar.highlightTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.highlight')}
-            aria-pressed={state.highlight}
-            className={state.highlight ? 'bg-accent text-accent-foreground' : ''}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              editor.chain().focus().toggleHighlight().run()
-            }}
-          >
-            <Highlighter size={14} />
-          </Button>
-        </Tip>
+        <ToolbarButtonGroup buttons={markToggles} state={state as Record<string, unknown>} t={t} />
 
         <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
@@ -238,65 +346,11 @@ export function FormattingToolbar({
           </PopoverContent>
         </Popover>
 
-        <Tip label={t('toolbar.pageLinkTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.internalLink')}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              editor.chain().focus().insertContent('[[').run()
-            }}
-          >
-            <FileSymlink size={14} />
-          </Button>
-        </Tip>
-
-        <Tip label={t('toolbar.tagTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.insertTag')}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              editor.chain().focus().insertContent('@').run()
-            }}
-          >
-            <AtSign size={14} />
-          </Button>
-        </Tip>
-
-        <Tip label={t('toolbar.codeBlockTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.codeBlock')}
-            aria-pressed={state.codeBlock}
-            className={state.codeBlock ? 'bg-accent text-accent-foreground' : ''}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              editor.chain().focus().toggleCodeBlock().run()
-            }}
-          >
-            <FileCode2 size={14} />
-          </Button>
-        </Tip>
-
-        <Tip label={t('toolbar.blockquoteTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.blockquote')}
-            aria-pressed={state.blockquote}
-            className={state.blockquote ? 'bg-accent text-accent-foreground' : ''}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              editor.chain().focus().toggleBlockquote().run()
-            }}
-          >
-            <Quote size={14} />
-          </Button>
-        </Tip>
+        <ToolbarButtonGroup
+          buttons={refsAndBlocks}
+          state={state as Record<string, unknown>}
+          t={t}
+        />
 
         <Popover open={headingPopoverOpen} onOpenChange={setHeadingPopoverOpen}>
           <Tip label={t('toolbar.headingTip')}>
@@ -380,115 +434,20 @@ export function FormattingToolbar({
             </span>
           </Button>
         </Tip>
-        <Tip label={t('toolbar.insertDateTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.insertDate')}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              document.dispatchEvent(new CustomEvent('open-date-picker'))
-            }}
-          >
-            <CalendarDays size={14} />
-          </Button>
-        </Tip>
-        <Tip label={t('toolbar.dueDateTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.setDueDate')}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              document.dispatchEvent(new CustomEvent('open-due-date-picker'))
-            }}
-          >
-            <CalendarClock size={14} />
-          </Button>
-        </Tip>
-        <Tip label={t('toolbar.scheduledDateTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.setScheduledDate')}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              document.dispatchEvent(new CustomEvent('open-scheduled-date-picker'))
-            }}
-          >
-            <CalendarCheck2 size={14} />
-          </Button>
-        </Tip>
-        <Tip label={t('toolbar.todoToggleTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.todoToggle')}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              document.dispatchEvent(new CustomEvent('toggle-todo-state'))
-            }}
-          >
-            <CheckSquare size={14} />
-          </Button>
-        </Tip>
-        <Tip label={t('toolbar.propertiesTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.properties')}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              document.dispatchEvent(new CustomEvent('open-block-properties'))
-            }}
-          >
-            <Settings2 size={14} />
-          </Button>
-        </Tip>
+
+        <ToolbarButtonGroup
+          buttons={metadataButtons}
+          state={state as Record<string, unknown>}
+          t={t}
+        />
 
         <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-        <Tip label={t('toolbar.undoTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.undo')}
-            disabled={!state.canUndo}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              editor.chain().focus().undo().run()
-            }}
-          >
-            <Undo2 size={14} />
-          </Button>
-        </Tip>
-        <Tip label={t('toolbar.redoTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.redo')}
-            disabled={!state.canRedo}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              editor.chain().focus().redo().run()
-            }}
-          >
-            <Redo2 size={14} />
-          </Button>
-        </Tip>
-        <Tip label={t('toolbar.discardTip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.discard')}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              document.dispatchEvent(new CustomEvent('discard-block-edit'))
-            }}
-          >
-            <X size={14} />
-          </Button>
-        </Tip>
+        <ToolbarButtonGroup
+          buttons={historyButtons}
+          state={state as Record<string, unknown>}
+          t={t}
+        />
       </div>
     </TooltipProvider>
   )

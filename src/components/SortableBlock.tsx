@@ -180,6 +180,55 @@ interface SortableBlockProps {
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
 }
 
+interface CheckboxStyle {
+  className: string
+  testId?: string
+  icon?: React.ReactNode
+}
+
+const EMPTY_STYLE: CheckboxStyle = {
+  className: 'task-checkbox-empty border-muted-foreground/40 transition-colors',
+  testId: 'task-checkbox-empty',
+}
+
+/** Style config for the task checkbox per state. */
+const TASK_CHECKBOX_STYLES: Record<string, CheckboxStyle> = {
+  DONE: {
+    className: 'task-checkbox-done border-green-600 bg-green-600 flex items-center justify-center',
+    testId: 'task-checkbox-done',
+    icon: <Check size={12} className="text-white" />,
+  },
+  DOING: {
+    className:
+      'task-checkbox-doing border-blue-500 bg-blue-500/20 flex items-center justify-center',
+    testId: 'task-checkbox-doing',
+    icon: <div className="h-1.5 w-1.5 rounded-sm bg-blue-500" />,
+  },
+  TODO: {
+    className: 'task-checkbox-todo border-muted-foreground',
+    testId: 'task-checkbox-todo',
+  },
+  _custom: {
+    className:
+      'task-checkbox-custom border-orange-500 bg-orange-500/20 flex items-center justify-center',
+    icon: <div className="h-1.5 w-1.5 rounded-full bg-orange-500" />,
+  },
+  _empty: EMPTY_STYLE,
+}
+
+function TaskCheckbox({ state }: { state: string | null | undefined }) {
+  const key = !state ? '_empty' : TASK_CHECKBOX_STYLES[state] ? state : '_custom'
+  const style = TASK_CHECKBOX_STYLES[key] ?? EMPTY_STYLE
+  return (
+    <div
+      className={`task-checkbox h-4 w-4 rounded border-2 ${style.className}`}
+      data-testid={style.testId}
+    >
+      {style.icon}
+    </div>
+  )
+}
+
 function SortableBlockInner({
   blockId,
   content,
@@ -522,35 +571,7 @@ function SortableBlockInner({
                   todoState ? t('block.taskCycle', { state: todoState }) : t('block.setTodo')
                 }
               >
-                {todoState === 'DONE' ? (
-                  <div
-                    className="task-checkbox task-checkbox-done h-4 w-4 rounded border-2 border-green-600 bg-green-600 flex items-center justify-center"
-                    data-testid="task-checkbox-done"
-                  >
-                    <Check size={12} className="text-white" />
-                  </div>
-                ) : todoState === 'DOING' ? (
-                  <div
-                    className="task-checkbox task-checkbox-doing h-4 w-4 rounded border-2 border-blue-500 bg-blue-500/20 flex items-center justify-center"
-                    data-testid="task-checkbox-doing"
-                  >
-                    <div className="h-1.5 w-1.5 rounded-sm bg-blue-500" />
-                  </div>
-                ) : todoState === 'TODO' ? (
-                  <div
-                    className="task-checkbox task-checkbox-todo h-4 w-4 rounded border-2 border-muted-foreground"
-                    data-testid="task-checkbox-todo"
-                  />
-                ) : todoState ? (
-                  <div className="task-checkbox task-checkbox-custom h-4 w-4 rounded border-2 border-orange-500 bg-orange-500/20 flex items-center justify-center">
-                    <div className="h-1.5 w-1.5 rounded-full bg-orange-500" />
-                  </div>
-                ) : (
-                  <div
-                    className="task-checkbox task-checkbox-empty h-4 w-4 rounded border-2 border-muted-foreground/40 transition-colors"
-                    data-testid="task-checkbox-empty"
-                  />
-                )}
+                <TaskCheckbox state={todoState} />
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom" sideOffset={4}>

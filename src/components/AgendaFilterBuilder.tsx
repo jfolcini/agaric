@@ -7,6 +7,7 @@
  * input.  Chips are editable via click (opens an inline popover).
  */
 
+import type { LucideIcon } from 'lucide-react'
 import { ArrowUpDown, Filter, Layers, Plus, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -562,6 +563,72 @@ const SORT_OPTIONS: { value: AgendaSortBy; labelKey: string }[] = [
   { value: 'state', labelKey: 'agenda.sortState' },
 ]
 
+// ---------------------------------------------------------------------------
+// DropdownSelector — reusable popover-based dropdown (file-internal)
+// ---------------------------------------------------------------------------
+
+interface DropdownSelectorProps<T extends string> {
+  icon: LucideIcon
+  label: string // i18n key
+  currentValue: T
+  currentLabel: string | undefined // pre-resolved label, or undefined to fall back to raw value
+  options: ReadonlyArray<{ value: T; labelKey: string }>
+  onChange: (value: T) => void
+}
+
+function DropdownSelector<T extends string>({
+  icon: Icon,
+  label,
+  currentValue,
+  currentLabel,
+  options,
+  onChange,
+}: DropdownSelectorProps<T>) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            'inline-flex items-center gap-1 rounded-full bg-muted',
+            'px-2.5 py-1 text-xs hover:bg-accent cursor-pointer',
+          )}
+          aria-label={t(label)}
+        >
+          <Icon size={12} aria-hidden="true" />
+          <span className="font-medium">{t(label)}:</span>
+          <span>{currentLabel ?? currentValue}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-40 p-1">
+        <ul className="flex flex-col gap-0.5 list-none m-0 p-0" aria-label={t(label)}>
+          {options.map((opt) => (
+            <li key={opt.value}>
+              <button
+                type="button"
+                className={cn(
+                  'w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent cursor-pointer',
+                  opt.value === currentValue && 'bg-accent font-medium',
+                )}
+                onClick={() => {
+                  onChange(opt.value)
+                  setOpen(false)
+                }}
+                aria-current={opt.value === currentValue ? 'true' : undefined}
+              >
+                {t(opt.labelKey)}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 export interface AgendaSortGroupControlsProps {
   groupBy: AgendaGroupBy
   onGroupByChange: (value: AgendaGroupBy) => void
@@ -576,8 +643,6 @@ export function AgendaSortGroupControls({
   onSortByChange,
 }: AgendaSortGroupControlsProps): React.ReactElement {
   const { t } = useTranslation()
-  const [groupOpen, setGroupOpen] = useState(false)
-  const [sortOpen, setSortOpen] = useState(false)
 
   const groupLabel = GROUP_OPTIONS.find((o) => o.value === groupBy)
   const sortLabel = SORT_OPTIONS.find((o) => o.value === sortBy)
@@ -589,79 +654,22 @@ export function AgendaSortGroupControls({
       role="toolbar"
       aria-label={`${t('agenda.sortBy')} / ${t('agenda.groupBy')}`}
     >
-      {/* Group by */}
-      <Popover open={groupOpen} onOpenChange={setGroupOpen}>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs hover:bg-accent cursor-pointer"
-            aria-label={t('agenda.groupBy')}
-          >
-            <Layers size={12} aria-hidden="true" />
-            <span className="font-medium">{t('agenda.groupBy')}:</span>
-            <span>{groupLabel ? t(groupLabel.labelKey) : groupBy}</span>
-          </button>
-        </PopoverTrigger>
-        <PopoverContent align="start" className="w-40 p-1">
-          <ul className="flex flex-col gap-0.5 list-none m-0 p-0" aria-label={t('agenda.groupBy')}>
-            {GROUP_OPTIONS.map((opt) => (
-              <li key={opt.value}>
-                <button
-                  type="button"
-                  className={cn(
-                    'w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent cursor-pointer',
-                    opt.value === groupBy && 'bg-accent font-medium',
-                  )}
-                  onClick={() => {
-                    onGroupByChange(opt.value)
-                    setGroupOpen(false)
-                  }}
-                  aria-current={opt.value === groupBy ? 'true' : undefined}
-                >
-                  {t(opt.labelKey)}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </PopoverContent>
-      </Popover>
-
-      {/* Sort by */}
-      <Popover open={sortOpen} onOpenChange={setSortOpen}>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs hover:bg-accent cursor-pointer"
-            aria-label={t('agenda.sortBy')}
-          >
-            <ArrowUpDown size={12} aria-hidden="true" />
-            <span className="font-medium">{t('agenda.sortBy')}:</span>
-            <span>{sortLabel ? t(sortLabel.labelKey) : sortBy}</span>
-          </button>
-        </PopoverTrigger>
-        <PopoverContent align="start" className="w-40 p-1">
-          <ul className="flex flex-col gap-0.5 list-none m-0 p-0" aria-label={t('agenda.sortBy')}>
-            {SORT_OPTIONS.map((opt) => (
-              <li key={opt.value}>
-                <button
-                  type="button"
-                  className={cn(
-                    'w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent cursor-pointer',
-                    opt.value === sortBy && 'bg-accent font-medium',
-                  )}
-                  onClick={() => {
-                    onSortByChange(opt.value)
-                    setSortOpen(false)
-                  }}
-                  aria-current={opt.value === sortBy ? 'true' : undefined}
-                >
-                  {t(opt.labelKey)}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </PopoverContent>
-      </Popover>
+      <DropdownSelector
+        icon={Layers}
+        label="agenda.groupBy"
+        currentValue={groupBy}
+        currentLabel={groupLabel ? t(groupLabel.labelKey) : undefined}
+        options={GROUP_OPTIONS}
+        onChange={onGroupByChange}
+      />
+      <DropdownSelector
+        icon={ArrowUpDown}
+        label="agenda.sortBy"
+        currentValue={sortBy}
+        currentLabel={sortLabel ? t(sortLabel.labelKey) : undefined}
+        options={SORT_OPTIONS}
+        onChange={onSortByChange}
+      />
     </div>
   )
 }

@@ -24,6 +24,7 @@ import {
 } from '../lib/agenda-sort'
 import { priorityColor } from '../lib/priority-color'
 import type { BlockRow } from '../lib/tauri'
+import { truncateContent } from '../lib/text-utils'
 
 export interface AgendaResultsProps {
   /** Pre-filtered blocks to display. If empty, shows empty state. */
@@ -87,13 +88,6 @@ function dueDateColor(dateStr: string): string {
   if (dateStr === todayStr)
     return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
   return 'bg-muted text-muted-foreground'
-}
-
-/** Truncate content to plain text. */
-function truncateContent(content: string | null, max = 120): string {
-  if (!content) return '(empty)'
-  const plain = content.replace(/\[\[([^\]]*)\]\]/g, '$1').replace(/[#*_~`]/g, '')
-  return plain.length > max ? `${plain.slice(0, max)}...` : plain
 }
 
 /** Return the appropriate status icon component for a todo_state. */

@@ -3,6 +3,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BacklinkFilter, BlockRow } from '../lib/tauri'
 import { batchResolve, listBlocks, queryByProperty, queryByTags } from '../lib/tauri'
+import { truncateContent } from '../lib/text-utils'
 import { cn } from '../lib/utils'
 
 /** Column definition for table mode. */
@@ -133,13 +134,6 @@ export function buildFilters(
   }
 
   return filters
-}
-
-/** Truncate content for display. */
-function truncate(text: string | null, max = 80): string {
-  if (!text) return '(empty)'
-  const plain = text.replace(/\[\[([^\]]*)\]\]/g, '$1').replace(/[#*_~`]/g, '')
-  return plain.length > max ? `${plain.slice(0, max)}...` : plain
 }
 
 export function QueryResult({
@@ -373,8 +367,8 @@ export function QueryResult({
                       )}
                       <span className="flex-1 truncate">
                         {resolveBlockTitle
-                          ? resolveBlockTitle(block.id) || truncate(block.content)
-                          : truncate(block.content)}
+                          ? resolveBlockTitle(block.id) || truncateContent(block.content, 80)
+                          : truncateContent(block.content, 80)}
                       </span>
                       {pageTitle && (
                         <span className="shrink-0 text-[10px] text-muted-foreground/60 truncate max-w-[120px]">
@@ -441,8 +435,9 @@ export function QueryResult({
                                 }}
                               >
                                 {resolveBlockTitle
-                                  ? resolveBlockTitle(block.id) || truncate(block.content)
-                                  : truncate(block.content)}
+                                  ? resolveBlockTitle(block.id) ||
+                                    truncateContent(block.content, 80)
+                                  : truncateContent(block.content, 80)}
                               </button>
                             ) : (
                               <span>{(block[col.key as keyof BlockRow] as string) ?? ''}</span>

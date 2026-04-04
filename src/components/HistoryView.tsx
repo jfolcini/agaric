@@ -25,10 +25,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { formatTimestamp } from '../lib/format'
-import type { DiffSpan, HistoryEntry } from '../lib/tauri'
-import { computeEditDiff, listPageHistory, revertOps } from '../lib/tauri'
+import { getPayloadPreview } from '../lib/history-utils'
+import type { HistoryEntry } from '../lib/tauri'
+import { listPageHistory, revertOps } from '../lib/tauri'
 import { DiffDisplay } from './DiffDisplay'
 import { EmptyState } from './EmptyState'
 
@@ -90,29 +92,6 @@ function opBadgeClasses(opType: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Payload preview
-// ---------------------------------------------------------------------------
-
-function getPayloadPreview(entry: HistoryEntry): string | null {
-  try {
-    const parsed = JSON.parse(entry.payload) as Record<string, unknown>
-    // edit_block payloads have to_text
-    if (typeof parsed.to_text === 'string') {
-      const text = parsed.to_text
-      return text.length > 80 ? `${text.slice(0, 80)}...` : text
-    }
-    // create_block payloads have content
-    if (typeof parsed.content === 'string') {
-      const text = parsed.content
-      return text.length > 80 ? `${text.slice(0, 80)}...` : text
-    }
-  } catch {
-    // Invalid JSON
-  }
-  return null
-}
-
-// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -125,9 +104,9 @@ export function HistoryView(): React.ReactElement {
   const [opTypeFilter, setOpTypeFilter] = useState<string | null>(null)
   const [confirmRevert, setConfirmRevert] = useState(false)
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
-  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
-  const [diffCache, setDiffCache] = useState<Map<string, DiffSpan[]>>(new Map())
-  const [loadingDiffs, setLoadingDiffs] = useState<Set<string>>(new Set())
+  const { expandedKeys, diffCache, loadingDiffs, handleToggleDiff } = useHistoryDiffToggle<string>(
+    (entry) => entryKey(entry),
+  )
 
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -260,37 +239,6 @@ export function HistoryView(): React.ReactElement {
     setReverting(false)
     setConfirmRevert(false)
   }, [selected, entries, reload, setEntries])
-
-  const handleToggleDiff = useCallback(
-    async (entry: HistoryEntry) => {
-      const key = entryKey(entry)
-      if (expandedKeys.has(key)) {
-        setExpandedKeys((prev) => {
-          const next = new Set(prev)
-          next.delete(key)
-          return next
-        })
-        return
-      }
-      setExpandedKeys((prev) => new Set(prev).add(key))
-      if (diffCache.has(key)) return
-      setLoadingDiffs((prev) => new Set(prev).add(key))
-      try {
-        const diff = await computeEditDiff({ deviceId: entry.device_id, seq: entry.seq })
-        if (diff) {
-          setDiffCache((prev) => new Map(prev).set(key, diff))
-        }
-      } catch {
-        toast.error('Failed to load diff')
-      }
-      setLoadingDiffs((prev) => {
-        const next = new Set(prev)
-        next.delete(key)
-        return next
-      })
-    },
-    [expandedKeys, diffCache],
-  )
 
   // ── Keyboard navigation ──────────────────────────────────────────
 

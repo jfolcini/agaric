@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { priorityColor } from '../lib/priority-color'
 import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
+import { truncateContent } from '../lib/text-utils'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 
 export interface DuePanelProps {
@@ -32,13 +33,6 @@ function priorityKey(p: string | null): number {
   if (p === '2') return 2
   if (p === '3') return 3
   return 4
-}
-
-/** Truncate content to plain text. */
-function truncateContent(content: string | null, max = 120, emptyFallback = '(empty)'): string {
-  if (!content) return emptyFallback
-  const plain = content.replace(/\[\[([^\]]*)\]\]/g, '$1').replace(/[#*_~`]/g, '')
-  return plain.length > max ? `${plain.slice(0, max)}...` : plain
 }
 
 /** Format a Date to YYYY-MM-DD using local timezone. */
