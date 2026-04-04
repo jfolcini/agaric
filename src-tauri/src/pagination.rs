@@ -52,7 +52,6 @@ pub struct BlockRow {
     pub parent_id: Option<String>,
     pub position: Option<i64>,
     pub deleted_at: Option<String>,
-    pub archived_at: Option<String>,
     pub is_conflict: bool,
     pub conflict_type: Option<String>,
     pub todo_state: Option<String>,
@@ -227,7 +226,7 @@ pub async fn list_children(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
-                deleted_at, archived_at, is_conflict as "is_conflict: bool",
+                deleted_at, is_conflict as "is_conflict: bool",
                 conflict_type, todo_state, priority, due_date, scheduled_date
          FROM blocks
          WHERE parent_id IS ?1 AND deleted_at IS NULL
@@ -274,7 +273,7 @@ pub async fn list_by_type(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
-                deleted_at, archived_at, is_conflict as "is_conflict: bool",
+                deleted_at, is_conflict as "is_conflict: bool",
                 conflict_type, todo_state, priority, due_date, scheduled_date
          FROM blocks
          WHERE block_type = ?1 AND deleted_at IS NULL
@@ -322,7 +321,7 @@ pub async fn list_trash(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
-                deleted_at, archived_at, is_conflict as "is_conflict: bool",
+                deleted_at, is_conflict as "is_conflict: bool",
                 conflict_type, todo_state, priority, due_date, scheduled_date
          FROM blocks
          WHERE deleted_at IS NOT NULL AND is_conflict = 0
@@ -367,7 +366,7 @@ pub async fn list_by_tag(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
+                b.deleted_at, b.is_conflict as "is_conflict: bool",
                 b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
          FROM block_tags bt
          JOIN blocks b ON b.id = bt.block_id
@@ -425,7 +424,7 @@ pub async fn query_by_property(
         };
         let sql = format!(
             "SELECT id, block_type, content, parent_id, position, \
-                    deleted_at, archived_at, is_conflict, conflict_type, \
+                    deleted_at, is_conflict, conflict_type, \
                     todo_state, priority, due_date, scheduled_date \
              FROM blocks \
              WHERE {col} IS NOT NULL \
@@ -452,7 +451,7 @@ pub async fn query_by_property(
         sqlx::query_as!(
             BlockRow,
             r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                    b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
+                    b.deleted_at, b.is_conflict as "is_conflict: bool",
                     b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
              FROM block_properties bp
              JOIN blocks b ON b.id = bp.block_id
@@ -506,7 +505,7 @@ pub async fn list_agenda(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
+                b.deleted_at, b.is_conflict as "is_conflict: bool",
                 b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
@@ -560,7 +559,7 @@ pub async fn list_agenda_range(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
+                b.deleted_at, b.is_conflict as "is_conflict: bool",
                 b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
@@ -625,7 +624,7 @@ pub async fn list_backlinks(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
+                b.deleted_at, b.is_conflict as "is_conflict: bool",
                 b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
          FROM block_links bl
          JOIN blocks b ON b.id = bl.source_id
@@ -794,7 +793,7 @@ pub async fn list_conflicts(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT id, block_type, content, parent_id, position,
-                deleted_at, archived_at, is_conflict as "is_conflict: bool",
+                deleted_at, is_conflict as "is_conflict: bool",
                 conflict_type, todo_state, priority, due_date, scheduled_date
          FROM blocks
          WHERE is_conflict = 1 AND deleted_at IS NULL

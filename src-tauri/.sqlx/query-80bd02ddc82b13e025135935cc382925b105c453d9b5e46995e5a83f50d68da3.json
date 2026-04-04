@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_type, content, parent_id, position,\n                deleted_at, archived_at, is_conflict as \"is_conflict: bool\",\n                conflict_type, todo_state, priority, due_date, scheduled_date\n         FROM blocks\n         WHERE block_type = ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR id > ?3)\n         ORDER BY id ASC\n         LIMIT ?4",
+  "query": "SELECT id, block_type, content, parent_id, position,\n                deleted_at, is_conflict as \"is_conflict: bool\",\n                conflict_type, todo_state, priority, due_date, scheduled_date\n         FROM blocks\n         WHERE parent_id IS ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR (\n                IFNULL(position, ?6) > ?3\n                OR (IFNULL(position, ?6) = ?3 AND id > ?4)))\n         ORDER BY IFNULL(position, ?6) ASC, id ASC\n         LIMIT ?5",
   "describe": {
     "columns": [
       {
@@ -34,48 +34,42 @@
         "type_info": "Text"
       },
       {
-        "name": "archived_at",
-        "ordinal": 6,
-        "type_info": "Text"
-      },
-      {
         "name": "is_conflict: bool",
-        "ordinal": 7,
+        "ordinal": 6,
         "type_info": "Integer"
       },
       {
         "name": "conflict_type",
-        "ordinal": 8,
+        "ordinal": 7,
         "type_info": "Text"
       },
       {
         "name": "todo_state",
-        "ordinal": 9,
+        "ordinal": 8,
         "type_info": "Text"
       },
       {
         "name": "priority",
-        "ordinal": 10,
+        "ordinal": 9,
         "type_info": "Text"
       },
       {
         "name": "due_date",
-        "ordinal": 11,
+        "ordinal": 10,
         "type_info": "Text"
       },
       {
         "name": "scheduled_date",
-        "ordinal": 12,
+        "ordinal": 11,
         "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 4
+      "Right": 6
     },
     "nullable": [
       false,
       false,
-      true,
       true,
       true,
       true,
@@ -88,5 +82,5 @@
       true
     ]
   },
-  "hash": "9d3abbcaed6fbb76bda5a15c709e0482df5785d1aabef35316f1232fea2a5070"
+  "hash": "80bd02ddc82b13e025135935cc382925b105c453d9b5e46995e5a83f50d68da3"
 }

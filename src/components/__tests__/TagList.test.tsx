@@ -40,7 +40,6 @@ function makeTag(id: string, name: string) {
     parent_id: null,
     position: null,
     deleted_at: null,
-    archived_at: null,
     is_conflict: false,
   }
 }

@@ -46,7 +46,6 @@ const makeBlock = (overrides?: Partial<Record<string, unknown>>) => ({
   parent_id: null,
   position: 1,
   deleted_at: null,
-  archived_at: null,
   is_conflict: false,
   ...overrides,
 })
@@ -539,7 +538,6 @@ describe('TagFilterPanel', () => {
       parent_id: null,
       position: 0,
       deleted_at: null,
-      archived_at: null,
       is_conflict: false,
     })
 

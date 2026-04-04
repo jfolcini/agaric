@@ -787,7 +787,7 @@ export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "Property
 /**
  * Row returned by paginated block queries.
  */
-export type BlockRow = { id: string; block_type: string; content: string | null; parent_id: string | null; position: number | null; deleted_at: string | null; archived_at: string | null; is_conflict: boolean; conflict_type: string | null; todo_state: string | null; priority: string | null; due_date: string | null; scheduled_date: string | null }
+export type BlockRow = { id: string; block_type: string; content: string | null; parent_id: string | null; position: number | null; deleted_at: string | null; is_conflict: boolean; conflict_type: string | null; todo_state: string | null; priority: string | null; due_date: string | null; scheduled_date: string | null }
 /**
  * Comparison operators for property filters.
  */

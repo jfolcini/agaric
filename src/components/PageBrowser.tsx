@@ -217,7 +217,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         parent_id: resp.parent_id,
         position: resp.position,
         deleted_at: null,
-        archived_at: null,
         is_conflict: false,
         conflict_type: null,
         todo_state: null,

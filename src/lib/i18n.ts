@@ -28,6 +28,7 @@ const resources = {
       'sidebar.status': 'Status',
       'sidebar.conflicts': 'Conflicts',
       'sidebar.history': 'History',
+      'sidebar.templates': 'Templates',
       'sidebar.collapse': 'Collapse',
       'sidebar.toggleSidebar': 'Toggle Sidebar',
       'sidebar.newPageTooltip': 'New Page (Ctrl+N)',
@@ -346,6 +347,15 @@ const resources = {
       'pageHeader.removeTemplate': 'Remove template status',
       'pageHeader.setJournalTemplate': 'Set as journal template',
       'pageHeader.removeJournalTemplate': 'Remove journal template',
+
+      // Templates view (F-25)
+      'templates.empty': 'No templates yet. Mark a page as a template to see it here.',
+      'templates.search': 'Search templates…',
+      'templates.journalIndicator': 'Journal template',
+      'templates.navigateLabel': 'Open template {{name}}',
+      'templates.removeTemplateLabel': 'Remove template status from {{name}}',
+      'templates.noResults': 'No templates match your search.',
+
       'pageHeader.exportMarkdown': 'Export as Markdown',
       'pageHeader.deletePage': 'Delete page',
       'pageHeader.deletePageTitle': 'Delete page',
@@ -435,6 +445,7 @@ const resources = {
       'property.scheduledDate': 'Scheduled',
       'property.clearDueDate': 'Clear due date',
       'property.clearScheduledDate': 'Clear scheduled date',
+      'property.valueLabel': '{{key}} value',
 
       // Properties view
       'sidebar.properties': 'Properties',

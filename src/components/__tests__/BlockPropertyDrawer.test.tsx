@@ -180,7 +180,6 @@ describe('BlockPropertyDrawer', () => {
           parent_id: 'PAGE_1',
           position: 0,
           deleted_at: null,
-          archived_at: null,
           is_conflict: false,
           conflict_type: null,
           todo_state: null,
@@ -212,7 +211,6 @@ describe('BlockPropertyDrawer', () => {
           parent_id: 'PAGE_1',
           position: 0,
           deleted_at: null,
-          archived_at: null,
           is_conflict: false,
           conflict_type: null,
           todo_state: null,
@@ -244,7 +242,6 @@ describe('BlockPropertyDrawer', () => {
           parent_id: 'PAGE_1',
           position: 0,
           deleted_at: null,
-          archived_at: null,
           is_conflict: false,
           conflict_type: null,
           todo_state: null,
@@ -276,7 +273,6 @@ describe('BlockPropertyDrawer', () => {
           parent_id: 'PAGE_1',
           position: 0,
           deleted_at: null,
-          archived_at: null,
           is_conflict: false,
           conflict_type: null,
           todo_state: null,
@@ -314,7 +310,6 @@ describe('BlockPropertyDrawer', () => {
           parent_id: 'PAGE_1',
           position: 0,
           deleted_at: null,
-          archived_at: null,
           is_conflict: false,
           conflict_type: null,
           todo_state: null,
@@ -344,5 +339,14 @@ describe('BlockPropertyDrawer', () => {
       expect(screen.getByTitle('Due')).toBeInTheDocument()
     })
     expect(screen.getByDisplayValue('2026-08-20')).toBeInTheDocument()
+  })
+
+  it('property value inputs have accessible labels', async () => {
+    setupMock([makeProp('status', { value_text: 'active' })], [makeDef('status')])
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    const input = await screen.findByLabelText('status value')
+    expect(input).toBeInTheDocument()
   })
 })

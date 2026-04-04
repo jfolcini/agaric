@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id, b.block_type, b.content, b.parent_id, b.position,\n                b.deleted_at, b.archived_at, b.is_conflict as \"is_conflict: bool\",\n                b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date\n         FROM block_links bl\n         JOIN blocks b ON b.id = bl.source_id\n         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR b.id > ?3)\n         ORDER BY b.id ASC\n         LIMIT ?4",
+  "query": "SELECT id, block_type, content, parent_id, position, deleted_at,\n                  is_conflict as \"is_conflict: bool\", conflict_type,\n                  todo_state, priority, due_date, scheduled_date\n           FROM blocks\n           WHERE block_type = 'page' AND content = ? AND deleted_at IS NULL\n           LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -34,48 +34,42 @@
         "type_info": "Text"
       },
       {
-        "name": "archived_at",
-        "ordinal": 6,
-        "type_info": "Text"
-      },
-      {
         "name": "is_conflict: bool",
-        "ordinal": 7,
+        "ordinal": 6,
         "type_info": "Integer"
       },
       {
         "name": "conflict_type",
-        "ordinal": 8,
+        "ordinal": 7,
         "type_info": "Text"
       },
       {
         "name": "todo_state",
-        "ordinal": 9,
+        "ordinal": 8,
         "type_info": "Text"
       },
       {
         "name": "priority",
-        "ordinal": 10,
+        "ordinal": 9,
         "type_info": "Text"
       },
       {
         "name": "due_date",
-        "ordinal": 11,
+        "ordinal": 10,
         "type_info": "Text"
       },
       {
         "name": "scheduled_date",
-        "ordinal": 12,
+        "ordinal": 11,
         "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 4
+      "Right": 1
     },
     "nullable": [
       false,
       false,
-      true,
       true,
       true,
       true,
@@ -88,5 +82,5 @@
       true
     ]
   },
-  "hash": "3c42f6b60efc1735d11c3d45020758f68be0c42b682478dcd4926f9bcb806dcb"
+  "hash": "0b8c3af2e95af42365d4043831c081fb47891fff20310671d829abd5b53e7a9e"
 }

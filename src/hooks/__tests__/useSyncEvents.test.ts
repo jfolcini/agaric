@@ -507,7 +507,6 @@ describe('useSyncEvents', () => {
             parent_id: null,
             position: null,
             deleted_at: null,
-            archived_at: null,
             is_conflict: true,
           },
         ],

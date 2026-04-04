@@ -9,7 +9,6 @@ items:
     parent_id: SNAP_PAR2
     position: 1
     deleted_at: ~
-    archived_at: ~
     is_conflict: false
     conflict_type: ~
     todo_state: ~
@@ -22,7 +21,6 @@ items:
     parent_id: SNAP_PAR2
     position: 2
     deleted_at: ~
-    archived_at: ~
     is_conflict: false
     conflict_type: ~
     todo_state: ~

@@ -14,6 +14,7 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -173,55 +174,61 @@ export function BlockPropertyDrawer({
           {!loading && hasBuiltinDates && (
             <>
               {dueDate !== null && (
-                <div className="flex items-center gap-2">
-                  <span
-                    className="text-xs font-medium text-muted-foreground w-20 truncate flex items-center gap-1"
+                <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 text-xs max-w-[120px] truncate flex items-center gap-1"
                     title={t('property.dueDate')}
                   >
                     <CalendarCheck2 size={12} />
                     {t('property.dueDate')}
-                  </span>
+                  </Badge>
                   <Input
-                    className="flex-1 h-7 text-sm"
+                    className="flex-1 h-7 text-xs"
                     type="date"
+                    aria-label={t('property.valueLabel', { key: t('property.dueDate') })}
                     defaultValue={dueDate}
                     key={`due-${dueDate}`}
                     onBlur={(e) => handleSaveBuiltinDate('due_date', e.target.value)}
                   />
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-destructive p-0.5"
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="shrink-0 text-muted-foreground hover:text-destructive"
                     aria-label={t('property.clearDueDate')}
                     onClick={() => handleClearBuiltinDate('due_date')}
                   >
-                    <X size={14} />
-                  </button>
+                    <X className="h-3 w-3" />
+                  </Button>
                 </div>
               )}
               {scheduledDate !== null && (
-                <div className="flex items-center gap-2">
-                  <span
-                    className="text-xs font-medium text-muted-foreground w-20 truncate flex items-center gap-1"
+                <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 text-xs max-w-[120px] truncate flex items-center gap-1"
                     title={t('property.scheduledDate')}
                   >
                     <CalendarClock size={12} />
                     {t('property.scheduledDate')}
-                  </span>
+                  </Badge>
                   <Input
-                    className="flex-1 h-7 text-sm"
+                    className="flex-1 h-7 text-xs"
                     type="date"
+                    aria-label={t('property.valueLabel', { key: t('property.scheduledDate') })}
                     defaultValue={scheduledDate}
                     key={`sched-${scheduledDate}`}
                     onBlur={(e) => handleSaveBuiltinDate('scheduled_date', e.target.value)}
                   />
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-destructive p-0.5"
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="shrink-0 text-muted-foreground hover:text-destructive"
                     aria-label={t('property.clearScheduledDate')}
                     onClick={() => handleClearBuiltinDate('scheduled_date')}
                   >
-                    <X size={14} />
-                  </button>
+                    <X className="h-3 w-3" />
+                  </Button>
                 </div>
               )}
               {properties.length > 0 && <div className="border-t border-border/40" />}
@@ -234,15 +241,17 @@ export function BlockPropertyDrawer({
             <p className="text-sm text-muted-foreground">{t('property.noProperties')}</p>
           ) : (
             properties.map((prop) => (
-              <div key={prop.key} className="flex items-center gap-2">
-                <span
-                  className="text-xs font-medium text-muted-foreground w-20 truncate"
+              <div key={prop.key} className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
+                <Badge
+                  variant="outline"
+                  className="shrink-0 font-mono text-xs max-w-[120px] truncate"
                   title={prop.key}
                 >
                   {prop.key}
-                </span>
+                </Badge>
                 <Input
-                  className="flex-1 h-7 text-sm"
+                  className="flex-1 h-7 text-xs"
+                  aria-label={t('property.valueLabel', { key: prop.key })}
                   defaultValue={
                     prop.value_text ??
                     prop.value_date ??
@@ -253,14 +262,15 @@ export function BlockPropertyDrawer({
                     if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                   }}
                 />
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-destructive p-0.5"
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="shrink-0 text-muted-foreground hover:text-destructive"
                   aria-label={t('property.delete')}
                   onClick={() => handleDelete(prop.key)}
                 >
-                  <X size={14} />
-                </button>
+                  <X className="h-3 w-3" />
+                </Button>
               </div>
             ))
           )}
@@ -367,8 +377,9 @@ function AddPropertySection({
           {selectedKey && (
             <div className="flex items-center gap-1">
               <Input
-                className="flex-1 h-7 text-sm"
+                className="flex-1 h-7 text-xs"
                 placeholder={selectedKey}
+                aria-label={t('property.valueLabel', { key: selectedKey })}
                 value={newValue}
                 onChange={(e) => setNewValue(e.target.value)}
                 onKeyDown={(e) => {

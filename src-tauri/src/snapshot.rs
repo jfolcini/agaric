@@ -45,7 +45,6 @@ pub struct BlockSnapshot {
     pub parent_id: Option<String>,
     pub position: Option<i64>,
     pub deleted_at: Option<String>,
-    pub archived_at: Option<String>,
     pub is_conflict: i64,
     pub conflict_source: Option<String>,
     #[serde(default)]
@@ -162,7 +161,7 @@ pub fn decode_snapshot(data: &[u8]) -> Result<SnapshotData, AppError> {
 async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTables, AppError> {
     let blocks: Vec<BlockSnapshot> = sqlx::query_as!(
         BlockSnapshot,
-        "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source, todo_state, priority, due_date, scheduled_date FROM blocks"
+        "SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict, conflict_source, todo_state, priority, due_date, scheduled_date FROM blocks"
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -354,17 +353,17 @@ pub async fn apply_snapshot(
     // Each table uses a chunk size derived from MAX_SQL_PARAMS / num_columns
     // to stay within SQLite's bind-parameter limit.
 
-    // -- blocks (13 columns) --
-    const BLOCKS_COLS: usize = 13;
-    const BLOCKS_CHUNK: usize = MAX_SQL_PARAMS / BLOCKS_COLS; // 76
+    // -- blocks (12 columns) --
+    const BLOCKS_COLS: usize = 12;
+    const BLOCKS_CHUNK: usize = MAX_SQL_PARAMS / BLOCKS_COLS; // 83
     for chunk in data.tables.blocks.chunks(BLOCKS_CHUNK) {
         let placeholders: Vec<&str> = chunk
             .iter()
-            .map(|_| "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .map(|_| "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .collect();
         let sql = format!(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, \
-             deleted_at, archived_at, is_conflict, conflict_source, \
+             deleted_at, is_conflict, conflict_source, \
              todo_state, priority, due_date, scheduled_date) VALUES {}",
             placeholders.join(", ")
         );
@@ -377,7 +376,6 @@ pub async fn apply_snapshot(
                 .bind(&b.parent_id)
                 .bind(b.position)
                 .bind(&b.deleted_at)
-                .bind(&b.archived_at)
                 .bind(b.is_conflict)
                 .bind(&b.conflict_source)
                 .bind(&b.todo_state)
@@ -591,7 +589,6 @@ mod tests {
                     parent_id: None,
                     position: Some(1),
                     deleted_at: None,
-                    archived_at: None,
                     is_conflict: 0,
                     conflict_source: None,
                     todo_state: None,
@@ -928,7 +925,6 @@ mod tests {
                     parent_id: None,
                     position: Some(1),
                     deleted_at: None,
-                    archived_at: None,
                     is_conflict: 0,
                     conflict_source: None,
                     todo_state: None,
@@ -1140,7 +1136,6 @@ mod tests {
                     parent_id: None,
                     position: None,
                     deleted_at: None,
-                    archived_at: None,
                     is_conflict: 0,
                     conflict_source: None,
                     todo_state: None,
@@ -1377,7 +1372,6 @@ mod tests {
                         parent_id: None,
                         position: Some(1),
                         deleted_at: None,
-                        archived_at: None,
                         is_conflict: 0,
                         conflict_source: None,
                         todo_state: None,
@@ -1392,7 +1386,6 @@ mod tests {
                         parent_id: Some("blk-parent".to_string()),
                         position: Some(1),
                         deleted_at: None,
-                        archived_at: None,
                         is_conflict: 0,
                         conflict_source: None,
                         todo_state: None,
@@ -1408,7 +1401,6 @@ mod tests {
                         parent_id: None,
                         position: None,
                         deleted_at: None,
-                        archived_at: None,
                         is_conflict: 0,
                         conflict_source: None,
                         todo_state: None,
@@ -1679,7 +1671,6 @@ mod tests {
                     parent_id: None,
                     position: Some(1),
                     deleted_at: None,
-                    archived_at: None,
                     is_conflict: 0,
                     conflict_source: None,
                     todo_state: None,
@@ -1744,7 +1735,6 @@ mod tests {
                     parent_id: None,
                     position: None,
                     deleted_at: None,
-                    archived_at: None,
                     is_conflict: 0,
                     conflict_source: None,
                     todo_state: None,
@@ -1774,7 +1764,6 @@ mod tests {
         assert!(block.parent_id.is_none(), "parent_id should be None");
         assert!(block.position.is_none(), "position should be None");
         assert!(block.deleted_at.is_none(), "deleted_at should be None");
-        assert!(block.archived_at.is_none(), "archived_at should be None");
         assert!(
             block.conflict_source.is_none(),
             "conflict_source should be None"
@@ -1841,7 +1830,6 @@ mod tests {
             assert_eq!(a.parent_id, b.parent_id);
             assert_eq!(a.position, b.position);
             assert_eq!(a.deleted_at, b.deleted_at);
-            assert_eq!(a.archived_at, b.archived_at);
             assert_eq!(a.is_conflict, b.is_conflict);
             assert_eq!(a.conflict_source, b.conflict_source);
         }
@@ -2342,7 +2330,6 @@ mod tests {
                     parent_id: None,
                     position: Some(1),
                     deleted_at: None,
-                    archived_at: None,
                     is_conflict: 0,
                     conflict_source: None,
                     todo_state: Some("TODO".to_string()),

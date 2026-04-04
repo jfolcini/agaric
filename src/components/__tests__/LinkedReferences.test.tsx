@@ -77,7 +77,6 @@ function makeGroup(
       parent_id: pageId,
       position: 1,
       deleted_at: null,
-      archived_at: null,
       is_conflict: false,
     })),
   }

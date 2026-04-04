@@ -92,11 +92,17 @@ export function useBlockResolve(): UseBlockResolveReturn {
         label: tag.name,
       }))
 
-      // Append a "Create new tag" option when the query doesn't exactly match an existing tag
+      // Prepend a "Create new tag" option when the query doesn't exactly match
+      // an existing tag — this makes it the default selection so pressing Enter
+      // auto-creates the tag (F-26).
       if (q.length > 0) {
         const exactMatch = tags.some((t) => t.name.toLowerCase() === q)
         if (!exactMatch) {
-          result.push({ id: '__create__', label: query.replace(/\]+$/, '').trim(), isCreate: true })
+          result.unshift({
+            id: '__create__',
+            label: query.replace(/\]+$/, '').trim(),
+            isCreate: true,
+          })
         }
       }
       return result
@@ -176,7 +182,8 @@ export function useBlockResolve(): UseBlockResolveReturn {
         }
       }
 
-      // Append a "Create new" option when the query doesn't exactly match an existing page
+      // Append (not prepend) "Create new" for pages — F-26 only targeted tags.
+      // Pages keep the existing UX where Create is at the end of the list.
       if (q.length > 0) {
         const allSource = pagesListRef.current.length > 0 ? pagesListRef.current : matches
         const exactMatch = allSource.some(

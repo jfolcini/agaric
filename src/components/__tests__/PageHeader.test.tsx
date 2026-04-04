@@ -78,7 +78,6 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
             parent_id: null,
             position: null,
             deleted_at: null,
-            archived_at: null,
             is_conflict: false,
             conflict_type: null,
           },
@@ -89,7 +88,6 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
             parent_id: null,
             position: null,
             deleted_at: null,
-            archived_at: null,
             is_conflict: false,
             conflict_type: null,
           },
@@ -109,7 +107,6 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
         parent_id: null,
         position: null,
         deleted_at: null,
-        archived_at: null,
         is_conflict: false,
         conflict_type: null,
       }
@@ -671,7 +668,6 @@ describe('PageHeader page-level undo/redo buttons', () => {
           parent_id: null,
           position: null,
           deleted_at: null,
-          archived_at: null,
           is_conflict: false,
           conflict_type: null,
         }

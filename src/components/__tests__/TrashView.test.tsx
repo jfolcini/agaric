@@ -37,7 +37,6 @@ function makeBlock(id: string, content: string, deletedAt: string) {
     parent_id: null,
     position: null,
     deleted_at: deletedAt,
-    archived_at: null,
     is_conflict: false,
   }
 }

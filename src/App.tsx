@@ -7,6 +7,7 @@ import {
   GitMerge,
   History,
   Keyboard,
+  LayoutTemplate,
   Plus,
   RefreshCw,
   Search,
@@ -30,6 +31,7 @@ import { SearchPanel } from './components/SearchPanel'
 import { StatusPanel } from './components/StatusPanel'
 import { TagFilterPanel } from './components/TagFilterPanel'
 import { TagList } from './components/TagList'
+import { TemplatesView } from './components/TemplatesView'
 import { TrashView } from './components/TrashView'
 import {
   Sidebar,
@@ -72,6 +74,7 @@ const NAV_ITEMS: { id: Exclude<View, 'page-editor'>; icon: React.ElementType; la
     { id: 'status', icon: Activity, labelKey: 'sidebar.status' },
     { id: 'conflicts', icon: GitMerge, labelKey: 'sidebar.conflicts' },
     { id: 'history', icon: History, labelKey: 'sidebar.history' },
+    { id: 'templates', icon: LayoutTemplate, labelKey: 'sidebar.templates' },
   ]
 
 function CollapseButton() {
@@ -377,6 +380,7 @@ function App() {
             {currentView === 'status' && <StatusPanel />}
             {currentView === 'conflicts' && <ConflictList />}
             {currentView === 'history' && <HistoryView />}
+            {currentView === 'templates' && <TemplatesView />}
             {currentView === 'page-editor' && activePage && (
               <PageEditor
                 pageId={activePage.pageId}

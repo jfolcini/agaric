@@ -1534,7 +1534,6 @@ async fn get_block_returns_full_row() {
     assert!(row.parent_id.is_none(), "parent_id must be None");
     assert_eq!(row.position, Some(5), "position must match");
     assert!(row.deleted_at.is_none(), "deleted_at must be None");
-    assert!(row.archived_at.is_none(), "archived_at must be None");
     assert!(!row.is_conflict, "is_conflict must be false");
 }
 

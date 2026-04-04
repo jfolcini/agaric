@@ -33,7 +33,6 @@ function makeTagBlock(id: string, content: string) {
     parent_id: null,
     position: 0,
     deleted_at: null,
-    archived_at: null,
     is_conflict: false,
     conflict_type: null,
     todo_state: null,

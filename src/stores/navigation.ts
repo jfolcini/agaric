@@ -17,6 +17,7 @@ export type View =
   | 'status'
   | 'conflicts'
   | 'history'
+  | 'templates'
   | 'page-editor'
 
 interface PageEntry {

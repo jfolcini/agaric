@@ -378,7 +378,6 @@ pub(crate) async fn create_block_in_tx(
             parent_id,
             position: Some(effective_position),
             deleted_at: None,
-            archived_at: None,
             is_conflict: false,
             conflict_type: None,
             todo_state: None,
@@ -433,7 +432,7 @@ pub async fn edit_block_inner(
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut *tx)
@@ -501,7 +500,6 @@ pub async fn edit_block_inner(
         parent_id,
         position,
         deleted_at: None,
-        archived_at: None,
         is_conflict: false,
         conflict_type: None,
         todo_state: None,
@@ -1108,7 +1106,7 @@ pub async fn list_blocks_inner(
 pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ?"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ?"#,
         block_id
     )
     .fetch_optional(pool)
@@ -1673,7 +1671,7 @@ pub(crate) async fn set_property_in_tx(
     // 2. Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut **tx)
@@ -1728,7 +1726,6 @@ pub(crate) async fn set_property_in_tx(
             parent_id: existing.parent_id,
             position: existing.position,
             deleted_at: existing.deleted_at,
-            archived_at: existing.archived_at,
             is_conflict: existing.is_conflict,
             conflict_type: existing.conflict_type,
             todo_state: if key == "todo_state" {
@@ -1810,7 +1807,7 @@ pub async fn set_todo_state_inner(
     // Fetch current block to check existing todo_state for transition logic
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as "is_conflict: bool", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(pool)
@@ -3003,7 +3000,7 @@ pub async fn list_projected_agenda_inner(
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
-                b.deleted_at, b.archived_at, b.is_conflict as "is_conflict: bool",
+                b.deleted_at, b.is_conflict as "is_conflict: bool",
                 b.conflict_type, b.todo_state, b.priority, b.due_date, b.scheduled_date
          FROM blocks b
          JOIN block_properties bp ON bp.block_id = b.id AND bp.key = 'repeat'
@@ -4913,7 +4910,7 @@ pub async fn navigate_journal_inner(
     // Look for an existing page whose content matches the date exactly.
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+        r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                   is_conflict as "is_conflict: bool", conflict_type,
                   todo_state, priority, due_date, scheduled_date
            FROM blocks
@@ -13309,7 +13306,7 @@ mod tests {
         // Find the new sibling block (any block with todo_state=TODO that isn't original)
         let new_blocks: Vec<BlockRow> = sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                       is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
                       due_date, scheduled_date
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
@@ -13385,7 +13382,7 @@ mod tests {
         // Find new block
         let new_blocks: Vec<BlockRow> = sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                       is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
                       due_date, scheduled_date
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
@@ -13446,7 +13443,7 @@ mod tests {
 
         let new_blocks: Vec<BlockRow> = sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                       is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
                       due_date, scheduled_date
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
@@ -13510,7 +13507,7 @@ mod tests {
 
         let new_blocks: Vec<BlockRow> = sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                       is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
                       due_date, scheduled_date
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
@@ -13622,7 +13619,7 @@ mod tests {
         // Find the new sibling block
         let new_blocks: Vec<BlockRow> = sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                       is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
                       due_date, scheduled_date
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
@@ -13882,7 +13879,7 @@ mod tests {
         // Should create a new TODO block
         let new_blocks: Vec<BlockRow> = sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                       is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
                       due_date, scheduled_date
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
@@ -13964,7 +13961,7 @@ mod tests {
         // Find the new sibling
         let new_blocks: Vec<BlockRow> = sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                       is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
                       due_date, scheduled_date
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
@@ -14137,7 +14134,7 @@ mod tests {
         // Find the sibling (new block with TODO state, same parent)
         let blocks = sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                     is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
                     due_date, scheduled_date
              FROM blocks WHERE todo_state = 'TODO' AND id != ?1 AND deleted_at IS NULL"#,
@@ -14225,7 +14222,7 @@ mod tests {
         // Find the sibling
         let blocks = sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,
+            r#"SELECT id, block_type, content, parent_id, position, deleted_at,
                     is_conflict as "is_conflict: bool", conflict_type, todo_state, priority,
                     due_date, scheduled_date
              FROM blocks WHERE todo_state = 'TODO' AND id != ?1 AND deleted_at IS NULL"#,

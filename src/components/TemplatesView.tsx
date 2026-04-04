@@ -1,0 +1,172 @@
+/**
+ * TemplatesView — browse and manage template pages.
+ *
+ * Lists pages with property `template` = 'true', shows a preview of the
+ * first child block, and allows navigating to or removing template status.
+ */
+
+import { LayoutTemplate, Search, X } from 'lucide-react'
+import type React from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { deleteProperty, queryByProperty } from '../lib/tauri'
+import { loadTemplatePagesWithPreview } from '../lib/template-utils'
+import { useNavigationStore } from '../stores/navigation'
+import { EmptyState } from './EmptyState'
+
+interface TemplateItem {
+  id: string
+  content: string
+  preview: string | null
+  isJournalTemplate: boolean
+}
+
+export function TemplatesView(): React.ReactElement {
+  const { t } = useTranslation()
+  const [templates, setTemplates] = useState<TemplateItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+
+  const loadTemplates = useCallback(async () => {
+    setLoading(true)
+    try {
+      const pages = await loadTemplatePagesWithPreview()
+      const journalResp = await queryByProperty({
+        key: 'journal-template',
+        valueText: 'true',
+        limit: 10,
+      })
+      const journalIds = new Set(journalResp.items.map((b) => b.id))
+      setTemplates(
+        pages.map((p) => ({
+          id: p.id,
+          content: p.content,
+          preview: p.preview,
+          isJournalTemplate: journalIds.has(p.id),
+        })),
+      )
+    } catch {
+      toast.error('Failed to load templates')
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    loadTemplates()
+  }, [loadTemplates])
+
+  const handleRemoveTemplate = useCallback(async (id: string, name: string) => {
+    try {
+      await deleteProperty(id, 'template')
+      setTemplates((prev) => prev.filter((tpl) => tpl.id !== id))
+      toast.success(`Removed template status from ${name}`)
+    } catch {
+      toast.error('Failed to remove template status')
+    }
+  }, [])
+
+  const handleNavigate = useCallback((id: string, content: string) => {
+    useNavigationStore.getState().navigateToPage(id, content)
+  }, [])
+
+  const filtered = templates.filter((tpl) =>
+    tpl.content.toLowerCase().includes(search.toLowerCase()),
+  )
+
+  return (
+    <section className="space-y-4" aria-label={t('sidebar.templates')}>
+      {/* Loading skeleton */}
+      {loading && (
+        <div className="space-y-2" data-testid="templates-loading">
+          <Skeleton className="h-14 w-full rounded-lg" />
+          <Skeleton className="h-14 w-full rounded-lg" />
+          <Skeleton className="h-14 w-full rounded-lg" />
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && templates.length === 0 && (
+        <EmptyState icon={LayoutTemplate} message={t('templates.empty')} />
+      )}
+
+      {/* Search input — only show when there are templates */}
+      {!loading && templates.length > 0 && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('templates.search')}
+            aria-label={t('templates.search')}
+            className="pl-9"
+          />
+        </div>
+      )}
+
+      {/* Template list */}
+      {!loading && filtered.length > 0 && (
+        <ul className="space-y-1">
+          {filtered.map((tpl) => (
+            <li
+              key={tpl.id}
+              className="group flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-accent/50 cursor-pointer"
+            >
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 flex-col text-left"
+                      aria-label={t('templates.navigateLabel', { name: tpl.content })}
+                      onClick={() => handleNavigate(tpl.id, tpl.content)}
+                    >
+                      <span className="text-sm font-medium truncate">{tpl.content}</span>
+                      {tpl.preview && (
+                        <span className="text-xs text-muted-foreground truncate">
+                          {tpl.preview}
+                        </span>
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{t('templates.navigateLabel', { name: tpl.content })}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              {tpl.isJournalTemplate && (
+                <Badge variant="secondary" className="shrink-0 text-xs">
+                  {t('templates.journalIndicator')}
+                </Badge>
+              )}
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t('templates.removeTemplateLabel', { name: tpl.content })}
+                className={[
+                  'shrink-0 opacity-0 group-hover:opacity-100 transition-opacity',
+                  'text-muted-foreground hover:text-destructive focus-visible:opacity-100',
+                  '[@media(pointer:coarse)]:opacity-100',
+                  '[@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
+                ].join(' ')}
+                onClick={() => handleRemoveTemplate(tpl.id, tpl.content)}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* No search results */}
+      {!loading && filtered.length === 0 && templates.length > 0 && (
+        <p className="text-sm text-muted-foreground">{t('templates.noResults')}</p>
+      )}
+    </section>
+  )
+}

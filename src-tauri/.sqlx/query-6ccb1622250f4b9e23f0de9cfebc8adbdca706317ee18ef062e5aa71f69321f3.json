@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source, todo_state, priority, due_date, scheduled_date FROM blocks",
+  "query": "SELECT id, block_type, content, parent_id, position, deleted_at, is_conflict as \"is_conflict: bool\", conflict_type, todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -34,48 +34,42 @@
         "type_info": "Text"
       },
       {
-        "name": "archived_at",
+        "name": "is_conflict: bool",
         "ordinal": 6,
-        "type_info": "Text"
-      },
-      {
-        "name": "is_conflict",
-        "ordinal": 7,
         "type_info": "Integer"
       },
       {
-        "name": "conflict_source",
-        "ordinal": 8,
+        "name": "conflict_type",
+        "ordinal": 7,
         "type_info": "Text"
       },
       {
         "name": "todo_state",
-        "ordinal": 9,
+        "ordinal": 8,
         "type_info": "Text"
       },
       {
         "name": "priority",
-        "ordinal": 10,
+        "ordinal": 9,
         "type_info": "Text"
       },
       {
         "name": "due_date",
-        "ordinal": 11,
+        "ordinal": 10,
         "type_info": "Text"
       },
       {
         "name": "scheduled_date",
-        "ordinal": 12,
+        "ordinal": 11,
         "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false,
       false,
-      true,
       true,
       true,
       true,
@@ -88,5 +82,5 @@
       true
     ]
   },
-  "hash": "d31179e168edc079cd3e94b99a63484372532835c2f09b5b77e76a09fcd43403"
+  "hash": "6ccb1622250f4b9e23f0de9cfebc8adbdca706317ee18ef062e5aa71f69321f3"
 }

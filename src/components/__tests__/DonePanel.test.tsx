@@ -59,7 +59,6 @@ function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
     parent_id: 'PAGE1',
     position: 0,
     deleted_at: null,
-    archived_at: null,
     is_conflict: false,
     conflict_type: null,
     todo_state: 'DONE',
