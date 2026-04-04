@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 155 — 2026-04-03 — Deadline warning period (#641 completion) — REVIEW-LATER CLEARED
+
+### Build: configurable warning days + DuePanel "Upcoming" section
+
+1 build subagent. DeadlineWarningSection in PropertiesView (number input, 0-90, localStorage). DuePanel fetches blocks due within N days, renders amber "Upcoming" section. Default 0 (disabled).
+
+| File | Change |
+|------|--------|
+| `PropertiesView.tsx` | DeadlineWarningSection: number input, localStorage persistence. |
+| `DuePanel.tsx` | `upcomingBlocks` state, `warningDays` from localStorage, fetch + filter + render. |
+| `DuePanel.test.tsx` | 2 new tests (upcoming shown, hidden when 0). 33/33 pass. |
+| `i18n.ts` | 2 new keys. |
+| `REVIEW-LATER.md` | **CLEARED TO 0 ITEMS.** All 20 items resolved across sessions 129-155. |
+
+### Stats
+- Frontend: 2 new tests (33/33 DuePanel pass)
+- Commit: `6425459`
+- **REVIEW-LATER: 0 open items. Fully cleared.**
+
+### Mega-session totals (sessions 129-155):
+- **~205 new tests** (frontend + backend)
+- **40 feature/fix commits**
+- **20 tracker items resolved**: #522, #639, #641, #642, #644, #651, #654, #655, #656, #657, #658, #660, #662, #663, #664, #665, #666, #667, #668 + partial items consolidated
+- **REVIEW-LATER: 12 → 0 items**
+
 ## Session 154 — 2026-04-03 — Logseq/Markdown file import (#660)
 
 ### Build: backend parser + frontend file picker
