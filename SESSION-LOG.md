@@ -1,5 +1,37 @@
 # Session Log
 
+## Session 197 — 2026-04-04 — Batch 51: Mobile layout overflow fixes (MOB-H4, MOB-H6, MOB-H7, MOB-H8, MOB-H9, MOB-H10)
+
+### Summary
+Fixed 6 mobile HIGH items: layout overflow and non-standard breakpoints across 7 components. All MOBILE-HIGH items now resolved.
+
+### Batch 51
+
+**Commit:** 9d30153
+
+| Area | Change |
+|------|--------|
+| PdfViewerDialog.tsx | MOB-H4: Replace custom `<button>` with `<Button variant="outline" size="icon-sm">` for touch-friendly PDF navigation. |
+| DeviceManagement.tsx | MOB-H6: Add `flex-wrap` to action buttons container; change edit address button to `size="icon-xs"` for proper touch sizing. |
+| ConflictList.tsx | MOB-H7: Add `flex-wrap` to action buttons container (line 605). |
+| JournalPage.tsx | MOB-H8: Add `flex-wrap` to header container (line 441); responsive `min-w-[100px] sm:min-w-[140px]` on date display. |
+| BlockTree.tsx | MOB-H9: Replace `max-[479px]:` with standard `max-sm:` breakpoint; add `max-w-[calc(100vw-2rem)] sm:max-w-[300px]`. |
+| block-tree/BlockDatePicker.tsx | MOB-H9: Replace `max-[479px]:` with `max-sm:`; add `max-w-[calc(100vw-2rem)]`. |
+| TrashView.tsx | MOB-H10: Change to `flex-col sm:flex-row` responsive stacking (line 102); add `flex-wrap` to content div. |
+| Test files | 6 test files updated: PdfViewerDialog (1 new), DeviceManagement (2 new), ConflictList (1 new), JournalPage (2 new), BlockTree (2 new), TrashView (1 new). |
+
+**Review findings applied:**
+- Review A (PdfViewerDialog + ConflictList + TrashView): All pass, approved.
+- Review B (DeviceManagement): Found duplicate `size` prop — fixed before commit.
+- Review C (JournalPage): All pass, approved.
+- Review D (BlockTree + BlockDatePicker): All pass, approved.
+
+**Stats:** 13 files changed, 260 insertions, 18 deletions. 3111/3111 frontend tests pass. All prek hooks pass.
+
+**Resolved:** MOB-H4, MOB-H6, MOB-H7, MOB-H8, MOB-H9, MOB-H10 (6 items). 66 open items remain.
+
+---
+
 ## Session 196 — 2026-04-04 — Batch 50: Backend bugs + property guards (H-7, H-8, M-51, M-52, M-53)
 
 ### Summary
