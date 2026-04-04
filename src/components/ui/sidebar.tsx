@@ -392,8 +392,8 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
     setOpen(true)
   }, [setSidebarWidth, setOpen])
 
-  const onMouseDown = React.useCallback(
-    (e: React.MouseEvent) => {
+  const onPointerDown = React.useCallback(
+    (e: React.PointerEvent) => {
       if (e.button !== 0) return
       e.preventDefault()
       const state = dragState.current
@@ -404,7 +404,7 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
       state.startWidth = open ? sidebarWidth : 0
       state.moved = false
 
-      const onMouseMove = (ev: MouseEvent) => {
+      const onPointerMove = (ev: PointerEvent) => {
         if (!state.dragging) return
         const delta = ev.clientX - state.startX
         if (Math.abs(delta) > 2 && !state.moved) {
@@ -420,8 +420,8 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
           if (newWidth < SIDEBAR_WIDTH_ICON_PX) {
             // Dragged below icon width — collapse
             state.dragging = false
-            document.removeEventListener('mousemove', onMouseMove)
-            document.removeEventListener('mouseup', onMouseUp)
+            document.removeEventListener('pointermove', onPointerMove)
+            document.removeEventListener('pointerup', onPointerUp)
             document.documentElement.style.cursor = ''
             document.body.style.userSelect = ''
             setIsResizing(false)
@@ -432,10 +432,10 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
         }
       }
 
-      const onMouseUp = () => {
+      const onPointerUp = () => {
         state.dragging = false
-        document.removeEventListener('mousemove', onMouseMove)
-        document.removeEventListener('mouseup', onMouseUp)
+        document.removeEventListener('pointermove', onPointerMove)
+        document.removeEventListener('pointerup', onPointerUp)
         document.documentElement.style.cursor = ''
         document.body.style.userSelect = ''
         if (state.moved) {
@@ -446,8 +446,8 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
         }
       }
 
-      document.addEventListener('mousemove', onMouseMove)
-      document.addEventListener('mouseup', onMouseUp)
+      document.addEventListener('pointermove', onPointerMove)
+      document.addEventListener('pointerup', onPointerUp)
       document.documentElement.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
     },
@@ -460,11 +460,11 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
       data-slot="sidebar-rail"
       aria-label="Toggle Sidebar"
       tabIndex={-1}
-      onMouseDown={onMouseDown}
+      onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
       title="Toggle Sidebar"
       className={cn(
-        'absolute inset-y-0 z-20 hidden w-4 -translate-x-1/2 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex',
+        'absolute inset-y-0 z-20 hidden w-4 [@media(pointer:coarse)]:w-8 -translate-x-1/2 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex',
         'in-data-[side=left]:cursor-col-resize in-data-[side=right]:cursor-col-resize',
         '[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize',
         'group-data-[collapsible=offcanvas]:translate-x-0 group-data-[collapsible=offcanvas]:after:left-full hover:group-data-[collapsible=offcanvas]:bg-sidebar',

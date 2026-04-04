@@ -262,13 +262,13 @@ describe('LinkEditPopover', () => {
       expect(onClose).toHaveBeenCalled()
     })
 
-    it('Apply button prevents mousedown default (preserves editor focus)', () => {
+    it('Apply button prevents pointerdown default (preserves editor focus)', () => {
       render(
         <LinkEditPopover editor={makeEditor()} isEditing={false} initialUrl="" onClose={onClose} />,
       )
 
       const applyBtn = screen.getByRole('button', { name: 'Apply' })
-      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const preventSpy = vi.spyOn(event, 'preventDefault')
       fireEvent(applyBtn, event)
 
@@ -298,7 +298,7 @@ describe('LinkEditPopover', () => {
       expect(onClose).toHaveBeenCalled()
     })
 
-    it('Remove button prevents mousedown default (preserves editor focus)', () => {
+    it('Remove button prevents pointerdown default (preserves editor focus)', () => {
       render(
         <LinkEditPopover
           editor={makeEditor()}
@@ -309,7 +309,7 @@ describe('LinkEditPopover', () => {
       )
 
       const removeBtn = screen.getByRole('button', { name: 'Remove' })
-      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+      const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
       const preventSpy = vi.spyOn(event, 'preventDefault')
       fireEvent(removeBtn, event)
 

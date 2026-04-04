@@ -387,7 +387,7 @@ export function JournalPage({
         setBacklinkCounts(backlinks)
       }
     }
-    fetchCounts().catch(() => {})
+    fetchCounts().catch(() => toast.error(t('journal.loadCountsFailed')))
     return () => {
       cancelled = true
     }
@@ -1237,7 +1237,7 @@ export function JournalControls(): React.ReactElement {
         }
         setPageMap(dates)
       })
-      .catch(() => {})
+      .catch(() => toast.error(t('journal.loadCalendarFailed')))
   }, [])
 
   const highlightedDays = useMemo(() => {

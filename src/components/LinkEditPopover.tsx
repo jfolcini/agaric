@@ -117,7 +117,7 @@ export function LinkEditPopover({
         <Button
           size="xs"
           className="[@media(pointer:coarse)]:h-10"
-          onMouseDown={(e) => e.preventDefault()}
+          onPointerDown={(e) => e.preventDefault()}
           onClick={handleApply}
         >
           {isEditing ? 'Update' : 'Apply'}
@@ -127,7 +127,7 @@ export function LinkEditPopover({
             size="xs"
             variant="destructive"
             className="[@media(pointer:coarse)]:h-10"
-            onMouseDown={(e) => e.preventDefault()}
+            onPointerDown={(e) => e.preventDefault()}
             onClick={handleRemove}
           >
             Remove

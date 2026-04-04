@@ -186,7 +186,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     if (!pageId) return
     getPageAliases(pageId)
       .then(setAliases)
-      .catch(() => {})
+      .catch(() => toast.error(t('pageHeader.loadAliasesFailed')))
   }, [pageId])
 
   // Sync editableTitle when prop changes (e.g., navigating to a different page)

@@ -535,8 +535,8 @@ function SortableBlockInner({
 
           {/* Repeat indicator — special-case for repeat property */}
           {properties?.some((p) => p.key === 'repeat') && (
-            <span
-              role="img"
+            <button
+              type="button"
               className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400"
               aria-label={t('block.repeats', {
                 value: properties.find((p) => p.key === 'repeat')?.value ?? '',
@@ -544,7 +544,7 @@ function SortableBlockInner({
             >
               <Repeat size={12} className="flex-shrink-0" />
               {formatRepeatLabel(properties.find((p) => p.key === 'repeat')?.value ?? '')}
-            </span>
+            </button>
           )}
 
           {/* Custom property chips — up to 3 shown (excluding repeat) */}

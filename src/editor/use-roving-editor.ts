@@ -69,6 +69,15 @@ export function shouldSplitOnBlur(markdown: string): boolean {
 
 const lowlight = createLowlight(common)
 
+/** Inline Code with Mod-e to toggle inline code. */
+const CodeWithShortcut = Code.extend({
+  addKeyboardShortcuts() {
+    return {
+      'Mod-e': () => this.editor.commands.toggleCode(),
+    }
+  },
+})
+
 /** CodeBlockLowlight with Mod-Shift-c to toggle code blocks. */
 const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   addKeyboardShortcuts() {
@@ -223,7 +232,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Text,
       Bold,
       Italic,
-      Code,
+      CodeWithShortcut,
       Strike,
       Highlight,
       Blockquote,

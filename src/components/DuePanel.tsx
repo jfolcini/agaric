@@ -314,12 +314,13 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                   })
                 }
               })
-              .catch(() => {})
+              .catch(() => toast.error(t('duePanel.loadAgendaFailed')))
           }
         }
       })
       .catch(() => {
         if (!stale) setProjectedEntries([])
+        toast.error(t('duePanel.loadAgendaFailed'))
       })
       .finally(() => {
         if (!stale) setProjectedLoading(false)
