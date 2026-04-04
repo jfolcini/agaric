@@ -25,6 +25,9 @@ pub struct PeerRef {
     pub cert_hash: Option<String>,
     /// Human-readable name/label for this peer (e.g. "Javier's Phone").
     pub device_name: Option<String>,
+    /// Last known network address (host:port) for direct connection.
+    /// Updated after each successful sync. Used when mDNS is unavailable.
+    pub last_address: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -39,7 +42,7 @@ pub async fn get_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<Option<Pee
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
-                  device_name
+                  device_name, last_address
            FROM peer_refs WHERE peer_id = ?"#,
         peer_id,
     )
@@ -56,7 +59,7 @@ pub async fn list_peer_refs(pool: &SqlitePool) -> Result<Vec<PeerRef>, AppError>
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
-                  device_name
+                  device_name, last_address
            FROM peer_refs
            ORDER BY synced_at DESC"#,
     )
@@ -186,6 +189,23 @@ pub async fn update_device_name(
     if rows == 0 {
         return Err(AppError::NotFound(format!("peer_ref {peer_id}")));
     }
+    Ok(())
+}
+
+/// Update the last known network address for a peer.
+///
+/// Called after each successful sync to cache the peer's address for
+/// direct connection when mDNS discovery is unavailable.
+pub async fn update_last_address(
+    pool: &SqlitePool,
+    peer_id: &str,
+    address: &str,
+) -> Result<(), AppError> {
+    sqlx::query("UPDATE peer_refs SET last_address = ?1 WHERE peer_id = ?2")
+        .bind(address)
+        .bind(peer_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

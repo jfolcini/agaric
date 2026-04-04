@@ -102,6 +102,7 @@ mod specta_tests {
             crate::commands::get_peer_ref,
             crate::commands::delete_peer_ref,
             crate::commands::update_peer_name,
+            crate::commands::set_peer_address,
             crate::commands::get_device_id,
             // Sync — pairing & session (#275, #278)
             crate::commands::start_pairing,
@@ -266,6 +267,7 @@ pub fn run() {
         commands::get_peer_ref,
         commands::delete_peer_ref,
         commands::update_peer_name,
+        commands::set_peer_address,
         commands::get_device_id,
         // Sync — pairing & session (#275, #278)
         commands::start_pairing,

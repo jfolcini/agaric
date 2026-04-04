@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT peer_id, last_hash, last_sent_hash, synced_at,\n                  reset_count as \"reset_count!: i64\", last_reset_at, cert_hash,\n                  device_name\n           FROM peer_refs WHERE peer_id = ?",
+  "query": "SELECT peer_id, last_hash, last_sent_hash, synced_at,\n                  reset_count as \"reset_count!: i64\", last_reset_at, cert_hash,\n                  device_name, last_address\n           FROM peer_refs\n           ORDER BY synced_at DESC",
   "describe": {
     "columns": [
       {
@@ -42,10 +42,15 @@
         "name": "device_name",
         "ordinal": 7,
         "type_info": "Text"
+      },
+      {
+        "name": "last_address",
+        "ordinal": 8,
+        "type_info": "Text"
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false,
@@ -55,8 +60,9 @@
       false,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "9685697937b375dac9e71576a3a2c74c6daf59fa939fd3137b11a968d992a127"
+  "hash": "542379f4ece5bd469aeb4564e45bf6ef0421caeb8aab6dd7e9f7ab2530c4b24d"
 }

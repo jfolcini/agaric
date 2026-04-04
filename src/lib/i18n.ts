@@ -426,6 +426,15 @@ const resources = {
       'conflict.typeMove': 'Move conflict — block moved to different locations',
       'conflict.expand': 'Expand conflict details',
       'conflict.collapse': 'Collapse conflict details',
+
+      // Peer address (manual IP entry)
+      'status.peerAddress': 'Address',
+      'status.peerAddressNotSet': 'No address',
+      'status.editAddress': 'Edit',
+      'status.addressUpdated': 'Address updated',
+      'status.addressInvalid': 'Invalid address format (expected host:port)',
+      'status.manualIpHint':
+        'If mDNS discovery is unavailable, share this device\u2019s IP and sync port with the remote peer, then set it via the address edit button below.',
     },
   },
 }

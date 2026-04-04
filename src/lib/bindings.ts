@@ -500,6 +500,17 @@ async updatePeerName(peerId: string, deviceName: string | null) : Promise<Result
 }
 },
 /**
+ * Tauri command: set a peer's last-known network address for direct connection.
+ */
+async setPeerAddress(peerId: string, address: string) : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_peer_address", { peerId, address }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: return the local device's persistent UUID.
  */
 async getDeviceId() : Promise<Result<string, { kind: string; message: string }>> {
@@ -745,7 +756,12 @@ cert_hash: string | null;
 /**
  * Human-readable name/label for this peer (e.g. "Javier's Phone").
  */
-device_name: string | null }
+device_name: string | null; 
+/**
+ * Last known network address (host:port) for direct connection.
+ * Updated after each successful sync. Used when mDNS is unavailable.
+ */
+last_address: string | null }
 /**
  * A projected future occurrence of a repeating block.
  * 

@@ -541,6 +541,7 @@ export interface PeerRefRow {
   last_reset_at: string | null
   cert_hash: string | null
   device_name: string | null
+  last_address: string | null
 }
 
 /** List all known peer references. */
@@ -561,6 +562,11 @@ export async function deletePeerRef(peerId: string): Promise<void> {
 /** Update the display name for a paired peer. Pass null to clear. */
 export async function updatePeerName(peerId: string, deviceName: string | null): Promise<void> {
   return invoke('update_peer_name', { peerId, deviceName })
+}
+
+/** Manually set a peer's network address (host:port) for direct connection. */
+export async function setPeerAddress(peerId: string, address: string): Promise<void> {
+  return invoke('set_peer_address', { peerId, address })
 }
 
 /** Get the local device ID. */

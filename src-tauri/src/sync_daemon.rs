@@ -290,6 +290,26 @@ async fn daemon_loop(
                             &cancel,
                         )
                         .await;
+                    } else if let Some(ref addr) = peer_ref.last_address {
+                        // Fallback: use last-known address (manual IP / stored from previous sync)
+                        if let Ok(socket_addr) = addr.parse::<std::net::SocketAddr>() {
+                            let fallback_peer = DiscoveredPeer {
+                                device_id: peer_ref.peer_id.clone(),
+                                addresses: vec![socket_addr.ip()],
+                                port: socket_addr.port(),
+                            };
+                            try_sync_with_peer(
+                                &pool,
+                                &device_id,
+                                &materializer,
+                                &scheduler,
+                                &event_sink,
+                                &fallback_peer,
+                                &refs,
+                                &cancel,
+                            )
+                            .await;
+                        }
                     }
                 }
             }
@@ -318,6 +338,26 @@ async fn daemon_loop(
                             &cancel,
                         )
                         .await;
+                    } else if let Some(ref addr) = refs.iter().find(|r| r.peer_id == pid).and_then(|r| r.last_address.clone()) {
+                        // Fallback: use last-known address (manual IP / stored from previous sync)
+                        if let Ok(socket_addr) = addr.parse::<std::net::SocketAddr>() {
+                            let fallback_peer = DiscoveredPeer {
+                                device_id: pid.clone(),
+                                addresses: vec![socket_addr.ip()],
+                                port: socket_addr.port(),
+                            };
+                            try_sync_with_peer(
+                                &pool,
+                                &device_id,
+                                &materializer,
+                                &scheduler,
+                                &event_sink,
+                                &fallback_peer,
+                                &refs,
+                                &cancel,
+                            )
+                            .await;
+                        }
                     }
                 }
             }
@@ -419,6 +459,10 @@ async fn try_sync_with_peer(
     match run_sync_session(&mut orch, &mut conn, cancel).await {
         Ok(()) => {
             scheduler.record_success(peer_id);
+            // Save the peer's address for future direct connections
+            if let Err(e) = peer_refs::update_last_address(pool, peer_id, &addr).await {
+                tracing::warn!("failed to save peer address: {e}");
+            }
             let session = orch.session();
             event_sink.on_sync_event(SyncEvent::Complete {
                 remote_device_id: peer_id.clone(),

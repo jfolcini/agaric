@@ -11,7 +11,7 @@
  * Follows StatusPanel.tsx layout patterns.
  */
 
-import { Copy, Loader2, Pencil, RefreshCw, Smartphone, Unplug, X } from 'lucide-react'
+import { Copy, Globe, Loader2, Pencil, RefreshCw, Smartphone, Unplug, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
@@ -26,6 +26,7 @@ import {
   deletePeerRef,
   getDeviceId,
   listPeerRefs,
+  setPeerAddress,
   startSync,
   updatePeerName,
 } from '../lib/tauri'
@@ -243,6 +244,14 @@ export function DeviceManagement(): React.ReactElement {
                 </dd>
               </dl>
 
+              {/* Manual IP hint */}
+              <p className="manual-ip-hint text-xs text-muted-foreground mb-4">
+                <Globe className="inline h-3 w-3 mr-1 align-text-bottom" />
+                If mDNS discovery is unavailable, share this device&apos;s IP and
+                sync port with the remote peer, then set it via the address
+                edit button below.
+              </p>
+
               {/* Pair New Device button */}
               <Button
                 onClick={() => setPairingOpen(true)}
@@ -303,6 +312,38 @@ export function DeviceManagement(): React.ReactElement {
                                 {peer.reset_count} reset{peer.reset_count !== 1 ? 's' : ''}
                               </Badge>
                             )}
+                            <div className="peer-address flex items-center gap-1 mt-0.5">
+                              <Globe className="h-3 w-3 shrink-0 text-muted-foreground" />
+                              <span className="text-xs text-muted-foreground truncate">
+                                {peer.last_address ?? 'No address'}
+                              </span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="peer-address-edit h-5 w-5 p-0"
+                                onClick={() => {
+                                  const addr = prompt(
+                                    'Enter peer address (host:port):',
+                                    peer.last_address ?? '',
+                                  )
+                                  if (addr) {
+                                    setPeerAddress(peer.peer_id, addr)
+                                      .then(() => {
+                                        toast.success('Address updated')
+                                        loadData()
+                                      })
+                                      .catch(() =>
+                                        toast.error(
+                                          'Invalid address format (expected host:port)',
+                                        ),
+                                      )
+                                  }
+                                }}
+                                aria-label={`Edit address for ${peer.device_name || truncateId(peer.peer_id)}`}
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </Button>
+                            </div>
                           </div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">

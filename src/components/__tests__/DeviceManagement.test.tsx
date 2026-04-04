@@ -98,6 +98,7 @@ const mockPeers = [
     last_reset_at: null,
     cert_hash: null,
     device_name: null,
+    last_address: null,
   },
   {
     peer_id: 'peer-def-0987654321',
@@ -108,6 +109,7 @@ const mockPeers = [
     last_reset_at: '2025-01-01T00:00:00Z',
     cert_hash: null,
     device_name: null,
+    last_address: null,
   },
 ]
 
@@ -990,6 +992,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: null,
+          last_address: null,
         },
       ],
     })
@@ -997,6 +1000,91 @@ describe('DeviceManagement', () => {
     render(<DeviceManagement />)
     await waitFor(() => {
       expect(screen.getByText('ABCDEFGHIJKL...')).toBeInTheDocument()
+    })
+  })
+
+  // --- Peer address (manual IP entry) tests (#522) ---
+
+  describe('peer address display (#522)', () => {
+    it('shows "No address" when peer has no last_address', async () => {
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [{ ...mockPeers[0], last_address: null }],
+      })
+
+      const { container } = render(<DeviceManagement />)
+
+      await screen.findByText('peer-abc-123...')
+      const addrEl = container.querySelector('.peer-address')
+      expect(addrEl).toBeTruthy()
+      expect(addrEl?.textContent).toContain('No address')
+    })
+
+    it('shows last_address when set on a peer', async () => {
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [{ ...mockPeers[0], last_address: '192.168.1.42:9000' }],
+      })
+
+      const { container } = render(<DeviceManagement />)
+
+      await screen.findByText('peer-abc-123...')
+      const addrEl = container.querySelector('.peer-address')
+      expect(addrEl?.textContent).toContain('192.168.1.42:9000')
+    })
+
+    it('renders an edit-address button with correct aria-label', async () => {
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [{ ...mockPeers[0], last_address: null }],
+      })
+
+      const { container } = render(<DeviceManagement />)
+
+      await screen.findByText('peer-abc-123...')
+      const editBtn = container.querySelector('.peer-address-edit')
+      expect(editBtn).toBeTruthy()
+      expect(editBtn?.getAttribute('aria-label')).toBe(
+        'Edit address for peer-abc-123...',
+      )
+    })
+
+    it('calls set_peer_address when user enters an address via prompt', async () => {
+      vi.spyOn(window, 'prompt').mockReturnValue('10.0.0.5:8080')
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [{ ...mockPeers[0], last_address: null }],
+        set_peer_address: undefined,
+      })
+
+      const { container } = render(<DeviceManagement />)
+
+      await screen.findByText('peer-abc-123...')
+      const editBtn = container.querySelector('.peer-address-edit') as HTMLButtonElement
+      await userEvent.click(editBtn)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('set_peer_address', {
+          peerId: 'peer-abc-1234567890',
+          address: '10.0.0.5:8080',
+        })
+      })
+
+      vi.restoreAllMocks()
+    })
+
+    it('shows manual IP hint text', async () => {
+      mockInvokeByCommand({
+        get_device_id: mockDeviceId,
+        list_peer_refs: [],
+      })
+
+      const { container } = render(<DeviceManagement />)
+
+      await screen.findByText(mockDeviceId)
+      const hint = container.querySelector('.manual-ip-hint')
+      expect(hint).toBeTruthy()
+      expect(hint?.textContent).toContain('mDNS discovery')
     })
   })
 })

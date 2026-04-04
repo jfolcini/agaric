@@ -3301,6 +3301,29 @@ pub async fn update_peer_name_inner(
     peer_refs::update_device_name(pool, &peer_id, device_name.as_deref()).await
 }
 
+/// Set (or update) a peer's last-known network address for direct connection.
+///
+/// Validates the address is a valid `host:port` socket address and that the
+/// peer exists before persisting.
+pub async fn set_peer_address_inner(
+    pool: &SqlitePool,
+    peer_id: String,
+    address: String,
+) -> Result<(), AppError> {
+    // Validate the address format
+    address
+        .parse::<std::net::SocketAddr>()
+        .map_err(|_| AppError::Validation(format!("invalid address: {address}. Expected host:port")))?;
+
+    // Verify peer exists
+    let peer = peer_refs::get_peer_ref(pool, &peer_id).await?;
+    if peer.is_none() {
+        return Err(AppError::NotFound(format!("peer '{peer_id}' not found")));
+    }
+
+    peer_refs::update_last_address(pool, &peer_id, &address).await
+}
+
 /// Return the local device's persistent UUID.
 pub fn get_device_id_inner(device_id: &DeviceId) -> String {
     device_id.as_str().to_string()
@@ -4742,6 +4765,19 @@ pub async fn update_peer_name(
     device_name: Option<String>,
 ) -> Result<(), AppError> {
     update_peer_name_inner(&pool.0, peer_id, device_name)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: set a peer's last-known network address for direct connection.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_peer_address(
+    peer_id: String,
+    address: String,
+    pool: State<'_, WritePool>,
+) -> Result<(), AppError> {
+    set_peer_address_inner(&pool.0, peer_id, address)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -15217,5 +15253,44 @@ mod tests {
         assert_eq!(entries.len(), 5, "limit should cap results to 5");
 
         mat.shutdown();
+    }
+
+    // ======================================================================
+    // set_peer_address — manual peer address management (#522)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_peer_address_stores_address() {
+        let (pool, _dir) = test_pool().await;
+        peer_refs::upsert_peer_ref(&pool, "peer-1").await.unwrap();
+
+        set_peer_address_inner(&pool, "peer-1".into(), "192.168.1.100:9090".into())
+            .await
+            .unwrap();
+
+        let peer = peer_refs::get_peer_ref(&pool, "peer-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(peer.last_address.as_deref(), Some("192.168.1.100:9090"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_peer_address_rejects_invalid_address() {
+        let (pool, _dir) = test_pool().await;
+        peer_refs::upsert_peer_ref(&pool, "peer-1").await.unwrap();
+
+        let result =
+            set_peer_address_inner(&pool, "peer-1".into(), "not-an-address".into()).await;
+        assert!(matches!(result, Err(AppError::Validation(_))));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_peer_address_rejects_unknown_peer() {
+        let (pool, _dir) = test_pool().await;
+
+        let result =
+            set_peer_address_inner(&pool, "nonexistent".into(), "192.168.1.1:9090".into()).await;
+        assert!(matches!(result, Err(AppError::NotFound(_))));
     }
 }
