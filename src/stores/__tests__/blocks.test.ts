@@ -1414,6 +1414,12 @@ describe('useBlockStore', () => {
       expect(useBlockStore.getState().selectedBlockIds).toEqual(['B'])
     })
 
+    it('rangeSelect handles missing last selected block gracefully', () => {
+      useBlockStore.setState({ selectedBlockIds: ['DELETED_BLOCK'] })
+      useBlockStore.getState().rangeSelect('B')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B'])
+    })
+
     it('selectAll selects all blocks', () => {
       useBlockStore.getState().selectAll()
       expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'C'])

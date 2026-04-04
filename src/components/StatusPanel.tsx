@@ -70,6 +70,8 @@ function syncStateLabel(state: string): string {
       return 'Syncing...'
     case 'error':
       return 'Error'
+    case 'offline':
+      return 'Offline'
     default:
       return state
   }
@@ -85,6 +87,8 @@ function syncStateDotClasses(state: string): string {
       return 'bg-amber-500'
     case 'error':
       return 'bg-destructive'
+    case 'offline':
+      return 'bg-slate-400'
     default:
       return 'bg-muted-foreground'
   }
