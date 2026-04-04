@@ -309,11 +309,11 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    const { container } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
 
     // Error text includes the backend error message
     await waitFor(() => {
-      const errorEl = container.querySelector('.pairing-error')
+      const errorEl = document.querySelector('.pairing-error')
       expect(errorEl).toBeTruthy()
       expect(errorEl?.textContent).toContain('Failed to start pairing:')
       expect(errorEl?.textContent).toContain('network error')
@@ -329,7 +329,7 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    const { container } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
 
     await screen.findByText('alpha bravo charlie delta')
 
@@ -343,7 +343,7 @@ describe('PairingDialog', () => {
     await user.click(pairBtn)
 
     await waitFor(() => {
-      const errorEl = container.querySelector('.pairing-error')
+      const errorEl = document.querySelector('.pairing-error')
       expect(errorEl).toBeTruthy()
       expect(errorEl?.textContent).toContain('Pairing failed:')
       expect(errorEl?.textContent).toContain('invalid passphrase')
@@ -356,10 +356,10 @@ describe('PairingDialog', () => {
       () => new Promise(() => {}), // never resolves
     )
 
-    const { container } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
 
     await waitFor(() => {
-      const loadingEl = container.querySelector('.pairing-loading')
+      const loadingEl = document.querySelector('.pairing-loading')
       expect(loadingEl).toBeTruthy()
       expect(loadingEl?.textContent).toContain('Starting pairing...')
     })
@@ -432,14 +432,14 @@ describe('PairingDialog', () => {
 
     await screen.findByText('Pair Device')
 
-    const dialog = document.querySelector('[role="dialog"]')
+    const dialog = screen.getByRole('dialog')
     expect(dialog).toBeTruthy()
-    expect(dialog?.getAttribute('aria-labelledby')).toBe('pairing-dialog-title')
-    expect(dialog?.getAttribute('aria-modal')).toBe('true')
 
-    const title = document.getElementById('pairing-dialog-title')
-    expect(title).toBeTruthy()
-    expect(title?.textContent).toBe('Pair Device')
+    // Radix Dialog auto-links aria-labelledby to DialogTitle
+    const labelledBy = dialog.getAttribute('aria-labelledby')
+    expect(labelledBy).toBeTruthy()
+    const titleEl = document.getElementById(labelledBy as string)
+    expect(titleEl?.textContent).toBe('Pair Device')
   })
 
   // -----------------------------------------------------------------------
@@ -538,11 +538,11 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    const { container } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
 
-    // Wait for error to appear (query via container to avoid sr-only duplicate)
+    // Wait for error to appear (query via document to include Portal content)
     await waitFor(() => {
-      const errorEl = container.querySelector('.pairing-error p')
+      const errorEl = document.querySelector('.pairing-error p')
       expect(errorEl).toBeTruthy()
       expect(errorEl?.textContent).toContain('network error')
     })
@@ -612,10 +612,10 @@ describe('PairingDialog', () => {
       list_peer_refs: [],
     })
 
-    const { container } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
     await screen.findByText('alpha bravo charlie delta')
 
-    const grid = container.querySelector('.pairing-word-inputs')
+    const grid = document.querySelector('.pairing-word-inputs')
     expect(grid).toBeTruthy()
     expect(grid?.classList.contains('grid-cols-2')).toBe(true)
     expect(grid?.classList.contains('sm:grid-cols-4')).toBe(true)
@@ -736,11 +736,11 @@ describe('PairingDialog', () => {
       return undefined
     })
 
-    const { container } = render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
+    render(<PairingDialog open={true} onOpenChange={vi.fn()} />)
 
-    // Wait for error to appear (use container query to avoid sr-only duplicate)
+    // Wait for error to appear (use document query for Portal content)
     await waitFor(() => {
-      const errorEl = container.querySelector('.pairing-error p')
+      const errorEl = document.querySelector('.pairing-error p')
       expect(errorEl).toBeTruthy()
       expect(errorEl?.textContent).toContain('network error')
     })

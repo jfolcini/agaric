@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import type { BacklinkGroup } from '../lib/tauri'
 import { editBlock, listUnlinkedReferences } from '../lib/tauri'
+import { EmptyState } from './EmptyState'
 
 export interface UnlinkedReferencesProps {
   pageId: string
@@ -180,7 +181,7 @@ export function UnlinkedReferences({
 
           {/* Empty state */}
           {!loading && totalCount === 0 && groups.length === 0 && (
-            <p className="px-3 py-2 text-sm text-muted-foreground">{t('unlinkedRefs.noResults')}</p>
+            <EmptyState compact message={t('unlinkedRefs.noResults')} />
           )}
 
           {/* Group list */}

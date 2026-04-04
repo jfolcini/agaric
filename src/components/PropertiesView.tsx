@@ -33,6 +33,7 @@ import {
   listPropertyDefs,
   updatePropertyDefOptions,
 } from '../lib/tauri'
+import { EmptyState } from './EmptyState'
 
 const VALUE_TYPES = ['text', 'number', 'date', 'select'] as const
 
@@ -295,10 +296,7 @@ export function PropertiesView(): React.ReactElement {
 
       {/* Empty state */}
       {!loading && definitions.length === 0 && (
-        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          <Settings2 className="mx-auto mb-2 h-5 w-5 text-muted-foreground" />
-          {t('propertiesView.empty')}
-        </div>
+        <EmptyState icon={Settings2} message={t('propertiesView.empty')} />
       )}
 
       {/* Definitions list */}

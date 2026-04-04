@@ -266,7 +266,7 @@ export function AgendaResults({
   const sortedBlocks = sortAgendaBlocksBy(blocks, sortBy)
 
   return (
-    <div className="agenda-results space-y-1">
+    <div className="agenda-results space-y-2">
       {/* Screen-reader result count */}
       <div role="status" className="sr-only">
         {blocks.length === 1
@@ -287,7 +287,7 @@ export function AgendaResults({
             <div key={group.label} className="agenda-group mb-3">
               <h3
                 className={cn(
-                  'agenda-group-header text-xs font-semibold uppercase tracking-wide px-2 py-1',
+                  'agenda-group-header text-xs font-semibold uppercase tracking-wide px-3 py-1',
                   group.className ?? 'text-muted-foreground',
                 )}
               >
@@ -296,14 +296,14 @@ export function AgendaResults({
                   ({group.blocks.length})
                 </span>
               </h3>
-              <ul className="agenda-results-list space-y-1" aria-label={displayLabel}>
+              <ul className="agenda-results-list space-y-2" aria-label={displayLabel}>
                 {group.blocks.map((block) => renderItem(block))}
               </ul>
             </div>
           )
         })
       ) : (
-        <ul className="agenda-results-list space-y-1" aria-label={t('agenda.agendaResults')}>
+        <ul className="agenda-results-list space-y-2" aria-label={t('agenda.agendaResults')}>
           {sortedBlocks.map((block) => renderItem(block))}
         </ul>
       )}

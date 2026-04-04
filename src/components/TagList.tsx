@@ -28,6 +28,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
+import { EmptyState } from './EmptyState'
 
 interface TagListProps {
   /** Called when a tag name is clicked. */
@@ -137,12 +138,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         </div>
       )}
 
-      {!loading && tags.length === 0 && (
-        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          <Tag className="mx-auto mb-2 h-5 w-5 text-muted-foreground" />
-          No tags yet. Create one above to organize your blocks.
-        </div>
-      )}
+      {!loading && tags.length === 0 && <EmptyState icon={Tag} message={t('tagList.empty')} />}
 
       {tags.length > 0 && (
         <ul className="space-y-2">

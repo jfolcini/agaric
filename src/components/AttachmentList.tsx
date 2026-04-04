@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
 import type { AttachmentRow } from '../lib/tauri'
+import { EmptyState } from './EmptyState'
 
 interface AttachmentListProps {
   blockId: string
@@ -91,12 +92,7 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
   }
 
   if (attachments.length === 0) {
-    return (
-      <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-        <Paperclip className="mx-auto mb-2 h-5 w-5 text-muted-foreground" />
-        {t('attachments.empty')}
-      </div>
-    )
+    return <EmptyState compact icon={Paperclip} message={t('attachments.empty')} />
   }
 
   return (

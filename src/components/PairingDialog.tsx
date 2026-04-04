@@ -9,7 +9,7 @@
  * Props: open (boolean), onOpenChange (callback), triggerRef (optional).
  */
 
-import { Camera, Loader2, Smartphone, X } from 'lucide-react'
+import { Camera, Loader2, Smartphone } from 'lucide-react'
 import type React from 'react'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -17,6 +17,7 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { formatLastSynced } from '@/lib/format'
@@ -244,12 +245,9 @@ export function PairingDialog({
     [t],
   )
 
-  const handleCancel = useCallback(async () => {
-    try {
-      await cancelPairing()
-    } catch (err) {
-      console.error('Failed to cancel pairing:', err)
-    }
+  const handleCancel = useCallback(() => {
+    // Cancel any in-progress pairing session
+    cancelPairing().catch((err) => console.error('Failed to cancel pairing:', err))
     setPairingInfo(null)
     setWords(['', '', '', ''])
     setError(null)
@@ -271,43 +269,6 @@ export function PairingDialog({
     }
   }, [])
 
-  // Handle Escape key and focus trap
-  useEffect(() => {
-    if (!open) return
-
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        handleCancel()
-        return
-      }
-
-      // Focus trap: keep Tab within the dialog
-      if (e.key === 'Tab' && dialogRef.current) {
-        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        )
-        if (focusable.length === 0) return
-        const first = focusable[0]
-        const last = focusable[focusable.length - 1]
-
-        if (e.shiftKey) {
-          if (document.activeElement === first) {
-            e.preventDefault()
-            last?.focus()
-          }
-        } else {
-          if (document.activeElement === last) {
-            e.preventDefault()
-            first?.focus()
-          }
-        }
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [open, handleCancel])
-
   // #294: Format countdown for display
   const isExpired = countdown !== null && countdown <= 0
   const countdownDisplay =
@@ -326,264 +287,260 @@ export function PairingDialog({
 
   return (
     <>
-      <button
-        type="button"
-        className="pairing-dialog-overlay fixed inset-0 z-50 bg-black/50 dark:bg-black/60 border-none cursor-default"
-        onClick={handleCancel}
-        tabIndex={-1}
-        aria-label={t('pairing.closeDialogLabel')}
-      />
-      <div
-        ref={dialogRef}
-        className="pairing-dialog fixed top-[50%] left-[50%] z-50 w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-4rem)] overflow-y-auto translate-x-[-50%] translate-y-[-50%] rounded-lg border bg-background p-6 shadow-lg sm:max-w-lg"
-        role="dialog"
-        aria-labelledby="pairing-dialog-title"
-        aria-modal="true"
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (!o) handleCancel()
+        }}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4">
-          <h2 id="pairing-dialog-title" className="text-lg font-semibold">
-            {t('pairing.dialogTitle')}
-          </h2>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleCancel}
-            aria-label={t('pairing.closeDialogLabel')}
-            className="[@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
+        <DialogContent
+          className="pairing-dialog gap-0 max-h-[calc(100dvh-4rem)] overflow-y-auto"
+          aria-describedby={undefined}
+          onCloseAutoFocus={(e) => {
+            if (triggerRef?.current) {
+              e.preventDefault()
+              triggerRef.current.focus()
+            }
+          }}
+        >
+          <div ref={dialogRef}>
+            {/* Header */}
+            <DialogHeader className="text-left mb-4">
+              <DialogTitle>{t('pairing.dialogTitle')}</DialogTitle>
+            </DialogHeader>
 
-        {/* Error message with Retry button (#282) */}
-        {error && (
-          <div className="pairing-error flex items-center gap-2 mb-4" aria-live="polite">
-            <p className="text-sm text-destructive flex-1">{error}</p>
-            <Button
-              variant="outline"
-              size="sm"
-              ref={retryBtnRef}
-              onClick={() => init()}
-              className="pairing-retry-btn shrink-0"
-            >
-              Retry
-            </Button>
-          </div>
-        )}
-
-        {/* Loading state */}
-        {loading && (
-          <div className="pairing-loading flex items-center justify-center py-8">
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-            <span className="ml-2 text-sm text-muted-foreground">
-              {t('pairing.startingMessage')}
-            </span>
-          </div>
-        )}
-
-        {/* QR + Passphrase display */}
-        {!loading && pairingInfo && (
-          <>
-            <div className="flex flex-col sm:flex-row [@media(pointer:coarse)]:flex-col gap-4 items-center mb-4">
-              {/* #290: Use backend QR SVG instead of react-qr-code */}
-              <div
-                className="pairing-qr shrink-0 w-[200px] max-w-full rounded-lg border bg-white p-3 [&_svg]:w-full [&_svg]:h-auto"
-                role="img"
-                aria-label={t('pairing.qrCodeLabel')}
-                data-testid="pairing-qr-code"
-                // biome-ignore lint/security/noDangerouslySetInnerHtml: SVG from our own Rust backend, not user input
-                dangerouslySetInnerHTML={{ __html: pairingInfo.qr_svg }}
-              />
-              <div className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-muted-foreground">
-                  {t('pairing.passphraseLabel')}
-                </span>
-                <p className="pairing-passphrase text-lg font-mono font-semibold break-words">
-                  {pairingInfo.passphrase}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t('pairing.scanOrEnterInstruction')}
-                </p>
-                {/* #294: Countdown timer */}
-                {countdownDisplay && (
-                  <p
-                    className="pairing-countdown text-xs text-muted-foreground mt-1"
-                    aria-hidden="true"
-                  >
-                    {t('pairing.sessionExpiresIn')} {countdownDisplay}
-                  </p>
-                )}
-                {/* #424: SR-only countdown — announces at key intervals only */}
-                <p className="sr-only" aria-live="polite" aria-atomic="true">
-                  {countdown !== null && countdown > 0 && (countdown % 60 === 0 || countdown === 30)
-                    ? `Session expires in ${
-                        countdown >= 60
-                          ? `${Math.floor(countdown / 60)} minute${
-                              Math.floor(countdown / 60) !== 1 ? 's' : ''
-                            }`
-                          : `${countdown} seconds`
-                      }`
-                    : ''}
-                </p>
-                {isExpired && !error && (
-                  <div className="pairing-expired flex items-center gap-2 mt-1">
-                    <p className="text-xs text-destructive font-medium flex-1">
-                      {t('pairing.sessionExpired')}
-                    </p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      ref={retryBtnRef}
-                      onClick={() => init()}
-                      className="pairing-retry-expired-btn shrink-0"
-                    >
-                      {t('pairing.retryButton')}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="relative my-4">
-              <Separator />
-              <span className="pairing-separator absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-background px-2 text-xs text-muted-foreground">
-                {t('pairing.orSeparator')}
-              </span>
-            </div>
-
-            {/* Entry mode toggle: manual passphrase vs QR scan */}
-            <div className="pairing-entry-toggle flex gap-2 mb-4 justify-center">
-              <Button
-                variant={entryMode === 'manual' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setEntryMode('manual')}
-                className="[@media(pointer:coarse)]:min-h-[44px]"
-              >
-                {t('pairing.typePassphraseButton')}
-              </Button>
-              <Button
-                variant={entryMode === 'scan' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setEntryMode('scan')}
-                className="[@media(pointer:coarse)]:min-h-[44px]"
-              >
-                <Camera className="h-4 w-4 mr-1" />
-                {t('pairing.scanQrCodeButton')}
-              </Button>
-            </div>
-
-            {/* Conditional: manual word inputs or QR scanner */}
-            {entryMode === 'manual' ? (
-              <div className="pairing-word-inputs grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-                {(['first', 'second', 'third', 'fourth'] as const).map((slot, i) => (
-                  <Input
-                    key={slot}
-                    value={words[i]}
-                    onChange={(e) => handleWordChange(i, e.target.value)}
-                    onKeyDown={(e) => handleWordKeyDown(i, e)}
-                    placeholder={t('pairing.wordPlaceholder', {
-                      ordinal: ['1st', '2nd', '3rd', '4th'][i],
-                    })}
-                    aria-label={t('pairing.wordLabel', { num: i + 1 })}
-                    className="text-center [@media(pointer:coarse)]:min-h-[44px]"
-                    disabled={pairLoading || isExpired}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="pairing-qr-scanner mb-4">
-                <Suspense
-                  fallback={
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                      <span className="ml-2 text-sm text-muted-foreground">
-                        {t('pairing.loadingScannerMessage')}
-                      </span>
-                    </div>
-                  }
+            {/* Error message with Retry button (#282) */}
+            {error && (
+              <div className="pairing-error flex items-center gap-2 mb-4" aria-live="polite">
+                <p className="text-sm text-destructive flex-1">{error}</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  ref={retryBtnRef}
+                  onClick={() => init()}
+                  className="pairing-retry-btn shrink-0"
                 >
-                  <LazyQrScanner
-                    onScan={handleQrScan}
-                    onError={(err) => setError(`Camera error: ${err}`)}
-                  />
-                </Suspense>
+                  Retry
+                </Button>
               </div>
             )}
 
-            {/* Action buttons */}
-            <div className="flex justify-between gap-2 mb-4">
-              <Button
-                variant="outline"
-                onClick={handleCancel}
-                disabled={pairLoading}
-                className="[@media(pointer:coarse)]:min-h-[44px]"
-              >
-                {t('pairing.cancelButton')}
-              </Button>
-              <Button
-                onClick={handlePair}
-                disabled={pairLoading || words.some((w) => w === '') || isExpired}
-                className="pairing-pair-btn [@media(pointer:coarse)]:min-h-[44px]"
-              >
-                {pairLoading && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
-                {t('pairing.pairButton')}
-              </Button>
-            </div>
-          </>
-        )}
+            {/* Loading state */}
+            {loading && (
+              <div className="pairing-loading flex items-center justify-center py-8">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                <span className="ml-2 text-sm text-muted-foreground">
+                  {t('pairing.startingMessage')}
+                </span>
+              </div>
+            )}
 
-        {/* Paired Devices */}
-        {!loading && (
-          <>
-            <Separator className="my-4" />
-            <div className="pairing-peers">
-              <h3 className="text-sm font-medium mb-2">{t('pairing.pairedDevicesTitle')}</h3>
-              {peers.length === 0 ? (
-                <p className="text-sm text-muted-foreground">{t('pairing.noPairedDevices')}</p>
-              ) : (
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {peers.map((peer) => (
-                    <Card key={peer.peer_id} className="pairing-peer-item p-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <div className="min-w-0">
-                            <p className="text-sm font-mono truncate">{peer.peer_id}</p>
-                            <p className="text-xs text-muted-foreground">
-                              Last: {formatLastSynced(peer.synced_at)}
-                            </p>
-                            {peer.reset_count > 0 && (
-                              <Badge variant="outline" className="mt-0.5 text-xs">
-                                {peer.reset_count} reset{peer.reset_count !== 1 ? 's' : ''}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
+            {/* QR + Passphrase display */}
+            {!loading && pairingInfo && (
+              <>
+                <div className="flex flex-col sm:flex-row [@media(pointer:coarse)]:flex-col gap-4 items-center mb-4">
+                  {/* #290: Use backend QR SVG instead of react-qr-code */}
+                  <div
+                    className="pairing-qr shrink-0 w-[200px] max-w-full rounded-lg border bg-white p-3 [&_svg]:w-full [&_svg]:h-auto"
+                    role="img"
+                    aria-label={t('pairing.qrCodeLabel')}
+                    data-testid="pairing-qr-code"
+                    // biome-ignore lint/security/noDangerouslySetInnerHtml: SVG from our own Rust backend, not user input
+                    dangerouslySetInnerHTML={{ __html: pairingInfo.qr_svg }}
+                  />
+                  <div className="flex flex-col gap-1">
+                    <span className="text-sm font-medium text-muted-foreground">
+                      {t('pairing.passphraseLabel')}
+                    </span>
+                    <p className="pairing-passphrase text-lg font-mono font-semibold break-words">
+                      {pairingInfo.passphrase}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t('pairing.scanOrEnterInstruction')}
+                    </p>
+                    {/* #294: Countdown timer */}
+                    {countdownDisplay && (
+                      <p
+                        className="pairing-countdown text-xs text-muted-foreground mt-1"
+                        aria-hidden="true"
+                      >
+                        {t('pairing.sessionExpiresIn')} {countdownDisplay}
+                      </p>
+                    )}
+                    {/* #424: SR-only countdown — announces at key intervals only */}
+                    <p className="sr-only" aria-live="polite" aria-atomic="true">
+                      {countdown !== null &&
+                      countdown > 0 &&
+                      (countdown % 60 === 0 || countdown === 30)
+                        ? `Session expires in ${
+                            countdown >= 60
+                              ? `${Math.floor(countdown / 60)} minute${
+                                  Math.floor(countdown / 60) !== 1 ? 's' : ''
+                                }`
+                              : `${countdown} seconds`
+                          }`
+                        : ''}
+                    </p>
+                    {isExpired && !error && (
+                      <div className="pairing-expired flex items-center gap-2 mt-1">
+                        <p className="text-xs text-destructive font-medium flex-1">
+                          {t('pairing.sessionExpired')}
+                        </p>
                         <Button
-                          variant="destructive"
+                          variant="outline"
                           size="sm"
-                          onClick={() => setUnpairPeerId(peer.peer_id)}
-                          className="pairing-unpair-btn shrink-0 [@media(pointer:coarse)]:min-h-[44px]"
+                          ref={retryBtnRef}
+                          onClick={() => init()}
+                          className="pairing-retry-expired-btn shrink-0"
                         >
-                          Unpair
+                          {t('pairing.retryButton')}
                         </Button>
                       </div>
-                    </Card>
-                  ))}
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
-          </>
-        )}
 
-        {/* Status message for screen readers */}
-        <div aria-live="polite" className="sr-only">
-          {loading && t('pairing.startingMessage')}
-          {pairLoading && 'Pairing in progress...'}
-          {error}
-        </div>
-      </div>
+                <div className="relative my-4">
+                  <Separator />
+                  <span className="pairing-separator absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-background px-2 text-xs text-muted-foreground">
+                    {t('pairing.orSeparator')}
+                  </span>
+                </div>
+
+                {/* Entry mode toggle: manual passphrase vs QR scan */}
+                <div className="pairing-entry-toggle flex gap-2 mb-4 justify-center">
+                  <Button
+                    variant={entryMode === 'manual' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setEntryMode('manual')}
+                    className="[@media(pointer:coarse)]:min-h-[44px]"
+                  >
+                    {t('pairing.typePassphraseButton')}
+                  </Button>
+                  <Button
+                    variant={entryMode === 'scan' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setEntryMode('scan')}
+                    className="[@media(pointer:coarse)]:min-h-[44px]"
+                  >
+                    <Camera className="h-4 w-4 mr-1" />
+                    {t('pairing.scanQrCodeButton')}
+                  </Button>
+                </div>
+
+                {/* Conditional: manual word inputs or QR scanner */}
+                {entryMode === 'manual' ? (
+                  <div className="pairing-word-inputs grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+                    {(['first', 'second', 'third', 'fourth'] as const).map((slot, i) => (
+                      <Input
+                        key={slot}
+                        value={words[i]}
+                        onChange={(e) => handleWordChange(i, e.target.value)}
+                        onKeyDown={(e) => handleWordKeyDown(i, e)}
+                        placeholder={t('pairing.wordPlaceholder', {
+                          ordinal: ['1st', '2nd', '3rd', '4th'][i],
+                        })}
+                        aria-label={t('pairing.wordLabel', { num: i + 1 })}
+                        className="text-center [@media(pointer:coarse)]:min-h-[44px]"
+                        disabled={pairLoading || isExpired}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="pairing-qr-scanner mb-4">
+                    <Suspense
+                      fallback={
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          <span className="ml-2 text-sm text-muted-foreground">
+                            {t('pairing.loadingScannerMessage')}
+                          </span>
+                        </div>
+                      }
+                    >
+                      <LazyQrScanner
+                        onScan={handleQrScan}
+                        onError={(err) => setError(`Camera error: ${err}`)}
+                      />
+                    </Suspense>
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div className="flex justify-between gap-2 mb-4">
+                  <Button
+                    variant="outline"
+                    onClick={handleCancel}
+                    disabled={pairLoading}
+                    className="[@media(pointer:coarse)]:min-h-[44px]"
+                  >
+                    {t('pairing.cancelButton')}
+                  </Button>
+                  <Button
+                    onClick={handlePair}
+                    disabled={pairLoading || words.some((w) => w === '') || isExpired}
+                    className="pairing-pair-btn [@media(pointer:coarse)]:min-h-[44px]"
+                  >
+                    {pairLoading && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
+                    {t('pairing.pairButton')}
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {/* Paired Devices */}
+            {!loading && (
+              <>
+                <Separator className="my-4" />
+                <div className="pairing-peers">
+                  <h3 className="text-sm font-medium mb-2">{t('pairing.pairedDevicesTitle')}</h3>
+                  {peers.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">{t('pairing.noPairedDevices')}</p>
+                  ) : (
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {peers.map((peer) => (
+                        <Card key={peer.peer_id} className="pairing-peer-item p-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <div className="min-w-0">
+                                <p className="text-sm font-mono truncate">{peer.peer_id}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Last: {formatLastSynced(peer.synced_at)}
+                                </p>
+                                {peer.reset_count > 0 && (
+                                  <Badge variant="outline" className="mt-0.5 text-xs">
+                                    {peer.reset_count} reset{peer.reset_count !== 1 ? 's' : ''}
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => setUnpairPeerId(peer.peer_id)}
+                              className="pairing-unpair-btn shrink-0 [@media(pointer:coarse)]:min-h-[44px]"
+                            >
+                              Unpair
+                            </Button>
+                          </div>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Status message for screen readers */}
+            <div aria-live="polite" className="sr-only">
+              {loading && t('pairing.startingMessage')}
+              {pairLoading && 'Pairing in progress...'}
+              {error}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* #301: Use shared UnpairConfirmDialog */}
       <UnpairConfirmDialog

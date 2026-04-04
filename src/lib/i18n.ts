@@ -475,6 +475,7 @@ const resources = {
       'tags.loadFailed': 'Failed to load tags',
       'tags.nameTooLong': 'Tag name must be under 100 characters',
       'tags.deleteWarning': 'Blocks using this tag will lose the reference.',
+      'tagList.empty': 'No tags yet. Create one above to organize your blocks.',
 
       // Shortcuts / Quick Reference
       'shortcuts.title': 'Quick Reference',

@@ -30,6 +30,7 @@ import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
+import { EmptyState } from './EmptyState'
 
 interface PageBrowserProps {
   /** Called when a page is selected. */
@@ -338,33 +339,32 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       )}
 
       {!loading && pages.length === 0 && (
-        <div className="page-browser-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          <FileText className="mx-auto mb-2 h-5 w-5" />
-          {t('pageBrowser.noPages')}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="mt-3 mx-auto flex items-center gap-1"
-            onClick={handleCreatePage}
-            disabled={isCreating}
-          >
-            {isCreating ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Plus className="h-4 w-4" />
-            )}
-            {t('pageBrowser.createFirst')}
-          </Button>
-        </div>
+        <EmptyState
+          icon={FileText}
+          message={t('pageBrowser.noPages')}
+          action={
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-3 mx-auto flex items-center gap-1"
+              onClick={handleCreatePage}
+              disabled={isCreating}
+            >
+              {isCreating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+              {t('pageBrowser.createFirst')}
+            </Button>
+          }
+        />
       )}
 
       {/* biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn */}
       <div className="page-browser-list space-y-1" role="list">
         {isFiltering && filteredPages.length === 0 ? (
-          <div className="page-browser-no-matches rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-            <Search className="mx-auto mb-2 h-5 w-5" />
-            {t('pageBrowser.noMatches')}
-          </div>
+          <EmptyState icon={Search} message={t('pageBrowser.noMatches')} />
         ) : filteredPages.some((p) => p.content?.includes('/')) ? (
           buildPageTree(filteredPages).map((node) => (
             <PageTreeItem
