@@ -69,6 +69,23 @@
 - Commit: `1b602da`
 - REVIEW-LATER: H-5, H-6, M-1, M-11 resolved and removed. 102 → **98 open items**.
 
+### Phase 1 (batch 5): Rust backend perf (M-4, M-5, M-6, M-9, L-5)
+
+2 build subagents (commands.rs, backlink_query.rs), orchestrator direct fix (sync_daemon.rs), 1 review subagent. M-8 investigated but not fixable (Bytes→Vec requires copy, function only used in tests).
+
+| File | Change |
+|------|--------|
+| `commands.rs` | M-4: Combined parent_depth + subtree_depth into single query with 2 CTEs. Updated `.sqlx/` cache. |
+| `commands.rs` | M-5: Changed `for ... in &reverses` to consuming `into_iter`. Reordered borrow-before-move. Eliminated `.clone()` on OpPayload and OpRef. |
+| `commands.rs` | L-5: `Vec::with_capacity(reverses.len())` for op_records. |
+| `backlink_query.rs` | M-6: Replaced 6 `base_ids.clone()` with moves in both eval and grouped backlink query functions. |
+| `sync_daemon.rs` | M-9: Built `refs_by_id` HashMap before peer loop, replaced O(n) linear search with O(1) lookup. |
+
+### Stats
+- Backend: 63/63 undo/move tests pass, 164/164 backlink tests pass, 171/171 sync daemon tests pass
+- Commit: `8f3a4bb`
+- REVIEW-LATER: M-4, M-5, M-6, M-9, L-5 resolved and removed. 98 → **93 open items**.
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system
