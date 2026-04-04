@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
+import { dragBlock, focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
 
 /**
  * E2E tests for toolbar buttons and block interactions.
@@ -472,38 +472,8 @@ test.describe('Block interactions', () => {
     await blocks.nth(1).hover()
     await expect(source).toBeVisible({ timeout: 3000 })
 
-    // Perform drag using manual pointer events
-    // (dnd-kit PointerSensor needs delay ≥ 250ms with tolerance ≤ 5px)
-    const sourceBox = await source.boundingBox()
-    const targetBox = await target.boundingBox()
-
-    if (!sourceBox || !targetBox) throw new Error('Could not get bounding boxes')
-
-    const sx = sourceBox.x + sourceBox.width / 2
-    const sy = sourceBox.y + sourceBox.height / 2
-    // Keep same X to avoid horizontal offset (which dnd-kit interprets as indent/dedent)
-    const tx = sx
-    const ty = targetBox.y + targetBox.height / 2
-
-    // pointerdown on the drag handle
-    await page.mouse.move(sx, sy)
-    await page.mouse.down()
-
-    // Hold still for the delay activation constraint (250ms delay, 5px tolerance)
-    await page.waitForTimeout(350)
-
-    // Move vertically to target in small increments
-    const moveSteps = 20
-    for (let i = 1; i <= moveSteps; i++) {
-      const x = sx + (tx - sx) * (i / moveSteps)
-      const y = sy + (ty - sy) * (i / moveSteps)
-      await page.mouse.move(x, y)
-      if (i % 5 === 0) await page.waitForTimeout(50)
-    }
-
-    // Pause for dnd-kit to process the over state, then drop
-    await page.waitForTimeout(150)
-    await page.mouse.up()
+    // Perform drag using shared helper (handles dnd-kit PointerSensor delay)
+    await dragBlock(page, source, target)
 
     // Verify order swapped
     await expect(blocks.nth(0).locator('.block-static')).toHaveText(secondText, { timeout: 5000 })

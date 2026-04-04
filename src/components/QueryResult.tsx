@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, ChevronDown, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { BlockRow } from '../lib/tauri'
+import type { BacklinkFilter, BlockRow } from '../lib/tauri'
 import { batchResolve, listBlocks, queryByProperty, queryByTags } from '../lib/tauri'
 import { cn } from '../lib/utils'
 
@@ -50,21 +50,89 @@ export interface QueryResultProps {
   resolveBlockTitle?: (id: string) => string
 }
 
-/** Parse a query expression string into structured params. */
+/** Parsed property filter from shorthand syntax (property:key=value). */
+export interface PropertyFilter {
+  key: string
+  value: string
+}
+
+/** Parse a query expression string into structured params.
+ *
+ * Supports both the legacy explicit-type syntax and the new shorthand:
+ * - Legacy: `type:tag expr:project` or `type:property key:X value:Y`
+ * - Shorthand: `property:key=value` and `tag:prefix`
+ *
+ * Multiple shorthand tokens are collected and produce a `'filtered'` type
+ * with AND semantics.
+ */
 export function parseQueryExpression(expr: string): {
-  type: 'tag' | 'property' | 'backlinks' | 'unknown'
+  type: 'tag' | 'property' | 'backlinks' | 'filtered' | 'unknown'
   params: Record<string, string>
+  propertyFilters: PropertyFilter[]
+  tagFilters: string[]
 } {
   const parts = expr.trim().split(/\s+/)
   const params: Record<string, string> = {}
+  const propertyFilters: PropertyFilter[] = []
+  const tagFilters: string[] = []
+
   for (const part of parts) {
     const colonIdx = part.indexOf(':')
     if (colonIdx > 0) {
-      params[part.slice(0, colonIdx)] = part.slice(colonIdx + 1)
+      const prefix = part.slice(0, colonIdx)
+      const rest = part.slice(colonIdx + 1)
+
+      if (prefix === 'property' && rest.includes('=')) {
+        // Shorthand: property:key=value
+        const eqIdx = rest.indexOf('=')
+        propertyFilters.push({ key: rest.slice(0, eqIdx), value: rest.slice(eqIdx + 1) })
+      } else if (prefix === 'tag' && rest !== '') {
+        // Shorthand: tag:prefix
+        tagFilters.push(rest)
+      } else {
+        params[prefix] = rest
+      }
     }
   }
-  const type = params.type as 'tag' | 'property' | 'backlinks' | undefined
-  return { type: type ?? 'unknown', params }
+
+  // If shorthand filters were found, treat as a 'filtered' query
+  if (propertyFilters.length > 0 || tagFilters.length > 0) {
+    return { type: 'filtered', params, propertyFilters, tagFilters }
+  }
+
+  const explicitType = params.type as 'tag' | 'property' | 'backlinks' | undefined
+  return { type: explicitType ?? 'unknown', params, propertyFilters, tagFilters }
+}
+
+/** Build BacklinkFilter objects from parsed shorthand filters.
+ *
+ * Maps known fixed-field keys (todo_state, priority, due_date) to their
+ * specialised filter variants, and falls back to PropertyText for custom
+ * property keys.  Tag filters become HasTagPrefix filters.
+ */
+export function buildFilters(
+  propertyFilters: PropertyFilter[],
+  tagFilters: string[],
+): BacklinkFilter[] {
+  const filters: BacklinkFilter[] = []
+
+  for (const pf of propertyFilters) {
+    if (pf.key === 'todo_state') {
+      filters.push({ type: 'TodoState', state: pf.value })
+    } else if (pf.key === 'priority') {
+      filters.push({ type: 'Priority', level: pf.value })
+    } else if (pf.key === 'due_date') {
+      filters.push({ type: 'DueDate', op: 'Eq', value: pf.value })
+    } else {
+      filters.push({ type: 'PropertyText', key: pf.key, op: 'Eq', value: pf.value })
+    }
+  }
+
+  for (const tf of tagFilters) {
+    filters.push({ type: 'HasTagPrefix', prefix: tf })
+  }
+
+  return filters
 }
 
 /** Truncate content for display. */
@@ -121,7 +189,7 @@ export function QueryResult({
         setLoading(false)
         return
       }
-      const { type, params } = parseQueryExpression(expression)
+      const { type, params, propertyFilters, tagFilters } = parseQueryExpression(expression)
       let items: BlockRow[] = []
 
       if (type === 'tag') {
@@ -146,6 +214,58 @@ export function QueryResult({
           limit: 50,
         })
         items = resp.items
+      } else if (type === 'filtered') {
+        // Multi-filter query: execute individual queries in parallel,
+        // then AND-intersect result sets client-side.
+        const queryPromises: Promise<BlockRow[]>[] = []
+
+        for (const pf of propertyFilters) {
+          queryPromises.push(
+            queryByProperty({
+              key: pf.key,
+              valueText: pf.value,
+              limit: 200,
+            }).then((resp) => resp.items),
+          )
+        }
+
+        for (const tf of tagFilters) {
+          queryPromises.push(
+            queryByTags({
+              tagIds: [],
+              prefixes: [tf],
+              mode: 'or',
+              limit: 200,
+            }).then((resp) => resp.items),
+          )
+        }
+
+        const resultSets = await Promise.all(queryPromises)
+
+        if (resultSets.length === 0) {
+          items = []
+        } else if (resultSets.length === 1) {
+          items = resultSets[0]
+        } else {
+          // AND intersection: keep only blocks present in ALL result sets
+          const blockMap = new Map<string, BlockRow>()
+          for (const rs of resultSets) {
+            for (const b of rs) {
+              if (!blockMap.has(b.id)) blockMap.set(b.id, b)
+            }
+          }
+
+          const idSets = resultSets.map((rs) => new Set(rs.map((b) => b.id)))
+          const intersectedIds = idSets.reduce((acc, set) => {
+            const result = new Set<string>()
+            for (const id of acc) {
+              if (set.has(id)) result.add(id)
+            }
+            return result
+          })
+
+          items = [...intersectedIds].map((id) => blockMap.get(id)!).slice(0, 50)
+        }
       } else if (type === 'backlinks') {
         if (!params.target) {
           setError('Backlinks query requires target:ULID parameter')

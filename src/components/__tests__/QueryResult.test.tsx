@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { detectColumns, parseQueryExpression, QueryResult } from '../QueryResult'
+import { buildFilters, detectColumns, parseQueryExpression, QueryResult } from '../QueryResult'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 const mockedInvoke = vi.mocked(invoke)
@@ -17,6 +17,8 @@ describe('parseQueryExpression', () => {
     expect(parseQueryExpression('type:tag expr:project')).toEqual({
       type: 'tag',
       params: { type: 'tag', expr: 'project' },
+      propertyFilters: [],
+      tagFilters: [],
     })
   })
 
@@ -24,6 +26,8 @@ describe('parseQueryExpression', () => {
     expect(parseQueryExpression('type:property key:priority value:1')).toEqual({
       type: 'property',
       params: { type: 'property', key: 'priority', value: '1' },
+      propertyFilters: [],
+      tagFilters: [],
     })
   })
 
@@ -31,6 +35,59 @@ describe('parseQueryExpression', () => {
     expect(parseQueryExpression('foo:bar')).toEqual({
       type: 'unknown',
       params: { foo: 'bar' },
+      propertyFilters: [],
+      tagFilters: [],
+    })
+  })
+
+  it('parses single property shorthand', () => {
+    expect(parseQueryExpression('property:todo_state=TODO')).toEqual({
+      type: 'filtered',
+      params: {},
+      propertyFilters: [{ key: 'todo_state', value: 'TODO' }],
+      tagFilters: [],
+    })
+  })
+
+  it('parses multiple property shorthands (AND)', () => {
+    const result = parseQueryExpression('property:todo_state=TODO property:priority=1')
+    expect(result).toEqual({
+      type: 'filtered',
+      params: {},
+      propertyFilters: [
+        { key: 'todo_state', value: 'TODO' },
+        { key: 'priority', value: '1' },
+      ],
+      tagFilters: [],
+    })
+  })
+
+  it('parses tag shorthand', () => {
+    expect(parseQueryExpression('tag:project-x')).toEqual({
+      type: 'filtered',
+      params: {},
+      propertyFilters: [],
+      tagFilters: ['project-x'],
+    })
+  })
+
+  it('parses tag + property combination', () => {
+    const result = parseQueryExpression('tag:project-x property:todo_state=TODO')
+    expect(result).toEqual({
+      type: 'filtered',
+      params: {},
+      propertyFilters: [{ key: 'todo_state', value: 'TODO' }],
+      tagFilters: ['project-x'],
+    })
+  })
+
+  it('preserves extra params alongside shorthand filters', () => {
+    const result = parseQueryExpression('property:todo_state=TODO table:true')
+    expect(result).toEqual({
+      type: 'filtered',
+      params: { table: 'true' },
+      propertyFilters: [{ key: 'todo_state', value: 'TODO' }],
+      tagFilters: [],
     })
   })
 })
@@ -521,5 +578,236 @@ describe('QueryResult – table mode', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  buildFilters tests                                                */
+/* ------------------------------------------------------------------ */
+
+describe('buildFilters', () => {
+  it('maps todo_state to TodoState filter', () => {
+    const filters = buildFilters([{ key: 'todo_state', value: 'TODO' }], [])
+    expect(filters).toEqual([{ type: 'TodoState', state: 'TODO' }])
+  })
+
+  it('maps priority to Priority filter', () => {
+    const filters = buildFilters([{ key: 'priority', value: '1' }], [])
+    expect(filters).toEqual([{ type: 'Priority', level: '1' }])
+  })
+
+  it('maps due_date to DueDate Eq filter', () => {
+    const filters = buildFilters([{ key: 'due_date', value: '2025-01-01' }], [])
+    expect(filters).toEqual([{ type: 'DueDate', op: 'Eq', value: '2025-01-01' }])
+  })
+
+  it('maps custom property key to PropertyText filter', () => {
+    const filters = buildFilters([{ key: 'status', value: 'active' }], [])
+    expect(filters).toEqual([
+      { type: 'PropertyText', key: 'status', op: 'Eq', value: 'active' },
+    ])
+  })
+
+  it('maps tag filters to HasTagPrefix', () => {
+    const filters = buildFilters([], ['project-x'])
+    expect(filters).toEqual([{ type: 'HasTagPrefix', prefix: 'project-x' }])
+  })
+
+  it('combines multiple property and tag filters', () => {
+    const filters = buildFilters(
+      [
+        { key: 'todo_state', value: 'TODO' },
+        { key: 'priority', value: '1' },
+      ],
+      ['project-x'],
+    )
+    expect(filters).toEqual([
+      { type: 'TodoState', state: 'TODO' },
+      { type: 'Priority', level: '1' },
+      { type: 'HasTagPrefix', prefix: 'project-x' },
+    ])
+  })
+
+  it('returns empty array when no filters', () => {
+    expect(buildFilters([], [])).toEqual([])
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Multi-filter (filtered type) rendering tests                      */
+/* ------------------------------------------------------------------ */
+
+describe('QueryResult – multi-filter (filtered)', () => {
+  const makeBlock = (overrides: Partial<{
+    id: string
+    content: string
+    parent_id: string | null
+    todo_state: string | null
+    priority: string | null
+    due_date: string | null
+    scheduled_date: string | null
+  }> = {}) => ({
+    id: overrides.id ?? 'B1',
+    block_type: 'content',
+    content: overrides.content ?? 'Task A',
+    parent_id: overrides.parent_id ?? 'P1',
+    position: 1,
+    deleted_at: null,
+    archived_at: null,
+    is_conflict: false,
+    conflict_type: null,
+    todo_state: overrides.todo_state ?? null,
+    priority: overrides.priority ?? null,
+    due_date: overrides.due_date ?? null,
+    scheduled_date: overrides.scheduled_date ?? null,
+  })
+
+  it('single property shorthand filter works (backward compat)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_property') {
+        return {
+          items: [
+            makeBlock({ id: 'B1', content: 'TODO task', todo_state: 'TODO' }),
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'batch_resolve') return []
+      return null
+    })
+
+    render(<QueryResult expression="property:todo_state=TODO" />)
+
+    expect(await screen.findByText(/TODO task/)).toBeInTheDocument()
+    expect(screen.getByText('1 result')).toBeInTheDocument()
+
+    // Verify query_by_property was called with correct params
+    expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
+      key: 'todo_state',
+      valueText: 'TODO',
+      valueDate: null,
+      cursor: null,
+      limit: 200,
+    })
+  })
+
+  it('multiple property filters produce AND semantics', async () => {
+    // Block B1 matches both filters, B2 matches only todo_state, B3 matches only priority
+    const todoBlocks = [
+      makeBlock({ id: 'B1', content: 'High-pri TODO', todo_state: 'TODO', priority: '1' }),
+      makeBlock({ id: 'B2', content: 'Low-pri TODO', todo_state: 'TODO', priority: '3' }),
+    ]
+    const priorityBlocks = [
+      makeBlock({ id: 'B1', content: 'High-pri TODO', todo_state: 'TODO', priority: '1' }),
+      makeBlock({ id: 'B3', content: 'High-pri DONE', todo_state: 'DONE', priority: '1' }),
+    ]
+
+    mockedInvoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'query_by_property') {
+        if ((args as { key: string }).key === 'todo_state') {
+          return { items: todoBlocks, next_cursor: null, has_more: false }
+        }
+        if ((args as { key: string }).key === 'priority') {
+          return { items: priorityBlocks, next_cursor: null, has_more: false }
+        }
+      }
+      if (cmd === 'batch_resolve') return []
+      return null
+    })
+
+    render(<QueryResult expression="property:todo_state=TODO property:priority=1" />)
+
+    // Only B1 (intersection) should appear
+    expect(await screen.findByText(/High-pri TODO/)).toBeInTheDocument()
+    expect(screen.getByText('1 result')).toBeInTheDocument()
+
+    // B2 and B3 should NOT appear
+    expect(screen.queryByText(/Low-pri TODO/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/High-pri DONE/)).not.toBeInTheDocument()
+  })
+
+  it('tag + property combination works', async () => {
+    const tagBlocks = [
+      makeBlock({ id: 'B1', content: 'Tagged TODO', todo_state: 'TODO' }),
+      makeBlock({ id: 'B2', content: 'Tagged DONE', todo_state: 'DONE' }),
+    ]
+    const propertyBlocks = [
+      makeBlock({ id: 'B1', content: 'Tagged TODO', todo_state: 'TODO' }),
+      makeBlock({ id: 'B3', content: 'Untagged TODO', todo_state: 'TODO' }),
+    ]
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return { items: tagBlocks, next_cursor: null, has_more: false }
+      }
+      if (cmd === 'query_by_property') {
+        return { items: propertyBlocks, next_cursor: null, has_more: false }
+      }
+      if (cmd === 'batch_resolve') return []
+      return null
+    })
+
+    render(<QueryResult expression="tag:project-x property:todo_state=TODO" />)
+
+    // Only B1 (in both sets) should appear
+    expect(await screen.findByText(/Tagged TODO/)).toBeInTheDocument()
+    expect(screen.getByText('1 result')).toBeInTheDocument()
+
+    // B2 (tag only) and B3 (property only) should NOT appear
+    expect(screen.queryByText(/Tagged DONE/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Untagged TODO/)).not.toBeInTheDocument()
+  })
+
+  it('renders results from filtered query in table mode', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_property') {
+        return {
+          items: [
+            makeBlock({ id: 'B1', content: 'Filtered task', todo_state: 'TODO', priority: '1' }),
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'batch_resolve') {
+        return [{ id: 'P1', title: 'Test Page', block_type: 'page', deleted: false }]
+      }
+      return null
+    })
+
+    render(<QueryResult expression="property:todo_state=TODO table:true" />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('grid')).toBeInTheDocument()
+    })
+
+    const table = screen.getByRole('grid')
+    expect(within(table).getByText(/Filtered task/)).toBeInTheDocument()
+    expect(within(table).getByText('TODO')).toBeInTheDocument()
+  })
+
+  it('shows empty state when filtered results have no intersection', async () => {
+    const set1 = [makeBlock({ id: 'B1', content: 'Only in set 1' })]
+    const set2 = [makeBlock({ id: 'B2', content: 'Only in set 2' })]
+
+    let callCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_property') {
+        callCount++
+        return {
+          items: callCount === 1 ? set1 : set2,
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'batch_resolve') return []
+      return null
+    })
+
+    render(<QueryResult expression="property:todo_state=TODO property:priority=1" />)
+
+    expect(await screen.findByText('No results')).toBeInTheDocument()
+    expect(screen.getByText('0 results')).toBeInTheDocument()
   })
 })
