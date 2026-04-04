@@ -1,9 +1,45 @@
-import { ChevronDown, Search } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronDown, Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, listBlocks, queryByProperty, queryByTags } from '../lib/tauri'
 import { cn } from '../lib/utils'
+
+/** Column definition for table mode. */
+interface TableColumn {
+  key: string
+  label: string
+}
+
+/** Known block property keys that can become table columns. */
+const KNOWN_PROPERTY_KEYS: { key: keyof BlockRow; label: string }[] = [
+  { key: 'todo_state', label: 'Status' },
+  { key: 'priority', label: 'Priority' },
+  { key: 'due_date', label: 'Due Date' },
+  { key: 'scheduled_date', label: 'Scheduled' },
+]
+
+/** Auto-detect which columns to show based on result data. */
+export function detectColumns(results: BlockRow[]): TableColumn[] {
+  const cols: TableColumn[] = [{ key: 'content', label: 'Content' }]
+  for (const { key, label } of KNOWN_PROPERTY_KEYS) {
+    if (results.some((b) => b[key] != null && b[key] !== '')) {
+      cols.push({ key, label })
+    }
+  }
+  return cols
+}
+
+export type SortDirection = 'asc' | 'desc'
+
+/** Compare two block values for sorting. */
+function compareValues(a: string | null, b: string | null, dir: SortDirection): number {
+  if (a == null && b == null) return 0
+  if (a == null) return dir === 'asc' ? 1 : -1
+  if (b == null) return dir === 'asc' ? -1 : 1
+  const cmp = a.localeCompare(b)
+  return dir === 'asc' ? cmp : -cmp
+}
 
 export interface QueryResultProps {
   /** The raw query expression, e.g. "type:tag expr:project" */
@@ -48,6 +84,33 @@ export function QueryResult({
   const [error, setError] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
+  const [sortKey, setSortKey] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<SortDirection>('asc')
+
+  const { params } = parseQueryExpression(expression)
+  const tableMode = params.table === 'true'
+
+  const columns = useMemo(() => detectColumns(results), [results])
+
+  const sortedResults = useMemo(() => {
+    if (!sortKey) return results
+    return [...results].sort((a, b) => {
+      const aVal = sortKey === 'content' ? a.content : (a[sortKey as keyof BlockRow] as string | null)
+      const bVal = sortKey === 'content' ? b.content : (b[sortKey as keyof BlockRow] as string | null)
+      return compareValues(aVal ?? null, bVal ?? null, sortDir)
+    })
+  }, [results, sortKey, sortDir])
+
+  const handleColumnSort = useCallback((key: string) => {
+    setSortKey((prev) => {
+      if (prev === key) {
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+        return key
+      }
+      setSortDir('asc')
+      return key
+    })
+  }, [])
 
   const fetchResults = useCallback(async () => {
     setLoading(true)
@@ -150,7 +213,7 @@ export function QueryResult({
           {!loading && !error && results.length === 0 && (
             <div className="px-3 py-2 text-xs text-muted-foreground italic">No results</div>
           )}
-          {!loading && !error && results.length > 0 && (
+          {!loading && !error && results.length > 0 && !tableMode && (
             <ul className="divide-y divide-muted-foreground/10">
               {results.map((block) => {
                 const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
@@ -195,6 +258,85 @@ export function QueryResult({
                 )
               })}
             </ul>
+          )}
+          {!loading && !error && results.length > 0 && tableMode && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs" role="grid">
+                <thead>
+                  <tr className="border-b border-muted-foreground/20">
+                    {columns.map((col) => (
+                      <th
+                        key={col.key}
+                        className="px-3 py-1.5 text-left font-medium text-muted-foreground cursor-pointer select-none hover:bg-muted/40 transition-colors"
+                        onClick={() => handleColumnSort(col.key)}
+                        aria-sort={
+                          sortKey === col.key
+                            ? sortDir === 'asc'
+                              ? 'ascending'
+                              : 'descending'
+                            : 'none'
+                        }
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          {col.label}
+                          {sortKey === col.key &&
+                            (sortDir === 'asc' ? (
+                              <ArrowUp size={10} aria-hidden="true" />
+                            ) : (
+                              <ArrowDown size={10} aria-hidden="true" />
+                            ))}
+                        </span>
+                      </th>
+                    ))}
+                    <th className="px-3 py-1.5 text-left font-medium text-muted-foreground">
+                      Page
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-muted-foreground/10">
+                  {sortedResults.map((block) => {
+                    const pageTitle = block.parent_id
+                      ? pageTitles.get(block.parent_id)
+                      : undefined
+                    return (
+                      <tr
+                        key={block.id}
+                        className="hover:bg-muted/40 transition-colors"
+                      >
+                        {columns.map((col) => (
+                          <td key={col.key} className="px-3 py-1.5">
+                            {col.key === 'content' ? (
+                              <button
+                                type="button"
+                                className="text-left hover:underline truncate max-w-[300px] block"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (block.parent_id && onNavigate) {
+                                    onNavigate(block.parent_id)
+                                  }
+                                }}
+                              >
+                                {resolveBlockTitle
+                                  ? resolveBlockTitle(block.id) ||
+                                    truncate(block.content)
+                                  : truncate(block.content)}
+                              </button>
+                            ) : (
+                              <span>
+                                {(block[col.key as keyof BlockRow] as string) ?? ''}
+                              </span>
+                            )}
+                          </td>
+                        ))}
+                        <td className="px-3 py-1.5 text-muted-foreground/60 truncate max-w-[120px]">
+                          {pageTitle ?? ''}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
