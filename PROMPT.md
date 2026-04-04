@@ -10,13 +10,13 @@ Work through REVIEW-LATER.md in manageable batches. If it's empty, generate new 
 
 ### 1. PLAN
 
-Read REVIEW-LATER.md. Group 2-4 related items into a batch (same domain: e.g., all sync items, all test gaps, all Android items). Leave the rest for future batches — don't try to clear everything at once.
+Read REVIEW-LATER.md. Group 3-6 related items into a batch (same domain: e.g., all sync items, all test gaps, all Android items). Leave the rest for future batches — don't try to clear everything at once.
 
 Use **FEATURE-MAP.md** for feature discovery: when picking items to work on, consult the feature map to understand how the feature fits into the broader system (related commands, stores, components, database tables). This avoids blind spots during planning.
 
-### 2. BUILD (parallel by default)
+### 2. BUILD (parallel by default — up to 6 subagents)
 
-Split the batch into **parallel subagents by domain/file-boundary** — e.g., one Rust subagent, one frontend subagent, or one per non-overlapping feature. Launch them all as background subagents simultaneously. Don't wait for one to finish before launching the next.
+Split the batch into **parallel subagents by domain/file-boundary** — e.g., one Rust subagent, one frontend subagent, or one per non-overlapping feature. Launch them all as background subagents simultaneously. Don't wait for one to finish before launching the next. **Target 5-6 concurrent subagents** whenever the batch has enough independent work to fill them. If a batch only yields 2-3 natural splits, look for further subdivisions (e.g., split a large Rust subagent into two by module, or split frontend work into component vs. store changes).
 
 Each subagent prompt must include:
 
@@ -31,7 +31,7 @@ Each subagent prompt must include:
 
 **Worktrees:** Use `git worktree add` only when parallel subagents touch **overlapping directories** and need independent git state. If subagents touch non-overlapping files, they can safely work in the main tree without worktrees. Skip worktrees for sequential work, single-file edits, or review-only subagents.
 
-**Sizing:** Prefer 2-3 focused parallel subagents grouped by domain over 1 large sequential subagent. Each worktree pays ~15s cold-compile overhead, but that's recouped if the parallel wall-clock time is shorter. Batch trivial 1-line fixes together and apply them as orchestrator (in parallel with subagent work).
+**Sizing:** Prefer 5-6 focused parallel subagents grouped by domain over fewer sequential ones — you can safely run up to 6 subagents simultaneously. Split work so each subagent touches non-overlapping files. Each worktree pays ~15s cold-compile overhead, but that's recouped if the parallel wall-clock time is shorter. Batch trivial 1-line fixes together and apply them as orchestrator (in parallel with subagent work). Don't serialize work that can be parallelized — launch all build subagents at once.
 
 **Subagent verification scope:** Build subagents verify only their own work by running the relevant tests. Do NOT run clippy, fmt, biome, or prek inside subagents — the orchestrator runs prek once after merging.
 
@@ -46,7 +46,7 @@ This is non-negotiable — no code ships without tests.
 
 ### 4. REVIEW (pipelined with BUILD)
 
-**Don't wait for all builds to finish.** As each build subagent completes, immediately launch its review subagent while remaining builds continue. If multiple builds finish close together, launch all their review subagents in parallel.
+**Don't wait for all builds to finish.** As each build subagent completes, immediately launch its review subagent while remaining builds continue. If multiple builds finish close together, launch all their review subagents in parallel. You can have build and review subagents running simultaneously — e.g., 3 builds still running + 3 reviews already launched is fine (up to 6 total active subagents).
 
 No self-reviews — the reviewer must be a different subagent than the builder.
 
@@ -95,9 +95,9 @@ In REVIEW-LATER.md: remove resolved items entirely — both the summary table ro
 
 Pick one feature area to review. **Prioritize major features from FEATURE-MAP.md** — review the most important and complex areas of the system regardless of when they were last touched. Use FEATURE-MAP.md as the primary discovery tool to understand each feature's scope, related commands, stores, components, and database tables. Good candidates include: sync (section 6), materializer (section 4), editor (section 9), stores (section 7), property system (section 14), undo/redo (section 11), journal/agenda (section 15), tag system (section 16), backlinks (section 17), or any area not recently reviewed in SESSION-LOG.md. The properties system (#643, #645) is particularly worth reviewing — it's designed as the primary extension point and has many expandable surface areas.
 
-Launch **parallel review subagents covering both technical and UX dimensions**:
+Launch **parallel review subagents covering both technical and UX dimensions** (up to 6 total):
 
-- **Technical subagents** (2-3): each covering a different slice of the feature area (e.g., error handling, test gaps, performance). Don't assign the same files to multiple reviewers.
+- **Technical subagents** (4-5): each covering a different slice of the feature area (e.g., error handling, test gaps, performance, sync correctness, data model integrity). Don't assign the same files to multiple reviewers.
 - **UX subagent** (1): reviews the user-facing surface of the feature — discoverability, interaction patterns, mobile parity, empty states, consistency with similar features. Looks at components, hooks, and user flows, not backend code.
 
 ### Step B: Cross-validate (pipelined with Step A)
@@ -122,7 +122,7 @@ Add validated findings following the existing format:
 
 ### Step D: Return to Phase 1
 
-Pick a manageable batch (2-4 related items) from the newly added items and execute Phase 1.
+Pick a manageable batch (3-6 related items) from the newly added items and execute Phase 1.
 
 ---
 
