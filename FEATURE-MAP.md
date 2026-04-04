@@ -89,6 +89,7 @@ Opens when navigating to any page:
 
 - Editable page title with alias support
 - Block tree with full outliner editing
+- Auto-creates first empty block on new/empty pages for immediate typing
 - Page properties table
 - Linked references (grouped by source page)
 - Unlinked references (mentions not yet linked, with "Link it" button)
@@ -228,6 +229,7 @@ Text, number, date, select, and reference (link to another block).
 - Due/scheduled date chips are clickable to open date picker
 - Reference values show resolved page titles
 - Click-to-edit with type-aware inputs (text field, dropdown, page picker)
+- Block property drawer shows built-in due_date and scheduled_date from block store alongside custom properties
 
 ### Repeat Properties
 

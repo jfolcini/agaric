@@ -1,5 +1,37 @@
 # Session Log
 
+## Session 188 — 2026-04-04 — Batch 40: four HIGH-priority bug fixes (H-9, H-10, H-11, H-12)
+
+### Summary
+Fixed 4 HIGH-priority bugs from REVIEW-LATER.md. All items removed from the backlog — zero HIGH items remain.
+
+**Commit:** 1e7e8b1
+
+### Changes
+
+| Area | Change |
+|------|--------|
+| BlockTree.tsx | H-9: Auto-create first block on empty pages via `useEffect` + `autoCreatedForRef` guard. Empty state shows "Creating first block…" when rootParentId is set, original message when null. |
+| useBlockResolve.ts | H-10/H-11: Wrapped `searchTags` and `searchPages` callbacks in try/catch, returning `[]` on error. TipTap Suggestion plugin silently swallows rejected promises. |
+| BlockPropertyDrawer.tsx | H-12: Subscribe to block store for `due_date`/`scheduled_date` display. Built-in dates show at top with clear/edit controls and CalendarCheck2/CalendarClock icons. |
+| i18n.ts | 7 new translation keys: `blockTree.noBlocks`, `blockTree.emptyPage`, `blockTree.createFirstBlockFailed`, `property.dueDate`, `property.scheduledDate`, `property.clearDueDate`, `property.clearScheduledDate` |
+| BlockTree.test.tsx | 6 new H-9 tests + 3 existing tests updated for new empty state message |
+| BlockPropertyDrawer.test.tsx | 5 new H-12 tests (built-in date display, clear, reactivity) |
+| useBlockResolve.test.ts | Updated error propagation tests (searchTags/searchPages now return [] instead of throwing) |
+
+### Stats
+- 7 files changed, 628 insertions, 126 deletions
+- 3075 frontend tests pass
+- All prek hooks pass (biome, tsc, vitest)
+
+### REVIEW-LATER removals
+- H-9: Cannot add block to newly created page
+- H-10: `[[` page link picker not opening
+- H-11: Toolbar tag/link buttons don't trigger picker
+- H-12: Due/scheduled dates not shown in property drawer
+
+---
+
 ## Session 187 — 2026-04-04 — Project-wide lint/format cleanup
 
 ### Summary
