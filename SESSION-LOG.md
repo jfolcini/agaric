@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 170 — 2026-04-04 — Phase 1 batch 23: property :: autocomplete
+
+### Phase 1 (batch 23): Property :: autocomplete (F-1)
+
+1 focused frontend subagent (new TipTap extension + BlockTree wiring).
+
+| File | Change |
+|------|--------|
+| `property-picker.ts` | F-1: New TipTap suggestion extension triggered by `::`. Uses `@tiptap/suggestion` with shared `SuggestionList`. |
+| `property-picker.test.ts` | F-1: 6 new tests (extension config, options, defaults). |
+| `use-roving-editor.ts` | F-1: Added `searchPropertyKeys` + `onPropertySelect` options. Registered PropertyPicker in extensions. |
+| `BlockTree.tsx` | F-1: `searchPropertyKeys` callback (IPC + filter), `handlePropertySelect` (set_property op). |
+
+### Stats
+- Frontend: 6 new tests (2975 total pass)
+- Commit: `8995422`
+- REVIEW-LATER: F-1 resolved. 29 → **28 open items**.
+
 ## Session 169 — 2026-04-04 — Phase 1 batch 22: multi-property queries + E2E drag helper
 
 ### Phase 1 (batch 22): Multi-property query builder + E2E drag helper (F-5, TM-4)
