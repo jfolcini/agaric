@@ -29,6 +29,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
+import { priorityColor } from '../lib/priority-color'
 import { formatRepeatLabel } from '../lib/repeat-utils'
 import type { BlockRow } from '../lib/tauri'
 import { listAttachments, listBlocks, listPropertyDefs, setProperty } from '../lib/tauri'
@@ -534,9 +535,7 @@ function SortableBlockInner({
                   <span
                     className={cn(
                       'inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold',
-                      priority === '1' && 'bg-red-500 text-white',
-                      priority === '2' && 'bg-yellow-500 text-white',
-                      priority === '3' && 'bg-blue-500 text-white',
+                      priorityColor(priority),
                     )}
                   >
                     {PRIORITY_DISPLAY[priority]}

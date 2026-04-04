@@ -22,6 +22,7 @@ import {
   groupByState,
   sortAgendaBlocksBy,
 } from '../lib/agenda-sort'
+import { priorityColor } from '../lib/priority-color'
 import type { BlockRow } from '../lib/tauri'
 
 export interface AgendaResultsProps {
@@ -86,13 +87,6 @@ function dueDateColor(dateStr: string): string {
   if (dateStr === todayStr)
     return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
   return 'bg-muted text-muted-foreground'
-}
-
-/** Badge color class by priority level. */
-function priorityColor(p: string): string {
-  if (p === '1') return 'bg-red-500 text-white'
-  if (p === '2') return 'bg-yellow-500 text-white'
-  return 'bg-blue-500 text-white'
 }
 
 /** Truncate content to plain text. */

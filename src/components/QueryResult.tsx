@@ -360,12 +360,12 @@ export function QueryResult({
                       {block.todo_state && (
                         <span
                           className={cn(
-                            'shrink-0 rounded px-1 py-0.5 text-[10px] font-bold leading-none',
+                            'shrink-0 rounded px-1 py-0.5 text-xs font-bold leading-none',
                             block.todo_state === 'DONE'
-                              ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                              ? 'bg-status-done text-status-done-foreground'
                               : block.todo_state === 'DOING'
-                                ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300'
-                                : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
+                                ? 'bg-status-active text-status-active-foreground'
+                                : 'bg-status-pending text-status-pending-foreground',
                           )}
                         >
                           {block.todo_state}

@@ -223,7 +223,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
           {grouped.map((group) => (
             <div key={group.pageId} className="done-panel-group">
               {/* Group sub-header: page title + block count (not individually collapsible) */}
-              <div className="done-panel-group-header px-3 py-1 text-xs font-semibold text-muted-foreground tracking-wide bg-green-50/50 dark:bg-green-950/10 rounded">
+              <div className="done-panel-group-header px-3 py-1 text-xs font-semibold text-muted-foreground tracking-wide uppercase bg-muted rounded">
                 {group.title} ({group.items.length})
               </div>
 

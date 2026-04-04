@@ -40,9 +40,9 @@ export function SourcePageFilter({
 
   // Determine button color based on filter state
   const buttonColor = useMemo(() => {
-    if (hasIncludes && hasExcludes) return 'text-yellow-600'
-    if (hasIncludes) return 'text-green-600'
-    if (hasExcludes) return 'text-red-600'
+    if (hasIncludes && hasExcludes) return 'text-status-pending-foreground'
+    if (hasIncludes) return 'text-primary'
+    if (hasExcludes) return 'text-destructive'
     return 'text-muted-foreground'
   }, [hasIncludes, hasExcludes])
 
@@ -105,8 +105,8 @@ export function SourcePageFilter({
   )
 
   const getDotColor = (pageId: string): string => {
-    if (included.includes(pageId)) return 'bg-green-500'
-    if (excluded.includes(pageId)) return 'bg-red-500'
+    if (included.includes(pageId)) return 'bg-primary'
+    if (excluded.includes(pageId)) return 'bg-destructive'
     return 'bg-muted-foreground'
   }
 

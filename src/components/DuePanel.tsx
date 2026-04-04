@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { priorityColor } from '../lib/priority-color'
 import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
 
@@ -30,13 +31,6 @@ function priorityKey(p: string | null): number {
   if (p === '2') return 2
   if (p === '3') return 3
   return 4
-}
-
-/** Badge color class by priority level. */
-function priorityColor(p: string): string {
-  if (p === '1') return 'bg-red-500 text-white'
-  if (p === '2') return 'bg-yellow-500 text-white'
-  return 'bg-blue-500 text-white'
 }
 
 /** Truncate content to plain text. */

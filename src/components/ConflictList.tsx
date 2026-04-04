@@ -76,11 +76,11 @@ function truncatePreview(text: string, max = 120): string {
 function conflictTypeBadgeClass(type: 'Text' | 'Property' | 'Move'): string {
   switch (type) {
     case 'Text':
-      return 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800'
+      return 'bg-conflict-text text-conflict-text-foreground border-border'
     case 'Property':
-      return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800'
+      return 'bg-status-active text-status-active-foreground border-border'
     case 'Move':
-      return 'bg-purple-100 text-purple-800 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800'
+      return 'bg-conflict-move text-conflict-move-foreground border-border'
   }
 }
 

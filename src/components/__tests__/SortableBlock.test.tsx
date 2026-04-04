@@ -1145,8 +1145,8 @@ describe('SortableBlock priority badge', () => {
     )
 
     const badge = container.querySelector('.priority-badge > span')
-    expect(badge?.className).toContain('bg-red-500')
-    expect(badge?.className).toContain('text-white')
+    expect(badge?.className).toContain('bg-priority-urgent')
+    expect(badge?.className).toContain('text-priority-foreground')
   })
 
   it('applies yellow styling for priority 2', () => {
@@ -1161,8 +1161,8 @@ describe('SortableBlock priority badge', () => {
     )
 
     const badge = container.querySelector('.priority-badge > span')
-    expect(badge?.className).toContain('bg-yellow-500')
-    expect(badge?.className).toContain('text-white')
+    expect(badge?.className).toContain('bg-priority-high')
+    expect(badge?.className).toContain('text-priority-foreground')
   })
 
   it('applies blue styling for priority 3', () => {
@@ -1177,8 +1177,8 @@ describe('SortableBlock priority badge', () => {
     )
 
     const badge = container.querySelector('.priority-badge > span')
-    expect(badge?.className).toContain('bg-blue-500')
-    expect(badge?.className).toContain('text-white')
+    expect(badge?.className).toContain('bg-priority-normal')
+    expect(badge?.className).toContain('text-priority-foreground')
   })
 
   it('does not render priority badge when priority is null (hidden)', () => {

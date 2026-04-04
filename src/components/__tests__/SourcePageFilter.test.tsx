@@ -99,7 +99,7 @@ describe('SourcePageFilter', () => {
     )
 
     const button = screen.getByLabelText('Filter by source page')
-    expect(button.className).toContain('text-green-600')
+    expect(button.className).toContain('text-primary')
   })
 
   // 4. filter button is red with excludes only
@@ -114,7 +114,7 @@ describe('SourcePageFilter', () => {
     )
 
     const button = screen.getByLabelText('Filter by source page')
-    expect(button.className).toContain('text-red-600')
+    expect(button.className).toContain('text-destructive')
   })
 
   // 5. filter button is yellow with mixed
@@ -129,7 +129,7 @@ describe('SourcePageFilter', () => {
     )
 
     const button = screen.getByLabelText('Filter by source page')
-    expect(button.className).toContain('text-yellow-600')
+    expect(button.className).toContain('text-status-pending-foreground')
   })
 
   // 6. search filters the page list

@@ -36,6 +36,21 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  /* Semantic badge colors (status, conflict, priority) */
+  --color-status-done: var(--status-done);
+  --color-status-done-foreground: var(--status-done-foreground);
+  --color-status-active: var(--status-active);
+  --color-status-active-foreground: var(--status-active-foreground);
+  --color-status-pending: var(--status-pending);
+  --color-status-pending-foreground: var(--status-pending-foreground);
+  --color-conflict-text: var(--conflict-text);
+  --color-conflict-text-foreground: var(--conflict-text-foreground);
+  --color-conflict-move: var(--conflict-move);
+  --color-conflict-move-foreground: var(--conflict-move-foreground);
+  --color-priority-urgent: var(--priority-urgent);
+  --color-priority-high: var(--priority-high);
+  --color-priority-normal: var(--priority-normal);
+  --color-priority-foreground: var(--priority-foreground);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -82,6 +97,21 @@
   --sidebar-accent-foreground: oklch(0.377 0.136 28.584);
   --sidebar-border: oklch(0.929 0.013 255.508);
   --sidebar-ring: oklch(0.55 0.188 28.71);
+  /* Semantic badge colors */
+  --status-done: oklch(0.94 0.06 155);
+  --status-done-foreground: oklch(0.33 0.1 155);
+  --status-active: oklch(0.93 0.05 250);
+  --status-active-foreground: oklch(0.33 0.1 250);
+  --status-pending: oklch(0.96 0.05 90);
+  --status-pending-foreground: oklch(0.47 0.12 88);
+  --conflict-text: oklch(0.94 0.06 75);
+  --conflict-text-foreground: oklch(0.45 0.1 70);
+  --conflict-move: oklch(0.93 0.05 310);
+  --conflict-move-foreground: oklch(0.35 0.1 310);
+  --priority-urgent: oklch(0.64 0.22 25);
+  --priority-high: oklch(0.8 0.16 90);
+  --priority-normal: oklch(0.62 0.22 265);
+  --priority-foreground: oklch(1 0 0);
 }
 
 /* ── Agaric dark theme ─────────────────────────────────────────────── */
@@ -118,6 +148,21 @@
   --sidebar-accent-foreground: oklch(0.911 0.04 84.583);
   --sidebar-border: oklch(0.279 0.041 260.031);
   --sidebar-ring: oklch(0.55 0.188 28.71);
+  /* Semantic badge colors */
+  --status-done: oklch(0.25 0.05 155);
+  --status-done-foreground: oklch(0.8 0.08 160);
+  --status-active: oklch(0.25 0.04 250);
+  --status-active-foreground: oklch(0.8 0.06 250);
+  --status-pending: oklch(0.28 0.04 90);
+  --status-pending-foreground: oklch(0.85 0.08 95);
+  --conflict-text: oklch(0.27 0.04 70);
+  --conflict-text-foreground: oklch(0.82 0.08 80);
+  --conflict-move: oklch(0.25 0.04 310);
+  --conflict-move-foreground: oklch(0.8 0.06 310);
+  --priority-urgent: oklch(0.64 0.22 25);
+  --priority-high: oklch(0.8 0.16 90);
+  --priority-normal: oklch(0.62 0.22 265);
+  --priority-foreground: oklch(1 0 0);
 }
 
 /* ── Indent width (responsive) ─────────────────────────────────────── */

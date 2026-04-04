@@ -846,7 +846,7 @@ describe('ConflictList', () => {
     })
     const badge = container.querySelector('.conflict-type-badge')
     expect(badge?.textContent).toBe('Property')
-    expect(badge?.className).toContain('bg-blue-100')
+    expect(badge?.className).toContain('bg-status-active')
   })
 
   it('renders Move conflict type badge when backend provides it', async () => {
@@ -889,7 +889,7 @@ describe('ConflictList', () => {
     })
     const badge = container.querySelector('.conflict-type-badge')
     expect(badge?.textContent).toBe('Move')
-    expect(badge?.className).toContain('bg-purple-100')
+    expect(badge?.className).toContain('bg-conflict-move')
   })
 
   it('displays conflict metadata: source block ID (truncated)', async () => {
@@ -969,8 +969,8 @@ describe('ConflictList', () => {
 
     const typeBadge = container.querySelector('.conflict-type-badge')
     expect(typeBadge).toBeTruthy()
-    expect(typeBadge?.className).toContain('bg-amber-100')
-    expect(typeBadge?.className).toContain('text-amber-800')
+    expect(typeBadge?.className).toContain('bg-conflict-text')
+    expect(typeBadge?.className).toContain('text-conflict-text-foreground')
   })
 
   it('Keep/Discard flow still works with badges and metadata present', async () => {
