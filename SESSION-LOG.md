@@ -214,6 +214,33 @@
 - Commit: `b897891`
 - REVIEW-LATER: F-16, F-18, F-24, M-15, TM-6, TL-9 resolved. 56 → **50 open items**.
 
+### Phase 1 (batch 13): Final S-cost sweep (M-18, L-3)
+
+2 parallel subagents (knip tooling, pagination clones).
+
+| File | Change |
+|------|--------|
+| `knip.json` + `package.json` + `prek.toml` | M-18: Added knip ^6.3.0 with config. Detects 2 unused files, 21 unused exports, 55 unused types. |
+| `pagination.rs` | L-3: Eliminated 14 cursor ID clones across 10 pagination functions via &str borrows. 10 unavoidable clones remain (borrow→owned in closures). |
+
+### Stats
+- Backend: 78/78 pagination tests pass
+- Commit: `a9c0843`
+- REVIEW-LATER: M-18, L-3 resolved. 50 → **48 open items**.
+
+### Session 166 Summary
+
+**13 batches, 64 items resolved. REVIEW-LATER: 112 → 48 (57% cleared).**
+
+| Metric | Count |
+|--------|-------|
+| Items resolved | 64 |
+| New tests | ~175+ |
+| Commits | 26 |
+| Cleared tiers | All HIGH (8→2), all MEDIUM (18→3), all UX-HIGH (14→1), all UX-MED (7→0), most TEST-LOW (8→2) |
+
+**Remaining 48 items:** 19 FEAT (M/L cost features), 2 HIGH, 3 MEDIUM, 5 LOW, 1 UX-HIGH (i18n L-cost), 6 TEST-HIGH (M cost), 8 TEST-MED, 2 TEST-LOW. Nearly all remaining items require M/L cost effort — the S-cost actionable items are exhausted.
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system
