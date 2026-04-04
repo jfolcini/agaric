@@ -1,5 +1,31 @@
 # Session Log
 
+## Session 202 — 2026-04-04 — Batch 56: Mobile responsiveness (10 MOBILE items)
+
+### Summary
+Resolved all 10 MOBILE items from REVIEW-LATER.md via 5 parallel build subagents + 5 review subagents. 16 files changed — all CSS-only except PdfViewerDialog (ResizeObserver adaptive scale logic). REVIEW-LATER.md reduced from 40 to 30 items (entire MOBILE section removed).
+
+### Batch 56
+
+**Commit:** 791ea08
+
+| Area | Change |
+|------|--------|
+| PageHeader.tsx, PagePropertyTable.tsx, AgendaFilterBuilder.tsx, SourcePageFilter.tsx | MOB-M1: Added `max-w-[calc(100vw-2rem)]` to all fixed-width PopoverContent elements. |
+| LinkedReferences.tsx | MOB-M7: Responsive flex stacking for filter controls (`flex-col sm:flex-row`) and `flex-wrap` on item rows. |
+| PdfViewerDialog.tsx | MOB-M8: Replaced hardcoded `scale: 1.5` with adaptive `containerWidth / defaultWidth` (clamped [0.5, 3.0]). Added ResizeObserver for container resize re-rendering. Zero-width edge case protected. |
+| AgendaResults.tsx, DuePanel.tsx, DonePanel.tsx, DaySection.tsx | MOB-M12: Added `active:` touch feedback states on interactive elements alongside existing `hover:` classes. |
+| DuePanel.tsx, SortableBlock.tsx, HistoryPanel.tsx, HistoryView.tsx | MOB-M13: Replaced all `text-[10px]` with `text-xs` (12px minimum). |
+| DeviceManagement.tsx | MOB-M14: Added `[@media(pointer:coarse)]:min-h-[44px]` touch target on rename button. |
+| HistoryPanel.tsx | MOB-M15: Responsive stacking (`flex-col` → `flex-row` via `[@media(pointer:fine)]`) + restore button touch target. |
+| StaticBlock.tsx | MOB-L2: Responsive heading sizes with `sm:` breakpoints (e.g., `text-xl sm:text-2xl` for H1). |
+| KeyboardShortcuts.tsx | MOB-L3: Added `overflow-x-auto` to shortcuts container. |
+| AgendaResults.tsx, DuePanel.tsx, DonePanel.tsx, HistoryPanel.tsx | MOB-L4: Added `[@media(pointer:coarse)]:text-sm` on small labels, breadcrumbs, and group headers. |
+
+**Review:** 5 parallel build subagents + 5 review subagents. Review findings fixed: (1) DaySection.tsx duplicate closing JSX syntax error; (2) DuePanel.tsx trailing garbage; (3) Missing `active:` states on DaySection badges, DuePanel filter button and item; (4) Missing `[@media(pointer:coarse)]:text-sm` on 5 elements (AgendaResults due chip + breadcrumb, DuePanel breadcrumb + group header, DonePanel group header); (5) Missing restore button touch target in HistoryPanel; (6) PageHeader.tsx and PdfViewerDialog.tsx biome formatting fixes.
+
+**Stats:** 16 files changed, 84 insertions, 51 deletions. 3177/3179 frontend tests pass (2 pre-existing date-dependent flakes in template-utils.test.ts). TypeScript + Biome clean.
+
 ## Session 201 — 2026-04-04 — Batch 55: Refactoring extractions (R-2, R-4, R-9, R-13, R-16)
 
 ### Summary
