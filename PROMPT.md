@@ -4,17 +4,15 @@ Before starting work, compact your conversation context (`/compact`) to free up 
 
 # Goal
 
-Work through REVIEW-LATER.md in manageable batches. If it's empty, generate new items via code review first.
+Work through REVIEW-LATER.md in manageable batches, fixing items that are already listed there.
 
-## Phase 1 — Fix REVIEW-LATER items
-
-### 1. PLAN
+## 1. PLAN
 
 Read REVIEW-LATER.md. Group 3-6 related items into a batch (same domain: e.g., all sync items, all test gaps, all Android items). Leave the rest for future batches — don't try to clear everything at once.
 
 Use **FEATURE-MAP.md** for feature discovery: when picking items to work on, consult the feature map to understand how the feature fits into the broader system (related commands, stores, components, database tables). This avoids blind spots during planning.
 
-### 2. BUILD (parallel by default — up to 6 subagents)
+## 2. BUILD (parallel by default — up to 6 subagents)
 
 Split the batch into **parallel subagents by domain/file-boundary** — e.g., one Rust subagent, one frontend subagent, or one per non-overlapping feature. Launch them all as background subagents simultaneously. Don't wait for one to finish before launching the next. **Target 5-6 concurrent subagents** whenever the batch has enough independent work to fill them. If a batch only yields 2-3 natural splits, look for further subdivisions (e.g., split a large Rust subagent into two by module, or split frontend work into component vs. store changes).
 
@@ -35,7 +33,7 @@ Each subagent prompt must include:
 
 **Subagent verification scope:** Build subagents verify only their own work by running the relevant tests. Do NOT run clippy, fmt, biome, or prek inside subagents — the orchestrator runs prek once after merging.
 
-### 3. TEST
+## 3. TEST
 
 Every new or changed code path must have tests:
 
@@ -44,7 +42,7 @@ Every new or changed code path must have tests:
 
 This is non-negotiable — no code ships without tests.
 
-### 4. REVIEW (pipelined with BUILD)
+## 4. REVIEW (pipelined with BUILD)
 
 **Don't wait for all builds to finish.** As each build subagent completes, immediately launch its review subagent while remaining builds continue. If multiple builds finish close together, launch all their review subagents in parallel. You can have build and review subagents running simultaneously — e.g., 3 builds still running + 3 reviews already launched is fine (up to 6 total active subagents).
 
@@ -69,15 +67,15 @@ For backend-only changes, the UX reviewer is unnecessary. For frontend changes w
 
 If a reviewer makes fixes, they must run the relevant tests to verify.
 
-### 5. MERGE
+## 5. MERGE
 
 If worktrees were used, copy changed files back to the main tree. Skip this step if no worktrees were used.
 
-### 6. COMMIT
+## 6. COMMIT
 
 Stage all changes. Run `prek run --all-files` — this is the single point where formatting, linting, clippy, and all 15 hooks run. If prek modifies files (e.g., biome auto-fix), re-stage the modified files and retry the commit.
 
-### 7. LOG
+## 7. LOG
 
 Update SESSION-LOG.md with a summary of what was done (follow the existing format — phase heading, file/change table, stats).
 
@@ -89,44 +87,7 @@ In REVIEW-LATER.md: remove resolved items entirely — both the summary table ro
 
 ---
 
-## Phase 2 — Generate new items (only if REVIEW-LATER is empty)
-
-### Step A: Deep review
-
-Pick one feature area to review. **Prioritize major features from FEATURE-MAP.md** — review the most important and complex areas of the system regardless of when they were last touched. Use FEATURE-MAP.md as the primary discovery tool to understand each feature's scope, related commands, stores, components, and database tables. Good candidates include: sync (section 6), materializer (section 4), editor (section 9), stores (section 7), property system (section 14), undo/redo (section 11), journal/agenda (section 15), tag system (section 16), backlinks (section 17), or any area not recently reviewed in SESSION-LOG.md. The properties system (#643, #645) is particularly worth reviewing — it's designed as the primary extension point and has many expandable surface areas.
-
-Launch **parallel review subagents covering both technical and UX dimensions** (up to 6 total):
-
-- **Technical subagents** (4-5): each covering a different slice of the feature area (e.g., error handling, test gaps, performance, sync correctness, data model integrity). Don't assign the same files to multiple reviewers.
-- **UX subagent** (1): reviews the user-facing surface of the feature — discoverability, interaction patterns, mobile parity, empty states, consistency with similar features. Looks at components, hooks, and user flows, not backend code.
-
-### Step B: Cross-validate (pipelined with Step A)
-
-**Don't wait for all reviewers to finish.** As each Step A subagent completes, immediately launch a validator subagent for its findings while other reviews continue. Validator subagents check:
-
-- **Hallucinated issues** — Does the problem actually exist in the code? Read the actual source.
-- **Exaggerated severity** — Is this really P1/P2, or is it P3/P4? Does it cause data loss or just a minor UX hiccup?
-- **False positives** — "Missing tests" when tests exist elsewhere. "Race condition" that's prevented by the single-writer pool. "Memory leak" under 500KB.
-
-Assign each finding a verdict: **CONFIRMED** (with accurate priority), **DOWNGRADED** (with new priority), or **REJECTED** (with reason). Only confirmed findings with accurate severity survive.
-
-### Step C: Add to REVIEW-LATER.md
-
-Add validated findings following the existing format:
-
-- Summary table row: `| # | Item | Tier | Impact | Cost | Risk | Phase |`
-- Detail section under the appropriate tier heading with Source, Issue/Impact, Priority, Cost, Risk
-- Cost key: S = <2h, M = 2-8h, L = 8h+
-- Increment the item number sequentially from the highest existing number
-- Update the summary count
-
-### Step D: Return to Phase 1
-
-Pick a manageable batch (3-6 related items) from the newly added items and execute Phase 1.
-
----
-
-## Principles throughout
+## Principles
 
 - Be pragmatic but rigorous. Fix what's there, don't gold-plate, don't refactor beyond the scope of the item.
 - Every commit must pass `prek run --all-files`.
