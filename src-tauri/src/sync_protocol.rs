@@ -118,6 +118,7 @@ pub struct SyncSession {
 }
 
 /// Counts returned by [`apply_remote_ops`].
+#[derive(Debug)]
 pub struct ApplyResult {
     pub inserted: usize,
     pub duplicates: usize,
@@ -215,7 +216,7 @@ pub async fn apply_remote_ops(
     materializer: &Materializer,
     ops: Vec<OpTransfer>,
 ) -> Result<ApplyResult, AppError> {
-    use crate::hash::verify_op_hash;
+    use crate::hash::verify_op_record;
 
     let mut result = ApplyResult {
         inserted: 0,
@@ -224,25 +225,24 @@ pub async fn apply_remote_ops(
     };
     let mut to_materialize = Vec::new();
 
+    // Convert all transfers to records and verify hashes upfront.
+    // Reject the entire batch on the first mismatch.
+    let records: Vec<OpRecord> = ops.into_iter().map(OpRecord::from).collect();
+    for record in &records {
+        verify_op_record(record).map_err(|msg| {
+            tracing::warn!(
+                device_id = %record.device_id,
+                seq = record.seq,
+                "integrity check failed during sync: {msg}"
+            );
+            AppError::InvalidOperation(format!("integrity check failed: {msg}"))
+        })?;
+    }
+
     // Wrap all inserts in a single transaction to reduce per-op overhead.
     let mut tx = pool.begin().await?;
 
-    for op in ops {
-        let record: OpRecord = op.into();
-
-        // Hash verification (same logic as dag::insert_remote_op)
-        if !verify_op_hash(
-            &record.hash,
-            &record.device_id,
-            record.seq,
-            record.parent_seqs.as_deref(),
-            &record.op_type,
-            &record.payload,
-        ) {
-            result.hash_mismatches += 1;
-            continue;
-        }
-
+    for record in records {
         // Validate payload is well-formed JSON before insertion
         if let Err(e) = serde_json::from_str::<serde_json::Value>(&record.payload) {
             tracing::warn!(
@@ -2329,20 +2329,24 @@ mod tests {
             "BADHASH0000000000000000000000000000000000000000000000000000000000".to_string();
         bad_op.seq = 99; // different seq so it's not just a duplicate of t2
 
-        // Batch: duplicate (t1 again) + valid new (t2) + bad hash
-        let result = apply_remote_ops(&local_pool, &materializer, vec![t1, t2, bad_op])
+        // Batch containing a bad hash should be rejected entirely
+        let err = apply_remote_ops(&local_pool, &materializer, vec![t1.clone(), t2.clone(), bad_op])
+            .await
+            .expect_err("batch with bad hash must be rejected");
+        assert!(
+            err.to_string().contains("integrity check failed"),
+            "error must mention integrity check, got: {err}"
+        );
+
+        // A clean batch (no bad hashes) should still work: duplicate + new
+        let result = apply_remote_ops(&local_pool, &materializer, vec![t1, t2])
             .await
             .unwrap();
-
         assert_eq!(
             result.duplicates, 1,
             "op1 already in DB should be duplicate"
         );
         assert_eq!(result.inserted, 1, "op2 should be newly inserted");
-        assert_eq!(
-            result.hash_mismatches, 1,
-            "corrupted hash op should be counted as mismatch"
-        );
 
         materializer.shutdown();
     }

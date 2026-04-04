@@ -546,8 +546,8 @@ async fn ops_with_gaps_in_sequence() {
     mat_b.shutdown();
 }
 
-/// An op with a tampered hash should be rejected by apply_remote_ops
-/// (hash_mismatches counter incremented).
+/// An op with a tampered hash should cause apply_remote_ops to reject the
+/// entire batch (integrity check failure).
 #[tokio::test]
 async fn hash_mismatch_op_rejected() {
     let ((pool_a, _dir_a), (pool_b, _dir_b)) = two_device_setup().await;
@@ -562,13 +562,12 @@ async fn hash_mismatch_op_rejected() {
     let mut transfer: OpTransfer = op.into();
     transfer.hash = "0".repeat(64);
 
-    let result = apply_remote_ops(&pool_b, &mat_b, vec![transfer])
+    let err = apply_remote_ops(&pool_b, &mat_b, vec![transfer])
         .await
-        .unwrap();
-    assert_eq!(result.inserted, 0, "tampered op should not be inserted");
-    assert_eq!(
-        result.hash_mismatches, 1,
-        "tampered op should increment hash_mismatches"
+        .expect_err("batch with tampered hash must be rejected");
+    assert!(
+        err.to_string().contains("integrity check failed"),
+        "error must mention integrity check, got: {err}"
     );
 
     // Verify nothing in B's log

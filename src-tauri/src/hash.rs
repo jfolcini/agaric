@@ -85,6 +85,31 @@ pub fn compute_op_hash(
     hasher.finalize().to_hex().to_string()
 }
 
+/// Verify that an [`OpRecord`]'s stored hash matches its recomputed hash.
+///
+/// Returns `Ok(())` if the hash is valid, or `Err` with a human-readable
+/// message describing the mismatch (device_id, seq, expected vs actual).
+///
+/// Prefer this over [`verify_op_hash`] when you already have an `OpRecord`
+/// — it avoids having to destructure the fields at every call site.
+pub fn verify_op_record(record: &crate::op_log::OpRecord) -> Result<(), String> {
+    let expected = compute_op_hash(
+        &record.device_id,
+        record.seq,
+        record.parent_seqs.as_deref(),
+        &record.op_type,
+        &record.payload,
+    );
+    if constant_time_eq(expected.as_bytes(), record.hash.as_bytes()) {
+        Ok(())
+    } else {
+        Err(format!(
+            "hash mismatch for {}:{} — expected {}, got {}",
+            record.device_id, record.seq, expected, record.hash
+        ))
+    }
+}
+
 /// Verify that a stored hash matches the recomputed hash of the given fields.
 ///
 /// Uses constant-time comparison to prevent timing side-channel leaks,
@@ -364,6 +389,58 @@ mod tests {
         assert!(
             !verify_op_hash("", DEV_1, 1, None, OP_CREATE, EMPTY_JSON),
             "verify must reject empty hash string"
+        );
+    }
+
+    // ── verify_op_record ─────────────────────────────────────────────
+
+    /// Helper: build a valid [`OpRecord`] with a correct hash.
+    fn make_valid_record() -> crate::op_log::OpRecord {
+        let payload = r#"{"block_id":"AB","text":"hello"}"#;
+        let hash = compute_op_hash(DEV_1, 1, None, OP_CREATE, payload);
+        crate::op_log::OpRecord {
+            device_id: DEV_1.to_string(),
+            seq: 1,
+            parent_seqs: None,
+            hash,
+            op_type: OP_CREATE.to_string(),
+            payload: payload.to_string(),
+            created_at: "2025-01-01T00:00:00+00:00".to_string(),
+        }
+    }
+
+    #[test]
+    fn verify_op_hash_valid() {
+        let record = make_valid_record();
+        assert!(
+            verify_op_record(&record).is_ok(),
+            "verify_op_record must return Ok for a correctly-hashed record"
+        );
+    }
+
+    #[test]
+    fn verify_op_hash_detects_tampered_payload() {
+        let mut record = make_valid_record();
+        record.payload = r#"{"block_id":"AB","text":"TAMPERED"}"#.to_string();
+        let result = verify_op_record(&record);
+        assert!(result.is_err(), "must detect tampered payload");
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("hash mismatch"),
+            "error should mention hash mismatch, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn verify_op_hash_detects_tampered_hash() {
+        let mut record = make_valid_record();
+        record.hash = "0".repeat(64);
+        let result = verify_op_record(&record);
+        assert!(result.is_err(), "must detect tampered hash");
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("hash mismatch"),
+            "error should mention hash mismatch, got: {msg}"
         );
     }
 
