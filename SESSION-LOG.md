@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 193 — 2026-04-04 — Batch 48: M-22 (noEvolvingTypes lint rule)
+
+### Summary
+Resolved M-22: enabled Biome's `suspicious/noEvolvingTypes` lint rule. The item was incorrectly flagged as blocked (claiming the rule was a nursery rule that didn't exist in Biome 2.4.9) — it's actually `lint/suspicious/noEvolvingTypes`, available since Biome v1.6.3. Only 1 violation existed in the entire codebase.
+
+### Batch 48 — M-22
+
+**Commit:** 5806319
+
+| Area | Change |
+|------|--------|
+| biome.json | Added `"noEvolvingTypes": "error"` to `suspicious` rules section |
+| src/components/__tests__/LinkedReferences.test.tsx | Line 310: `const groups = []` → `const groups: ReturnType<typeof makeGroup>[] = []` |
+
+**Stats:** 2 files changed, 3 insertions, 2 deletions. All 34 LinkedReferences tests pass. All prek hooks pass.
+
+**Remaining:** 1 open item in REVIEW-LATER.md (F-14: attachment sync file transfer protocol — blocked, needs architectural discussion).
+
+---
+
 ## Session 192 — 2026-04-04 — Batches 44-47: UX-M27..M50 (all remaining UX-MED items)
 
 ### Summary
