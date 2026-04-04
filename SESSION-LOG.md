@@ -1,5 +1,13 @@
 # Session Log
 
+## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
+
+### Phase 2: Deep review of Search / FTS5 system
+
+1 review subagent. All P1 areas properly handled: query sanitization (double-quote wrapping), empty query guards, debounce (300ms), FTS rebuild at boot, result cap (100). Three P2 items downgraded to P3-P4 on cross-validation (CJK docstring nit, WAL handles concurrent reads, short queries are acceptable). No REVIEW-LATER items created.
+
+**All systems now reviewed. REVIEW-LATER: 0 items.**
+
 ## Session 157 — 2026-04-03 — Phase 2 materializer review (clean)
 
 ### Phase 2: Deep review of materializer + cache system
