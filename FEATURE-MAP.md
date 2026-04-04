@@ -351,10 +351,13 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **ConfirmDialog** (`src/components/ConfirmDialog.tsx`): Wraps AlertDialog primitives with title/description/cancel/action props, optional `children` slot, `actionVariant` (default/destructive), `loading` spinner. Used by 8 components.
 - **LoadMoreButton** (`src/components/LoadMoreButton.tsx`): Cursor-paginated load-more button with `loading`/`hasMore`/`onLoadMore` props and Loader2 spinner. Used by 6 components.
 - **LoadingSkeleton** (`src/components/LoadingSkeleton.tsx`): Skeleton loading placeholder with `count`/`height` props. Used by 7 components.
+- **CollapsibleGroupList** (`src/components/CollapsibleGroupList.tsx`): Generic collapsible grouped list with expand/collapse state management. Accepts `expandedGroups` record, `defaultExpanded` prop, `onToggle` callback, and custom `renderBlock` slot. Used by LinkedReferences, UnlinkedReferences.
+- **ResultCard** (`src/components/ResultCard.tsx`): Block result card button with content display, Badge for page/tag types, optional spinner, optional children slot. Used by SearchPanel, TagFilterPanel.
 - **PropertyRow** (`src/components/BlockPropertyDrawer.tsx`): Extracted sub-component for property rows with badge+input+remove layout. Supports optional icon, date/text input types.
 
 ### Shared Hooks
 - **useBlockNavigation** (`src/hooks/useBlockNavigation.ts`): Returns `{ handleBlockClick, handleBlockKeyDown }` for block click + keyboard (Enter/Space) navigation. Used by AgendaResults, DonePanel, DuePanel.
+- **usePaginatedQuery** (`src/hooks/usePaginatedQuery.ts`): Cursor-based pagination hook with `items`, `hasMore`, `loading`, `loadMore`, `reset` state. Supports `enabled` option for conditional fetching (preserves items when disabled, refetches on re-enable). Used by LinkedReferences, UnlinkedReferences, SearchPanel, TagFilterPanel, and others.
 
 ### CSS Utilities
 - **`.touch-target-44`** (`src/index.css`): Utility class for `@media(pointer:coarse)` min-height 44px touch targets. Used across 19+ components.

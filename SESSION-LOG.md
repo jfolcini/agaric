@@ -1,5 +1,25 @@
 # Session Log
 
+## Session 204 — 2026-04-05 — Batch 58: Final refactoring extractions (R-18, R-19, R-20)
+
+### Summary
+Resolved the final 3 REFACTOR items, completing the entire refactoring audit backlog. Extracted CollapsibleGroupList, ResultCard components and migrated SearchPanel/TagFilterPanel to usePaginatedQuery hook. 12 files changed, +884/-259 lines. REVIEW-LATER.md reduced from 24 to 21 items (REFACTOR section fully emptied and removed).
+
+### Batch 58
+
+**Commit:** 9ae0ac1
+
+| Area | Change |
+|------|--------|
+| CollapsibleGroupList.tsx + 2 consumers | R-18: Generic collapsible grouped list component extracted from LinkedReferences + UnlinkedReferences. Supports `expandedGroups` record, `defaultExpanded` prop, `onToggle` callback, and custom `renderBlock` slot. UnlinkedReferences migrated from `Set<string>` (collapsedGroups) to `Record<string, boolean>` (expandedGroups) with `defaultExpanded={true}`. |
+| ResultCard.tsx + 2 consumers | R-20: Shared result card button with block content, Badge for page/tag types, optional spinner, optional children slot. Used by SearchPanel and TagFilterPanel. |
+| usePaginatedQuery.ts + SearchPanel + TagFilterPanel | R-19: Added `enabled` option to usePaginatedQuery hook. SearchPanel fully migrated to use usePaginatedQuery with debouncedQuery-driven refetching. TagFilterPanel block results phase migrated to usePaginatedQuery. |
+| LoadingSkeleton.tsx | Added biome-ignore for noArrayIndexKey lint (identical skeleton placeholders). |
+
+**Review:** 2 review subagents. Both passed. Post-review fixes: (1) Added `focus-visible:ring-offset-2` to ResultCard button; (2) Added items-preserved assertion in usePaginatedQuery enabled→false test; (3) Biome formatting fixes across 5 files.
+
+**Stats:** 12 files changed (4 new: CollapsibleGroupList, ResultCard + tests). 3268/3270 frontend tests pass (2 pre-existing date-dependent flakes in template-utils.test.ts). TypeScript clean. Biome clean.
+
 ## Session 203 — 2026-04-05 — Batch 57: Refactoring extractions (R-1, R-3, R-8, R-11, R-14, R-17)
 
 ### Summary
