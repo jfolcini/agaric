@@ -9,7 +9,7 @@
 
 import { ArrowUpDown, Filter, Layers, Plus, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,12 +17,13 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 import type { AgendaGroupBy, AgendaSortBy } from '../lib/agenda-sort'
 import i18n from '../lib/i18n'
+import { listPropertyKeys } from '../lib/tauri'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type AgendaFilterDimension = 'status' | 'priority' | 'dueDate' | 'scheduledDate' | 'completedDate' | 'createdDate' | 'tag'
+export type AgendaFilterDimension = 'status' | 'priority' | 'dueDate' | 'scheduledDate' | 'completedDate' | 'createdDate' | 'tag' | 'property'
 
 export interface AgendaFilter {
   dimension: AgendaFilterDimension
@@ -75,6 +76,7 @@ const DIMENSION_OPTIONS: Record<
     choices: ['Today', 'This week', 'This month', 'Last 7 days', 'Last 30 days'],
   },
   tag: { labelKey: 'agendaFilter.tag', choices: null }, // free-text
+  property: { labelKey: 'agendaFilter.property', choices: null }, // dynamic — two-step picker
 }
 
 const ALL_DIMENSIONS: AgendaFilterDimension[] = [
@@ -85,6 +87,7 @@ const ALL_DIMENSIONS: AgendaFilterDimension[] = [
   'completedDate',
   'createdDate',
   'tag',
+  'property',
 ]
 
 export function dimensionLabel(dim: AgendaFilterDimension): string {
@@ -174,10 +177,77 @@ function TextValuePicker({
   )
 }
 
+function PropertyValuePicker({
+  selected,
+  onChange,
+}: {
+  selected: string[]
+  onChange: (values: string[]) => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const [propertyKeys, setPropertyKeys] = useState<string[]>([])
+  const [propertyKey, setPropertyKey] = useState(() => {
+    if (selected.length > 0) {
+      const colonIdx = selected[0].indexOf(':')
+      return colonIdx > 0 ? selected[0].slice(0, colonIdx) : selected[0]
+    }
+    return ''
+  })
+  const [propertyValue, setPropertyValue] = useState(() => {
+    if (selected.length > 0) {
+      const colonIdx = selected[0].indexOf(':')
+      return colonIdx > 0 ? selected[0].slice(colonIdx + 1) : ''
+    }
+    return ''
+  })
+
+  useEffect(() => {
+    listPropertyKeys().then(setPropertyKeys).catch(() => setPropertyKeys([]))
+  }, [])
+
+  useEffect(() => {
+    if (propertyKey) {
+      const filterValue = propertyValue ? `${propertyKey}:${propertyValue}` : propertyKey
+      onChange([filterValue])
+    } else {
+      onChange([])
+    }
+  }, [propertyKey, propertyValue]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="flex flex-col gap-2">
+      <label className="text-xs font-medium">{t('agendaFilter.propertyKey')}</label>
+      <select
+        className="h-7 text-xs border rounded px-2"
+        value={propertyKey}
+        onChange={(e) => setPropertyKey(e.target.value)}
+        aria-label={t('agendaFilter.propertyKey')}
+      >
+        <option value="">{t('agendaFilter.selectProperty')}</option>
+        {propertyKeys.map((k) => (
+          <option key={k} value={k}>{k}</option>
+        ))}
+      </select>
+      <label className="text-xs font-medium">{t('agendaFilter.propertyValue')}</label>
+      <Input
+        className="h-7 text-xs"
+        placeholder={t('agendaFilter.propertyValuePlaceholder')}
+        value={propertyValue}
+        onChange={(e) => setPropertyValue(e.target.value)}
+        aria-label={t('agendaFilter.propertyValue')}
+      />
+    </div>
+  )
+}
+
 function ValuePicker({ dimension, selected, onChange }: ValuePickerProps): React.ReactElement {
   const meta = DIMENSION_OPTIONS[dimension]
   const label = dimensionLabel(dimension)
   const choices = typeof meta.choices === 'function' ? meta.choices() : meta.choices
+
+  if (dimension === 'property') {
+    return <PropertyValuePicker selected={selected} onChange={onChange} />
+  }
 
   if (choices) {
     return (
@@ -261,7 +331,7 @@ function AddFilterPopover({
             aria-label={t('agendaFilter.filterDimensions')}
           >
             {ALL_DIMENSIONS.map((dim) => {
-              const alreadyUsed = existingDimensions.has(dim)
+              const alreadyUsed = dim !== 'property' && existingDimensions.has(dim)
               return (
                 <li key={dim}>
                   <button
@@ -400,7 +470,7 @@ export function AgendaFilterBuilder({
         {filters.length > 0 && (
           <ul aria-label={t('agendaFilter.appliedFilters')} className="contents list-none m-0 p-0">
             {filters.map((filter, idx) => (
-              <li key={filter.dimension} className="contents">
+              <li key={`${filter.dimension}-${idx}`} className="contents">
                 <div className="flex items-center gap-0 rounded-full bg-muted text-xs shrink-0">
                   <EditFilterPopover
                     filter={filter}

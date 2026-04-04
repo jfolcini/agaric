@@ -20,6 +20,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { invoke } from '@tauri-apps/api/core'
 import type { AgendaFilter, AgendaFilterBuilderProps, AgendaSortGroupControlsProps } from '../AgendaFilterBuilder'
 import { AgendaFilterBuilder, AgendaSortGroupControls, getTaskStates } from '../AgendaFilterBuilder'
 
@@ -420,6 +421,61 @@ describe('AgendaFilterBuilder', () => {
     expect(within(group).getByLabelText('WAITING')).toBeInTheDocument()
 
     localStorage.removeItem('task_cycle')
+  })
+
+  // -----------------------------------------------------------------------
+  // 21. Property dimension shows in add filter popover
+  // -----------------------------------------------------------------------
+  it('property dimension shows in add filter popover', async () => {
+    const user = userEvent.setup()
+    renderBuilder()
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+    const list = screen.getByRole('list', { name: /Filter dimensions/i })
+    expect(within(list).getByText('Property')).toBeInTheDocument()
+  })
+
+  // -----------------------------------------------------------------------
+  // 22. Selecting Property dimension shows key picker and value input
+  // -----------------------------------------------------------------------
+  it('selecting Property dimension shows key picker and value input', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_property_keys') return ['project', 'effort', 'context']
+      return undefined
+    })
+
+    const user = userEvent.setup()
+    renderBuilder()
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+    await user.click(screen.getByText('Property'))
+
+    expect(screen.getByLabelText('Property key')).toBeInTheDocument()
+    expect(screen.getByLabelText('Value (optional)')).toBeInTheDocument()
+  })
+
+  // -----------------------------------------------------------------------
+  // 23. Property dimension is not disabled when already used
+  // -----------------------------------------------------------------------
+  it('property dimension is not disabled when already used', async () => {
+    const user = userEvent.setup()
+    const filters: AgendaFilter[] = [{ dimension: 'property', values: ['project:alpha'] }]
+    renderBuilder({ filters })
+
+    await user.click(screen.getByRole('button', { name: /Add filter/i }))
+
+    const propertyBtn = screen.getByText('Property').closest('button')
+    expect(propertyBtn).not.toBeDisabled()
+  })
+
+  // -----------------------------------------------------------------------
+  // 24. Property filter chip displays key:value
+  // -----------------------------------------------------------------------
+  it('property filter chip displays key:value', () => {
+    const filters: AgendaFilter[] = [{ dimension: 'property', values: ['project:alpha'] }]
+    renderBuilder({ filters })
+
+    expect(screen.getByText('Property:')).toBeInTheDocument()
+    expect(screen.getByText('project:alpha')).toBeInTheDocument()
   })
 })
 

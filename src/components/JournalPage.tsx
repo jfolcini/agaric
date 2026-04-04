@@ -729,6 +729,21 @@ export function JournalPage({
                   allBlocks.set(b.id, b)
                 }
               }
+            } else if (filter.dimension === 'property') {
+              for (const filterValue of filter.values) {
+                const colonIdx = filterValue.indexOf(':')
+                const key = colonIdx > 0 ? filterValue.slice(0, colonIdx) : filterValue
+                const value = colonIdx > 0 ? filterValue.slice(colonIdx + 1) : undefined
+                const resp = await queryByProperty({
+                  key,
+                  valueText: value ?? undefined,
+                  limit: 500,
+                })
+                for (const b of resp.items) {
+                  ids.add(b.id)
+                  allBlocks.set(b.id, b)
+                }
+              }
             }
 
             resultSets.push(ids)
