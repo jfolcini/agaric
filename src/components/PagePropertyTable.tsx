@@ -231,7 +231,7 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
                 </Button>
               </PopoverTrigger>
               <PopoverContent
-                className="w-64 space-y-2 p-3"
+                className="w-64 space-y-2 p-3 max-w-[calc(100vw-2rem)]"
                 aria-label={t('pageProperty.pickerLabel')}
               >
                 <Input
@@ -453,7 +453,7 @@ function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: Proper
             </Button>
           </PopoverTrigger>
           <PopoverContent
-            className="w-56 space-y-2 p-3"
+            className="w-56 space-y-2 p-3 max-w-[calc(100vw-2rem)]"
             aria-label={t('pageProperty.editOptionsLabel', { key: prop.key })}
           >
             <div className="max-h-32 space-y-1 overflow-y-auto">

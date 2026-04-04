@@ -122,7 +122,7 @@ export function SourcePageFilter({
           <Filter className="h-4 w-4" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-64 p-2" align="start">
+      <PopoverContent className="w-64 p-2 max-w-[calc(100vw-2rem)]" align="start">
         <div className="source-page-filter-content space-y-2">
           <Input
             placeholder={t('sourceFilter.searchPlaceholder')}

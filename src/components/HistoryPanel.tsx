@@ -127,17 +127,17 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
               key={entry.seq}
               className="history-item flex flex-col gap-2 rounded-lg border bg-card p-4"
             >
-              <div className="history-item-row flex items-start justify-between gap-3 w-full">
+              <div className="history-item-row flex flex-col [@media(pointer:fine)]:flex-row [@media(pointer:fine)]:items-start [@media(pointer:fine)]:justify-between gap-3 w-full">
                 <div className="history-item-content flex flex-col gap-1 min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <Badge variant="secondary" className="history-item-type shrink-0">
                       {entry.op_type}
                     </Badge>
-                    <span className="history-item-time text-xs text-muted-foreground">
+                    <span className="history-item-time text-xs [@media(pointer:coarse)]:text-sm text-muted-foreground">
                       {formatTimestamp(entry.created_at)}
                     </span>
-                    <span className="text-[10px] text-muted-foreground/60">&middot;</span>
-                    <span className="text-[10px] text-muted-foreground/60">
+                    <span className="text-xs text-muted-foreground/60">&middot;</span>
+                    <span className="text-xs text-muted-foreground/60">
                       dev:{entry.device_id.slice(0, 8)}
                     </span>
                   </div>
@@ -168,7 +168,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                   <Button
                     variant="outline"
                     size="sm"
-                    className="history-restore-btn shrink-0"
+                    className="history-restore-btn shrink-0 [@media(pointer:coarse)]:min-h-[44px]"
                     onClick={() => setConfirmEntry(entry)}
                     disabled={restoringSeq === entry.seq}
                   >

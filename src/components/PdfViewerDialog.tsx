@@ -40,6 +40,9 @@ export function PdfViewerDialog({
   const pdfDocRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const renderTaskRef = useRef<ReturnType<pdfjsLib.PDFPageProxy['render']> | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const currentPageRef = useRef(currentPage)
+  currentPageRef.current = currentPage
 
   /** Render a specific page onto the canvas. */
   const renderPage = useCallback(async (pageNum: number) => {
@@ -59,7 +62,18 @@ export function PdfViewerDialog({
 
     try {
       const page = await pdfDoc.getPage(pageNum)
-      const viewport = page.getViewport({ scale: 1.5 })
+
+      // Calculate adaptive scale based on container width
+      const containerWidth = containerRef.current?.clientWidth
+      let scale = 1.5 // fallback when container is not yet measured
+      if (containerWidth && containerWidth > 0) {
+        const defaultWidth = page.getViewport({ scale: 1 }).width
+        if (defaultWidth > 0) {
+          scale = Math.min(3.0, Math.max(0.5, containerWidth / defaultWidth))
+        }
+      }
+
+      const viewport = page.getViewport({ scale })
 
       canvas.height = viewport.height
       canvas.width = viewport.width
@@ -155,6 +169,19 @@ export function PdfViewerDialog({
     if (currentPage < numPages) goToPage(currentPage + 1)
   }, [currentPage, numPages, goToPage])
 
+  /** Re-render the current page when the container resizes. */
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || numPages === 0) return
+
+    const observer = new ResizeObserver(() => {
+      renderPage(currentPageRef.current)
+    })
+    observer.observe(container)
+
+    return () => observer.disconnect()
+  }, [numPages, renderPage])
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl max-h-[90vh] flex flex-col">
@@ -163,7 +190,10 @@ export function PdfViewerDialog({
           <DialogDescription className="sr-only">PDF viewer for {filename}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 min-h-0 overflow-auto flex items-start justify-center bg-muted/30 rounded-md">
+        <div
+          ref={containerRef}
+          className="flex-1 min-h-0 overflow-auto flex items-start justify-center bg-muted/30 rounded-md"
+        >
           {loading && (
             <div className="flex items-center justify-center p-8" data-testid="pdf-loading">
               <span className="text-muted-foreground text-sm">Loading PDF...</span>

@@ -200,7 +200,7 @@ export function AgendaResults({
     return (
       <li
         key={block.id}
-        className="agenda-results-item flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer hover:bg-accent/50 transition-colors"
+        className="agenda-results-item flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer hover:bg-accent/50 active:bg-accent/70 transition-colors"
         // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
         tabIndex={0}
         onClick={() => handleItemClick(block)}
@@ -225,7 +225,7 @@ export function AgendaResults({
         {block.due_date && (
           <span
             className={cn(
-              'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+              'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs [@media(pointer:coarse)]:text-sm font-medium',
               dueDateColor(block.due_date),
             )}
           >
@@ -281,7 +281,7 @@ export function AgendaResults({
             <div key={group.label} className="agenda-group mb-3">
               <h3
                 className={cn(
-                  'agenda-group-header text-xs font-semibold uppercase tracking-wide px-3 py-1',
+                  'agenda-group-header text-xs [@media(pointer:coarse)]:text-sm font-semibold uppercase tracking-wide px-3 py-1',
                   group.className ?? 'text-muted-foreground',
                 )}
               >

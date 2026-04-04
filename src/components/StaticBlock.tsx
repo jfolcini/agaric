@@ -287,10 +287,10 @@ export function renderRichContent(
     if (block.type === 'heading') {
       const HeadingTag = `h${block.attrs.level}` as keyof JSX.IntrinsicElements
       const headingClasses: Record<number, string> = {
-        1: 'text-2xl font-bold',
-        2: 'text-xl font-bold',
-        3: 'text-lg font-semibold',
-        4: 'text-base font-semibold',
+        1: 'text-xl sm:text-2xl font-bold',
+        2: 'text-lg sm:text-xl font-bold',
+        3: 'text-base sm:text-lg font-semibold',
+        4: 'text-sm sm:text-base font-semibold',
         5: 'text-sm font-semibold',
         6: 'text-xs font-semibold uppercase tracking-wide',
       }
@@ -343,10 +343,10 @@ export function renderRichContent(
         } else if (child.type === 'heading') {
           const HTag = `h${child.attrs.level}` as keyof JSX.IntrinsicElements
           const hClasses: Record<number, string> = {
-            1: 'text-2xl font-bold',
-            2: 'text-xl font-bold',
-            3: 'text-lg font-semibold',
-            4: 'text-base font-semibold',
+            1: 'text-xl sm:text-2xl font-bold',
+            2: 'text-lg sm:text-xl font-bold',
+            3: 'text-base sm:text-lg font-semibold',
+            4: 'text-sm sm:text-base font-semibold',
             5: 'text-sm font-semibold',
             6: 'text-xs font-semibold uppercase tracking-wide',
           }

@@ -216,7 +216,7 @@ export function KeyboardShortcuts({
             Available keyboard shortcuts and syntax reference for the editor.
           </SheetDescription>
         </SheetHeader>
-        <div className="overflow-y-auto px-4 pb-4" data-testid="shortcuts-table">
+        <div className="overflow-y-auto overflow-x-auto px-4 pb-4" data-testid="shortcuts-table">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b">

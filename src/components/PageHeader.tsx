@@ -322,7 +322,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             </PopoverTrigger>
             <PopoverContent
               align="end"
-              className="w-56 p-1"
+              className="w-56 p-1 max-w-[calc(100vw-2rem)]"
               aria-label={t('pageHeader.pageActions')}
             >
               <button
@@ -495,7 +495,10 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               {appliedTags.length === 0 ? t('pageHeader.addTag') : ''}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-64 space-y-2 p-3" aria-label={t('pageHeader.tagPicker')}>
+          <PopoverContent
+            className="w-64 space-y-2 p-3 max-w-[calc(100vw-2rem)]"
+            aria-label={t('pageHeader.tagPicker')}
+          >
             <Input
               placeholder={t('pageHeader.searchTags')}
               value={tagQuery}

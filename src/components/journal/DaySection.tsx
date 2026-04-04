@@ -101,7 +101,7 @@ export function DaySection({
               {entry.pageId && (backlinkCounts[entry.pageId] ?? 0) > 0 && (
                 <button
                   type="button"
-                  className="inline-flex items-center rounded-full bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50"
+                  className="inline-flex items-center rounded-full bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 active:bg-blue-300 dark:active:bg-blue-900/70"
                   onClick={() => goToDateAndPanel(entry.date, 'references')}
                   aria-label={`${backlinkCounts[entry.pageId]} references, click to view`}
                 >
@@ -161,7 +161,7 @@ export function DaySection({
         (compact ? (
           <button
             type="button"
-            className="w-full rounded-md border border-dashed px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent/50 transition-colors"
+            className="w-full rounded-md border border-dashed px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent/50 active:bg-accent/70 transition-colors"
             onClick={() => onAddBlock(entry.dateStr)}
           >
             <Plus className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />

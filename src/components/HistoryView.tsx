@@ -482,8 +482,8 @@ export function HistoryView(): React.ReactElement {
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
-                    <span className="text-[10px] text-muted-foreground/60"> · </span>
-                    <span className="history-item-device text-[10px] text-muted-foreground/60">
+                    <span className="text-xs text-muted-foreground/60"> · </span>
+                    <span className="history-item-device text-xs text-muted-foreground/60">
                       dev:{entry.device_id.slice(0, 8)}
                     </span>
                   </div>

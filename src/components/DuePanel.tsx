@@ -432,7 +432,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
           <button
             type="button"
             className={cn(
-              'text-[10px] px-1.5 py-0.5 rounded border transition-colors',
+              'text-xs px-1.5 py-0.5 rounded border transition-colors',
               hideBeforeScheduled
                 ? 'bg-primary/10 border-primary/30 text-primary'
                 : 'border-muted-foreground/20 text-muted-foreground hover:bg-accent/50',
@@ -496,14 +496,14 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                         }}
                       >
                         {block.todo_state && (
-                          <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-bold leading-none bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
+                          <span className="shrink-0 rounded px-1 py-0.5 text-xs font-bold leading-none bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
                             {block.todo_state}
                           </span>
                         )}
                         {block.priority && (
                           <span
                             className={cn(
-                              'inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-[10px] font-bold leading-none',
+                              'inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-xs font-bold leading-none',
                               priorityColor(block.priority),
                             )}
                           >
@@ -513,7 +513,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                         <span className="min-w-0 flex-1 truncate">
                           {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
                         </span>
-                        <span className="shrink-0 text-[10px] text-destructive/60">
+                        <span className="shrink-0 text-xs text-destructive/60">
                           {block.due_date}
                         </span>
                       </li>
@@ -551,14 +551,14 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                         }}
                       >
                         {block.todo_state && (
-                          <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-bold leading-none bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
+                          <span className="shrink-0 rounded px-1 py-0.5 text-xs font-bold leading-none bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
                             {block.todo_state}
                           </span>
                         )}
                         <span className="min-w-0 flex-1 truncate">
                           {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
                         </span>
-                        <span className="shrink-0 text-[10px] text-amber-600/60 dark:text-amber-400/60">
+                        <span className="shrink-0 text-xs text-amber-600/60 dark:text-amber-400/60">
                           {block.due_date}
                         </span>
                       </li>
@@ -580,7 +580,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                 {group.items.map((block) => (
                   <li
                     key={block.id}
-                    className="due-panel-item flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer hover:bg-muted/50 transition-colors"
+                    className="due-panel-item flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer hover:bg-muted/50 active:bg-muted/70 transition-colors"
                     data-testid="due-panel-item"
                     // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
                     tabIndex={0}
@@ -621,14 +621,14 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
             const uniqueProjected = projectedEntries.filter((e) => !realBlockIds.has(e.block.id))
             return uniqueProjected.length > 0 ? (
               <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
-                <p className="text-xs font-medium text-muted-foreground mb-2">
+                <p className="text-xs [@media(pointer:coarse)]:text-sm font-medium text-muted-foreground mb-2">
                   {t('due.projected', { defaultValue: 'Projected' })}
                 </p>
                 <ul className="space-y-1">
                   {uniqueProjected.map((entry) => (
                     <li
                       key={`projected-${entry.block.id}-${entry.source}`}
-                      className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 transition-colors"
+                      className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70 transition-colors"
                       onClick={() => {
                         if (!entry.block.parent_id || !onNavigateToPage) return
                         const title = pageTitles.get(entry.block.parent_id) ?? ''
@@ -651,7 +651,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                       {entry.block.priority && (
                         <span
                           className={cn(
-                            'inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-[10px] font-bold leading-none',
+                            'inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-xs font-bold leading-none',
                             priorityColor(entry.block.priority),
                           )}
                         >

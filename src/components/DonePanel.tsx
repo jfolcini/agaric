@@ -212,7 +212,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
           {grouped.map((group) => (
             <div key={group.pageId} className="done-panel-group">
               {/* Group sub-header: page title + block count (not individually collapsible) */}
-              <div className="done-panel-group-header px-3 py-1 text-xs font-semibold text-muted-foreground tracking-wide uppercase bg-muted rounded">
+              <div className="done-panel-group-header px-3 py-1 text-xs [@media(pointer:coarse)]:text-sm font-semibold text-muted-foreground tracking-wide uppercase bg-muted rounded">
                 {group.title} ({group.items.length})
               </div>
 
@@ -223,7 +223,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
                 {group.items.map((block) => (
                   <li
                     key={block.id}
-                    className="done-panel-item flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer hover:bg-muted/50 transition-colors"
+                    className="done-panel-item flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer hover:bg-muted/50 active:bg-muted/70 transition-colors"
                     // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
                     tabIndex={0}
                     onClick={() => handleBlockClick(block)}
@@ -239,7 +239,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
 
                     {/* Source page breadcrumb */}
                     {block.parent_id && (
-                      <span className="done-panel-breadcrumb text-xs text-muted-foreground truncate max-w-[40%]">
+                      <span className="done-panel-breadcrumb text-xs [@media(pointer:coarse)]:text-sm text-muted-foreground truncate max-w-[40%]">
                         {t('donePanel.breadcrumbArrow')}{' '}
                         {pageTitles.get(block.parent_id) ?? t('donePanel.untitled')}
                       </span>

@@ -352,7 +352,7 @@ export function DeviceManagement(): React.ReactElement {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="device-rename-btn"
+                            className="device-rename-btn [@media(pointer:coarse)]:min-h-[44px]"
                             onClick={() => setRenamePeerId(peer.peer_id)}
                             disabled={renamingPeerId === peer.peer_id}
                             aria-label={t('device.renameDeviceLabel', {

@@ -110,7 +110,7 @@ function DateChip({ date, icon: Icon, colorClass, eventName, i18nKey, chipClass 
     <button
       type="button"
       className={cn(
-        `${chipClass} flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none cursor-pointer`,
+        `${chipClass} flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer`,
         colorClass,
       )}
       title={t(i18nKey, { date: formatCompactDate(date) })}
@@ -637,7 +637,7 @@ function SortableBlockInner({
           {properties?.some((p) => p.key === 'repeat') && (
             <button
               type="button"
-              className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400 [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
+              className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400 [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
               aria-label={t('block.repeats', {
                 value: properties.find((p) => p.key === 'repeat')?.value ?? '',
               })}
@@ -665,7 +665,7 @@ function SortableBlockInner({
                 )
               })}
               {filteredProperties.length > 3 && (
-                <span className="text-[10px] text-muted-foreground select-none">
+                <span className="text-xs text-muted-foreground select-none">
                   +{filteredProperties.length - 3}
                 </span>
               )}
@@ -678,7 +678,7 @@ function SortableBlockInner({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1 [@media(pointer:coarse)]:min-h-[44px]"
+                  className="attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1 [@media(pointer:coarse)]:min-h-[44px]"
                   aria-label={t('block.attachments', { count: attachmentCount })}
                   aria-expanded={showAttachments}
                   onClick={() => setShowAttachments((prev) => !prev)}

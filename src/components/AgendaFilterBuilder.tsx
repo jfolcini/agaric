@@ -353,7 +353,7 @@ function AddFilterPopover({
           {t('agendaFilter.addFilter')}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-56 p-3">
+      <PopoverContent align="start" className="w-56 p-3 max-w-[calc(100vw-2rem)]">
         {step === 'pick-dimension' && (
           <ul
             className="flex flex-col gap-1 list-none m-0 p-0"
@@ -423,7 +423,7 @@ function EditFilterPopover({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent align="start" className="w-56 p-3">
+      <PopoverContent align="start" className="w-56 p-3 max-w-[calc(100vw-2rem)]">
         <div className="flex flex-col gap-2">
           <p className="text-xs font-medium">{dimensionLabel(filter.dimension)}</p>
           <ValuePicker dimension={filter.dimension} selected={filter.values} onChange={onUpdate} />
@@ -603,7 +603,7 @@ function DropdownSelector<T extends string>({
           <span>{currentLabel ?? currentValue}</span>
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-40 p-1">
+      <PopoverContent align="start" className="w-40 p-1 max-w-[calc(100vw-2rem)]">
         <ul className="flex flex-col gap-0.5 list-none m-0 p-0" aria-label={t(label)}>
           {options.map((opt) => (
             <li key={opt.value}>
