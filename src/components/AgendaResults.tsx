@@ -240,13 +240,13 @@ export function AgendaResults({
         )}
 
         {/* Block content */}
-        <span className="agenda-results-text flex-1 truncate text-sm">
+        <span className="agenda-results-text min-w-0 flex-1 truncate text-sm">
           {truncateContent(block.content)}
         </span>
 
         {/* Source page breadcrumb */}
         {block.parent_id && (
-          <span className="agenda-results-breadcrumb text-xs text-muted-foreground shrink-0">
+          <span className="agenda-results-breadcrumb text-xs text-muted-foreground truncate max-w-[40%]">
             {t('agenda.breadcrumbArrow')} {pageTitles.get(block.parent_id) ?? t('agenda.untitled')}
           </span>
         )}

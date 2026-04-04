@@ -187,7 +187,11 @@ export function SearchPanel(): React.ReactElement {
   return (
     <div className="search-panel space-y-4">
       {/* biome-ignore lint/a11y/useSemanticElements: jsdom doesn't support <search> element */}
-      <form onSubmit={handleSubmit} role="search" className="flex items-center gap-2">
+      <form
+        onSubmit={handleSubmit}
+        role="search"
+        className="flex flex-col sm:flex-row sm:items-center gap-2"
+      >
         <Input
           value={query}
           onChange={handleInputChange}

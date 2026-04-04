@@ -299,7 +299,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           e.preventDefault()
           handleCreatePage()
         }}
-        className="flex items-center gap-2"
+        className="flex flex-col sm:flex-row sm:items-center gap-2"
       >
         <Input
           value={newPageName}

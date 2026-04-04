@@ -117,7 +117,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           e.preventDefault()
           handleCreateTag()
         }}
-        className="flex items-center gap-2"
+        className="flex flex-col sm:flex-row sm:items-center gap-2"
       >
         <Input
           value={newTagName}

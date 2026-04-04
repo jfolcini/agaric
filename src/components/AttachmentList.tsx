@@ -100,7 +100,7 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
       {attachments.map((attachment) => (
         <li
           key={attachment.id}
-          className="group flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-accent/50"
+          className="group flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 transition-colors hover:bg-accent/50"
         >
           <MimeIcon mimeType={attachment.mime_type} />
           <span className="truncate flex-1 text-sm font-medium" title={attachment.filename}>

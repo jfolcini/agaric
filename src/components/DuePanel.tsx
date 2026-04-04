@@ -521,7 +521,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             P{block.priority}
                           </span>
                         )}
-                        <span className="flex-1 truncate">
+                        <span className="min-w-0 flex-1 truncate">
                           {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
                         </span>
                         <span className="shrink-0 text-[10px] text-destructive/60">
@@ -566,7 +566,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             {block.todo_state}
                           </span>
                         )}
-                        <span className="flex-1 truncate">
+                        <span className="min-w-0 flex-1 truncate">
                           {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
                         </span>
                         <span className="shrink-0 text-[10px] text-amber-600/60 dark:text-amber-400/60">
@@ -608,13 +608,13 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                     )}
 
                     {/* Block content */}
-                    <span className="due-panel-item-text text-sm flex-1 truncate">
+                    <span className="due-panel-item-text text-sm min-w-0 flex-1 truncate">
                       {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
                     </span>
 
                     {/* Source page breadcrumb */}
                     {block.parent_id && (
-                      <span className="due-panel-breadcrumb text-xs text-muted-foreground shrink-0">
+                      <span className="due-panel-breadcrumb text-xs text-muted-foreground truncate max-w-[40%]">
                         {t('duePanel.breadcrumbArrow')}{' '}
                         {pageTitles.get(block.parent_id) ?? t('duePanel.untitled')}
                       </span>
@@ -656,7 +656,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                       <span className="text-xs font-mono opacity-60">
                         {entry.source === 'due_date' ? '\u23F0' : '\uD83D\uDCC5'}
                       </span>
-                      <span className="flex-1 truncate">
+                      <span className="min-w-0 flex-1 truncate">
                         {truncateContent(entry.block.content, 80, t('duePanel.emptyContent'))}
                       </span>
                       {entry.block.priority && (

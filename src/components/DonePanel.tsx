@@ -244,13 +244,13 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
                     <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-green-600" />
 
                     {/* Block content */}
-                    <span className="done-panel-item-text text-sm flex-1 truncate">
+                    <span className="done-panel-item-text text-sm min-w-0 flex-1 truncate">
                       {truncateContent(block.content)}
                     </span>
 
                     {/* Source page breadcrumb */}
                     {block.parent_id && (
-                      <span className="done-panel-breadcrumb text-xs text-muted-foreground shrink-0">
+                      <span className="done-panel-breadcrumb text-xs text-muted-foreground truncate max-w-[40%]">
                         {t('donePanel.breadcrumbArrow')}{' '}
                         {pageTitles.get(block.parent_id) ?? t('donePanel.untitled')}
                       </span>

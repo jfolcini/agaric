@@ -493,14 +493,14 @@ export function AgendaFilterBuilder({
           : t('agendaFilter.filtersApplied', { count: filters.length })}
       </div>
 
-      <div className="flex items-center gap-1.5 overflow-x-auto">
+      <div className="flex flex-wrap items-center gap-1.5">
         <Filter className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
 
         {filters.length > 0 && (
           <ul aria-label={t('agendaFilter.appliedFilters')} className="contents list-none m-0 p-0">
             {filters.map((filter, idx) => (
               <li key={filter.dimension} className="contents">
-                <div className="flex items-center gap-0 rounded-full bg-muted text-xs shrink-0">
+                <div className="flex items-center gap-0 rounded-full bg-muted text-xs">
                   <EditFilterPopover
                     filter={filter}
                     onUpdate={(values) => handleUpdate(idx, values)}

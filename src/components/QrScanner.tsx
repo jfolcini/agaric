@@ -76,7 +76,7 @@ export function QrScanner({ onScan, onError }: QrScannerProps) {
       <section
         id="qr-scanner-region"
         ref={scannerRef}
-        className="w-64 h-64 bg-muted rounded-md flex items-center justify-center"
+        className="w-full max-w-64 aspect-square bg-muted rounded-md flex items-center justify-center"
         aria-label={t('qrScanner.viewportLabel')}
       >
         {!scanning && !error && (

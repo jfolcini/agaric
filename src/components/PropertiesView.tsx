@@ -260,7 +260,7 @@ export function PropertiesView(): React.ReactElement {
           e.preventDefault()
           handleCreate()
         }}
-        className="flex items-center gap-2"
+        className="flex flex-col sm:flex-row sm:items-center gap-2"
       >
         <Input
           value={newKey}
