@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, getBlock, searchBlocks } from '../lib/tauri'
+import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
 
@@ -39,7 +40,13 @@ export function SearchPanel(): React.ReactElement {
   const [loadingResultId, setLoadingResultId] = useState<string | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
+  const [recentPages, setRecentPages] = useState<RecentPage[]>([])
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
+
+  // Load recent pages from localStorage on mount
+  useEffect(() => {
+    setRecentPages(getRecentPages())
+  }, [])
 
   const executeSearch = useCallback(async (q: string, cursor?: string) => {
     setLoading(true)
@@ -137,12 +144,16 @@ export function SearchPanel(): React.ReactElement {
       setLoadingResultId(block.id)
       try {
         if (block.block_type === 'page') {
+          addRecentPage(block.id, block.content ?? 'Untitled')
+          setRecentPages(getRecentPages())
           navigateToPage(block.id, block.content ?? 'Untitled')
           return
         }
         if (block.parent_id) {
           try {
             const parent = await getBlock(block.parent_id)
+            addRecentPage(block.parent_id, parent.content ?? 'Untitled')
+            setRecentPages(getRecentPages())
             navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
           } catch {
             toast.error('Failed to load search results')
@@ -153,6 +164,15 @@ export function SearchPanel(): React.ReactElement {
       } finally {
         setLoadingResultId(null)
       }
+    },
+    [navigateToPage],
+  )
+
+  const handleRecentClick = useCallback(
+    (page: RecentPage) => {
+      addRecentPage(page.id, page.title)
+      setRecentPages(getRecentPages())
+      navigateToPage(page.id, page.title)
     },
     [navigateToPage],
   )
@@ -185,6 +205,25 @@ export function SearchPanel(): React.ReactElement {
       {query.trim().length > 0 && query.trim().length < 3 && (
         <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
           Search requires at least 3 characters
+        </div>
+      )}
+
+      {query === '' && recentPages.length > 0 && (
+        <div className="recent-pages">
+          <h3 className="text-xs font-medium text-muted-foreground px-3 py-2">Recent</h3>
+          <ul className="space-y-1 list-none m-0 p-0">
+            {recentPages.map((page) => (
+              <li key={page.id}>
+                <button
+                  type="button"
+                  className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left text-sm hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  onClick={() => handleRecentClick(page)}
+                >
+                  {page.title}
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

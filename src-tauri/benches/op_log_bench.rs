@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 use agaric_lib::db::init_pool;
 use agaric_lib::op::*;
@@ -60,7 +60,9 @@ fn bench_append_batch_100(c: &mut Criterion) {
     let db_path = dir.path().join("bench_batch.db");
     let pool = rt.block_on(init_pool(&db_path)).unwrap();
 
-    c.bench_function("append_local_op_batch_100", |b| {
+    let mut group = c.benchmark_group("append_local_op_batch");
+    group.throughput(Throughput::Elements(100));
+    group.bench_function("100", |b| {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             async move {
@@ -77,6 +79,7 @@ fn bench_append_batch_100(c: &mut Criterion) {
             }
         })
     });
+    group.finish();
 }
 
 /// Benchmark: append ops with varying payload content sizes (10 B → 10 KB).

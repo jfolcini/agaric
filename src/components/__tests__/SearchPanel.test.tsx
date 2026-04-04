@@ -22,6 +22,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { useNavigationStore } from '../../stores/navigation'
+import { addRecentPage } from '../../lib/recent-pages'
 import { SearchPanel } from '../SearchPanel'
 
 vi.mock('sonner', () => ({
@@ -49,6 +50,7 @@ const makeSearchResult = (overrides?: Partial<Record<string, unknown>>) => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
   useNavigationStore.setState({
     currentView: 'search',
     pageStack: [],
@@ -742,5 +744,176 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(screen.getByRole('list')).toBeInTheDocument()
     })
+  })
+
+  // =========================================================================
+  // Recent pages tests (F-6)
+  // =========================================================================
+
+  it('shows recent pages when query is empty and localStorage has entries', () => {
+    localStorage.setItem(
+      'recent_pages',
+      JSON.stringify([
+        { id: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' },
+        { id: 'P2', title: 'Page Two', visitedAt: '2024-01-01T00:00:00.000Z' },
+      ]),
+    )
+
+    render(<SearchPanel />)
+
+    expect(screen.getByText('Recent')).toBeInTheDocument()
+    expect(screen.getByText('Page One')).toBeInTheDocument()
+    expect(screen.getByText('Page Two')).toBeInTheDocument()
+  })
+
+  it('does not show recent section when localStorage is empty', () => {
+    render(<SearchPanel />)
+
+    expect(screen.queryByText('Recent')).not.toBeInTheDocument()
+  })
+
+  it('hides recent section when user types a query', () => {
+    localStorage.setItem(
+      'recent_pages',
+      JSON.stringify([{ id: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' }]),
+    )
+
+    render(<SearchPanel />)
+    expect(screen.getByText('Recent')).toBeInTheDocument()
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    fireEvent.change(input, { target: { value: 'search' } })
+
+    expect(screen.queryByText('Recent')).not.toBeInTheDocument()
+  })
+
+  it('navigates to page when clicking a recent item', async () => {
+    const user = userEvent.setup()
+
+    localStorage.setItem(
+      'recent_pages',
+      JSON.stringify([{ id: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' }]),
+    )
+
+    render(<SearchPanel />)
+    await user.click(screen.getByText('Page One'))
+
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('page-editor')
+    expect(navState.pageStack[0].pageId).toBe('P1')
+    expect(navState.pageStack[0].title).toBe('Page One')
+  })
+
+  it('updates recent pages in localStorage when clicking a search result (page type)', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        makeSearchResult({
+          id: 'PAGE1',
+          parent_id: null,
+          content: 'My Page',
+          block_type: 'page',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'page')
+
+    await waitFor(() => {
+      expect(screen.getByText('My Page')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByText('My Page'))
+
+    const stored = JSON.parse(localStorage.getItem('recent_pages') ?? '[]')
+    expect(stored).toHaveLength(1)
+    expect(stored[0].id).toBe('PAGE1')
+    expect(stored[0].title).toBe('My Page')
+  })
+
+  it('updates recent pages in localStorage when clicking a search result (child block)', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        makeSearchResult({
+          id: 'CHILD1',
+          parent_id: 'PARENT1',
+          content: 'child content',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'child')
+
+    await waitFor(() => {
+      expect(screen.getByText('child content')).toBeInTheDocument()
+    })
+
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'PARENT1',
+      block_type: 'page',
+      content: 'Parent Page Title',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+      archived_at: null,
+      is_conflict: false,
+    })
+
+    await user.click(screen.getByText('child content'))
+
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem('recent_pages') ?? '[]')
+      expect(stored).toHaveLength(1)
+      expect(stored[0].id).toBe('PARENT1')
+      expect(stored[0].title).toBe('Parent Page Title')
+    })
+  })
+
+  it('moves existing page to top of recent list on re-visit', async () => {
+    const user = userEvent.setup()
+
+    localStorage.setItem(
+      'recent_pages',
+      JSON.stringify([
+        { id: 'P1', title: 'First', visitedAt: '2024-01-01T00:00:00.000Z' },
+        { id: 'P2', title: 'Second', visitedAt: '2024-01-01T00:00:00.000Z' },
+      ]),
+    )
+
+    render(<SearchPanel />)
+    await user.click(screen.getByText('Second'))
+
+    const stored = JSON.parse(localStorage.getItem('recent_pages') ?? '[]')
+    expect(stored[0].id).toBe('P2')
+    expect(stored[1].id).toBe('P1')
+  })
+
+  it('caps recent pages at 10 entries', () => {
+    const pages = Array.from({ length: 10 }, (_, i) => ({
+      id: `P${i}`,
+      title: `Page ${i}`,
+      visitedAt: '2024-01-01T00:00:00.000Z',
+    }))
+    localStorage.setItem('recent_pages', JSON.stringify(pages))
+
+    addRecentPage('NEW1', 'New Page')
+
+    const stored = JSON.parse(localStorage.getItem('recent_pages') ?? '[]')
+    expect(stored).toHaveLength(10)
+    expect(stored[0].id).toBe('NEW1')
   })
 })

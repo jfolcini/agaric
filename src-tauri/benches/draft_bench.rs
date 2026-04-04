@@ -219,10 +219,10 @@ fn bench_save_draft_with_background_drafts(c: &mut Criterion) {
 
 fn bench_flush_draft_with_background_drafts(c: &mut Criterion) {
     let sizes: &[usize] = &[10, 100, 1000];
+    let rt = Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("flush_draft_bg_drafts");
     for &n in sizes {
-        let rt = Runtime::new().unwrap();
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("flush_bg_{n}")));
         let mat = rt.block_on(async { Materializer::new(pool.clone()) });

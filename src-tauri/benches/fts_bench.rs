@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 use agaric_lib::db::init_pool;
 use agaric_lib::fts::{fts_optimize, rebuild_fts_index, search_fts, update_fts_for_block};
@@ -102,6 +102,7 @@ fn bench_rebuild_fts_index(c: &mut Criterion) {
         // Only seed blocks; the benchmark itself does the rebuild.
         rt.block_on(seed_blocks(&pool, count));
 
+        group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.to_async(&rt).iter(|| rebuild_fts_index(&pool));
         });

@@ -3,7 +3,7 @@
 //!   2. `edit_block_inner`    — every keystroke save
 //!   3. `list_blocks_inner`   — every view render
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 use agaric_lib::commands::{
     batch_resolve_inner, create_block_inner, edit_block_inner, get_batch_properties_inner,
@@ -316,7 +316,7 @@ fn bench_list_blocks_empty(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             async move {
-                list_blocks_inner(&pool, None, None, None, None, None, None, Some(50))
+                list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(50))
                     .await
                     .unwrap()
             }
@@ -336,7 +336,7 @@ fn bench_list_blocks_10_items(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             async move {
-                list_blocks_inner(&pool, None, None, None, None, None, None, Some(50))
+                list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(50))
                     .await
                     .unwrap()
             }
@@ -358,7 +358,7 @@ fn bench_list_blocks_100_items(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             async move {
-                list_blocks_inner(&pool, None, None, None, None, None, None, Some(200))
+                list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(200))
                     .await
                     .unwrap()
             }
@@ -381,12 +381,12 @@ fn bench_list_blocks_paginate_10_of_100(c: &mut Criterion) {
             let pool = pool.clone();
             async move {
                 // First page — fetch 10 of 100
-                let page1 = list_blocks_inner(&pool, None, None, None, None, None, None, Some(10))
+                let page1 = list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(10))
                     .await
                     .unwrap();
                 // Second page using cursor from first page
                 if let Some(cursor) = page1.next_cursor {
-                    list_blocks_inner(&pool, None, None, None, None, None, Some(cursor), Some(10))
+                    list_blocks_inner(&pool, None, None, None, None, None, None, Some(cursor), Some(10))
                         .await
                         .unwrap();
                 }
@@ -433,6 +433,7 @@ fn bench_list_blocks_with_type_filter(c: &mut Criterion) {
                     None,
                     None,
                     None,
+                    None,
                     Some(50),
                 )
                 .await
@@ -448,58 +449,32 @@ fn bench_list_blocks_with_type_filter(c: &mut Criterion) {
 // batch_resolve benchmarks
 // ===========================================================================
 
-fn bench_batch_resolve_10(c: &mut Criterion) {
+fn bench_batch_resolve(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let dir = TempDir::new().unwrap();
-    let pool = rt.block_on(fresh_pool(&dir, "batch_resolve_10"));
-    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
-    let ids = rt.block_on(seed_blocks(&pool, &materializer, 10));
+    let mut group = c.benchmark_group("batch_resolve");
 
-    c.bench_function("batch_resolve_10_blocks", |b| {
-        b.to_async(&rt).iter(|| {
-            let pool = pool.clone();
-            let ids = ids.clone();
-            async move { batch_resolve_inner(&pool, ids).await.unwrap() }
-        })
-    });
+    for size in [10, 100, 500] {
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, &format!("batch_resolve_{size}")));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+        let ids = rt.block_on(seed_blocks(&pool, &materializer, size));
 
-    rt.block_on(async { materializer.shutdown() });
-}
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{size}_blocks")),
+            &size,
+            |b, _| {
+                b.to_async(&rt).iter(|| {
+                    let pool = pool.clone();
+                    let ids = ids.clone();
+                    async move { batch_resolve_inner(&pool, ids).await.unwrap() }
+                })
+            },
+        );
 
-fn bench_batch_resolve_100(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-    let dir = TempDir::new().unwrap();
-    let pool = rt.block_on(fresh_pool(&dir, "batch_resolve_100"));
-    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
-    let ids = rt.block_on(seed_blocks(&pool, &materializer, 100));
-
-    c.bench_function("batch_resolve_100_blocks", |b| {
-        b.to_async(&rt).iter(|| {
-            let pool = pool.clone();
-            let ids = ids.clone();
-            async move { batch_resolve_inner(&pool, ids).await.unwrap() }
-        })
-    });
-
-    rt.block_on(async { materializer.shutdown() });
-}
-
-fn bench_batch_resolve_500(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-    let dir = TempDir::new().unwrap();
-    let pool = rt.block_on(fresh_pool(&dir, "batch_resolve_500"));
-    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
-    let ids = rt.block_on(seed_blocks(&pool, &materializer, 500));
-
-    c.bench_function("batch_resolve_500_blocks", |b| {
-        b.to_async(&rt).iter(|| {
-            let pool = pool.clone();
-            let ids = ids.clone();
-            async move { batch_resolve_inner(&pool, ids).await.unwrap() }
-        })
-    });
-
-    rt.block_on(async { materializer.shutdown() });
+        rt.block_on(async { materializer.shutdown() });
+    }
+    group.finish();
 }
 
 // ===========================================================================
@@ -553,6 +528,7 @@ fn bench_batch_properties(c: &mut Criterion) {
 
     for size in [10, 50, 100] {
         let subset: Vec<String> = ids[..size].to_vec();
+        group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("{size}_blocks")),
             &size,
@@ -671,7 +647,7 @@ fn bench_list_blocks_at_scale(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
                     async move {
-                        list_blocks_inner(&pool, None, None, None, None, None, None, Some(50))
+                        list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(50))
                             .await
                             .unwrap()
                     }
@@ -711,9 +687,7 @@ criterion_group!(
 
 criterion_group!(
     resolve_benches,
-    bench_batch_resolve_10,
-    bench_batch_resolve_100,
-    bench_batch_resolve_500,
+    bench_batch_resolve,
 );
 
 criterion_group!(properties_benches, bench_batch_properties,);

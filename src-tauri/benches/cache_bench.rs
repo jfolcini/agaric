@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 use agaric_lib::cache::{
     rebuild_agenda_cache, rebuild_pages_cache, rebuild_tags_cache, reindex_block_links,
@@ -137,6 +137,7 @@ fn bench_rebuild_tags_cache(c: &mut Criterion) {
         let pool = make_pool(&rt, &dir);
         rt.block_on(seed_tags(&pool, count));
 
+        group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.to_async(&rt).iter(|| rebuild_tags_cache(&pool));
         });
@@ -153,6 +154,7 @@ fn bench_rebuild_pages_cache(c: &mut Criterion) {
         let pool = make_pool(&rt, &dir);
         rt.block_on(seed_pages(&pool, count));
 
+        group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.to_async(&rt).iter(|| rebuild_pages_cache(&pool));
         });
@@ -169,6 +171,7 @@ fn bench_rebuild_agenda_cache(c: &mut Criterion) {
         let pool = make_pool(&rt, &dir);
         rt.block_on(seed_agenda(&pool, count));
 
+        group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.to_async(&rt).iter(|| rebuild_agenda_cache(&pool));
         });
@@ -185,6 +188,7 @@ fn bench_reindex_block_links(c: &mut Criterion) {
         let pool = make_pool(&rt, &dir);
         rt.block_on(seed_links(&pool, count));
 
+        group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.to_async(&rt)
                 .iter(|| reindex_block_links(&pool, "LINKSRC00000000000000000"));

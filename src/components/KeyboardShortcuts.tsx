@@ -45,6 +45,8 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
       { keys: 'Ctrl + .', description: 'Collapse / expand children' },
       { keys: 'Ctrl + K', description: 'Insert or edit external link' },
       { keys: 'Ctrl + Shift + C', condition: 'in editor', description: 'Toggle code block' },
+      { keys: 'Ctrl + Shift + S', condition: 'in editor', description: 'Toggle strikethrough' },
+      { keys: 'Ctrl + Shift + H', condition: 'in editor', description: 'Toggle highlight' },
       { keys: 'Ctrl + Shift + Arrow Up', description: 'Move block up' },
       { keys: 'Ctrl + Shift + Arrow Down', description: 'Move block down' },
       { keys: 'Shift + Enter', condition: 'in editor', description: 'Insert line break (soft return)' },

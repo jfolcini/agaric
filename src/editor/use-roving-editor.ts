@@ -78,6 +78,24 @@ const CodeWithShortcut = Code.extend({
   },
 })
 
+/** Strike with Mod-Shift-s to toggle strikethrough. */
+const StrikeWithShortcut = Strike.extend({
+  addKeyboardShortcuts() {
+    return {
+      'Mod-Shift-s': () => this.editor.commands.toggleStrike(),
+    }
+  },
+})
+
+/** Highlight with Mod-Shift-h to toggle highlight. */
+const HighlightWithShortcut = Highlight.extend({
+  addKeyboardShortcuts() {
+    return {
+      'Mod-Shift-h': () => this.editor.commands.toggleHighlight(),
+    }
+  },
+})
+
 /** CodeBlockLowlight with Mod-Shift-c to toggle code blocks. */
 const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   addKeyboardShortcuts() {
@@ -233,8 +251,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Bold,
       Italic,
       CodeWithShortcut,
-      Strike,
-      Highlight,
+      StrikeWithShortcut,
+      HighlightWithShortcut,
       Blockquote,
       Table.configure({ resizable: false }),
       TableRow,

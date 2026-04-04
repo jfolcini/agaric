@@ -65,7 +65,7 @@ async fn seed_move_data(pool: &SqlitePool, n: usize) -> Vec<String> {
 fn bench_move_block(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("move_block");
-    group.sample_size(20);
+    group.sample_size(100);
 
     for count in [10, 100, 1_000] {
         let dir = TempDir::new().unwrap();
