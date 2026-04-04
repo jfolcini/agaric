@@ -124,6 +124,10 @@ mod specta_tests {
             crate::commands::list_projected_agenda,
             // Logseq/Markdown import (#660)
             crate::commands::import_markdown,
+            // Attachments (F-7)
+            crate::commands::add_attachment,
+            crate::commands::delete_attachment,
+            crate::commands::list_attachments,
         ])
     }
 
@@ -291,6 +295,10 @@ pub fn run() {
         commands::list_projected_agenda,
         // Logseq/Markdown import (#660)
         commands::import_markdown,
+        // Attachments (F-7)
+        commands::add_attachment,
+        commands::delete_attachment,
+        commands::list_attachments,
     ]);
 
     tauri::Builder::default()

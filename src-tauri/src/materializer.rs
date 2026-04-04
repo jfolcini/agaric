@@ -76,6 +76,8 @@ pub enum MaterializeTask {
     RebuildFtsIndex,
     /// Background: run FTS5 segment merge optimization
     FtsOptimize,
+    /// Background: clean up orphaned attachment files in the app data directory
+    CleanupOrphanedAttachments,
     /// Barrier: used by `flush_foreground()`/`flush_background()` to wait for
     /// queue drain. The consumer signals the `Notify` when it processes this
     /// task.  `Arc<Notify>` is `Clone`, so `MaterializeTask` keeps its
@@ -965,6 +967,7 @@ fn extract_block_id(task: &MaterializeTask) -> Option<String> {
                 .map(|h| h.block_id)
                 .filter(|id| !id.is_empty())
         }),
+        MaterializeTask::CleanupOrphanedAttachments => None,
         _ => None,
     }
 }
@@ -1393,6 +1396,23 @@ async fn apply_op(pool: &SqlitePool, record: &OpRecord) -> Result<(), AppError> 
     Ok(())
 }
 
+/// Scan the attachments directory, cross-reference with the database,
+/// and delete files with no matching row.
+async fn cleanup_orphaned_attachments(pool: &SqlitePool) -> Result<(), AppError> {
+    // For now, this is a no-op placeholder — the actual file scanning
+    // requires access to the app data directory path, which is not
+    // available in the materializer context. The infrastructure is in
+    // place for when the file storage convention is established (F-7/F-9).
+    //
+    // Implementation plan:
+    // 1. List all files in attachments/ directory
+    // 2. Query all fs_path values from attachments table
+    // 3. Delete files not in the DB set
+    let _ = pool;
+    tracing::debug!("orphaned attachment cleanup: no-op (file storage not yet established)");
+    Ok(())
+}
+
 async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Result<(), AppError> {
     match task {
         MaterializeTask::RebuildTagsCache => cache::rebuild_tags_cache(pool).await,
@@ -1412,6 +1432,9 @@ async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
         }
         MaterializeTask::RebuildFtsIndex => crate::fts::rebuild_fts_index(pool).await,
         MaterializeTask::FtsOptimize => crate::fts::fts_optimize(pool).await,
+        MaterializeTask::CleanupOrphanedAttachments => {
+            cleanup_orphaned_attachments(pool).await
+        }
         MaterializeTask::ApplyOp(ref record) => {
             tracing::warn!(seq = record.seq, "unexpected ApplyOp in background queue");
             Ok(())
@@ -4158,5 +4181,16 @@ mod tests {
             after.is_none(),
             "blocks.todo_state should be NULL after DeleteProperty, got: {after:?}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cleanup_orphaned_attachments_runs_without_error() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        // Enqueue and process the cleanup task
+        mat.try_enqueue_background(MaterializeTask::CleanupOrphanedAttachments)
+            .unwrap();
+        mat.flush_background().await.unwrap();
+        // No error = success (no-op for now)
     }
 }

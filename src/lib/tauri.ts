@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 
 export type {
+  AttachmentRow,
   BacklinkFilter,
   BacklinkGroup,
   BacklinkQueryResponse,
@@ -24,6 +25,7 @@ export type {
 } from './bindings'
 
 import type {
+  AttachmentRow,
   BacklinkFilter,
   BacklinkQueryResponse,
   BacklinkSort,
@@ -647,6 +649,47 @@ export async function resolvePageByAlias(alias: string): Promise<[string, string
 /** Export a page as Markdown with human-readable tag/page references. */
 export async function exportPageMarkdown(pageId: string): Promise<string> {
   return invoke('export_page_markdown', { pageId })
+}
+
+// ---------------------------------------------------------------------------
+// Attachment commands (F-7)
+// ---------------------------------------------------------------------------
+
+export interface AttachmentRow {
+  id: string
+  block_id: string
+  filename: string
+  mime_type: string
+  size_bytes: number
+  fs_path: string
+  created_at: string
+}
+
+/** List all attachments for a block. */
+export async function listAttachments(blockId: string): Promise<AttachmentRow[]> {
+  return invoke('list_attachments', { blockId })
+}
+
+/** Add an attachment to a block. */
+export async function addAttachment(params: {
+  blockId: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  fsPath: string
+}): Promise<AttachmentRow> {
+  return invoke('add_attachment', {
+    blockId: params.blockId,
+    filename: params.filename,
+    mimeType: params.mimeType,
+    sizeBytes: params.sizeBytes,
+    fsPath: params.fsPath,
+  })
+}
+
+/** Delete an attachment by ID. */
+export async function deleteAttachment(attachmentId: string): Promise<void> {
+  return invoke('delete_attachment', { attachmentId })
 }
 
 // ---------------------------------------------------------------------------

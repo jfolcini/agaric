@@ -51,6 +51,20 @@ const MAX_CONTENT_LENGTH: usize = 256 * 1024;
 /// Prevents pathological recursion and keeps recursive CTEs bounded.
 const MAX_BLOCK_DEPTH: i64 = 20;
 
+/// Maximum allowed attachment size (50 MB).
+const MAX_ATTACHMENT_SIZE: i64 = 50 * 1024 * 1024;
+
+/// Allowed MIME type patterns for attachments.
+/// Patterns ending with `/*` match any subtype under that top-level type.
+const ALLOWED_MIME_PATTERNS: &[&str] = &[
+    "image/*",
+    "application/pdf",
+    "text/*",
+    "application/json",
+    "application/zip",
+    "application/x-tar",
+];
+
 // ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------
@@ -158,6 +172,35 @@ pub struct PropertyRow {
     pub value_num: Option<f64>,
     pub value_date: Option<String>,
     pub value_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, sqlx::FromRow, specta::Type)]
+pub struct AttachmentRow {
+    pub id: String,
+    pub block_id: String,
+    pub mime_type: String,
+    pub filename: String,
+    pub size_bytes: i64,
+    pub fs_path: String,
+    pub created_at: String,
+}
+
+/// Check whether `mime` matches one of [`ALLOWED_MIME_PATTERNS`].
+///
+/// Wildcard patterns like `"image/*"` match any subtype under that
+/// top-level type (e.g. `"image/png"`, `"image/jpeg"`).
+fn is_mime_allowed(mime: &str) -> bool {
+    for pattern in ALLOWED_MIME_PATTERNS {
+        if pattern.ends_with("/*") {
+            let prefix = &pattern[..pattern.len() - 1]; // e.g. "image/"
+            if mime.starts_with(prefix) {
+                return true;
+            }
+        } else if *pattern == mime {
+            return true;
+        }
+    }
+    false
 }
 
 /// A property definition from the schema registry.
@@ -4091,6 +4134,190 @@ pub async fn import_markdown_inner(
 }
 
 // ---------------------------------------------------------------------------
+// Attachment inner functions
+// ---------------------------------------------------------------------------
+
+/// Add a file attachment to a block.
+///
+/// Validates the block exists and is not deleted, checks file size and MIME
+/// type against the allow-list, generates a ULID for the attachment, appends
+/// an `AddAttachment` op, inserts into the `attachments` table, and dispatches
+/// background cache tasks.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — block does not exist or is soft-deleted
+/// - [`AppError::Validation`] — size exceeds 50 MB or MIME type not allowed
+pub async fn add_attachment_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    filename: String,
+    mime_type: String,
+    size_bytes: i64,
+    fs_path: String,
+) -> Result<AttachmentRow, AppError> {
+    // F-11 validation: size limit
+    if size_bytes > MAX_ATTACHMENT_SIZE {
+        return Err(AppError::Validation(format!(
+            "attachment size {} bytes exceeds maximum {} bytes (50 MB)",
+            size_bytes, MAX_ATTACHMENT_SIZE
+        )));
+    }
+
+    // F-11 validation: MIME type allow-list
+    if !is_mime_allowed(&mime_type) {
+        return Err(AppError::Validation(format!(
+            "MIME type '{}' is not allowed; permitted: image/*, application/pdf, text/*, \
+             application/json, application/zip, application/x-tar",
+            mime_type
+        )));
+    }
+
+    // Generate ULID for attachment_id
+    let attachment_id = ulid::Ulid::new().to_string().to_uppercase();
+    let now = now_rfc3339();
+
+    // Build OpPayload
+    let payload = OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+        attachment_id: attachment_id.clone(),
+        block_id: BlockId::from_trusted(&block_id),
+        mime_type: mime_type.clone(),
+        filename: filename.clone(),
+        size_bytes,
+        fs_path: fs_path.clone(),
+    });
+
+    // Single IMMEDIATE transaction: validation + op_log + attachments write.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // Validate block exists and is not deleted (TOCTOU-safe inside tx)
+    let exists = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        block_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if exists.is_none() {
+        return Err(AppError::NotFound(format!(
+            "block '{block_id}' (not found or deleted)"
+        )));
+    }
+
+    // Append to op_log within transaction
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+
+    // Insert into attachments table within same transaction
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&attachment_id)
+    .bind(&block_id)
+    .bind(&mime_type)
+    .bind(&filename)
+    .bind(size_bytes)
+    .bind(&fs_path)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    // Fire-and-forget background cache dispatch
+    let _ = materializer.dispatch_background(&op_record);
+
+    Ok(AttachmentRow {
+        id: attachment_id,
+        block_id,
+        mime_type,
+        filename,
+        size_bytes,
+        fs_path,
+        created_at: now,
+    })
+}
+
+/// Delete an attachment by its ID.
+///
+/// Validates the attachment exists, appends a `DeleteAttachment` op,
+/// deletes from the `attachments` table, and dispatches background cache
+/// tasks.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — attachment does not exist
+pub async fn delete_attachment_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    attachment_id: String,
+) -> Result<(), AppError> {
+    let payload = OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+        attachment_id: attachment_id.clone(),
+    });
+
+    // Single IMMEDIATE transaction: validation + op_log + delete.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // Validate attachment exists
+    let exists = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM attachments WHERE id = ?"#,
+        attachment_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if exists.is_none() {
+        return Err(AppError::NotFound(format!(
+            "attachment '{attachment_id}'"
+        )));
+    }
+
+    // Append to op_log within transaction
+    let op_record =
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+
+    // Delete from attachments table within same transaction
+    sqlx::query("DELETE FROM attachments WHERE id = ?")
+        .bind(&attachment_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    // Fire-and-forget background cache dispatch
+    let _ = materializer.dispatch_background(&op_record);
+
+    Ok(())
+}
+
+/// List all (non-deleted) attachments for a block.
+///
+/// Pure read — no op log entry, no materializer dispatch.
+///
+/// # Errors
+///
+/// - [`AppError::Database`] — on query failure
+pub async fn list_attachments_inner(
+    pool: &SqlitePool,
+    block_id: String,
+) -> Result<Vec<AttachmentRow>, AppError> {
+    let rows = sqlx::query_as!(
+        AttachmentRow,
+        "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at \
+         FROM attachments WHERE block_id = ? AND deleted_at IS NULL \
+         ORDER BY created_at",
+        block_id
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
+// ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
@@ -5073,6 +5300,62 @@ pub async fn import_markdown(
     )
     .await
     .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn add_attachment(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_id: String,
+    filename: String,
+    mime_type: String,
+    size_bytes: i64,
+    fs_path: String,
+) -> Result<AttachmentRow, AppError> {
+    add_attachment_inner(
+        &pool.0,
+        device_id.as_str(),
+        &materializer,
+        block_id,
+        filename,
+        mime_type,
+        size_bytes,
+        fs_path,
+    )
+    .await
+    .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: delete an attachment. Delegates to [`delete_attachment_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_attachment(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    attachment_id: String,
+) -> Result<(), AppError> {
+    delete_attachment_inner(&pool.0, device_id.as_str(), &materializer, attachment_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: list attachments for a block. Delegates to [`list_attachments_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_attachments(
+    pool: State<'_, ReadPool>,
+    block_id: String,
+) -> Result<Vec<AttachmentRow>, AppError> {
+    list_attachments_inner(&pool.0, block_id)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -15746,6 +16029,293 @@ mod tests {
 
         assert_eq!(result.page_title, "Empty");
         assert_eq!(result.blocks_created, 0);
+
+        mat.shutdown();
+    }
+
+    // ======================================================================
+    // Attachment commands (F-7, F-11)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn add_attachment_creates_row() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block to attach to
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "hello".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let att = add_attachment_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "photo.png".into(),
+            "image/png".into(),
+            1024,
+            "/tmp/photo.png".into(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(att.block_id, block.id);
+        assert_eq!(att.filename, "photo.png");
+        assert_eq!(att.mime_type, "image/png");
+        assert_eq!(att.size_bytes, 1024);
+        assert_eq!(att.fs_path, "/tmp/photo.png");
+        assert!(!att.id.is_empty(), "attachment should have a generated ID");
+        assert!(!att.created_at.is_empty(), "created_at should be set");
+
+        // Verify persistence in DB via direct query
+        let db_row = sqlx::query_as!(
+            AttachmentRow,
+            "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at \
+             FROM attachments WHERE id = ?",
+            att.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(db_row.id, att.id);
+        assert_eq!(db_row.block_id, block.id);
+        assert_eq!(db_row.filename, "photo.png");
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn delete_attachment_removes_row() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block and an attachment
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "hello".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let att = add_attachment_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "doc.pdf".into(),
+            "application/pdf".into(),
+            2048,
+            "/tmp/doc.pdf".into(),
+        )
+        .await
+        .unwrap();
+
+        // Delete it
+        delete_attachment_inner(&pool, DEV, &mat, att.id.clone())
+            .await
+            .unwrap();
+
+        // Verify it's gone from the DB
+        let maybe = sqlx::query!(
+            r#"SELECT 1 as "v: i32" FROM attachments WHERE id = ?"#,
+            att.id
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert!(maybe.is_none(), "attachment should be deleted from DB");
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn add_attachment_validates_size_limit() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a block
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "hello".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        // Attempt to attach a file exceeding 50 MB
+        let over_limit = MAX_ATTACHMENT_SIZE + 1;
+        let result = add_attachment_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "big.bin".into(),
+            "application/zip".into(),
+            over_limit,
+            "/tmp/big.bin".into(),
+        )
+        .await;
+
+        assert!(result.is_err(), "should reject oversized attachment");
+        match result.unwrap_err() {
+            AppError::Validation(msg) => {
+                assert!(
+                    msg.contains("exceeds maximum"),
+                    "error should mention size limit: {msg}"
+                );
+            }
+            other => panic!("expected Validation error, got: {other:?}"),
+        }
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn add_attachment_validates_mime_type() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "hello".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let result = add_attachment_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "virus.exe".into(),
+            "application/x-msdownload".into(),
+            1024,
+            "/tmp/virus.exe".into(),
+        )
+        .await;
+
+        assert!(result.is_err(), "should reject disallowed MIME type");
+        match result.unwrap_err() {
+            AppError::Validation(msg) => {
+                assert!(
+                    msg.contains("not allowed"),
+                    "error should mention MIME not allowed: {msg}"
+                );
+            }
+            other => panic!("expected Validation error, got: {other:?}"),
+        }
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_attachments_returns_for_block() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create two blocks
+        let block_a = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "block a".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let block_b = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "block b".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+
+        // Add 2 attachments to block_a
+        add_attachment_inner(
+            &pool,
+            DEV,
+            &mat,
+            block_a.id.clone(),
+            "a1.png".into(),
+            "image/png".into(),
+            100,
+            "/tmp/a1.png".into(),
+        )
+        .await
+        .unwrap();
+
+        add_attachment_inner(
+            &pool,
+            DEV,
+            &mat,
+            block_a.id.clone(),
+            "a2.pdf".into(),
+            "application/pdf".into(),
+            200,
+            "/tmp/a2.pdf".into(),
+        )
+        .await
+        .unwrap();
+
+        // Add 1 attachment to block_b
+        add_attachment_inner(
+            &pool,
+            DEV,
+            &mat,
+            block_b.id.clone(),
+            "b1.txt".into(),
+            "text/plain".into(),
+            50,
+            "/tmp/b1.txt".into(),
+        )
+        .await
+        .unwrap();
+
+        // List for block_a — should get 2
+        let list_a = list_attachments_inner(&pool, block_a.id.clone())
+            .await
+            .unwrap();
+        assert_eq!(list_a.len(), 2, "block_a should have 2 attachments");
+        assert_eq!(list_a[0].filename, "a1.png");
+        assert_eq!(list_a[1].filename, "a2.pdf");
+
+        // List for block_b — should get 1
+        let list_b = list_attachments_inner(&pool, block_b.id.clone())
+            .await
+            .unwrap();
+        assert_eq!(list_b.len(), 1, "block_b should have 1 attachment");
+        assert_eq!(list_b[0].filename, "b1.txt");
 
         mat.shutdown();
     }
