@@ -6,7 +6,7 @@ What you can do with Agaric. For technical architecture and implementation detai
 
 ## 1. Views
 
-9 sidebar views plus a page editor.
+10 sidebar views plus a page editor.
 
 ### Journal
 
@@ -83,6 +83,14 @@ The default view — one page per day, created automatically.
 - Multi-select for batch revert (Ctrl+Click, Shift+Click, Ctrl+A)
 - Vim-style navigation (j/k, Space to toggle, Enter to revert)
 
+### Templates
+
+- Browse all pages marked as templates
+- Search/filter by template name
+- Journal template indicator badge
+- Click to navigate to template page
+- Remove template status with confirmation toast
+
 ### Page Editor
 
 Opens when navigating to any page:
@@ -127,7 +135,7 @@ Markdown-based WYSIWYG editing:
 
 ### Inline References
 
-- Type `@` to open tag picker with fuzzy search (create-new option)
+- Type `@` to open tag picker with fuzzy search (create-new option auto-selected on Enter when no exact match)
 - Type `[[` to open page/block link picker with fuzzy search (create-new option)
 - Type `((` to open block reference picker with FTS search (reference existing blocks)
 - Tags and links render as clickable chips with resolved names

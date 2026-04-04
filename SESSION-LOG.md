@@ -1,5 +1,44 @@
 # Session Log
 
+## Session 189 — 2026-04-04 — Batch 41: four REVIEW-LATER items (F-25, F-26, L-13, UX-M18)
+
+### Summary
+Resolved the final 4 actionable REVIEW-LATER items: templates sidebar view, tag picker auto-create, dead archived_at column removal, and properties drawer polish. Only F-14 (sync file transfer — requires architectural approval) remains open.
+
+**Commit:** fffa0ad
+
+### Changes
+
+| Area | Change |
+|------|--------|
+| TemplatesView.tsx (new) | F-25: New sidebar view — load templates via `loadTemplatePagesWithPreview()`, search/filter, journal template badge, remove template button, click-to-navigate |
+| App.tsx | F-25: Added `LayoutTemplate` icon, `TemplatesView` import, NAV_ITEMS entry, conditional render for 'templates' view |
+| navigation.ts | F-25: Added `'templates'` to `View` union type |
+| TemplatesView.test.tsx (new) | F-25: 12 tests (load, search, filter, navigate, remove, error, no-results, a11y) |
+| useBlockResolve.ts | F-26: Changed `result.push(...)` to `result.unshift(...)` in `searchTags()` — "Create new tag" is now first/default option when no exact match. Added clarifying comments on both searchTags and searchPages behavior |
+| useBlockResolve.test.ts | F-26: Reordered expected array in test to match unshift behavior |
+| 0018_remove_archived_at.sql (new) | L-13: Migration to drop `archived_at` column from blocks table |
+| 7 Rust source files | L-13: Removed `archived_at` from `BlockRow`, `FtsSearchRow`, `BlockSnapshot` structs and ~50 SELECT query sites |
+| 6 snapshot files | L-13: Updated insta snapshots |
+| 14 .sqlx cache files | L-13: Replaced old query hashes with new ones (column removal changed SQL) |
+| 33 TS files | L-13: Removed `archived_at: null` from fixtures, stores, mocks, components, bindings |
+| BlockPropertyDrawer.tsx | UX-M18: 6 fixes — text-xs typography, grid layout, Badge component for keys, Button component for delete, aria-label on inputs |
+| BlockPropertyDrawer.test.tsx | UX-M18: New test for accessible input labels |
+| i18n.ts | F-25 + UX-M18: 8 new translation keys (templates namespace + property.valueLabel) |
+
+### Stats
+- 71 files changed, 1122 insertions, 755 deletions
+- 3088 frontend tests pass, 1585 Rust tests pass
+- All 15 prek hooks pass
+
+### REVIEW-LATER removals
+- F-25: Templates sidebar view
+- F-26: Auto-create tags from @picker
+- L-13: Remove dead `archived_at` column
+- UX-M18: Properties drawer polish
+
+---
+
 ## Session 188 — 2026-04-04 — Batch 40: four HIGH-priority bug fixes (H-9, H-10, H-11, H-12)
 
 ### Summary
