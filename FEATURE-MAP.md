@@ -13,7 +13,7 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 | **Backend** | Rust, Tauri 2, SQLite (WAL mode), async Tokio |
 | **Sync** | Local WiFi, mDNS discovery, WebSocket + TLS, ECDSA P-256 cert pinning |
 | **Data integrity** | blake3 hash chains, three-way merge (diffy), zstd+CBOR snapshots |
-| **Testing** | Vitest (~2937 tests), cargo nextest (~850 tests), Playwright (14 E2E specs), fast-check, insta snapshots, Criterion benchmarks |
+| **Testing** | Vitest (~3200+ tests), cargo nextest (~850 tests), Playwright (14 E2E specs), fast-check, insta snapshots, Criterion benchmarks |
 
 ### Key Invariants
 
@@ -30,7 +30,7 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 
 ## 2. Database Schema
 
-**16 migration files**. **14 tables + 1 FTS5 virtual table**. **21+ indexes**.
+**17 migration files**. **14 tables + 1 FTS5 virtual table**. **21+ indexes**.
 
 ### Core Tables
 
@@ -99,7 +99,7 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 
 ---
 
-## 5. Tauri Commands (52 core + 5 sync = 57 total)
+## 5. Tauri Commands (55 core + 5 sync = 60 total)
 
 ### Block Operations (10)
 
@@ -125,17 +125,18 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 | `list_tags_by_prefix` | Case-insensitive prefix search on tags_cache. |
 | `list_tags_for_block` | Get all tag IDs for a block. |
 
-### Query Operations (7)
+### Query Operations (8)
 
 | Command | Purpose |
 |---------|---------|
 | `search_blocks` | FTS5 full-text search with cursor pagination. |
 | `query_by_tags` | Boolean tag query (AND/OR). TagExpr from IDs + prefixes. |
 | `query_by_property` | Filter blocks by property key/value. |
-| `query_backlinks_filtered` | Advanced backlink query with 11 filter types + sort. |
+| `query_backlinks_filtered` | Advanced backlink query with 17 filter types + sort. |
 | `list_backlinks_grouped` | Backlinks grouped by source page. |
 | `list_unlinked_references` | Blocks mentioning a page but not linked. |
 | `get_backlinks` | Simple backlink list. |
+| `list_projected_agenda` | Compute virtual future occurrences for repeating tasks within a date range. |
 
 ### Property Operations (9)
 
@@ -171,7 +172,7 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 | `revert_ops` | Batch revert multiple ops. |
 | `compute_edit_diff` | Word-level diff (word_diff.rs) for edit_block ops. |
 
-### Sync & Pairing (5 + 5 peer management)
+### Sync & Pairing (5 + 6 peer management)
 
 | Command | Purpose |
 |---------|---------|
@@ -185,8 +186,9 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 | `get_peer_ref` | Fetch single peer. |
 | `delete_peer_ref` | Unpair a peer. |
 | `update_peer_name` | Set human-readable peer name. |
+| `set_peer_address` | Set manual sync address for a peer. |
 
-### Batch, Export & System (8)
+### Batch, Export & System (9)
 
 | Command | Purpose |
 |---------|---------|
@@ -198,6 +200,7 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 | `export_page_markdown` | Export as Markdown with resolved `#[ULID]` and `[[ULID]]` + YAML frontmatter. |
 | `get_status` | Materializer queue metrics. |
 | `get_conflicts` | List conflict-copy blocks. |
+| `import_markdown` | Import Logseq/Markdown file as page + blocks. |
 
 ---
 
@@ -257,7 +260,7 @@ HeadExchange, OpBatch (1000 ops/chunk), ResetRequired, SnapshotOffer/Accept/Reje
 | `useJournalStore` | mode (daily/weekly/monthly/agenda), currentDate | Journal view state |
 | `useResolveStore` | cache Map\<ULID, {title, deleted}\> | Global title resolution |
 | `useUndoStore` | Per-page undoDepth + redoStack | Page-level undo/redo |
-| `useSyncStore` | state, peers[], opsReceived/Sent | Sync UI state |
+| `useSyncStore` | state ('idle'/'syncing'/'error'/'offline'), peers[], opsReceived/Sent | Sync UI state |
 
 ### Views (9)
 
@@ -303,7 +306,7 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 
 ### Utility Modules (src/lib/)
 
-- `tauri.ts` — Hand-written wrappers with object-style APIs for all 57 commands
+- `tauri.ts` — Hand-written wrappers with object-style APIs for all 60 commands
 - `bindings.ts` — Auto-generated from Rust types via specta
 - `tauri-mock.ts` — In-memory backend mock (activates when Tauri absent)
 - `tree-utils.ts` — Flat tree manipulation (depth, descendants, DnD projection)
@@ -361,6 +364,7 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 - Lists all page blocks (`block_type = 'page'`, non-deleted)
 - Default sort: ULID ascending (oldest first)
 - Cursor-based pagination
+- **Search/filter**: Inline text filter narrows page list by title (case-insensitive)
 - **Namespaced pages**: Pages with `/` in title auto-render as collapsible tree hierarchy (`buildPageTree` + `PageTreeItem`). Flat list preserved when no namespaces exist.
 - **Create under namespace**: `+` button on namespace folders (hover-visible) prefills input with `"namespace/"` and focuses it.
 - Create new page button (Ctrl+N)
@@ -412,7 +416,7 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 - Shows blocks where `is_conflict = 1` (sync merge conflict copies)
 - Cursor-based pagination
 - **Type-specific rendering**: Property conflicts show field-by-field diffs (state, priority, due_date, scheduled_date) with blue styling. Move conflicts show parent_id + position changes with purple styling. Text conflicts show Current:/Incoming: rich content. Falls back to text rendering when no diffs detected.
-- Metadata: conflict source block ID, created timestamp (ULID decoded)
+- Metadata: conflict source block ID, created timestamp (ULID decoded), device info display (source device name/ID)
 - Expandable content preview
 - Two actions (two-click confirmation each):
   - **Keep**: edit original with conflict content + delete conflict copy (with undo toast)
@@ -462,7 +466,7 @@ Minimal extension set (no starter-kit). Single roving instance.
 
 **Built-in extensions**: Document, Paragraph, Text, Bold, Italic, Code, CodeBlockLowlight, Heading (1-6), HardBreak, History, Placeholder
 
-### Custom Extensions (7 exported + 1 internal)
+### Custom Extensions (6 exported + 2 internal: CheckboxInputRule, PriorityShortcuts)
 
 | Extension | Trigger | Type | Purpose |
 |-----------|---------|------|---------|
@@ -475,9 +479,9 @@ Minimal extension set (no starter-kit). Single roving instance.
 | CheckboxInputRule | `- [ ]` / `- [x]` | input rule | Checkbox syntax → TODO/DONE state |
 | PriorityShortcuts (internal) | Mod-Shift-1/2/3 | keymap | Priority keyboard shortcuts |
 
-### Slash Commands
+### Slash Commands (17)
 
-**Base**: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT, ASSIGNEE, LOCATION, TEMPLATE
+**Base**: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT, ASSIGNEE, LOCATION, REPEAT, TEMPLATE, QUOTE, TABLE, QUERY
 
 **Progressive disclosure**: PRIORITY 1/2/3, REPEAT (daily/weekly/monthly/yearly), Heading 1-6, ASSIGNEE (Me/Custom), LOCATION (Office/Home/Remote/Custom)
 
@@ -485,7 +489,7 @@ Minimal extension set (no starter-kit). Single roving instance.
 
 Zero external dependencies. O(n) bidirectional conversion.
 
-**Supported syntax**: headings, fenced code blocks, \*\*bold\*\*, \*italic\*, \`code\`, \[links\](url), `#[ULID]` tag refs, `[[ULID]]` block links, hard breaks, backslash escaping
+**Supported syntax**: headings, fenced code blocks, \*\*bold\*\*, \*italic\*, \`code\`, \[links\](url), `#[ULID]` tag refs, `[[ULID]]` block links, hard breaks, backslash escaping, ~~strikethrough~~, ==highlight==, | tables |, > blockquotes
 
 **Special**: Mark coalescing (prevents ambiguous delimiters), unclosed mark revert, link grouping, balanced paren tracking for URLs
 
@@ -598,7 +602,7 @@ All list queries use cursor-based keyset pagination.
 - **Agenda sort/group**: `sortAgendaBlocks()`, `sortByPriority()`, `sortByState()`, `sortAgendaBlocksBy()` dispatcher, `groupByDate()`, `groupByPriority()`, `groupByState()` in `agenda-sort.ts`. Date groups: Overdue, Today, Tomorrow, future dates, No date. Priority groups: P1, P2, P3, No priority. State groups: DOING, TODO, DONE, No state. Sort key chain configurable: date→state→priority (default), priority→date→state, state→date→priority.
 - **Agenda toolbar**: `AgendaSortGroupControls` component — "Group by" and "Sort by" popover dropdowns with pill-style buttons. State persisted in localStorage (`agaric:agenda:groupBy`, `agaric:agenda:sortBy`). `AgendaResults` supports `groupBy` and `sortBy` props.
 - **Agenda default query**: Shows blocks with `due_date` or `scheduled_date` matching today (via `list_blocks` with `agenda_date`/`agenda_source`), not all TODO blocks.
-- **AgendaFilterBuilder**: status (custom keywords from localStorage), priority, dueDate (6 presets: Today/This week/Overdue/Next 7/14/30 days), scheduledDate (6 presets), completedDate (4 presets), createdDate (4 presets: Today/This week/Last 7/30 days), tag dimensions
+- **AgendaFilterBuilder**: status (custom keywords from localStorage), priority, dueDate (7 presets: Today/This week/This month/Overdue/Next 7/14/30 days), scheduledDate (7 presets: same), completedDate (5 presets: Today/This week/This month/Last 7/30 days), createdDate (5 presets: same), tag dimensions
 - **Inline query blocks**: `{{query type:tag expr:...}}` syntax in block content renders live results via `QueryResult` component. Supports tag queries (`queryByTags`), property queries (`queryByProperty`), and backlink queries (`listBlocks`). Collapsible panel with todo badges, page breadcrumbs, click-to-navigate. `/query` slash command inserts template.
 
 ---
@@ -618,7 +622,7 @@ All list queries use cursor-based keyset pagination.
 - **block_links table**: Derived index from `[[ULID]]` tokens in content
 - **Linked references**: Grouped by source page
 - **Unlinked references**: Blocks mentioning a page but not linked
-- **11 filter types**: PropertyText, PropertyNum, PropertyDate, PropertyIsSet, PropertyIsEmpty, HasTag, HasTagPrefix, Contains, CreatedInRange, BlockType, And/Or/Not
+- **17 filter types**: PropertyText, PropertyNum, PropertyDate, PropertyIsSet, PropertyIsEmpty, HasTag, HasTagPrefix, Contains, CreatedInRange, BlockType, TodoState, Priority, DueDate, ScheduledDate, SourcePage, And/Or/Not
 - **Sorting**: Created, PropertyText, PropertyNum, PropertyDate (Asc/Desc)
 
 ---
@@ -641,7 +645,7 @@ backlink_query, cache, commands, dag, db, device, draft, error, fts, hash, mater
 
 | Layer | Framework | Count |
 |-------|-----------|-------|
-| Frontend unit/component | Vitest + RTL + vitest-axe | 87 files, ~2937 tests |
+| Frontend unit/component | Vitest + RTL + vitest-axe | 91 files, ~3200+ tests |
 | Frontend property-based | fast-check | 1 file, 500 iterations/property |
 | Frontend E2E | Playwright | 14 spec files |
 | Backend unit | tokio + insta | 15+ modules |
@@ -679,17 +683,24 @@ trailing-whitespace, end-of-file-fixer, check-yaml/toml/json, check-merge-confli
 
 ---
 
-## 22. Deferred Features (REVIEW-LATER)
+## 22. Deferred Features (RESOLVED)
 
-| ID | Feature | Phase |
-|----|---------|-------|
-| 522 | mDNS peer discovery on iOS (manual IP fallback) | iOS |
-| 639 | Templates system (dynamic variables, CRUD UI) | Journaling |
-| 641 | Scheduling semantics (due/scheduled drive agenda) | Tasks |
-| 642 | Agenda filter by creation/completion dates, custom properties | Tasks |
-| 644 | Repeating tasks (modes, end conditions, agenda projection) | Tasks |
-| 651 | Conflicts view — metadata, resolution, rendering gaps | Sync |
-| 660 | Logseq/Markdown import | Import |
+All previously deferred items have been implemented and resolved:
+
+| ID | Feature | Resolution |
+|----|---------|------------|
+| 522 | iOS mDNS | Manual IP entry via `set_peer_address` command |
+| 639 | Templates | Full system with dynamic variables + kebab menu |
+| 641 | Scheduling | Overdue rollover + hide-before-scheduled + deadline warning |
+| 642 | Agenda filters | 8 dimensions including property + createdDate |
+| 644 | Repeating tasks | Modes, end conditions, agenda projection |
+| 651 | Conflicts | Type-specific rendering, batch resolution, device info |
+| 654 | Tables | Types, serializer, TipTap extension, /table command |
+| 655 | Inline queries | `{{query}}` with live results |
+| 656 | Namespaced pages | Tree view, breadcrumbs, create-under, search |
+| 657 | Multi-selection | Ctrl+Click, Shift+Click, batch toolbar |
+| 658 | Custom task keywords | localStorage config, agenda filter integration |
+| 660 | Logseq import | Parser + file picker UI via `import_markdown` command |
 
 ---
 

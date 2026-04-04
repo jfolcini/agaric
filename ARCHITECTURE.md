@@ -176,12 +176,12 @@ SQLite in WAL mode. Database file at `~/.local/share/com.agaric.app/notes.db`.
 **Migrations:** Auto-run on pool init from `src-tauri/migrations/`. Versioned `.sql` files.
 
 **Compile-time validation:** All static SQL uses `sqlx::query!` / `query_as!` / `query_scalar!`.
-The `.sqlx/` offline cache (101 query files) is committed; CI fails if stale. Runtime queries are
+The `.sqlx/` offline cache (107 query files) is committed; CI fails if stale. Runtime queries are
 limited to PRAGMAs, FTS5 operations, and dynamic SQL (~11 queries).
 
 ### Schema
 
-12 tables + 1 FTS5 virtual table, 13 indexes across 5 migrations.
+14 tables + 1 FTS5 virtual table, 19 indexes across 17 migrations.
 
 **Core tables:**
 
@@ -205,7 +205,8 @@ op_log              — (device_id, seq) composite PK, parent_seqs (JSON), hash 
 block_drafts        — block_id PK, content, updated_at — mutable scratch space for autosave
 log_snapshots       — id (ULID PK), status ('pending'|'complete'), up_to_hash, up_to_seqs,
                       data (zstd-compressed CBOR BLOB)
-peer_refs           — peer_id PK, last_hash, last_sent_hash, synced_at, reset_count
+peer_refs           — peer_id PK, last_hash, last_sent_hash, synced_at, reset_count,
+                      last_reset_at, cert_hash, device_name, last_address
 ```
 
 **Performance caches:**
@@ -222,7 +223,9 @@ fts_blocks          — FTS5 virtual table (block_id UNINDEXED, stripped), trigr
 `block_links(target_id)`, `block_properties(value_date)`, `op_log(created_at)`,
 `agenda_cache(date)`, `attachments(block_id)`, `op_log(json_extract(payload, '$.block_id'))`,
 `block_properties(key, block_id)`, `block_properties(key, value_text)`,
-`block_properties(key, value_num)`.
+`block_properties(key, value_num)`, `op_log(device_id, op_type)`,
+`blocks(todo_state)`, `blocks(due_date)`, `blocks(scheduled_date)`,
+`page_aliases(alias COLLATE NOCASE)`, `page_aliases(page_id)`.
 
 ---
 
@@ -390,9 +393,15 @@ human-readable in any text tool.
 
 ```
 block_content  := (block_element | span)*
-block_element  := heading | code_block
+block_element  := heading | code_block | blockquote | table
 heading        := '#'{1,6} ' ' span+              -- # H1 through ###### H6
 code_block     := '```' language? '\n' text '\n' '```'
+blockquote     := ('> ' span+ '\n')+               -- consecutive > lines
+table          := header_row '\n' separator '\n' data_row+
+header_row     := '|' (cell '|')+ 
+separator      := '|' ('-'+  '|')+                 -- e.g. |---|---|
+data_row       := '|' (cell '|')+
+cell           := span*
 span           := plain_text | bold | italic | code_span | tag_ref | block_link | ext_link
 bold           := '**' span+ '**'
 italic         := '*' span+ '*'
@@ -414,7 +423,7 @@ extending the serializer, FTS5 stripping, export mapping, and a migration audit.
 
 ### Custom serializer
 
-Standalone TypeScript module (`src/editor/markdown-serializer.ts`, ~681 lines) with zero external
+Standalone TypeScript module (`src/editor/markdown-serializer.ts`, ~852 lines) with zero external
 dependencies. Converts between ProseMirror document nodes and the storage format.
 
 **Serialize (ProseMirror → Markdown):**
@@ -431,10 +440,15 @@ dependencies. Converts between ProseMirror document nodes and the storage format
 | `block_link` node | `[[{id}]]` |
 | `link` mark | `[text](url)` |
 | `hardBreak` | `\n` (triggers auto-split) |
+| `blockquote` node | `> ` prefix per line. Nested content serialized recursively. |
+| `table` node | Pipe-delimited rows: header row + `|---|` separator + data rows. Cells contain inline content. |
 | unknown node | stripped with warning |
 
 **Parse (Markdown → ProseMirror):** Hand-rolled single-pass parser. Regex for token ID only. Mark
-stack with unclosed-mark revert (becomes plain text, never errors).
+stack with unclosed-mark revert (becomes plain text, never errors). Blockquotes detected by `> `
+prefix on consecutive lines. Tables detected by consecutive `|`-prefixed lines; `|---|` separator
+rows are consumed but not emitted as content nodes. Node types: `BlockquoteNode`, `TableNode`,
+`TableRowNode`, `TableHeaderNode`, `TableCellNode`.
 
 **Test suite:** 200+ unit tests, property-based tests (fast-check) for round-trip identity and
 idempotence. Mark coalescing avoids ambiguous sequences like `*a****b****c*`.
@@ -486,9 +500,11 @@ overhead elsewhere.
 | ExternalLink | mark extension | `[text](url)` with autolink and paste detection |
 | AtTagPicker | suggestion | `@` triggers fuzzy search of `tags_cache` → inserts `tag_ref` node |
 | BlockLinkPicker | suggestion | `[[` triggers fuzzy search of `pages_cache` → inserts `block_link` node, "Create new" option |
-| SlashCommand | suggestion | `/` triggers 23 commands: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT, ASSIGNEE, LOCATION, REPEAT, TEMPLATE + PRIORITY 1/2/3 + H1-H6 |
+| SlashCommand | suggestion | `/` triggers 26 commands: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT, ASSIGNEE, LOCATION, REPEAT, TEMPLATE, QUOTE, TABLE, QUERY + PRIORITY 1/2/3 + H1-H6 |
 | CheckboxInputRule | input rule | `- [ ]` / `- [x]` → TODO/DONE state |
 | CodeBlockLowlight | node | Fenced code blocks with syntax highlighting |
+| Blockquote | node | `@tiptap/extension-blockquote`. `> ` prefixed block content. |
+| Table + TableRow + TableHeader + TableCell | node (4 extensions) | `@tiptap/extension-table` family. Pipe-delimited table editing (`resizable: false`). |
 
 Pickers intercept keystrokes and open autocomplete popups. On selection, they insert the
 appropriate inline node with ULID. The raw ULID is never visible to the user.
@@ -578,6 +594,20 @@ BlockTree supports zooming into a block to show only it and its descendants. A b
 shows the ancestor path with clickable navigation. Home button exits zoom. State is ephemeral
 (not persisted across page reloads).
 
+### Block multi-selection
+
+`useBlockStore` exposes `selectedBlockIds` (a `Set<string>`-like array) for multi-block selection
+orthogonal to the roving editor. Selection gestures:
+
+- **Ctrl+Click** on a block bullet toggles its selection state.
+- **Shift+Click** selects the range from the last-selected block to the clicked block.
+- **Ctrl+A** (when no editor is active) selects all visible blocks.
+
+Editing a block (mounting TipTap) clears the selection — the two modes are mutually exclusive.
+
+**Batch toolbar:** When `selectedBlockIds` is non-empty, a toolbar appears with batch actions:
+delete selected blocks and set todo state (TODO/DOING/DONE) on all selected blocks.
+
 ### Recurrence
 
 When a block with a `repeat` property (e.g. `daily`, `weekly`, `monthly`, `+Nd`, `+Nw`, `+Nm`)
@@ -595,12 +625,12 @@ with month-end clamping.
 | Store | Purpose | Key state |
 |-------|---------|-----------|
 | `useBootStore` | App initialization state machine | booting → recovering → ready \| error |
-| `useBlockStore` | Block tree CRUD, focus management | blocks[], focusedBlockId, rootParentId |
+| `useBlockStore` | Block tree CRUD, focus management, multi-selection | blocks[], focusedBlockId, rootParentId, selectedBlockIds[], toggleSelected, rangeSelect, selectAll, clearSelected |
 | `useNavigationStore` | Page routing and view state | currentView, pageStack[], selectedBlockId |
 | `useJournalStore` | Journal mode and date selection | mode (daily/weekly/monthly/agenda), currentDate |
 | `useResolveStore` | Centralized ULID → title cache | cache Map, pagesList[], version counter |
 | `useUndoStore` | Page-level undo/redo state | undoDepth per page, redoStack (OpRef[]) |
-| `useSyncStore` | Peer-to-peer sync lifecycle | state (idle/discovering/pairing/syncing/error), peers[], opsReceived/opsSent |
+| `useSyncStore` | Peer-to-peer sync lifecycle | state (idle/discovering/pairing/syncing/error/offline), peers[], opsReceived/opsSent |
 
 `useResolveStore` is preloaded on boot (`preload()` fetches all pages and tags) and updated
 incrementally on create/edit/delete. Both JournalPage and BlockTree consume from the same store —
@@ -617,9 +647,11 @@ App
 │       └── SortableBlock          — @dnd-kit wrapper
 │           └── EditableBlock      — static div ↔ TipTap toggle
 │               ├── StaticBlock    — rendered Markdown (links, tags, code blocks)
+│               │   └── QueryResult — renders inline {{query ...}} blocks with live results
 │               ├── TipTap editor  — mounted on focus only
 │               └── BlockContextMenu — right-click / long-press actions
 ├── PageEditor                     — page title + block tree + detail panels
+│   ├── PageHeader                 — title editing, undo/redo, kebab menu (template actions, export, delete)
 │   └── BlockTree                  — same recursive renderer
 ├── PageBrowser                    — all pages list
 ├── TagList                        — all tags list
@@ -690,7 +722,7 @@ names, `[[ULID]]` → page titles, and YAML frontmatter for page properties.
 
 ### Tauri command wrappers
 
-`src/lib/tauri.ts` provides 39 type-safe wrappers over auto-generated `bindings.ts`. Handles
+`src/lib/tauri.ts` provides 60 type-safe wrappers over auto-generated `bindings.ts`. Handles
 Tauri 2's requirement for explicit `null` (not `undefined`) on `Option<T>` parameters.
 
 ### Extracted hooks
@@ -834,7 +866,7 @@ dispatch after boot (stale-while-revalidate handles it).
 
 ### specta + tauri-specta
 
-All 34 Tauri commands are annotated with `#[specta::specta]`. TypeScript bindings are auto-
+All 60 Tauri commands are annotated with `#[specta::specta]`. TypeScript bindings are auto-
 generated to `src/lib/bindings.ts`. A pre-commit test (`ts_bindings_up_to_date`) fails if the
 committed bindings diverge from the Rust types.
 
@@ -862,14 +894,14 @@ CI doesn't need a live database. `cargo sqlx prepare --check` is a CI gate.
 
 | Layer | Tool | Scope |
 |-------|------|-------|
-| Rust unit tests | cargo nextest | Inline `#[cfg(test)] mod tests` in every module (~850 tests) |
+| Rust unit tests | cargo nextest | Inline `#[cfg(test)] mod tests` in every module (~1,035 tests) |
 | Rust integration | cargo nextest | Pipeline tests, API contract tests |
 | Rust snapshots | insta (25 YAML snapshots) | Op payload serialization, command responses, backlink queries, pagination |
 | Frontend unit | Vitest (jsdom) | Pure functions, store logic, hooks |
 | Frontend component | Vitest + @testing-library/react | Render, interaction, a11y (vitest-axe) |
 | Frontend property | Vitest + fast-check | Markdown serializer fuzzing, round-trip stability |
 | E2E | Playwright (Chromium, 14 spec files) | Smoke, editor lifecycle, links, keyboard, Markdown syntax, slash commands, toolbar, tags, undo/redo, conflicts, history, error scenarios, sync UI, features coverage |
-| Benchmarks | Criterion (10 bench files) | Backlink queries, cache, commands, drafts, FTS, hash, op log, pagination, soft delete, undo/redo (manual only) |
+| Benchmarks | Criterion (12 bench files) | Backlink queries, cache, commands, drafts, FTS, hash, move/reorder, op log, pagination, soft delete, sync, undo/redo (manual only) |
 
 ### Pre-commit hooks (prek)
 
@@ -1004,6 +1036,22 @@ Two commands avoid N+1 patterns in the frontend:
 
 Both accept a `Vec<String>` of IDs and return validation errors on empty input.
 
+### Inline query blocks
+
+Blocks whose content matches `{{query type:<type> expr:<expression>}}` are rendered inline as
+live query results instead of static text. Detected in `StaticBlock` rendering — the block's
+content is stored as plain text in the op log (no special op type).
+
+**Syntax:** `{{query type:tag expr:project}}`, `{{query type:property key:priority value:1}}`,
+`{{query type:backlinks expr:<ULID>}}`. The `/query` slash command inserts the template.
+
+**`QueryResult` component** (`src/components/QueryResult.tsx`):
+- `parseQueryExpression()` extracts `type` and `expr`/`key`/`value` from the expression string.
+- Fetches results via existing query APIs: `queryByTags` (tag queries), `queryByProperty`
+  (property queries), `listBlocks` (backlinks queries).
+- Collapsible result panel with todo state badges and source page breadcrumbs.
+- Navigable — clicking a result block navigates to its parent page.
+
 ---
 
 ## 17. Android Platform
@@ -1130,6 +1178,7 @@ Idle → ExchangingHeads → StreamingOps → ApplyingOps → Merging → Comple
 | `synced_at` | Successful sync | Wall-clock timestamp, updated atomically with hashes |
 | `reset_count` | RESET_REQUIRED completes | Incremented by 1 |
 | `last_reset_at` | RESET_REQUIRED completes | Current timestamp |
+| `last_address` | Successful sync or manual `set_peer_address` | `host:port` string for direct connection when mDNS unavailable |
 
 On sync failure (connection lost mid-stream): `peer_refs` is **not** updated. Next sync restarts
 from `last_hash`. Duplicate delivery is safe due to `INSERT OR IGNORE` on the composite PK.
@@ -1149,6 +1198,10 @@ sync building blocks into an always-on sync service.
 - **mDNS discovery** (500ms poll): drains `browse_rx.try_recv()`, updates `HashMap<String, DiscoveredPeer>`, triggers immediate sync for newly discovered paired peers
 - **Change-triggered sync**: `SyncScheduler::wait_for_debounced_change()` wakes the daemon when local ops are materialized (3s debounce window)
 - **Periodic resync**: `SyncScheduler::peers_due_for_resync()` identifies stale peers (>60s since last sync)
+
+When mDNS discovery does not find a peer, the daemon falls back to the `last_address` stored in
+`peer_refs` for direct connection. After each successful sync, the daemon updates `last_address`
+with the peer's current address.
 
 **`try_sync_with_peer()`:** Runs a single initiator-side sync session:
 1. Checks `SyncScheduler::may_retry()` (exponential backoff gate)
@@ -1175,7 +1228,7 @@ sync building blocks into an always-on sync service.
 
 ### Tauri sync commands
 
-Five commands registered in the invoke handler (`commands.rs` + `lib.rs`):
+Six commands registered in the invoke handler (`commands.rs` + `lib.rs`):
 
 | Command | Backend function | Purpose |
 |---------|-----------------|---------|
@@ -1184,6 +1237,7 @@ Five commands registered in the invoke handler (`commands.rs` + `lib.rs`):
 | `cancel_pairing` | `cancel_pairing_inner()` | Clear pairing session |
 | `start_sync` | `start_sync_inner()` | Check backoff, acquire lock, notify daemon via `scheduler.notify_change()` |
 | `cancel_sync` | `cancel_sync_inner()` | Placeholder (future: cancel active sync task) |
+| `set_peer_address` | `set_peer_address_inner()` | Store a manual `host:port` address for a peer in `peer_refs.last_address` (migration 0017) |
 
 Managed state: `PairingState(Mutex<Option<PairingSession>>)`, `Arc<SyncScheduler>`.
 TypeScript bindings auto-generated via specta (`PairingInfo`, `SyncSessionInfo` types).
@@ -1192,7 +1246,7 @@ TypeScript bindings auto-generated via specta (`PairingInfo`, `SyncSessionInfo` 
 
 | Hook/Component | Purpose |
 |----------------|---------|
-| `useSyncTrigger` | Recursive setTimeout with exponential backoff (60s→600s max). Syncs on mount (2s delay) + periodic. Checks `navigator.onLine` before attempting. |
+| `useSyncTrigger` | Recursive setTimeout with exponential backoff (60s→600s max). Syncs on mount (2s delay) + periodic. Checks `navigator.onLine` before attempting — sets `useSyncStore` to `'offline'` state when offline. Triggers immediate sync on `window.online` event. |
 | `useSyncEvents` | Listens to `sync:progress`, `sync:complete`, `sync:error` Tauri events. Updates `useSyncStore`. Shows toast on completion/failure. Checks for conflicts after sync. |
 | `useOnlineStatus` | `useSyncExternalStore` hook tracking `navigator.onLine` with event listeners. |
 | Sidebar Sync button | Shows `WifiOff` + "Offline" when offline. Tooltip: "Syncing..." during active sync. |
@@ -1211,21 +1265,30 @@ On cache rebuild after sync, the materializer detects tag blocks with duplicate 
 ops to rewrite `#[loser-ULID]` tokens in all referencing blocks. Background reconciliation,
 idempotent.
 
+### Timeouts
+
+WebSocket `RECV_TIMEOUT` is 30 seconds (`sync_net.rs`). The `handle_message` loop in
+`sync_daemon.rs` wraps each message exchange in a 120-second `tokio::time::timeout` to prevent
+indefinite hangs during large op transfers.
+
 ---
 
 ## 19. Planned Features
 
-See [REVIEW-LATER.md](REVIEW-LATER.md) for full details on all planned items. Key architectural
-extensions on the roadmap:
+See [REVIEW-LATER.md](REVIEW-LATER.md) for full details on all planned items.
 
-| # | Feature | Architectural impact |
-|---|---------|---------------------|
-| 639 | Templates system — dynamic variables, CRUD UI | Extends template-utils.ts. No schema changes (templates are pages with properties). |
-| 641 | Scheduling semantics — due/scheduled drive agenda behavior | Agenda cache query changes. New semantic filtering in DuePanel/AgendaFilterBuilder. |
-| 644 | Repeating tasks — modes (.+, ++), end conditions, agenda projection | Extends `shift_date` in commands.rs. New properties (repeat-until, repeat-count, repeat-seq). Virtual agenda entries at query time. |
-| 645 | Block property UX — inline chips, click-to-edit, property drawer | Frontend only. Uses existing `getBatchProperties` API. |
-| 655 | Inline query blocks — `{{query ...}}` embedded live results | New TipTap node type + serializer extension. Query results in static divs (no editor conflict). |
-| 660 | Logseq/Markdown import | New backend command. Parser for Logseq `.md` format. UUID→ULID mapping. |
+**Recently completed** (formerly on this roadmap):
+- Templates system with dynamic variables (#639) — `template-utils.ts`, `/template` slash command
+- Scheduling semantics — overdue, hide-before, warning period (#641) — AgendaFilterBuilder presets
+- Repeating tasks — `.+` and `++` modes, end conditions (`repeat-until`), projected agenda (#644)
+- Block property UX — `BlockPropertyDrawer`, inline property editing (#645)
+- Inline query blocks — `{{query ...}}` syntax, `QueryResult` component (#655)
+- Logseq/Markdown import — `import_markdown` command, Logseq `.md` parser (#660)
+- Table support — `@tiptap/extension-table` family, serializer pipe-delimited syntax
+- Multi-selection + batch operations — `selectedBlockIds`, Ctrl+Click/Shift+Click, batch delete/todo
+- Namespaced page tree — breadcrumb navigation in PageHeader for `a/b/c` page titles
+- Custom task keywords — `set_todo_state` accepts arbitrary strings beyond TODO/DOING/DONE
+- All 5 agenda filter dimensions — status, priority, due date, scheduled date, tag
 
-All planned features use existing schema, op types, and materializer infrastructure. No
-architectural changes required unless explicitly noted.
+All completed features use existing schema, op types, and materializer infrastructure. No
+architectural changes were required.

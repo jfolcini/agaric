@@ -30,7 +30,7 @@
 | Collapse/expand children | Click arrow or `Ctrl+Up/Down` | Chevron toggle, `Ctrl+.` shortcut. State is ephemeral (lost on reload) | Partial |
 | Zoom into block (focus mode) | `Alt+Right` shows block + descendants | Zoom-in with breadcrumb trail. Home button + ancestor navigation | Done |
 | Move block up/down | `Alt+Shift+Up/Down` | DnD reordering (tree-aware, @dnd-kit) + `Ctrl+Shift+Up/Down` keyboard shortcuts | Done |
-| Block-level selection | `Esc` + arrow keys for multi-block select | Not implemented (single-focus roving editor) | Gap |
+| Block-level selection | `Esc` + arrow keys for multi-block select | Ctrl+Click toggle, Shift+Click range, Ctrl+A select all, batch toolbar (Delete + Set todo state) | Done |
 | Visual hierarchy | Bullet points + tree lines | Indentation + tree indent guide lines (`border-l`). No bullet points | Partial |
 | Cross-block undo | Ctrl+Z across blocks within session | Op-level undo/redo: `Ctrl+Z`/`Ctrl+Y`, per-page undo depth + redo stack, HistoryView with multi-select batch revert, word-level diff. Scoped per page (intentional — see ARCHITECTURE.md §Undo/Redo) | Done |
 
@@ -44,7 +44,7 @@
 | Pages as named containers | One .md/.org file per page | `blocks` with `block_type = 'page'`, content = title | Done |
 | Page properties (frontmatter) | First block holds `key:: value` | `block_properties` on page blocks. PagePropertyTable UI: collapsible, typed inputs, add/delete | Done |
 | Page aliases | `alias:: JS, ECMAScript` | `page_aliases` table with `set_page_aliases`/`get_page_aliases`/`resolve_page_by_alias`. PageHeader UI with alias badges (add/remove) | Done |
-| Namespaced pages | `Project/Backend/API` with `/` separator | Not implemented | Gap |
+| Namespaced pages | `Project/Backend/API` with `/` separator | Tree view in PageBrowser, breadcrumb navigation, create-under flow, search respects hierarchy | Done |
 | Page tags via property | `tags:: book, fiction` | Tags via `block_tags` junction table + @picker. Tags exist but aren't page-level property syntax | Partial |
 | `title::` override | Display title differs from filename | Block content IS the title. No separate title property | Design choice |
 | Auto-created pages from links | Clicking `[[New Page]]` creates page | `[[` picker has "Create new" option | Done |
@@ -53,7 +53,7 @@
 
 | Capability | Logseq | Agaric | Status |
 |---|---|---|---|
-| Markdown support | Full Markdown | Markdown subset via TipTap + custom serializer (bold, italic, code, headings, code blocks, links). No tables, blockquotes, lists | Partial |
+| Markdown support | Full Markdown | Markdown subset via TipTap + custom serializer (bold, italic, code, headings, code blocks, links, tables, blockquotes). No lists | Partial |
 | Org-mode support | Full .org format | Not implemented. Org-mode inspires features (tags, properties, agenda), not file format | Design choice |
 | **Bold** | `**bold**` | `**bold**` | Done |
 | *Italic* | `*italic*` | `*italic*` | Done |
@@ -63,8 +63,8 @@
 | Headings | `# H1` ... `###### H6` inside blocks | `/h1`-`/h6` slash commands + TipTap Heading extension (levels 1-6) | Done |
 | Code blocks | Fenced with language, syntax highlighting | Fenced code blocks with lowlight syntax highlighting (common language set, auto-detect fallback) | Done |
 | Math/LaTeX | `$$E=mc^2$$` inline and block | Not implemented | Gap |
-| Tables | Markdown tables | Not implemented | Gap |
-| Blockquotes | `> quote` | Not implemented | Gap |
+| Tables | Markdown tables | Pipe-delimited markdown tables, TipTap extensions, `/table` slash command | Done |
+| Blockquotes | `> quote` | TipTap Blockquote extension, markdown `>` syntax | Done |
 | Slash commands `/` | 20+ commands | 23 commands: TODO, DOING, DONE, DATE, DUE, SCHEDULED, LINK, TAG, CODE, EFFORT, ASSIGNEE, LOCATION, REPEAT, TEMPLATE + PRIORITY 1/2/3 + H1-H6 | Done |
 | Autocomplete `[[` | Search all pages | block-link-picker extension, page search, "Create new" option | Done |
 | Autocomplete `@` | Search all tags | at-tag-picker extension, tag search, "Create new" option | Done |
@@ -121,14 +121,14 @@
 
 | Capability | Logseq | Agaric | Status |
 |---|---|---|---|
-| Simple queries | `{{query (and [[page]] (task TODO))}}` embedded live results | Not implemented — no inline query blocks | Gap |
+| Simple queries | `{{query (and [[page]] (task TODO))}}` embedded live results | `{{query type:tag expr:...}}` syntax with live results in static view | Done |
 | Query operators | `and`, `or`, `not` | `TagExpr` supports AND/OR/NOT for tag queries. Backlink filter expressions with full And/Or/Not composition | Partial |
 | Date-based queries | `(between -7d today)`, relative dates | Agenda filter presets: Today, This week, Overdue, Next 7/14/30 days for both due and scheduled dates | Partial |
 | Task queries | `(task TODO DOING)`, `(priority A)` | Agenda mode: TODO/DOING/DONE sections with priority sorting. DonePanel: completed tasks by date. No inline query blocks | Partial |
 | Property queries | `(property type book)` | `query_by_property` with cursor pagination. Single key+value filter | Partial |
 | Advanced Datalog queries | Full Datascript query language | Not implemented — backend uses SQL | Gap |
 | Query result as table | `query-table:: true` | Not implemented | Gap |
-| Live-updating results | Queries re-evaluate on change | FTS search and agenda are live. No inline query blocks to update | Partial |
+| Live-updating results | Queries re-evaluate on change | FTS search, agenda, and inline query blocks are live-updating | Done |
 | Query sort/transform | `:result-transform`, `:sort-by` | Fixed sort orders in agenda/backlinks. No user-customizable sort | Gap |
 
 **Planned improvements:**
@@ -138,19 +138,18 @@
 
 | Capability | Logseq | Agaric | Status |
 |---|---|---|---|
-| Task markers | TODO, DOING, DONE, CANCELLED, NOW, LATER | TODO/DOING/DONE via properties. Click to cycle, `Ctrl+Enter`. Visual icons (Circle/CircleDot/CheckCircle2) | Partial (3 of 6 states) |
+| Task markers | TODO, DOING, DONE, CANCELLED, NOW, LATER | Configurable task keywords via localStorage + PropertiesView settings UI. Default: TODO/DOING/DONE. Click to cycle, `Ctrl+Enter`. Visual icons (Circle/CircleDot/CheckCircle2) | Done |
 | Priority levels | `[#A]`, `[#B]`, `[#C]` | Priority A/B/C: slash commands, `Ctrl+Shift+1/2/3`, click-to-cycle badge. Color-coded: A=red, B=amber, C=blue | Done |
 | Due dates | `DEADLINE: <date>` | `due_date` column on blocks. `/due` slash command, date picker. Agenda filter: Today, This week, Overdue, Next 7/14/30 days | Done |
 | Scheduled dates | `SCHEDULED: <date>` | `scheduled_date` column. `/scheduled` slash command, date picker. Agenda filter: Today, This week, Overdue, Next 7/14/30 days | Done |
 | Task cycling | `Ctrl+Enter` toggles TODO/DONE | Click marker or `Ctrl+Enter` cycles TODO -> DOING -> DONE -> none | Done |
-| Recurring tasks | Via plugins | Native recurrence via `repeat` property. Modes: daily, weekly, monthly, `+Nd`, `+Nw`, `+Nm`. On DONE transition: creates sibling with shifted dates | Done (basic) |
+| Recurring tasks | Via plugins | Native recurrence via `repeat` property. 3 modes: default, from-completion (`.+`), catch-up (`++`). End conditions: repeat-until, repeat-count. Agenda projection of future occurrences. On DONE: creates sibling with shifted dates | Done |
 | Task dashboard | Embedded queries surface tasks | Agenda mode: collapsible TODO/DOING/DONE sections with priority sorting, paginated. DonePanel: completed tasks grouped by source page | Done |
-| Custom task keywords | Configurable in `config.edn` | Hardcoded TODO/DOING/DONE cycle | Gap |
+| Custom task keywords | Configurable in `config.edn` | Configurable via localStorage, PropertiesView settings UI | Done |
 | Effort tracking | Via plugins | `/effort` slash command, `effort` property definition | Done |
-
-**Planned improvements:**
-- Scheduling semantics: hide-before scheduled date, deadline warning period, overdue rollforward (Planned #641)
-- Repeat modes: `.+` (from completion), `++` (catch-up). End conditions: repeat-until, repeat-count. Agenda projection of future occurrences (Planned #644)
+| Overdue task accumulation | Via queries | DuePanel shows overdue tasks on today's view | Done |
+| Scheduled date hide-before | `SCHEDULED` hides until date | localStorage toggle in DuePanel | Done |
+| Deadline warning period | `DEADLINE` with `-Nd` warning | Configurable N days in PropertiesView | Done |
 
 ### 9. Daily Journal
 
@@ -161,14 +160,10 @@
 | Date navigation | `g n`/`g p`, date picker | Prev/next per mode, calendar picker with content dots, Today button. `Alt+Left/Right` (mode-aware), `Alt+T` for today | Done |
 | View modes | Single scrollable daily view | 4 modes: Daily, Weekly, Monthly, Agenda | Better |
 | Scrollable past journals | Past days stacked below today | Daily: single day. Weekly: 7-day sections. Monthly: stacked sections (not grid). No "load older" / infinite scroll | Partial |
-| Journal templates | `default-templates > :journals` in config | Journal template auto-apply via `journal-template=true` property on template page. Applied on auto-create | Partial |
+| Journal templates | `default-templates > :journals` in config | Template pages via property, `/template` slash command, journal auto-apply, dynamic variables (`<% today %>` etc), kebab menu "Save as template" | Done |
 | Configurable date format | `:journal/page-title-format` | Fixed `YYYY-MM-DD` | Gap |
 | Natural language dates | "next friday" in date picker | `parse-date.ts` (267 lines, 200+ tests): "today", "tomorrow", "yesterday", "next monday", "in 3 days", "end of month", "+3d"/"+1w"/"+2m", ISO/month-name/ambiguous formats. Missing: "last monday", "this week" | Partial |
 | "On this day" queries | Datalog for same date last year | Not implemented | Gap |
-
-**Planned improvements:**
-- Journal templates: auto-populate structure with multiple sections for new days (Planned #630)
-- Full template system: dynamic variables (`{{today}}`, `{{time}}`), template CRUD UI, journal auto-apply config (Planned #639)
 
 ### 10. Search
 
@@ -189,27 +184,25 @@
 | Local-first | Flat files on disk (.md/.org per page) | SQLite (WAL mode) in app data dir | Both local-first |
 | File format | Human-readable Markdown/Org files | Binary SQLite | Design choice |
 | Sync | Logseq Sync (paid) or DIY git/iCloud/Dropbox | SyncDaemon: mDNS discovery, TLS WebSocket, ECDSA P-256 cert pinning, ChaCha20-Poly1305 pairing, exponential backoff (1s-60s), debounced change sync (3s), periodic resync (60s). Frontend: periodic sync, offline detection, toast notifications | Better |
-| Conflict resolution | File-level (fragile with git) | Three-way merge (diffy): edit divergence, property LWW, move LWW, delete-vs-edit resurrection. Conflict copies for unresolvable | Better |
+| Conflict resolution | File-level (fragile with git) | Three-way merge (diffy): edit divergence, property LWW, move LWW, delete-vs-edit resurrection. Type-specific rendering (property diffs, move diffs, text fallback). Batch resolution (multi-select keep/discard). Source device info from history + peer refs | Better |
 | Multi-device | Via sync solution | LAN sync via SyncDaemon: mDNS continuous discovery, immediate sync on peer appearance, periodic resync, change-triggered debounce | Done |
 | Op log / history | No explicit op log | Full append-only op log with blake3 hash chain, per-device sequences, cursor-paginated history | Better |
 | Snapshots / compaction | N/A | zstd-compressed CBOR snapshots, 90-day compaction | Better |
 | Crash recovery | File system journaling | Explicit recovery at boot (pending snapshots, draft errors, op-log verification) | Better |
 | Storage efficiency | One file per page (thousands of small files) | Single SQLite with WAL | Better |
+| Manual IP entry / mDNS fallback | N/A | last_address on peer_refs, sync daemon fallback, DeviceManagement UI | Done |
+| Offline state indication | N/A | useSyncStore 'offline' state, StatusPanel display | Done |
 
 ### 12. Templates
 
 | Capability | Logseq | Agaric | Status |
 |---|---|---|---|
-| Template creation | Block/page with `template:: name` property | Pages marked with `template=true` property serve as templates | Partial |
+| Template creation | Block/page with `template:: name` property | Pages marked with `template=true` property. Kebab menu "Save as template" | Done |
 | Template insertion | `/Template` slash command | `/template` slash command with template picker. Copies template children as new blocks | Done |
-| Dynamic variables | `<% today %>`, `<% time %>`, `<% current page %>` | Not implemented | Gap |
-| Default journal template | `:default-templates {:journals "name"}` | Pages with `journal-template=true` auto-apply on journal page creation | Partial |
+| Dynamic variables | `<% today %>`, `<% time %>`, `<% current page %>` | Dynamic variable expansion: `<% today %>`, `<% time %>`, etc. | Done |
+| Default journal template | `:default-templates {:journals "name"}` | Pages with `journal-template=true` auto-apply on journal page creation | Done |
 | Template including parent | `template-including-parent:: true` | Not implemented | Gap |
-| Template CRUD UI | Edit template page directly | Templates are just pages — edit normally. No dedicated management UI | Partial |
-
-**Planned improvements:**
-- Full template system: dynamic variable expansion, dedicated CRUD UI, configurable journal auto-apply (Planned #639)
-- Template insertion robustness: recursive child copy, picker UX, error handling (Planned #649)
+| Template CRUD UI | Edit template page directly | Templates are pages — edit normally. Kebab menu "Save as template", template picker | Done |
 
 ### 13. Import / Export
 
@@ -219,7 +212,7 @@
 | JSON/EDN export | Data export | Not implemented | Gap |
 | OPML export | Outline export | Not implemented | Gap |
 | Import from Roam | JSON import | Not implemented | Gap |
-| Import from Logseq/Notion | Markdown import | Not implemented | Gap |
+| Import from Logseq/Notion | Markdown import | Logseq import: parse indented markdown, properties, block ref stripping, tab normalization, YAML frontmatter stripping, file picker UI | Done (Logseq) |
 | Publishing as HTML | Static site generation | Not implemented | Gap |
 
 ### 14. Out of Scope (Noted, Not Priority)
@@ -240,7 +233,7 @@
 |---|---|---|
 | **Journal views** | 4 modes (daily/weekly/monthly/agenda) with calendar picker + keyboard nav | Single scrollable daily view |
 | **Task dashboard** | Dedicated agenda mode with collapsible TODO/DOING/DONE sections, priority sorting, DonePanel for completed tasks grouped by source page | Requires manually writing Datalog queries |
-| **Recurrence** | Native backend recurrence (daily/weekly/monthly/+Nd/+Nw/+Nm) with automatic sibling creation and date shifting on DONE | Plugin-only, no native support |
+| **Recurrence** | Native backend recurrence with 3 modes (default/from-completion/catch-up), end conditions (repeat-until/repeat-count), agenda projection of future occurrences, automatic sibling creation on DONE | Plugin-only, no native support |
 | **Backlink filtering** | Server-side expression tree: 11 filter types + And/Or/Not composition, keyset pagination | Basic filter bar with simple matching |
 | **Formatting toolbar** | BubbleMenu: 11 buttons with Radix tooltips + shortcut hints | None (keyboard only) |
 | **Sync architecture** | SyncDaemon: mDNS discovery + TLS WebSocket + cert pinning + ChaCha20-Poly1305 pairing + three-way merge + exponential backoff. Fully automated LAN sync | File-based sync is fragile, conflicts are file-level |
@@ -266,11 +259,9 @@
 
 **Agaric:** Open app -> today's journal auto-created with optional template -> 4 view modes (daily/weekly/monthly/agenda) -> calendar picker with content dots -> `Alt+Arrow` / `Alt+T` navigation -> `[[ULID]]` links -> backlinks with grouped linked + unlinked references.
 
-**Current gaps:** No dynamic template variables (date/time expansion). Monthly view is stacked sections, not calendar grid. No "load older days" / infinite scroll.
+**Current gaps:** Monthly view is stacked sections, not calendar grid. No "load older days" / infinite scroll.
 
-**Planned (#639):** Dynamic variables (`{{today}}`, `{{time}}`). Template CRUD UI.
-
-**Verdict: Strong.** Core daily journal workflow exceeds Logseq (4 view modes, calendar picker, auto-create + journal template). Planned template system will close the remaining UX gaps.
+**Verdict: Strong.** Core daily journal workflow exceeds Logseq (4 view modes, calendar picker, auto-create + journal template with dynamic variables). Template system is fully shipped.
 
 ---
 
@@ -278,13 +269,11 @@
 
 **Logseq:** `TODO` markers on journal blocks -> properties + links to projects/contexts -> priority + SCHEDULED/DEADLINE dates -> query pages surface all open/overdue tasks -> DOING/NOW for active work.
 
-**Agaric:** TODO/DOING/DONE markers (click or `Ctrl+Enter`) -> priority A/B/C (slash commands, `Ctrl+Shift+1/2/3`, badges) -> due/scheduled dates with `/due` and `/scheduled` -> recurrence (daily/weekly/monthly/custom) -> agenda dashboard with TODO/DOING/DONE sections and DonePanel -> agenda filters for due and scheduled dates (Today, This week, Overdue, Next 7/14/30 days).
+**Agaric:** Configurable task keywords (click or `Ctrl+Enter`) -> priority A/B/C (slash commands, `Ctrl+Shift+1/2/3`, badges) -> due/scheduled dates with `/due` and `/scheduled` -> recurrence (3 modes: default/from-completion/catch-up, end conditions) -> scheduling semantics (overdue accumulation, hide-before, deadline warnings) -> agenda dashboard with TODO/DOING/DONE sections, DonePanel, and inline query blocks -> agenda filters for due and scheduled dates (Today, This week, Overdue, Next 7/14/30 days).
 
-**Current gaps:** No scheduling semantics (due/scheduled are display-only, no hide-before or deadline warnings). Only 3 task states (no CANCELLED/WAITING). No inline query blocks on project pages. Repeat modes limited (no from-completion, no catch-up).
+**Current gaps:** No CANCELLED/WAITING as built-in defaults (custom keywords can add them).
 
-**Planned (#641, #644):** Scheduling semantics (hide-before scheduled, deadline warning period, overdue rollforward). Repeat modes (`.+` from completion, `++` catch-up). End conditions (repeat-until, repeat-count). Agenda projection of virtual future occurrences.
-
-**Verdict: Functional and growing.** Core task workflow works well — markers, priority, dates, recurrence, agenda dashboard all ship. Planned scheduling semantics and repeat enhancements will make this a strength.
+**Verdict: Strong.** Full task workflow ships — configurable markers, priority, dates, advanced recurrence (3 modes + end conditions), scheduling semantics (overdue, hide-before, deadline warnings), inline queries, and agenda dashboard. This is now a strength over Logseq.
 
 ---
 
@@ -306,13 +295,11 @@
 
 **Logseq:** Template with attendees/agenda/notes/action items -> person pages (`[[Alice]]`) accumulate meetings via backlinks -> `TODO [[Person]] description` tracked in task queries.
 
-**Agaric:** Create meeting page -> `/template` inserts stored template structure -> `[[ULID]]` links to person/project pages -> TODO/DOING/DONE markers on action items -> backlinks on person pages show all meetings -> DonePanel tracks completed actions by date.
+**Agaric:** Create meeting page -> `/template` inserts stored template structure with dynamic variables (`<% today %>`, `<% time %>`) -> `[[ULID]]` links to person/project pages -> TODO/DOING/DONE markers on action items -> backlinks on person pages show all meetings -> DonePanel tracks completed actions by date -> inline query blocks for person/project dashboards.
 
-**Current gaps:** No dynamic template variables (auto-insert date, attendees). No inline query blocks for person/project pages.
+**Current gaps:** None significant for the core meeting notes workflow.
 
-**Planned (#639):** Dynamic variables in templates. Template CRUD UI.
-
-**Verdict: Usable.** Basic meeting notes workflow works with `/template` insertion, links, and task markers. Templates improvement will close the gap.
+**Verdict: Strong.** Meeting notes workflow is fully supported with dynamic templates, links, task markers, inline queries, and backlinks.
 
 ---
 
@@ -320,13 +307,13 @@
 
 **Logseq:** Project pages with properties -> task aggregation via queries across all pages -> PARA method via namespaces.
 
-**Agaric:** Project pages with PagePropertyTable (typed properties, CRUD) -> property queries (`query_by_property`, paginated) -> tags with boolean AND/OR/NOT queries -> task markers + priority + recurrence on blocks -> agenda mode aggregates all tasks by status and date.
+**Agaric:** Project pages with PagePropertyTable (typed properties, CRUD) -> property queries (`query_by_property`, paginated) -> tags with boolean AND/OR/NOT queries -> task markers + priority + recurrence on blocks -> agenda mode aggregates all tasks by status and date -> namespaced pages for PARA method -> inline query blocks for embedding live task dashboards.
 
-**Current gaps:** No inline query blocks (can't embed task dashboards in project pages). No namespaced pages.
+**Current gaps:** Agenda filter by custom properties (e.g., `project: alpha`) not yet implemented.
 
-**Planned (#642):** Agenda filter by custom properties (e.g., `project: alpha`). Flexible date ranges.
+**Planned (#642):** Agenda filter by custom properties. Flexible date ranges.
 
-**Verdict: Primitives done, composition layer missing.** Properties, queries, tasks, recurrence all work individually. The inability to embed live query results in pages remains the main gap.
+**Verdict: Strong.** Properties, queries, tasks, recurrence, namespaces, and inline query blocks all ship. Embedding live query results in project pages now works. Planned custom property filters will complete the picture.
 
 ---
 
@@ -348,21 +335,10 @@ These features are designed and scoped but not yet implemented. Each has bite-si
 
 | # | Feature | Impact | Cost | Phase |
 |---|---------|--------|------|-------|
-| 639 | **Templates system** — dynamic variables, CRUD UI, journal auto-apply config | HIGH | L | Journaling |
-| 641 | **Scheduling semantics** — due/scheduled dates drive agenda behavior (hide-before, deadline warnings, overdue rollforward) | HIGH | L | Tasks |
 | 642 | **Agenda filters** — filter by creation/completion dates, custom properties, flexible date ranges | MED | M | Tasks |
 | 643 | **Properties management view** — browse, create, rename, delete properties and types. Usage counts, batch rename propagation | HIGH | M | Properties |
-| 644 | **Repeating tasks** — `.+` (from completion) and `++` (catch-up) modes, end conditions (repeat-until, repeat-count), agenda projection of virtual future occurrences | HIGH | M | Tasks |
 | 645 | **Block property UX** — inline chips on blocks, click-to-edit popovers, block property drawer. Closes gap between reserved and custom property visibility | HIGH | M | Properties |
-| 649 | **Template insertion robustness** — recursive child copy, picker UX (keyboard nav, responsive positioning), error handling for partial failures | MED | M | Journaling |
-| 651 | **Conflicts view** — navigation, refresh, metadata, type-specific rendering, batch resolution | MED | M | Sync |
 | 653 | **Editor formatting marks** — strikethrough (`~~`) + highlight (`==`) | MED | M | Editor |
-| 654 | **Editor block types** — blockquotes (`>`) + tables | MED | M | Editor |
-| 655 | **Inline query blocks** — `{{query ...}}` embedded live results | HIGH | M | Query |
-| 656 | **Namespaced pages** — `/` separator, page tree view in browser | MED | M | Pages |
-| 657 | **Block-level multi-selection** — static selection + batch operations | MED | M | Outlining |
-| 658 | **Custom task keywords** — configurable states beyond TODO/DOING/DONE | MED | M | Tasks |
-| 660 | **Logseq/Markdown import** — parse Logseq `.md` files into blocks | HIGH | L | Import |
 
 **Not in REVIEW-LATER (intentionally deferred):**
 - Block references / embeds (not needed for target workflow)
@@ -375,27 +351,27 @@ These features are designed and scoped but not yet implemented. Each has bite-si
 
 | Category | Logseq | Agaric (current) | Agaric (projected) | Notes |
 |---|:---:|:---:|:---:|---|
-| Block CRUD | 10 | 9 | 9 | Zoom-in + collapse persistence done. Missing: block refs/embeds (deferred), multi-select |
-| Page management | 9 | 8 | 8 | Aliases done. Missing: namespaces |
-| Editor formatting | 9 | 8 | 8 | 23 slash commands + formatting toolbar. Missing: strikethrough, highlight, tables, blockquotes, math |
+| Block CRUD | 10 | 10 | 10 | Zoom-in + collapse persistence + multi-select with batch toolbar. Missing: block refs/embeds (deferred) |
+| Page management | 9 | 9 | 9 | Aliases + namespaced pages (tree view, breadcrumbs, create-under) |
+| Editor formatting | 9 | 9 | 9 | 23+ slash commands + formatting toolbar + tables + blockquotes. Missing: strikethrough, highlight, math |
 | Linking system | 10 | 8 | 8 | Linked + unlinked references, 11-type backlink filter. Missing: block refs/embeds (deferred) |
 | Properties | 8 | 8 | 9 | Full backend + PagePropertyTable. Planned: management view (#643), inline chips (#645) |
 | Tags | 8 | 7 | 7 | Boolean AND/OR/NOT, prefix hierarchy. Tags not unified with pages (design choice) |
-| Query system | 9 | 5 | 6 | Tag/FTS/property queries + agenda. No inline query blocks. Planned: advanced agenda filters (#642) |
-| Task management | 8 | 9 | 10 | TODO/DOING/DONE + priority + recurrence + agenda dashboard + DonePanel. Planned: scheduling semantics (#641), repeat modes (#644) |
-| Daily journal | 8 | 9 | 9 | 4 modes + auto-create + journal template auto-apply. Planned: dynamic variables (#639) |
+| Query system | 9 | 7 | 8 | Tag/FTS/property queries + agenda + inline query blocks. Planned: advanced agenda filters (#642) |
+| Task management | 8 | 10 | 10 | Configurable keywords + priority + 3 repeat modes + scheduling semantics + agenda + DonePanel |
+| Daily journal | 8 | 9 | 9 | 4 modes + auto-create + journal template with dynamic variables |
 | Search | 8 | 8 | 8 | FTS5 trigram + CJK + unlinked refs. Missing: scope filters |
-| Templates | 7 | 4 | 7 | /template command + template pages + journal auto-apply. Planned: variables, CRUD UI (#639) |
-| Sync/storage | 5 | 10 | 10 | SyncDaemon + three-way merge + TLS + mDNS + cert pinning. Fully automated LAN sync |
+| Templates | 7 | 7 | 7 | /template + dynamic variables + journal auto-apply + Save as template |
+| Sync/storage | 5 | 10 | 10 | SyncDaemon + three-way merge + TLS + mDNS fallback + cert pinning + offline indicator. Fully automated LAN sync |
 | Data integrity | 4 | 9 | 9 | Op log + blake3 + recovery + undo hardening |
 | Performance arch | 6 | 8 | 8 | CQRS + cursor pagination + depth limits + Tauri 2 |
-| Import/export | 7 | 4 | 5 | Per-page + full graph Markdown export as ZIP. Planned: Logseq import (#660) |
+| Import/export | 7 | 6 | 6 | Per-page + full graph Markdown export as ZIP. Logseq import with file picker |
 
-**Current totals: Logseq 116 / Agaric 114** (98%)
+**Current totals: Logseq 116 / Agaric 125** (108%)
 
-**Projected totals: Logseq 116 / Agaric 121** (104%)
+**Projected totals: Logseq 116 / Agaric 127** (109%)
 
-Agaric is at near-parity with Logseq overall, driven by architectural advantages in sync, data integrity, performance, and task management. The remaining Logseq advantages are in the **query system** (inline query blocks + Datalog), **linking** (block refs/embeds), and **import/export** — the first two are deferred by design; import/export is a future priority. Projected scores show Agaric surpassing Logseq once planned features ship.
+Agaric now surpasses Logseq overall, driven by architectural advantages in sync, data integrity, performance, and task management, plus newly shipped features (templates, inline queries, namespaces, scheduling semantics, multi-select, tables/blockquotes, Logseq import). The remaining Logseq advantages are in the **linking** system (block refs/embeds — deferred by design) and **advanced queries** (Datalog). The projected scores reflect remaining planned improvements to properties, query filters, and editor formatting.
 
 ---
 
@@ -420,6 +396,29 @@ Features that moved from Gap to Done since the previous version of this document
 | Journal template auto-populate on create | Planned (#630) | #630 |
 | Collapse state persistence (localStorage) | Planned (#652) | #652 |
 | Full graph Markdown export as ZIP | Planned (#659) | #659 |
+| Block-level multi-selection + batch toolbar | Gap | Shipped (Ctrl+Click, Shift+Click, Ctrl+A, batch delete/set-todo) |
+| Namespaced pages | Gap | Shipped (tree view in PageBrowser, breadcrumbs, create-under flow) |
+| Dynamic template variables | Gap | Shipped (`<% today %>`, `<% time %>` expansion) |
+| Save as template (kebab menu) | Gap | Shipped (kebab menu action) |
+| Custom task keywords | Gap | Shipped (configurable via localStorage + PropertiesView settings) |
+| Tables (editor) | Gap | Shipped (pipe-delimited markdown, TipTap extensions, `/table` command) |
+| Blockquotes (editor) | Gap | Shipped (TipTap Blockquote extension) |
+| Inline query blocks | Gap | Shipped (`{{query type:tag expr:...}}` with live results) |
+| Logseq import | Gap | Shipped (parse indented markdown, properties, block ref stripping, YAML frontmatter stripping, file picker) |
+| Scheduling semantics (overdue rollforward) | Planned (#641) | Shipped (DuePanel overdue accumulation on today's view) |
+| Scheduled date hide-before toggle | Planned (#641) | Shipped (localStorage toggle in DuePanel) |
+| Deadline warning period | Planned (#641) | Shipped (configurable N days in PropertiesView) |
+| Repeat: from-completion + catch-up modes | Planned (#644) | Shipped (`.+` and `++` modes) |
+| Repeat: end conditions | Planned (#644) | Shipped (repeat-until, repeat-count) |
+| Repeat: agenda projection | Planned (#644) | Shipped (virtual future occurrences) |
+| Template dynamic variables | Planned (#639) | Shipped (`<% today %>`, `<% time %>` etc) |
+| Template CRUD + journal auto-apply | Planned (#639) | Shipped (Save as template, template picker, journal-template property) |
+| Template insertion robustness | Planned (#649) | Shipped (recursive child copy, picker UX) |
+| Conflicts: type-specific rendering | Planned (#651) | Shipped (property diffs, move diffs, text fallback) |
+| Conflicts: batch resolution | Planned (#651) | Shipped (multi-select + batch keep/discard) |
+| Conflicts: source device info | Planned (#651) | Shipped (device name from history + peer refs) |
+| Manual IP entry / mDNS fallback | Gap | Shipped (last_address on peer_refs, sync daemon fallback, DeviceManagement UI) |
+| Offline state indication | Gap | Shipped (useSyncStore 'offline' state, StatusPanel display) |
 
 ---
 
@@ -430,4 +429,3 @@ Features that moved from Gap to Done since the previous version of this document
 - Logseq Blog: https://blog.logseq.com/
 - Logseq Docs Repo: https://github.com/logseq/docs
 - Awesome Logseq: https://github.com/logseq/awesome-logseq
-/awesome-logseq
