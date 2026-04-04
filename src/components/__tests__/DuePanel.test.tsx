@@ -25,6 +25,7 @@ vi.mock('../../lib/tauri', () => ({
   listBlocks: vi.fn(),
   batchResolve: vi.fn(),
   listProjectedAgenda: vi.fn(),
+  queryByProperty: vi.fn(),
 }))
 
 vi.mock('lucide-react', () => ({
@@ -45,12 +46,13 @@ vi.mock('@/components/ui/button', () => ({
 }))
 
 import type { BlockRow } from '../../lib/tauri'
-import { batchResolve, listBlocks, listProjectedAgenda } from '../../lib/tauri'
+import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
 import { DuePanel } from '../DuePanel'
 
 const mockedListBlocks = vi.mocked(listBlocks)
 const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedListProjectedAgenda = vi.mocked(listProjectedAgenda)
+const mockedQueryByProperty = vi.mocked(queryByProperty)
 
 function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
   return {
@@ -82,6 +84,7 @@ beforeEach(() => {
   mockedListBlocks.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
   mockedListProjectedAgenda.mockResolvedValue([])
+  mockedQueryByProperty.mockResolvedValue(emptyResponse)
 })
 
 describe('DuePanel', () => {
@@ -639,6 +642,72 @@ describe('DuePanel', () => {
       // is for a block that already exists in the real agenda
       await waitFor(() => {
         expect(screen.queryByText('Projected')).not.toBeInTheDocument()
+      })
+    })
+  })
+
+  // --- Overdue blocks (#641) ---
+  describe('overdue blocks', () => {
+    it('shows overdue section when viewing today with overdue blocks', async () => {
+      const today = new Date()
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedQueryByProperty.mockResolvedValue({
+        items: [
+          makeBlock({
+            id: 'OVERDUE1',
+            content: 'Overdue task',
+            parent_id: 'P1',
+            todo_state: 'TODO',
+            priority: '1',
+            due_date: '2025-01-01',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<DuePanel date={todayStr} />)
+
+      expect(await screen.findByText('Overdue')).toBeInTheDocument()
+      expect(screen.getByText(/Overdue task/)).toBeInTheDocument()
+    })
+
+    it('does not show overdue section for non-today dates', async () => {
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+
+      render(<DuePanel date="2025-06-15" />)
+
+      await waitFor(() => {
+        expect(screen.queryByText('Overdue')).not.toBeInTheDocument()
+      })
+    })
+
+    it('does not show DONE blocks in overdue section', async () => {
+      const today = new Date()
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedQueryByProperty.mockResolvedValue({
+        items: [
+          makeBlock({
+            id: 'DONE1',
+            content: 'Done task',
+            parent_id: null,
+            todo_state: 'DONE',
+            priority: null,
+            due_date: '2025-01-01',
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<DuePanel date={todayStr} />)
+
+      await waitFor(() => {
+        expect(screen.queryByText('Overdue')).not.toBeInTheDocument()
       })
     })
   })

@@ -9,12 +9,12 @@
 
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
-import { batchResolve, listBlocks, listProjectedAgenda } from '../lib/tauri'
+import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -57,6 +57,59 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   const [sourceFilter, setSourceFilter] = useState<string | null>(null)
   const [projectedEntries, setProjectedEntries] = useState<ProjectedAgendaEntry[]>([])
   const [projectedLoading, setProjectedLoading] = useState(false)
+  const [overdueBlocks, setOverdueBlocks] = useState<BlockRow[]>([])
+
+  const todayStr = useMemo(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }, [])
+  const isToday = date === todayStr
+
+  // Fetch overdue blocks when showing today
+  useEffect(() => {
+    if (!isToday) {
+      setOverdueBlocks([])
+      return
+    }
+    let stale = false
+
+    async function fetchOverdue() {
+      try {
+        const resp = await queryByProperty({ key: 'due_date', limit: 500 })
+        if (stale) return
+
+        const overdue = resp.items.filter(
+          (b) => b.due_date && b.due_date < date && b.todo_state !== 'DONE',
+        )
+        setOverdueBlocks(overdue)
+
+        if (overdue.length > 0) {
+          const parentIds = overdue
+            .map((b) => b.parent_id)
+            .filter((id): id is string => id != null)
+          if (parentIds.length > 0) {
+            const resolved = await batchResolve([...new Set(parentIds)])
+            if (!stale) {
+              setPageTitles((prev) => {
+                const next = new Map(prev)
+                for (const r of resolved) {
+                  next.set(r.id, r.title ?? 'Untitled')
+                }
+                return next
+              })
+            }
+          }
+        }
+      } catch {
+        if (!stale) setOverdueBlocks([])
+      }
+    }
+
+    fetchOverdue()
+    return () => {
+      stale = true
+    }
+  }, [isToday, date])
 
   // Fetch blocks due on the given date
   const fetchBlocks = useCallback(
@@ -226,7 +279,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   }).filter((g) => g.items.length > 0)
 
   // Empty state: hidden entirely
-  if (!loading && !projectedLoading && totalCount === 0 && blocks.length === 0 && projectedEntries.length === 0) {
+  if (!loading && !projectedLoading && totalCount === 0 && blocks.length === 0 && projectedEntries.length === 0 && overdueBlocks.length === 0) {
     return null
   }
 
@@ -288,6 +341,77 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
             >
               <Loader2 className="h-4 w-4 animate-spin" data-testid="loader-spinner" />
               <span className="text-sm text-muted-foreground">{t('duePanel.loading')}</span>
+            </div>
+          )}
+
+          {/* Overdue section */}
+          {isToday && overdueBlocks.length > 0 && (
+            <div className="overdue-section mb-3">
+              <h4 className="text-xs font-semibold text-destructive mb-1.5 flex items-center gap-1">
+                <span>Overdue</span>
+                <span className="text-muted-foreground font-normal">
+                  ({overdueBlocks.length})
+                </span>
+              </h4>
+              <ul className="space-y-1">
+                {overdueBlocks
+                  .sort((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''))
+                  .map((block) => {
+                    const pageTitle = block.parent_id
+                      ? pageTitles.get(block.parent_id)
+                      : undefined
+                    return (
+                      <li
+                        key={`overdue-${block.id}`}
+                        className="flex items-center gap-2 rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-sm cursor-pointer hover:bg-destructive/10 transition-colors"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          if (block.parent_id && onNavigateToPage) {
+                            onNavigateToPage(
+                              block.parent_id,
+                              pageTitle ?? '',
+                              block.id,
+                            )
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== 'Enter' && e.key !== ' ') return
+                          e.preventDefault()
+                          if (block.parent_id && onNavigateToPage) {
+                            onNavigateToPage(
+                              block.parent_id,
+                              pageTitle ?? '',
+                              block.id,
+                            )
+                          }
+                        }}
+                      >
+                        {block.todo_state && (
+                          <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-bold leading-none bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
+                            {block.todo_state}
+                          </span>
+                        )}
+                        {block.priority && (
+                          <span
+                            className={cn(
+                              'inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-[10px] font-bold leading-none',
+                              priorityColor(block.priority),
+                            )}
+                          >
+                            P{block.priority}
+                          </span>
+                        )}
+                        <span className="flex-1 truncate">
+                          {truncateContent(block.content)}
+                        </span>
+                        <span className="shrink-0 text-[10px] text-destructive/60">
+                          {block.due_date}
+                        </span>
+                      </li>
+                    )
+                  })}
+              </ul>
             </div>
           )}
 
