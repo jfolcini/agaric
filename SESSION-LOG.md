@@ -1,5 +1,63 @@
 # Session Log
 
+## Session 187 — 2026-04-04 — Project-wide lint/format cleanup
+
+### Summary
+Eliminated all remaining lint, type-check, and formatting issues across the entire codebase. Zero noNonNullAssertion biome errors remain. All clippy warnings resolved. All prek hooks pass.
+
+**Commit:** 22c2348
+
+### Changes
+
+| Area | Change |
+|------|--------|
+| biome (28 source + test files) | Replaced all 127 `!` non-null assertions with `as Type` casts |
+| TypeScript strict mode (9 files) | Fixed ~47 compilation errors from the `as Type` migration |
+| QueryResult.tsx | Fixed unused biome suppression (wrong rule name) |
+| commands_bench.rs | Fixed `list_blocks_inner` calls (9→11 args: added `agenda_date_start`, `agenda_date_end`) |
+| commands.rs | Fixed needless borrows (`&key` → `key`), added `#[allow(clippy::too_many_arguments)]` for `add_attachment` |
+| fts.rs | Fixed `format!` in `format!` args |
+| pairing.rs | Fixed loop variable indexing → iterator |
+| pagination.rs | Fixed suspicious double-ref clone |
+| 4 bench files | Auto-fixed needless borrows via `cargo clippy --fix` |
+| 12 Rust source files | `cargo fmt` formatting |
+| bindings.ts | Whitespace cleanup (trailing spaces in doc comments) |
+
+### Stats
+- 71 files changed, 1311 insertions, 967 deletions
+- 3064 frontend + 1585 Rust tests pass
+- All 15 prek hooks pass
+
+---
+
+## Session 186 — 2026-04-04 — Batch 39: seven UX-MED fixes
+
+### Summary
+Resolved 7 UX-MED items across 5 parallel build subagents. Also fixed 8 pre-existing test failures (DOMMatrix stub, agendaDateRange params, KeyboardShortcuts text).
+
+**Commit:** 6632626
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `src/components/EditableBlock.tsx` | UX-M8: document-level Escape listener closes unfocused empty editor |
+| `src/components/BlockTree.tsx` | UX-M9: mousedown handler on page background saves and closes active editor |
+| `src/components/BlockPropertyDrawer.tsx` | UX-M11: added padding (p-4, px-4 py-3) to drawer content |
+| `src/editor/extensions/slash-command.ts` | UX-M12: auto-execute on exact match with 150ms debounce |
+| `src/index.css` | UX-M19: blockquote styling (3px left border + muted text + background) |
+| `src/components/SortableBlock.tsx` | UX-M20: heading gutter alignment via flex-shrink-0 + pt offsets; UX-M21: added title + aria-label to date pills |
+| `src/editor/__tests__/slash-command.test.ts` | New test file for slash command auto-execute |
+| `src/test-setup.ts` | DOMMatrix jsdom stub for pdfjs-dist |
+| `REVIEW-LATER.md` | 7 items removed (UX-M8, UX-M9, UX-M11, UX-M12, UX-M19, UX-M20, UX-M21) |
+
+### Stats
+- 19 files changed, 978 insertions, 163 deletions
+- 3064 frontend + 1585 Rust tests pass
+- All 15 prek hooks pass
+
+---
+
 ## Session 185 — 2026-04-04 — Batch 38: six UX-MED styling fixes
 
 ### Summary
