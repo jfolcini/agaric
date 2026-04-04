@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 200 — 2026-04-04 — Batch 54: Refactoring extractions (R-5, R-6, R-7, R-10, R-12, R-15)
+
+### Summary
+Extracted 6 duplicated patterns into shared hooks/components via 5 parallel subagents. 17 new tests, 3151 total pass. All internal refactoring — no user-facing changes.
+
+### Batch 54
+
+**Commit:** e16226e
+
+| Area | Change |
+|------|--------|
+| useBatchCounts.ts (NEW) | R-5: Hook extracts identical 22-line `useEffect` from WeeklyView + MonthlyView (countAgendaBatch + countBacklinksBatch with cancellation). 6 tests. |
+| WeeklyView.tsx | R-5: Replaced inline useEffect with `useBatchCounts` hook. ~83 → ~56 lines. |
+| MonthlyView.tsx | R-5: Same replacement. ~83 → ~56 lines. |
+| PageHeader.tsx | R-6: `createUndoRedoHandler` factory replaces duplicated undo/redo handlers (43 lines). R-7: `createTemplateToggle` factory replaces duplicated template toggle handlers (33 lines). |
+| useDebouncedCallback.ts (NEW) | R-10: Generic debounce hook replacing manual `useRef<timeout>` + `setTimeout` + cleanup pattern. 5 tests. |
+| SearchPanel.tsx | R-10: Replaced inline debounce with `useDebouncedCallback`. |
+| TagFilterPanel.tsx | R-10: Same replacement. |
+| SortableBlock.tsx | R-12: Extracted `DateChip` component with `DateChipProps` interface. Replaces two inline date chip renders (due + scheduled). |
+| CollapsiblePanelHeader.tsx (NEW) | R-15: Shared component for collapsible panel headers with chevron toggle. 6 tests. |
+| DonePanel.tsx | R-15: Replaced inline collapsible header with `CollapsiblePanelHeader`. |
+| DuePanel.tsx | R-15: Same replacement. |
+
+**Review:** 5 parallel build subagents + 1 review subagent. One blocking issue found and fixed: R-15 `CollapsiblePanelHeader.tsx` line exceeded 100-char limit (split className into `cn()` call). Biome auto-fixed import ordering and formatting in 5 files. TypeScript fix: `DateChip` icon prop widened from `ComponentType<{size: number}>` to `LucideIcon`.
+
+**Stats:** 14 files changed (5 new + 9 modified), 652 insertions, 225 deletions. 3151/3151 frontend tests pass. All prek hooks pass.
+
+**Resolved:** R-5, R-6, R-7, R-10, R-12, R-15 (6 items). 45 open items remain.
+
+---
+
 ## Session 199 — 2026-04-04 — Batch 53: Mobile CSS fixes (MOB-M3, MOB-M5, MOB-M6, MOB-M9, MOB-M10, MOB-M11, MOB-L1)
 
 ### Summary
