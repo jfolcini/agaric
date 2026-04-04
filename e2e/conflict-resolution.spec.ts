@@ -1,9 +1,5 @@
 import { expect, test } from '@playwright/test'
-
-async function waitForBoot(page: import('@playwright/test').Page) {
-  await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible({ timeout: 5000 })
-}
+import { waitForBoot } from './helpers'
 
 test.describe('Conflict resolution', () => {
   test.beforeEach(async ({ page }) => {

@@ -128,6 +128,10 @@ mod specta_tests {
             crate::commands::add_attachment,
             crate::commands::delete_attachment,
             crate::commands::list_attachments,
+            // Draft autosave (F-17)
+            crate::commands::save_draft,
+            crate::commands::flush_draft,
+            crate::commands::delete_draft,
         ])
     }
 
@@ -299,6 +303,10 @@ pub fn run() {
         commands::add_attachment,
         commands::delete_attachment,
         commands::list_attachments,
+        // Draft autosave (F-17)
+        commands::save_draft,
+        commands::flush_draft,
+        commands::delete_draft,
     ]);
 
     tauri::Builder::default()

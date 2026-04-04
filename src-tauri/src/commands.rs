@@ -23,6 +23,7 @@ use crate::backlink_query::{
 };
 use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
+use crate::draft;
 use crate::error::AppError;
 use crate::fts;
 use crate::import::{self, ImportResult};
@@ -5354,6 +5355,85 @@ pub async fn list_attachments(
     block_id: String,
 ) -> Result<Vec<AttachmentRow>, AppError> {
     list_attachments_inner(&pool.0, block_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+// ---------------------------------------------------------------------------
+// Draft autosave commands (F-17)
+// ---------------------------------------------------------------------------
+
+/// Flush a draft: look up the stored draft content, compute `prev_edit`,
+/// write an `edit_block` op, and delete the draft row — all atomically.
+///
+/// If no draft exists for `block_id`, this is a no-op (returns `Ok(())`).
+pub async fn flush_draft_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    block_id: String,
+) -> Result<(), AppError> {
+    // 1. Look up the draft; if none exists, no-op.
+    let stored = match draft::get_draft(pool, &block_id).await? {
+        Some(d) => d,
+        None => return Ok(()),
+    };
+
+    // 2. Compute prev_edit from op_log (same logic as edit_block_inner).
+    let prev_edit_row = sqlx::query!(
+        "SELECT device_id, seq FROM op_log \
+         WHERE json_extract(payload, '$.block_id') = ? \
+         AND op_type IN ('edit_block', 'create_block') \
+         ORDER BY created_at DESC \
+         LIMIT 1",
+        block_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    let prev_edit = prev_edit_row.map(|r| (r.device_id, r.seq));
+
+    // 3. Delegate to draft::flush_draft (atomic tx inside).
+    draft::flush_draft(pool, device_id, &block_id, &stored.content, prev_edit).await?;
+    Ok(())
+}
+
+/// Tauri command: save a draft for a block. Delegates to [`draft::save_draft`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn save_draft(
+    pool: State<'_, WritePool>,
+    block_id: String,
+    content: String,
+) -> Result<(), AppError> {
+    draft::save_draft(&pool.0, &block_id, &content)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: flush a draft (write edit_block op + delete draft row).
+/// Delegates to [`flush_draft_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn flush_draft(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    block_id: String,
+) -> Result<(), AppError> {
+    flush_draft_inner(&pool.0, device_id.as_str(), block_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: delete a draft for a block. Delegates to [`draft::delete_draft`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_draft(
+    pool: State<'_, WritePool>,
+    block_id: String,
+) -> Result<(), AppError> {
+    draft::delete_draft(&pool.0, &block_id)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -16384,5 +16464,80 @@ mod tests {
         assert_eq!(list_b[0].filename, "b1.txt");
 
         mat.shutdown();
+    }
+
+    // ======================================================================
+    // Draft autosave commands (F-17)
+    // ======================================================================
+
+    #[tokio::test]
+    async fn save_and_flush_draft() {
+        let (pool, _dir) = test_pool().await;
+
+        // Save a draft
+        draft::save_draft(&pool, "01HZ000000000000000000DRF01", "draft content")
+            .await
+            .unwrap();
+
+        // Verify it persists
+        let d = draft::get_draft(&pool, "01HZ000000000000000000DRF01")
+            .await
+            .unwrap()
+            .expect("draft should exist after save");
+        assert_eq!(d.content, "draft content");
+
+        // Flush the draft (writes edit_block op + deletes draft row)
+        flush_draft_inner(&pool, DEV, "01HZ000000000000000000DRF01".into())
+            .await
+            .unwrap();
+
+        // Draft should be gone
+        assert!(
+            draft::get_draft(&pool, "01HZ000000000000000000DRF01")
+                .await
+                .unwrap()
+                .is_none(),
+            "draft must be deleted after flush"
+        );
+
+        // An edit_block op should exist in the log
+        let ops = crate::op_log::get_ops_since(&pool, DEV, 0)
+            .await
+            .unwrap();
+        assert_eq!(ops.len(), 1, "flush must produce one op");
+        assert_eq!(ops[0].op_type, "edit_block");
+    }
+
+    #[tokio::test]
+    async fn delete_draft_removes_entry() {
+        let (pool, _dir) = test_pool().await;
+
+        // Save a draft
+        draft::save_draft(&pool, "01HZ000000000000000000DRF02", "to be deleted")
+            .await
+            .unwrap();
+
+        // Verify it exists
+        assert!(
+            draft::get_draft(&pool, "01HZ000000000000000000DRF02")
+                .await
+                .unwrap()
+                .is_some(),
+            "draft should exist after save"
+        );
+
+        // Delete it
+        draft::delete_draft(&pool, "01HZ000000000000000000DRF02")
+            .await
+            .unwrap();
+
+        // Verify it's gone
+        assert!(
+            draft::get_draft(&pool, "01HZ000000000000000000DRF02")
+                .await
+                .unwrap()
+                .is_none(),
+            "draft must be gone after delete"
+        );
     }
 }

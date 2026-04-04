@@ -707,3 +707,22 @@ export interface ImportResult {
 export async function importMarkdown(content: string, filename?: string): Promise<ImportResult> {
   return invoke('import_markdown', { content, filename: filename ?? null })
 }
+
+// ---------------------------------------------------------------------------
+// Draft autosave commands (F-17)
+// ---------------------------------------------------------------------------
+
+/** Save (upsert) a draft for a block. Called every ~2s during active typing. */
+export async function saveDraft(blockId: string, content: string): Promise<void> {
+  await invoke('save_draft', { blockId, content })
+}
+
+/** Flush a draft: write an edit_block op and delete the draft row. Called on blur/unmount. */
+export async function flushDraft(blockId: string): Promise<void> {
+  await invoke('flush_draft', { blockId })
+}
+
+/** Delete a draft for a block (e.g. after a successful normal save). */
+export async function deleteDraft(blockId: string): Promise<void> {
+  await invoke('delete_draft', { blockId })
+}

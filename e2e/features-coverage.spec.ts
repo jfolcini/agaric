@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { focusBlock, openPage, waitForBoot } from './helpers'
 
 /**
  * E2E coverage tests for remaining feature gaps.
@@ -17,29 +18,6 @@ import { expect, test } from '@playwright/test'
  *   PAGE_QUICK_NOTES ("Quick Notes") — 2 child blocks
  *   3 tags: work, personal, idea
  */
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function waitForBoot(page: import('@playwright/test').Page) {
-  await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
-}
-
-async function openPage(page: import('@playwright/test').Page, title: string) {
-  await page.getByRole('button', { name: 'Pages' }).click()
-  await page.getByText(title, { exact: true }).click()
-  await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
-}
-
-async function focusBlock(page: import('@playwright/test').Page, index = 0) {
-  await page.locator('.block-static').nth(index).click()
-  const editor = page.locator('.block-editor [contenteditable="true"]')
-  await expect(editor).toBeVisible({ timeout: 3000 })
-  await editor.focus()
-  return editor
-}
 
 // ===========================================================================
 // 1. Journal view modes

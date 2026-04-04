@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { openPage, waitForBoot } from './helpers'
 
 /**
  * E2E tests for HistoryView batch revert (#137).
@@ -8,21 +9,6 @@ import { expect, test } from '@playwright/test'
  *
  * The tauri-mock tracks an op log and supports batch revert.
  */
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function waitForBoot(page: import('@playwright/test').Page) {
-  await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
-}
-
-async function openPage(page: import('@playwright/test').Page, title: string) {
-  await page.getByRole('button', { name: 'Pages' }).click()
-  await page.getByText(title, { exact: true }).click()
-  await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
-}
 
 // ---------------------------------------------------------------------------
 // Tests

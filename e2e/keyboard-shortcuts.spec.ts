@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { focusBlock, openPage, waitForBoot } from './helpers'
 
 /**
  * E2E tests for keyboard shortcuts.
@@ -17,32 +18,6 @@ import { expect, test } from '@playwright/test'
  *     QN_1: contains [[PAGE_GETTING_STARTED]] backlink
  *     QN_2: contains *italic* text
  */
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Wait for the app to fully boot (BootGate resolved, sidebar visible). */
-async function waitForBoot(page: import('@playwright/test').Page) {
-  await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
-}
-
-/** Navigate to the page editor for a given page title. */
-async function openPage(page: import('@playwright/test').Page, title: string) {
-  await page.getByRole('button', { name: 'Pages' }).click()
-  await page.getByText(title, { exact: true }).click()
-  await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
-}
-
-/** Click a block to enter edit mode and wait for the TipTap editor. */
-async function focusBlock(page: import('@playwright/test').Page, index = 0) {
-  await page.locator('.block-static').nth(index).click()
-  const editor = page.locator('.block-editor [contenteditable="true"]')
-  await expect(editor).toBeVisible({ timeout: 3000 })
-  await editor.focus()
-  return editor
-}
 
 // ===========================================================================
 // 1. Formatting shortcuts (in focused editor)

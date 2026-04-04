@@ -701,6 +701,40 @@ async listAttachments(blockId: string) : Promise<Result<AttachmentRow[], { kind:
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: save a draft for a block. Delegates to [`draft::save_draft`].
+ */
+async saveDraft(blockId: string, content: string) : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_draft", { blockId, content }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: flush a draft (write edit_block op + delete draft row).
+ * Delegates to [`flush_draft_inner`].
+ */
+async flushDraft(blockId: string) : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("flush_draft", { blockId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: delete a draft for a block. Delegates to [`draft::delete_draft`].
+ */
+async deleteDraft(blockId: string) : Promise<Result<null, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_draft", { blockId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

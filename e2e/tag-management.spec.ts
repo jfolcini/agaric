@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
 
 /**
  * E2E tests for tag management flows.
@@ -19,32 +20,6 @@ import { expect, test } from '@playwright/test'
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-async function waitForBoot(page: import('@playwright/test').Page) {
-  await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible({ timeout: 5000 })
-}
-
-async function openPage(page: import('@playwright/test').Page, title: string) {
-  await page.getByRole('button', { name: 'Pages' }).click()
-  await page.getByText(title, { exact: true }).click()
-  await expect(page.locator('[aria-label="Page title"]')).toBeVisible({ timeout: 3000 })
-}
-
-async function focusBlock(page: import('@playwright/test').Page, index = 0) {
-  await page.locator('.block-static').nth(index).click()
-  const editor = page.locator('.block-editor [contenteditable="true"]')
-  await expect(editor).toBeVisible({ timeout: 3000 })
-  await editor.focus()
-  return editor
-}
-
-async function _saveBlock(page: import('@playwright/test').Page) {
-  await page.keyboard.press('Enter')
-  await expect(page.locator('.block-editor [contenteditable="true"]')).not.toBeVisible({
-    timeout: 3000,
-  })
-}
 
 async function navigateToTags(page: import('@playwright/test').Page) {
   await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Tags' }).click()

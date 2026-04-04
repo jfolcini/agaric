@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { focusBlock, openPage, waitForBoot } from './helpers'
 
 /**
  * Exhaustive E2E tests for inner links ([[ULID]] block links).
@@ -15,21 +16,6 @@ import { expect, test } from '@playwright/test'
  *     QN_2: contains *italic* text
  *   3 tags: work, personal, idea
  */
-
-/** Navigate to the page editor for a given page title. */
-async function openPage(page: import('@playwright/test').Page, title: string) {
-  await page.getByRole('button', { name: 'Pages' }).click()
-  await page.getByText(title, { exact: true }).click()
-  // Page editor shows title in an editable div
-  await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
-}
-
-/** Wait for the app to fully boot (BootGate resolved, sidebar visible). */
-async function waitForBoot(page: import('@playwright/test').Page) {
-  await page.goto('/')
-  // Wait for sidebar nav to appear (proves BootGate resolved)
-  await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
-}
 
 test.describe('Inner links — rendering', () => {
   test.beforeEach(async ({ page }) => {
@@ -158,16 +144,6 @@ test.describe('Inner links — navigation', () => {
     ).toBeVisible()
   })
 })
-
-/** Click a block to enter edit mode and wait for the TipTap editor. */
-async function focusBlock(page: import('@playwright/test').Page, index = 0) {
-  await page.locator('.block-static').nth(index).click()
-  // Wait for the TipTap editor to mount (contenteditable div inside .block-editor)
-  const editor = page.locator('.block-editor [contenteditable="true"]')
-  await expect(editor).toBeVisible({ timeout: 3000 })
-  // Focus the contenteditable
-  await editor.focus()
-}
 
 /** Type [[ to trigger the link picker inside the focused editor. */
 async function typeLinkTrigger(page: import('@playwright/test').Page) {

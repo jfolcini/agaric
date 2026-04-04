@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
 
 /**
  * E2E tests for markdown syntax rendering.
@@ -23,41 +24,6 @@ import { expect, test } from '@playwright/test'
  *     GS_4: contains #[TAG_WORK] and #[TAG_PERSONAL] tag refs
  *     GS_5: contains **bold** text
  */
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Wait for the app to fully boot (BootGate resolved, sidebar visible). */
-async function waitForBoot(page: import('@playwright/test').Page) {
-  await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Journal' })).toBeVisible()
-}
-
-/** Navigate to the page editor for a given page title. */
-async function openPage(page: import('@playwright/test').Page, title: string) {
-  await page.getByRole('button', { name: 'Pages' }).click()
-  await page.getByText(title, { exact: true }).click()
-  await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
-}
-
-/** Click a block to enter edit mode and wait for the TipTap editor. */
-async function focusBlock(page: import('@playwright/test').Page, index = 0) {
-  await page.locator('.block-static').nth(index).click()
-  const editor = page.locator('.block-editor [contenteditable="true"]')
-  await expect(editor).toBeVisible({ timeout: 3000 })
-  await editor.focus()
-  return editor
-}
-
-/** Save the current block by pressing Enter (flush content -> close editor -> static render). */
-async function saveBlock(page: import('@playwright/test').Page) {
-  await page.keyboard.press('Enter')
-  // Wait for the editor to disappear and static block to re-render
-  await expect(page.locator('.block-editor [contenteditable="true"]')).not.toBeVisible({
-    timeout: 3000,
-  })
-}
 
 // ===========================================================================
 // 1. Heading syntax — TipTap inputRules convert "# " at start of line
