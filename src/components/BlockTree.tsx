@@ -1243,7 +1243,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       try {
         const parentId = block.parent_id ?? rootParentId
         if (!parentId) return
-        const ids = await insertTemplateBlocks(templatePageId, parentId)
+        const pageTitle = useResolveStore.getState().cache.get(rootParentId ?? '')?.title ?? ''
+        const ids = await insertTemplateBlocks(templatePageId, parentId, { pageTitle })
         if (ids.length > 0) {
           await load(parentId)
           toast.success(t('slash.templateInserted'))

@@ -827,7 +827,7 @@ export function JournalPage({
             toast.warning(duplicateWarning)
           }
           if (journalTemplate) {
-            const ids = await insertTemplateBlocks(journalTemplate.id, pageId)
+            const ids = await insertTemplateBlocks(journalTemplate.id, pageId, { pageTitle: dateStr })
             await load(pageId)
             if (autoFocus && ids.length > 0) {
               useBlockStore.setState({ focusedBlockId: ids[0] })

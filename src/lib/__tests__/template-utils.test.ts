@@ -1,6 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { insertTemplateBlocks, loadJournalTemplate, loadTemplatePages, loadTemplatePagesWithPreview } from '../template-utils'
+import {
+  expandTemplateVariables,
+  insertTemplateBlocks,
+  loadJournalTemplate,
+  loadTemplatePages,
+  loadTemplatePagesWithPreview,
+} from '../template-utils'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -370,5 +376,60 @@ describe('loadTemplatePagesWithPreview', () => {
 
     const result = await loadTemplatePagesWithPreview()
     expect(result[0].preview).toBeNull()
+  })
+})
+
+describe('expandTemplateVariables', () => {
+  it('expands <% today %> to current date', () => {
+    const result = expandTemplateVariables('Due: <% today %>', {})
+    expect(result).toMatch(/Due: \d{4}-\d{2}-\d{2}/)
+  })
+
+  it('expands <% time %> to current time', () => {
+    const result = expandTemplateVariables('At: <% time %>', {})
+    expect(result).toMatch(/At: \d{2}:\d{2}/)
+  })
+
+  it('expands <% datetime %> to date and time', () => {
+    const result = expandTemplateVariables('Created: <% datetime %>', {})
+    expect(result).toMatch(/Created: \d{4}-\d{2}-\d{2} \d{2}:\d{2}/)
+  })
+
+  it('expands <% page title %> from context', () => {
+    const result = expandTemplateVariables('Page: <% page title %>', { pageTitle: 'My Notes' })
+    expect(result).toBe('Page: My Notes')
+  })
+
+  it('expands <% page title %> to empty when no context', () => {
+    const result = expandTemplateVariables('Page: <% page title %>', {})
+    expect(result).toBe('Page: ')
+  })
+
+  it('expands multiple variables in one string', () => {
+    const result = expandTemplateVariables('Date: <% today %>, Page: <% page title %>', {
+      pageTitle: 'Test',
+    })
+    expect(result).toMatch(/Date: \d{4}-\d{2}-\d{2}, Page: Test/)
+  })
+
+  it('is case-insensitive', () => {
+    const result = expandTemplateVariables('<% TODAY %> <% Today %>', {})
+    const today = new Date().toISOString().slice(0, 10)
+    expect(result).toBe(`${today} ${today}`)
+  })
+
+  it('handles whitespace variations in delimiters', () => {
+    const result = expandTemplateVariables('<%today%> <% today  %>', {})
+    const today = new Date().toISOString().slice(0, 10)
+    expect(result).toBe(`${today} ${today}`)
+  })
+
+  it('leaves unknown variables unchanged', () => {
+    const result = expandTemplateVariables('<% unknown %>', {})
+    expect(result).toBe('<% unknown %>')
+  })
+
+  it('returns content unchanged when no variables present', () => {
+    expect(expandTemplateVariables('Hello world', {})).toBe('Hello world')
   })
 })
