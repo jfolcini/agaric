@@ -1,15 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { MAX_REDO_STACK, useUndoStore } from '../undo'
+import {
+  MAX_REDO_STACK,
+  UNDO_GROUP_WINDOW_MS,
+  isWithinUndoGroup,
+  useUndoStore,
+} from '../undo'
 
 vi.mock('@/lib/tauri', () => ({
   undoPageOp: vi.fn(),
   redoPageOp: vi.fn(),
+  listPageHistory: vi.fn(),
 }))
 
-import { redoPageOp, undoPageOp } from '@/lib/tauri'
+import { listPageHistory, redoPageOp, undoPageOp } from '@/lib/tauri'
 
 const mockedUndoPageOp = vi.mocked(undoPageOp)
 const mockedRedoPageOp = vi.mocked(redoPageOp)
+const mockedListPageHistory = vi.mocked(listPageHistory)
 
 /** Helper — build a mock UndoResult. */
 function makeUndoResult(
@@ -345,5 +352,335 @@ describe('useUndoStore', () => {
       expect(useUndoStore.getState().pages.has('page1')).toBe(false)
       expect(useUndoStore.getState().pages.has('page2')).toBe(true)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isWithinUndoGroup
+// ---------------------------------------------------------------------------
+
+describe('isWithinUndoGroup', () => {
+  it('returns true for timestamps 50ms apart', () => {
+    expect(isWithinUndoGroup('2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.050Z')).toBe(true)
+  })
+
+  it('returns false for timestamps 500ms apart', () => {
+    expect(isWithinUndoGroup('2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.500Z')).toBe(false)
+  })
+
+  it('returns true for timestamps exactly at the boundary (200ms)', () => {
+    expect(isWithinUndoGroup('2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.200Z')).toBe(true)
+  })
+
+  it('returns false for timestamps 201ms apart', () => {
+    expect(isWithinUndoGroup('2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.201Z')).toBe(false)
+  })
+
+  it('returns false when either timestamp is invalid', () => {
+    expect(isWithinUndoGroup('not-a-date', '2024-01-01T00:00:00.000Z')).toBe(false)
+    expect(isWithinUndoGroup('2024-01-01T00:00:00.000Z', 'also-invalid')).toBe(false)
+  })
+
+  it('is order-independent (uses absolute difference)', () => {
+    // Reversed order should give the same result
+    expect(isWithinUndoGroup('2024-01-01T00:00:00.100Z', '2024-01-01T00:00:00.000Z')).toBe(true)
+  })
+
+  it('uses UNDO_GROUP_WINDOW_MS constant (200ms)', () => {
+    expect(UNDO_GROUP_WINDOW_MS).toBe(200)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Batch undo / redo
+// ---------------------------------------------------------------------------
+
+/** Helper — build a mock HistoryEntry. */
+function makeHistoryEntry(
+  overrides: Partial<{
+    device_id: string
+    seq: number
+    op_type: string
+    payload: string
+    created_at: string
+  }> = {},
+) {
+  return {
+    device_id: overrides.device_id ?? 'device1',
+    seq: overrides.seq ?? 1,
+    op_type: overrides.op_type ?? 'edit_block',
+    payload: overrides.payload ?? '{}',
+    created_at: overrides.created_at ?? '2024-01-01T00:00:00.000Z',
+  }
+}
+
+describe('batch undo', () => {
+  beforeEach(() => {
+    useUndoStore.setState({ pages: new Map() })
+    vi.clearAllMocks()
+  })
+
+  it('groups consecutive ops within 200ms window', async () => {
+    const t = '2024-01-01T00:00:00'
+    mockedListPageHistory.mockResolvedValueOnce({
+      items: [
+        makeHistoryEntry({ seq: 3, created_at: `${t}.150Z` }),
+        makeHistoryEntry({ seq: 2, created_at: `${t}.100Z` }),
+        makeHistoryEntry({ seq: 1, created_at: `${t}.000Z` }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    mockedUndoPageOp
+      .mockResolvedValueOnce(makeUndoResult({ seq: 3, newSeq: 4 }))
+      .mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 5 }))
+      .mockResolvedValueOnce(makeUndoResult({ seq: 1, newSeq: 6 }))
+
+    const result = await useUndoStore.getState().undo('page1')
+
+    expect(result).not.toBeNull()
+    expect(mockedUndoPageOp).toHaveBeenCalledTimes(3)
+
+    const pageState = useUndoStore.getState().pages.get('page1')
+    expect(pageState?.undoDepth).toBe(3)
+    expect(pageState?.redoStack).toHaveLength(3)
+  })
+
+  it('stops at group boundary (>200ms gap)', async () => {
+    const t = '2024-01-01T00:00:00'
+    mockedListPageHistory.mockResolvedValueOnce({
+      items: [
+        makeHistoryEntry({ seq: 3, created_at: `${t}.500Z` }), // 350ms gap to seq 2
+        makeHistoryEntry({ seq: 2, created_at: `${t}.150Z` }),
+        makeHistoryEntry({ seq: 1, created_at: `${t}.000Z` }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 3, newSeq: 4 }))
+
+    await useUndoStore.getState().undo('page1')
+
+    // Only the first undo — the 350ms gap stops the batch
+    expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
+    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
+  })
+
+  it('stops when device_id changes between consecutive ops', async () => {
+    const t = '2024-01-01T00:00:00'
+    mockedListPageHistory.mockResolvedValueOnce({
+      items: [
+        makeHistoryEntry({ device_id: 'dev1', seq: 2, created_at: `${t}.100Z` }),
+        makeHistoryEntry({ device_id: 'dev2', seq: 1, created_at: `${t}.000Z` }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 3 }))
+
+    await useUndoStore.getState().undo('page1')
+
+    expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to single undo when listPageHistory rejects', async () => {
+    mockedListPageHistory.mockRejectedValueOnce(new Error('network error'))
+    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 5, newSeq: 6 }))
+
+    const result = await useUndoStore.getState().undo('page1')
+
+    expect(result).not.toBeNull()
+    expect(mockedUndoPageOp).toHaveBeenCalledTimes(1)
+    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(1)
+  })
+
+  it('skips undo_/redo_ ops when determining groups', async () => {
+    const t = '2024-01-01T00:00:00'
+    mockedListPageHistory.mockResolvedValueOnce({
+      items: [
+        makeHistoryEntry({ seq: 5, op_type: 'undo_edit_block', created_at: `${t}.200Z` }),
+        makeHistoryEntry({ seq: 4, op_type: 'edit_block', created_at: `${t}.100Z` }),
+        makeHistoryEntry({ seq: 3, op_type: 'redo_edit_block', created_at: `${t}.080Z` }),
+        makeHistoryEntry({ seq: 2, op_type: 'edit_block', created_at: `${t}.050Z` }),
+        makeHistoryEntry({ seq: 1, op_type: 'edit_block', created_at: `${t}.000Z` }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    // After filtering: [seq4(100ms), seq2(50ms), seq1(0ms)] — all within 200ms
+    mockedUndoPageOp
+      .mockResolvedValueOnce(makeUndoResult({ seq: 4, newSeq: 6 }))
+      .mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 7 }))
+      .mockResolvedValueOnce(makeUndoResult({ seq: 1, newSeq: 8 }))
+
+    await useUndoStore.getState().undo('page1')
+
+    expect(mockedUndoPageOp).toHaveBeenCalledTimes(3)
+    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(3)
+  })
+
+  it('records group size in redoGroupSizes', async () => {
+    const t = '2024-01-01T00:00:00'
+    mockedListPageHistory.mockResolvedValueOnce({
+      items: [
+        makeHistoryEntry({ seq: 2, created_at: `${t}.050Z` }),
+        makeHistoryEntry({ seq: 1, created_at: `${t}.000Z` }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    mockedUndoPageOp
+      .mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 3 }))
+      .mockResolvedValueOnce(makeUndoResult({ seq: 1, newSeq: 4 }))
+
+    await useUndoStore.getState().undo('page1')
+
+    const pageState = useUndoStore.getState().pages.get('page1')
+    expect(pageState?.redoGroupSizes).toEqual([2])
+  })
+})
+
+describe('batch redo', () => {
+  beforeEach(() => {
+    useUndoStore.setState({ pages: new Map() })
+    vi.clearAllMocks()
+  })
+
+  it('replays the same group size as the batch undo', async () => {
+    // Batch undo of 3 ops
+    const t = '2024-01-01T00:00:00'
+    mockedListPageHistory.mockResolvedValueOnce({
+      items: [
+        makeHistoryEntry({ seq: 3, created_at: `${t}.100Z` }),
+        makeHistoryEntry({ seq: 2, created_at: `${t}.050Z` }),
+        makeHistoryEntry({ seq: 1, created_at: `${t}.000Z` }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    mockedUndoPageOp
+      .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 3, newSeq: 4 }))
+      .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 2, newSeq: 5 }))
+      .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 1, newSeq: 6 }))
+
+    await useUndoStore.getState().undo('page1')
+    expect(mockedUndoPageOp).toHaveBeenCalledTimes(3)
+
+    // Now redo — should replay all 3
+    mockedRedoPageOp
+      .mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 1 }))
+      .mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 2 }))
+      .mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 3 }))
+
+    const result = await useUndoStore.getState().redo('page1')
+
+    expect(result).not.toBeNull()
+    expect(mockedRedoPageOp).toHaveBeenCalledTimes(3)
+
+    const pageState = useUndoStore.getState().pages.get('page1')
+    expect(pageState?.undoDepth).toBe(0)
+    expect(pageState?.redoStack).toHaveLength(0)
+    expect(pageState?.redoGroupSizes).toEqual([])
+  })
+
+  it('handles mixed group sizes correctly', async () => {
+    const t = '2024-01-01T00:00:00'
+
+    // First batch undo: 2 ops
+    mockedListPageHistory.mockResolvedValueOnce({
+      items: [
+        makeHistoryEntry({ seq: 4, created_at: `${t}.050Z` }),
+        makeHistoryEntry({ seq: 3, created_at: `${t}.000Z` }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedUndoPageOp
+      .mockResolvedValueOnce(makeUndoResult({ seq: 4, newSeq: 5 }))
+      .mockResolvedValueOnce(makeUndoResult({ seq: 3, newSeq: 6 }))
+    await useUndoStore.getState().undo('page1')
+
+    // Second single undo (history fetch fails → group size 1)
+    mockedListPageHistory.mockRejectedValueOnce(new Error('fail'))
+    mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 7 }))
+    await useUndoStore.getState().undo('page1')
+
+    const stateAfterUndos = useUndoStore.getState().pages.get('page1')
+    expect(stateAfterUndos?.redoGroupSizes).toEqual([2, 1])
+    expect(stateAfterUndos?.undoDepth).toBe(3)
+
+    // Redo once — should redo 1 op (the single undo)
+    mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
+    await useUndoStore.getState().redo('page1')
+
+    expect(mockedRedoPageOp).toHaveBeenCalledTimes(1)
+    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(2)
+    expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([2])
+
+    // Redo again — should redo 2 ops (the batch undo)
+    mockedRedoPageOp
+      .mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
+      .mockResolvedValueOnce(makeUndoResult({ isRedo: true }))
+    await useUndoStore.getState().redo('page1')
+
+    expect(mockedRedoPageOp).toHaveBeenCalledTimes(3) // 1 + 2
+    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(0)
+    expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([])
+  })
+
+  it('defaults to single redo when no group size is recorded', async () => {
+    // Manually set up a page with a redo stack but no group sizes
+    // (simulates legacy state or edge case)
+    useUndoStore.setState({
+      pages: new Map([
+        [
+          'page1',
+          {
+            redoStack: [{ device_id: 'dev1', seq: 5 }],
+            undoDepth: 1,
+            redoGroupSizes: [],
+          },
+        ],
+      ]),
+    })
+
+    mockedRedoPageOp.mockResolvedValueOnce(makeUndoResult({ isRedo: true, seq: 5 }))
+
+    await useUndoStore.getState().redo('page1')
+
+    expect(mockedRedoPageOp).toHaveBeenCalledTimes(1)
+    expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(0)
+  })
+
+  it('onNewAction clears redoGroupSizes along with redoStack', async () => {
+    const t = '2024-01-01T00:00:00'
+    mockedListPageHistory.mockResolvedValueOnce({
+      items: [
+        makeHistoryEntry({ seq: 2, created_at: `${t}.050Z` }),
+        makeHistoryEntry({ seq: 1, created_at: `${t}.000Z` }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedUndoPageOp
+      .mockResolvedValueOnce(makeUndoResult({ seq: 2, newSeq: 3 }))
+      .mockResolvedValueOnce(makeUndoResult({ seq: 1, newSeq: 4 }))
+
+    await useUndoStore.getState().undo('page1')
+    expect(useUndoStore.getState().pages.get('page1')?.redoGroupSizes).toEqual([2])
+
+    // New action clears everything
+    useUndoStore.getState().onNewAction('page1')
+
+    const pageState = useUndoStore.getState().pages.get('page1')
+    expect(pageState?.redoStack).toEqual([])
+    expect(pageState?.undoDepth).toBe(0)
+    expect(pageState?.redoGroupSizes).toEqual([])
   })
 })
