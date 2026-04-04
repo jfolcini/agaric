@@ -18,7 +18,7 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 vi.mock('../../lib/tauri', () => ({
@@ -709,6 +709,74 @@ describe('DuePanel', () => {
       await waitFor(() => {
         expect(screen.queryByText('Overdue')).not.toBeInTheDocument()
       })
+    })
+  })
+
+  // --- Hide-before-scheduled toggle (#641) ---
+  describe('hide-before-scheduled toggle (#641)', () => {
+    afterEach(() => {
+      localStorage.removeItem('agaric:hideBeforeScheduled')
+    })
+
+    it('shows all blocks by default (toggle OFF)', async () => {
+      const futureDate = '2099-12-31'
+      mockedListBlocks.mockResolvedValue({
+        items: [
+          makeBlock({
+            id: 'FUTURE1',
+            content: 'Future scheduled',
+            parent_id: null,
+            todo_state: 'TODO',
+            due_date: '2026-04-03',
+            scheduled_date: futureDate,
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<DuePanel date="2026-04-03" />)
+      expect(await screen.findByText(/Future scheduled/)).toBeInTheDocument()
+    })
+
+    it('hides future-scheduled blocks when toggle is ON', async () => {
+      localStorage.setItem('agaric:hideBeforeScheduled', 'true')
+      const futureDate = '2099-12-31'
+      mockedListBlocks.mockResolvedValue({
+        items: [
+          makeBlock({
+            id: 'FUTURE2',
+            content: 'Hidden task',
+            parent_id: null,
+            todo_state: 'TODO',
+            due_date: '2026-04-03',
+            scheduled_date: futureDate,
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<DuePanel date="2026-04-03" />)
+
+      // Block should be hidden
+      await waitFor(() => {
+        expect(screen.queryByText(/Hidden task/)).not.toBeInTheDocument()
+      })
+    })
+
+    it('toggle button shows correct label', async () => {
+      mockedListBlocks.mockResolvedValue({
+        items: [makeBlock({ id: 'B1', content: 'label test block' })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      render(<DuePanel date="2026-04-03" />)
+
+      // Default: show all
+      const toggle = await screen.findByRole('button', { name: /Scheduled: show all/i })
+      expect(toggle).toHaveAttribute('aria-pressed', 'false')
     })
   })
 })

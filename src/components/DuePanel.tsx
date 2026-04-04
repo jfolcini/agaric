@@ -59,6 +59,22 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   const [projectedLoading, setProjectedLoading] = useState(false)
   const [overdueBlocks, setOverdueBlocks] = useState<BlockRow[]>([])
 
+  const [hideBeforeScheduled, setHideBeforeScheduled] = useState(() => {
+    try {
+      return localStorage.getItem('agaric:hideBeforeScheduled') === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  const toggleHideBeforeScheduled = useCallback(() => {
+    setHideBeforeScheduled((prev) => {
+      const next = !prev
+      try { localStorage.setItem('agaric:hideBeforeScheduled', String(next)) } catch {}
+      return next
+    })
+  }, [])
+
   const todayStr = useMemo(() => {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -265,6 +281,15 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     [handleBlockClick],
   )
 
+  // Filter out future-scheduled blocks when toggle is ON
+  const visibleBlocks = useMemo(() => {
+    if (!hideBeforeScheduled) return blocks
+    return blocks.filter((b) => {
+      if (b.scheduled_date && b.scheduled_date > todayStr) return false
+      return true
+    })
+  }, [blocks, hideBeforeScheduled, todayStr])
+
   // Group blocks by todo_state in the defined order, sorted by priority within
   const groupLabels: Record<string, string> = {
     DOING: t('duePanel.groupDoing'),
@@ -272,19 +297,20 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     DONE: t('duePanel.groupDone'),
   }
   const grouped = GROUP_ORDER.map((state) => {
-    const items = blocks
+    const items = visibleBlocks
       .filter((b) => b.todo_state === state)
       .sort((a, b) => priorityKey(a.priority) - priorityKey(b.priority))
     return { state, label: state ? (groupLabels[state] ?? state) : t('duePanel.groupOther'), items }
   }).filter((g) => g.items.length > 0)
 
   // Empty state: hidden entirely
-  if (!loading && !projectedLoading && totalCount === 0 && blocks.length === 0 && projectedEntries.length === 0 && overdueBlocks.length === 0) {
+  if (!loading && !projectedLoading && visibleBlocks.length === 0 && blocks.length === 0 && projectedEntries.length === 0 && overdueBlocks.length === 0) {
     return null
   }
 
+  const visibleCount = visibleBlocks.length
   const headerLabel =
-    totalCount === 1 ? t('duePanel.headerOne') : t('duePanel.header', { count: totalCount })
+    visibleCount === 1 ? t('duePanel.headerOne') : t('duePanel.header', { count: visibleCount })
 
   return (
     <section className="due-panel" aria-label="Due items">
@@ -327,6 +353,22 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
               {opt.label}
             </button>
           ))}
+          <button
+            type="button"
+            className={cn(
+              'text-[10px] px-1.5 py-0.5 rounded border transition-colors',
+              hideBeforeScheduled
+                ? 'bg-primary/10 border-primary/30 text-primary'
+                : 'border-muted-foreground/20 text-muted-foreground hover:bg-accent/50',
+            )}
+            onClick={toggleHideBeforeScheduled}
+            title={hideBeforeScheduled
+              ? 'Showing only tasks scheduled for today or earlier'
+              : 'Showing all tasks regardless of scheduled date'}
+            aria-pressed={hideBeforeScheduled}
+          >
+            {hideBeforeScheduled ? 'Scheduled: hide future' : 'Scheduled: show all'}
+          </button>
         </div>
       )}
 
