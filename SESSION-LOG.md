@@ -1,5 +1,22 @@
 # Session Log
 
+## Session 153 — 2026-04-03 — Hide-before-scheduled toggle (#641)
+
+### Build: localStorage toggle in DuePanel
+
+1 build subagent. Toggle hides blocks with scheduled_date > today. Default OFF. Button in filter bar with aria-pressed and dynamic label.
+
+| File | Change |
+|------|--------|
+| `DuePanel.tsx` | `hideBeforeScheduled` state + localStorage persistence. `visibleBlocks` useMemo filters future-scheduled. Toggle button in filter bar. |
+| `DuePanel.test.tsx` | 3 new tests (default shows all, toggle hides, button label). 31/31 pass. |
+| `REVIEW-LATER.md` | Updated #641 (hide-before done, warning period remains). |
+
+### Stats
+- Frontend: 3 new tests (31/31 DuePanel pass)
+- Commit: `7eace60`
+- REVIEW-LATER: #641 partially resolved. 2 open items.
+
 ## Session 152 — 2026-04-03 — PageHeader kebab menu (#639 completion)
 
 ### Build: overflow menu with template + page actions
