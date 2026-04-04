@@ -43,12 +43,13 @@ describe('seed data', () => {
     const result = invoke('list_blocks', { blockType: 'page' }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items).toHaveLength(5)
+    expect(result.items).toHaveLength(6)
     const titles = result.items.map((b) => b.content)
     expect(titles).toContain('Getting Started')
     expect(titles).toContain('Quick Notes')
     expect(titles).toContain('Projects')
     expect(titles).toContain('Meetings')
+    expect(titles).toContain('Meeting Notes Template')
   })
 
   it('populates tags', () => {

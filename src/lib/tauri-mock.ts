@@ -113,6 +113,11 @@ export const SEED_IDS = {
   BLOCK_MTG_1: '0000000000000000000BLOCK17',
   BLOCK_MTG_2: '0000000000000000000BLOCK18',
   BLOCK_OVERDUE_1: '0000000000000000000BLOCK19',
+  // -- Template seed data --
+  PAGE_TMPL_MEETING: '00000000000000000000PAGE06',
+  BLOCK_TMPL_M1: '0000000000000000000BLOCK20',
+  BLOCK_TMPL_M2: '0000000000000000000BLOCK21',
+  BLOCK_TMPL_M3: '0000000000000000000BLOCK22',
 } as const
 
 function makeBlock(
@@ -456,6 +461,43 @@ function seedBlocks(): void {
   // -- Seed page aliases --
   pageAliases.set(SEED_IDS.PAGE_GETTING_STARTED, ['gs', 'getting-started'])
   pageAliases.set(SEED_IDS.PAGE_PROJECTS, ['proj'])
+
+  // -- Seed template page (Meeting Notes template) --
+  blocks.set(
+    SEED_IDS.PAGE_TMPL_MEETING,
+    makeBlock(SEED_IDS.PAGE_TMPL_MEETING, 'page', 'Meeting Notes Template', null, 5),
+  )
+  blocks.set(
+    SEED_IDS.BLOCK_TMPL_M1,
+    makeBlock(SEED_IDS.BLOCK_TMPL_M1, 'content', '## Attendees', SEED_IDS.PAGE_TMPL_MEETING, 0),
+  )
+  blocks.set(
+    SEED_IDS.BLOCK_TMPL_M2,
+    makeBlock(
+      SEED_IDS.BLOCK_TMPL_M2,
+      'content',
+      '## Notes — <% today %>',
+      SEED_IDS.PAGE_TMPL_MEETING,
+      1,
+    ),
+  )
+  blocks.set(
+    SEED_IDS.BLOCK_TMPL_M3,
+    makeBlock(
+      SEED_IDS.BLOCK_TMPL_M3,
+      'content',
+      '## Action items for <% page title %>',
+      SEED_IDS.PAGE_TMPL_MEETING,
+      2,
+    ),
+  )
+  // Mark the meeting template page with the `template` property
+  setMockProp(SEED_IDS.PAGE_TMPL_MEETING, 'template', {
+    value_text: 'true',
+    value_num: null,
+    value_date: null,
+    value_ref: null,
+  })
 }
 
 /** Reset mock state — clears and re-seeds the in-memory store. Useful for tests. */
@@ -1336,6 +1378,56 @@ export function setupMock(): void {
           md += `- ${(child.content as string) ?? ''}\n`
         }
         return md
+      }
+
+      // -----------------------------------------------------------------------
+      // Markdown import (#660)
+      // -----------------------------------------------------------------------
+
+      case 'import_markdown': {
+        const a = args as Record<string, unknown>
+        const content = (a.content as string) ?? ''
+        const filename = (a.filename as string | null) ?? null
+
+        // Derive page title from filename (strip .md extension) or first heading
+        let pageTitle = 'Untitled'
+        if (filename) {
+          pageTitle = filename.replace(/\.md$/i, '')
+        }
+        const lines = content.split('\n')
+        // If first line is a heading, use it as the page title
+        const headingMatch = lines[0]?.match(/^#+\s+(.+)/)
+        if (headingMatch) {
+          pageTitle = headingMatch[1].trim()
+          lines.shift() // remove heading line from block content
+        }
+
+        // Create the page block
+        const pageId = fakeId()
+        const pageBlock = makeBlock(pageId, 'page', pageTitle, null, blocks.size)
+        blocks.set(pageId, pageBlock)
+
+        // Create content blocks from non-empty lines
+        let blocksCreated = 0
+        let position = 0
+        for (const line of lines) {
+          // Strip leading list markers (-, *, +, numbered) and whitespace
+          const trimmed = line.replace(/^\s*[-*+]\s+/, '').replace(/^\s*\d+\.\s+/, '').trim()
+          if (!trimmed) continue
+
+          const blockId = fakeId()
+          const block = makeBlock(blockId, 'content', trimmed, pageId, position)
+          blocks.set(blockId, block)
+          blocksCreated++
+          position++
+        }
+
+        return {
+          page_title: pageTitle,
+          blocks_created: blocksCreated,
+          properties_set: 0,
+          warnings: [] as string[],
+        }
       }
 
       default:
