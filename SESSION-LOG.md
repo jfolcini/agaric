@@ -1,5 +1,34 @@
 # Session Log
 
+## Session 185 — 2026-04-04 — Batch 38: six UX-MED styling fixes
+
+### Summary
+Resolved 6 UX-MED items across 5 parallel build subagents, each with a dedicated review subagent. Also fixed pre-existing biome `noNonNullAssertion` violations in touched files.
+
+**Commit:** 53f2275
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `src/components/FormattingToolbar.tsx` | UX-M10: Priority buttons use dot indicators + text instead of colored pill badges |
+| `src/components/PageHeader.tsx` | UX-M13: Alias section uses Badge component matching tag badges |
+| `src/components/SortableBlock.tsx` | UX-M14: DONE styling scoped to `!isFocused`; UX-M17: timestamp/repeat chips filtered |
+| `src/components/PairingDialog.tsx` | UX-M15: overflow-y-auto, max-h constraint, QR max-w-full; also fixed 3 pre-existing `!` assertions |
+| `src/editor/suggestion-renderer.ts` | UX-M16: changed `rect.right` to `rect.left` for popup positioning |
+| `src/components/__tests__/FormattingToolbar.test.tsx` | 2 new tests for dot indicator styling; fixed 2 pre-existing `!` assertions |
+| `src/components/__tests__/PageHeader.test.tsx` | 1 new test for alias/tag badge consistency |
+| `src/components/__tests__/PairingDialog.test.tsx` | 1 new test for overflow classes; fixed ~20 pre-existing `!` → `as HTMLElement` |
+| `src/components/__tests__/SortableBlock.test.tsx` | 3 new tests (DONE focused/unfocused, timestamp chip filtering) |
+| `src/editor/__tests__/suggestion-renderer.test.ts` | Updated 2 tests for left-aligned positioning; fixed 1 pre-existing `!` assertion |
+| `REVIEW-LATER.md` | 6 items removed (UX-M10, UX-M13, UX-M14, UX-M15, UX-M16, UX-M17) |
+
+### Stats
+- 7 new tests, 291 targeted tests pass, 2968/2976 total (8 pre-existing failures unchanged)
+- 5 build subagents + 5 review subagents (all pass)
+
+---
+
 ## Session 184 — 2026-04-04 — Phase 1 batch 37: block references (F-4)
 
 ### Phase 1 (batch 37): Block reference feature — `((` search, chip, hover preview (F-4)
