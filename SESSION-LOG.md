@@ -1,5 +1,42 @@
 # Session Log
 
+## Session 190 — 2026-04-04 — Batch 42: enable M-19..M-24 static analysis strictness rules
+
+### Summary
+Enabled 5 of 6 static analysis strictness rules from REVIEW-LATER.md. M-22 (noEvolvingTypes) blocked — rule does not exist in Biome 2.4.9.
+
+**Commit:** b4b2025
+
+### Changes
+
+| Area | Change |
+|------|--------|
+| tsconfig.app.json, tsconfig.node.json | M-19: `exactOptionalPropertyTypes: true`, M-20: `noImplicitReturns: true` |
+| biome.json | M-21: `useAwait: error` (with test file overrides), M-23: `noUndeclaredDependencies: error`, M-24: `useExplicitLengthCheck: error` |
+| src/lib/tauri.ts | Removed `async` from 60 wrapper functions that just `return invoke(...)`. Added `| undefined` to 38 optional properties across 17 functions |
+| src/components/EmptyState.tsx | Changed icon type from `ComponentType<{ className?: string }>` to `ComponentType<Record<string, unknown>>` for Lucide icon compatibility |
+| ~25 component files | Added `| undefined` to optional props interfaces, conditional spreads to avoid passing `undefined` |
+| 6 editor extension files | Added `| undefined` to optional properties in Options interfaces |
+| src/stores/blocks.ts | Conditional spread pattern to avoid passing `undefined` as property values |
+| src/components/__tests__/BlockTree.test.tsx | Added `mockedInvoke.mockResolvedValue({})` after 17 `mockReset()` calls |
+| 4 other test files | Removed explicit `undefined` assignments, added `return undefined` for noImplicitReturns |
+| playwright.config.ts | Conditional spread for workers |
+
+### Stats
+- 47 files changed, 322 insertions, 267 deletions
+- 0 TS errors, 3088 frontend tests pass
+- All prek hooks pass
+
+### REVIEW-LATER removals
+- M-19: exactOptionalPropertyTypes enabled
+- M-20: noImplicitReturns enabled
+- M-21: useAwait enabled
+- M-23: noUndeclaredDependencies enabled (0 violations)
+- M-24: useExplicitLengthCheck enabled (0 violations)
+- M-22: BLOCKED — rule does not exist in Biome 2.4.9
+
+---
+
 ## Session 189 — 2026-04-04 — Batch 41: four REVIEW-LATER items (F-25, F-26, L-13, UX-M18)
 
 ### Summary
