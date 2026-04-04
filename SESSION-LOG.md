@@ -1,5 +1,17 @@
 # Session Log
 
+## Session 148 — 2026-04-03 — Phase 2 journal review + #522 investigation
+
+### Phase 2: Journal filter review + sync architecture investigation
+
+1 review subagent on journal system. Confirmed "This month" date math is correct (loop bounded by `daysInMonth`). Found P3 performance note (28-31 calls per month filter — acceptable for local SQLite). No new P1/P2 bugs. Also investigated #522 mDNS: confirmed backend graceful handling already done (session 145 comment at sync_daemon.rs:157). Remaining need: `last_address` column on peer_refs + manual IP entry UI — requires schema migration approval per AGENTS.md.
+
+### #522 Status Update
+The mDNS graceful handling is done (daemon continues with `None`). The REVIEW-LATER description is outdated. What's actually remaining:
+1. Schema migration: add `last_address` column to `peer_refs` table (needs approval)
+2. Sync daemon: use stored addresses when mDNS unavailable
+3. Frontend: manual IP entry UI in StatusPanel
+
 ## Session 147 — 2026-04-03 — Phase 2 stores review + StatusPanel offline fix (#668)
 
 ### Phase 2: Zustand stores review
