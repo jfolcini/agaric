@@ -1,5 +1,47 @@
 # Session Log
 
+## Session 183 — 2026-04-04 — Phase 1 batch 36: noUncheckedIndexedAccess (M-16)
+
+### Phase 1 (batch 36): Enable noUncheckedIndexedAccess, fix 497 violations (M-16)
+
+6 parallel subagents (3 source, 3 test).
+
+| File | Change |
+|------|--------|
+| `tsconfig.app.json` | M-16: Added `"noUncheckedIndexedAccess": true`. |
+| `tsconfig.node.json` | M-16: Added `"noUncheckedIndexedAccess": true`. |
+| `BlockTree.tsx` | M-16: 37 fixes — `!` for bounded indices, regex groups, split results. |
+| `parse-date.ts` | M-16: 28 fixes — `!` for regex match groups after null checks. |
+| `blocks.ts` (store) | M-16: 23 fixes — guard clauses for reorder/indent, `!` for bounded loops. |
+| `markdown-serializer.ts` | M-16: 19 fixes — `!` for loop-bounded line access, regex groups. |
+| `tauri-mock.ts` | M-16: 9 fixes — guard clause for target lookup, `!` for regex groups. |
+| `undo.ts` | M-16: 8 fixes — `!` for bounded history access. |
+| `SortableBlock.tsx` | M-16: 6 fixes — touch event guard clauses. |
+| `sidebar.tsx` | M-16: 5 fixes — touch event guard clauses. |
+| `tree-utils.ts` | M-16: 5 fixes — `!` for bounded tree traversal. |
+| `useBlockProperties.ts` | M-16: 4 fixes — `?? null` for cycle arrays. |
+| `BlockDatePicker.tsx` | M-16: 4 fixes — tuple assertion for date split, `!` for focusable. |
+| `AgendaFilterBuilder.tsx` | M-16: 4 fixes — `!` for selected array access. |
+| `PageBrowser.tsx` | M-16: 4 fixes — `!` for loop-bounded segment access. |
+| `template-utils.ts` | M-16: 3 fixes — `!` for length-guarded access. |
+| `PairingDialog.tsx` | M-16: 3 fixes — `!` for bounded loops, focusable guard. |
+| `LinkedReferences.tsx` | M-16: 3 fixes — `!` for bounded loops, regex groups. |
+| `BlockPropertyDrawer.tsx` | M-16: 2 fixes — added missing `announce` import. |
+| `agenda-sort.ts` | M-16: 2 fixes — `!` for destructured date parts. |
+| `tauri.ts` | M-16: 2 fixes — removed conflicting AttachmentRow re-export. |
+| `AgendaView.tsx` | M-16: 2 fixes — `!` for bounded resultSet access. |
+| `QueryResult.tsx` | M-16: 1 fix — `!` for bounded resultSet access. |
+| `PdfViewerDialog.tsx` | M-16: 1 fix — added `canvas: null` to render params. |
+| + 6 more source files | M-16: 1 fix each. |
+| 30 test files | M-16: ~327 fixes — non-null assertions (`!`) for known test data. |
+
+### Stats
+- 57 files changed, 419 insertions, 408 deletions
+- 497 TypeScript violations fixed (0 → 0 tsc errors)
+- 2951 tests pass (8 pre-existing failures unchanged)
+- Commit: `cca55ab`
+- REVIEW-LATER: M-16 resolved. 4 -> **3 open items**. MEDIUM tier empty.
+
 ## Session 182 — 2026-04-04 — Phase 1 batch 35: data-testid + i18n (TM-2, UX-H6)
 
 ### Phase 1 (batch 35): E2E data-testid migration + i18n string extraction (TM-2, UX-H6)
