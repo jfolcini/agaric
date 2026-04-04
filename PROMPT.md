@@ -93,7 +93,7 @@ In REVIEW-LATER.md: remove resolved items entirely — both the summary table ro
 
 ### Step A: Deep review
 
-Pick one feature area to review. **Prioritize recently finished features first** — check SESSION-LOG.md for the latest completed work and review those before more stable areas. Newly shipped code is more likely to have bugs, edge cases, and test gaps than code that has been stable for multiple sessions. Use **FEATURE-MAP.md** for discovery and to understand how the feature fits into the broader system. If all recent features have already been reviewed, fall back to stable areas: sync (section 6), materializer (section 4), editor (section 9), stores (section 7), property system (section 14), or any area not recently reviewed in SESSION-LOG.md. The properties system (#643, #645) is particularly worth reviewing — it's designed as the primary extension point and has many expandable surface areas.
+Pick one feature area to review. **Prioritize major features from FEATURE-MAP.md** — review the most important and complex areas of the system regardless of when they were last touched. Use FEATURE-MAP.md as the primary discovery tool to understand each feature's scope, related commands, stores, components, and database tables. Good candidates include: sync (section 6), materializer (section 4), editor (section 9), stores (section 7), property system (section 14), undo/redo (section 11), journal/agenda (section 15), tag system (section 16), backlinks (section 17), or any area not recently reviewed in SESSION-LOG.md. The properties system (#643, #645) is particularly worth reviewing — it's designed as the primary extension point and has many expandable surface areas.
 
 Launch **parallel review subagents covering both technical and UX dimensions**:
 
