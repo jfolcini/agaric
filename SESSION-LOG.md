@@ -1,5 +1,36 @@
 # Session Log
 
+## Session 199 — 2026-04-04 — Batch 53: Mobile CSS fixes (MOB-M3, MOB-M5, MOB-M6, MOB-M9, MOB-M10, MOB-M11, MOB-L1)
+
+### Summary
+Fixed 6 mobile responsiveness issues + confirmed 1 false positive. All CSS-only changes — no logic changes, no test updates needed.
+
+### Batch 53
+
+**Commit:** 89b3e2a
+
+| Area | Change |
+|------|--------|
+| AgendaFilterBuilder.tsx | MOB-M3: Filter chips use `flex-wrap` instead of `overflow-x-auto`; removed `shrink-0` from chips. |
+| HistoryView.tsx | MOB-M5: Confirmed false positive — no `h-7` exists; uses `size="sm"` with responsive coarse-pointer sizing. Added to false positives list. |
+| AttachmentList.tsx | MOB-M6: Attachment items use `flex-wrap` with `gap-x-3 gap-y-1` for responsive wrapping. |
+| AgendaResults.tsx | MOB-M9+L1: Breadcrumb `shrink-0` → `truncate max-w-[40%]`; content span gets `min-w-0`. |
+| DonePanel.tsx | MOB-M9+L1: Same breadcrumb + min-w-0 fix. |
+| DuePanel.tsx | MOB-M9+L1: Same breadcrumb + min-w-0 fix (4 content spans total). |
+| QrScanner.tsx | MOB-M10: Scanner viewport `w-64 h-64` → `w-full max-w-64 aspect-square`. |
+| SearchPanel.tsx | MOB-M11: Form uses `flex-col sm:flex-row sm:items-center` for responsive stacking. |
+| PageBrowser.tsx | MOB-M11: Same form stacking fix. |
+| TagList.tsx | MOB-M11: Same form stacking fix. |
+| PropertiesView.tsx | MOB-M11: Same form stacking fix (only create form, not deadline warning input). |
+
+**Review:** Technical review approved all changes. Confirmed all CSS-only, all under 100-char line limit, no test assertions affected.
+
+**Stats:** 10 files changed, 21 insertions, 17 deletions. 3134/3134 frontend tests pass. All prek hooks pass.
+
+**Resolved:** MOB-M3, MOB-M5 (false positive), MOB-M6, MOB-M9, MOB-M10, MOB-M11, MOB-L1 (7 items). 51 open items remain.
+
+---
+
 ## Session 198 — 2026-04-04 — Batch 52: UX polish — properties, alias, agenda, mobile (UX-H1, UX-H3, UX-H4, UX-H7, UX-H8, F-21, MOB-M2, MOB-M4)
 
 ### Summary
