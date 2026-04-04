@@ -53,6 +53,21 @@
 - Commit: `9638fdd`
 - REVIEW-LATER: F-17, TM-3 resolved. 41 → **39 open items**.
 
+### Phase 1 (batch 18): Hash verification + merge benchmarks (F-19, TM-7)
+
+2 parallel Rust subagents (hash.rs + sync_protocol.rs, benches/).
+
+| File | Change |
+|------|--------|
+| `hash.rs` | F-19: Added `verify_op_record()` — recomputes blake3 hash, constant-time comparison. 3 new tests. |
+| `sync_protocol.rs` | F-19: Batch-level hash verification in `apply_remote_ops` — reject entire batch on first mismatch. Updated 2 existing tests. |
+| `merge_bench.rs` | TM-7: New bench with 3 functions: clean merge, conflict merge, LWW resolution (10/100/1000 sizes with Throughput::Elements). |
+
+### Stats
+- Backend: 3 new tests (208/208 sync/hash pass). 3 new benchmarks compile cleanly.
+- Commit: `516763b`
+- REVIEW-LATER: F-19, TM-7 resolved. 39 → **37 open items**.
+
 ## Session 166 — 2026-04-04 — Phase 1 undo/redo batch (H-8, L-15, TL-5)
 
 ### Phase 1: Fix 3 undo/redo items
