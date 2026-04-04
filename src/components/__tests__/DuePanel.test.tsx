@@ -779,4 +779,48 @@ describe('DuePanel', () => {
       expect(toggle).toHaveAttribute('aria-pressed', 'false')
     })
   })
+
+  // --- Deadline warning period (#641) ---
+  describe('deadline warning period (#641)', () => {
+    afterEach(() => {
+      localStorage.removeItem('agaric:deadlineWarningDays')
+    })
+
+    it('shows upcoming section when warning days > 0 and tasks approach deadline', async () => {
+      localStorage.setItem('agaric:deadlineWarningDays', '7')
+      const tomorrow = new Date()
+      tomorrow.setDate(tomorrow.getDate() + 1)
+      const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`
+      const today = new Date()
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedQueryByProperty.mockResolvedValue({
+        items: [{
+          id: 'UPCOMING1', block_type: 'content', content: 'Due soon task',
+          parent_id: null, position: 1, deleted_at: null, archived_at: null,
+          is_conflict: false, conflict_type: null, todo_state: 'TODO',
+          priority: null, due_date: tomorrowStr, scheduled_date: null,
+        }],
+        next_cursor: null, has_more: false,
+      })
+
+      render(<DuePanel date={todayStr} />)
+      expect(await screen.findByText('Upcoming')).toBeInTheDocument()
+      expect(screen.getByText(/Due soon task/)).toBeInTheDocument()
+    })
+
+    it('does not show upcoming section when warning days is 0', async () => {
+      localStorage.setItem('agaric:deadlineWarningDays', '0')
+      const today = new Date()
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+
+      render(<DuePanel date={todayStr} />)
+      await waitFor(() => {
+        expect(screen.queryByText('Upcoming')).not.toBeInTheDocument()
+      })
+    })
+  })
 })

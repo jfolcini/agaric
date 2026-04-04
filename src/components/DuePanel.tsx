@@ -45,6 +45,11 @@ function truncateContent(content: string | null, max = 120): string {
   return plain.length > max ? `${plain.slice(0, max)}...` : plain
 }
 
+/** Format a Date to YYYY-MM-DD using local timezone. */
+function formatLocalDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.ReactElement | null {
   const { t } = useTranslation()
   const [blocks, setBlocks] = useState<BlockRow[]>([])
@@ -58,6 +63,16 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   const [projectedEntries, setProjectedEntries] = useState<ProjectedAgendaEntry[]>([])
   const [projectedLoading, setProjectedLoading] = useState(false)
   const [overdueBlocks, setOverdueBlocks] = useState<BlockRow[]>([])
+  const [upcomingBlocks, setUpcomingBlocks] = useState<BlockRow[]>([])
+
+  const warningDays = useMemo(() => {
+    try {
+      const stored = localStorage.getItem('agaric:deadlineWarningDays')
+      return stored ? Number.parseInt(stored, 10) : 0
+    } catch {
+      return 0
+    }
+  }, [])
 
   const [hideBeforeScheduled, setHideBeforeScheduled] = useState(() => {
     try {
@@ -126,6 +141,58 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
       stale = true
     }
   }, [isToday, date])
+
+  // Fetch upcoming blocks (deadline approaching within warningDays)
+  useEffect(() => {
+    if (!isToday || warningDays <= 0) {
+      setUpcomingBlocks([])
+      return
+    }
+    let stale = false
+
+    async function fetchUpcoming() {
+      try {
+        const resp = await queryByProperty({ key: 'due_date', limit: 500 })
+        if (stale) return
+
+        // Filter: due_date is between tomorrow and today + warningDays
+        const tomorrow = new Date()
+        tomorrow.setDate(tomorrow.getDate() + 1)
+        const tomorrowStr = formatLocalDate(tomorrow)
+
+        const endDate = new Date()
+        endDate.setDate(endDate.getDate() + warningDays)
+        const endStr = formatLocalDate(endDate)
+
+        const upcoming = resp.items.filter((b) =>
+          b.due_date && b.due_date >= tomorrowStr && b.due_date <= endStr && b.todo_state !== 'DONE'
+        )
+        setUpcomingBlocks(upcoming)
+
+        // Resolve parent titles
+        if (upcoming.length > 0) {
+          const parentIds = upcoming.map((b) => b.parent_id).filter((id): id is string => id != null)
+          if (parentIds.length > 0) {
+            const titles = await batchResolve([...new Set(parentIds)])
+            if (!stale) {
+              setPageTitles((prev) => {
+                const next = new Map(prev)
+                for (const r of titles) {
+                  if (r.title) next.set(r.id, r.title)
+                }
+                return next
+              })
+            }
+          }
+        }
+      } catch {
+        if (!stale) setUpcomingBlocks([])
+      }
+    }
+
+    fetchUpcoming()
+    return () => { stale = true }
+  }, [isToday, warningDays])
 
   // Fetch blocks due on the given date
   const fetchBlocks = useCallback(
@@ -304,7 +371,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   }).filter((g) => g.items.length > 0)
 
   // Empty state: hidden entirely
-  if (!loading && !projectedLoading && visibleBlocks.length === 0 && blocks.length === 0 && projectedEntries.length === 0 && overdueBlocks.length === 0) {
+  if (!loading && !projectedLoading && visibleBlocks.length === 0 && blocks.length === 0 && projectedEntries.length === 0 && overdueBlocks.length === 0 && upcomingBlocks.length === 0) {
     return null
   }
 
@@ -448,6 +515,51 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                           {truncateContent(block.content)}
                         </span>
                         <span className="shrink-0 text-[10px] text-destructive/60">
+                          {block.due_date}
+                        </span>
+                      </li>
+                    )
+                  })}
+              </ul>
+            </div>
+          )}
+
+          {/* Upcoming section */}
+          {isToday && upcomingBlocks.length > 0 && (
+            <div className="upcoming-section mb-3">
+              <h4 className="text-xs font-semibold text-amber-600 dark:text-amber-400 mb-1.5 flex items-center gap-1">
+                <span>Upcoming</span>
+                <span className="text-muted-foreground font-normal">({upcomingBlocks.length})</span>
+              </h4>
+              <ul className="space-y-1">
+                {upcomingBlocks
+                  .sort((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''))
+                  .map((block) => {
+                    const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
+                    return (
+                      <li
+                        key={`upcoming-${block.id}`}
+                        className="flex items-center gap-2 rounded-md border border-amber-200/30 bg-amber-50/30 dark:border-amber-800/30 dark:bg-amber-950/20 px-2 py-1.5 text-sm cursor-pointer hover:bg-amber-50/50 dark:hover:bg-amber-950/30 transition-colors"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          if (block.parent_id && onNavigateToPage)
+                            onNavigateToPage(block.parent_id, pageTitle ?? '', block.id)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== 'Enter' && e.key !== ' ') return
+                          e.preventDefault()
+                          if (block.parent_id && onNavigateToPage)
+                            onNavigateToPage(block.parent_id, pageTitle ?? '', block.id)
+                        }}
+                      >
+                        {block.todo_state && (
+                          <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-bold leading-none bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
+                            {block.todo_state}
+                          </span>
+                        )}
+                        <span className="flex-1 truncate">{truncateContent(block.content)}</span>
+                        <span className="shrink-0 text-[10px] text-amber-600/60 dark:text-amber-400/60">
                           {block.due_date}
                         </span>
                       </li>

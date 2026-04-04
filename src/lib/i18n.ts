@@ -428,6 +428,8 @@ const resources = {
       'propertiesView.addTaskState': 'New state (e.g., CANCELLED)',
       'propertiesView.add': 'Add',
       'propertiesView.taskStatesReload': 'Reload the page to apply changes.',
+      'propertiesView.deadlineWarning': 'Deadline Warning',
+      'propertiesView.deadlineWarningDesc': 'Show tasks approaching their deadline in the DuePanel. Set to 0 to disable.',
 
       // Tags
       'tags.loadFailed': 'Failed to load tags',
