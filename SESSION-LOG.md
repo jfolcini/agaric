@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 152 — 2026-04-03 — PageHeader kebab menu (#639 completion)
+
+### Build: overflow menu with template + page actions
+
+1 build subagent. Popover-based kebab menu with: Save/Remove template, Set/Remove journal template, Export Markdown, Delete page. Fetches properties on mount for toggle labels.
+
+| File | Change |
+|------|--------|
+| `PageHeader.tsx` | Kebab menu (MoreVertical icon, Popover). 4 handlers: toggleTemplate, toggleJournalTemplate, export (clipboard), deletePage (confirm + onBack). |
+| `PageHeader.test.tsx` | 7 new tests (menu button, save/remove template, journal template, toggle invoke, export, delete). 38/38 pass. |
+| `i18n.ts` | 13 new keys for kebab menu labels + toasts. |
+| `REVIEW-LATER.md` | Removed #639. 3 → 2 open items. |
+
+### Stats
+- Frontend: 7 new tests (38/38 PageHeader pass)
+- Commit: `32a7b73`
+- REVIEW-LATER: #639 fully resolved. 2 open items.
+
 ## Session 151 — 2026-04-03 — Dynamic template variables (#639)
 
 ### Build: expandTemplateVariables + context passing
