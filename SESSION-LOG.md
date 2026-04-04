@@ -1,5 +1,41 @@
 # Session Log
 
+## Session 198 — 2026-04-04 — Batch 52: UX polish — properties, alias, agenda, mobile (UX-H1, UX-H3, UX-H4, UX-H7, UX-H8, F-21, MOB-M2, MOB-M4)
+
+### Summary
+Fixed 8 items: 5 UX-HIGH property/header issues, 1 feature improvement, 2 mobile fixes. Created shared `property-utils.ts` utility for consistent property name formatting and icon mapping.
+
+### Batch 52
+
+**Commit:** 4cfb922
+
+| Area | Change |
+|------|--------|
+| property-utils.ts (NEW) | `formatPropertyName()` — title-cases underscore/hyphen keys. `BUILTIN_PROPERTY_ICONS` — lucide-react icon map for 8 built-in keys. |
+| i18n.ts | Add translation keys for all 14 built-in property names (UX-H3). |
+| BlockPropertyDrawer.tsx | UX-H1+H8: Built-in properties render with icons + formatted names (same style as due/scheduled). Custom props keep `font-mono`. |
+| PropertyChip.tsx | UX-H3+H8: Display formatted names for all props, show icons for built-in props in both clickable and static variants. |
+| PagePropertyTable.tsx | UX-H3: Apply `formatPropertyName` to add-property popover list and property row labels. |
+| PropertiesView.tsx | UX-H3: Apply `formatPropertyName` to property definitions list. |
+| PageHeader.tsx | UX-H7: Consolidate two alias buttons into one. Guard `setAliases` against non-array IPC responses. |
+| AgendaView.tsx | F-21: Add `border-t border-border/40` separator between sort/group controls and results. |
+| popover.tsx | MOB-M2: Change popover max-width from `calc(100vw-1rem)` to `calc(100vw-2rem)` for 16px mobile margin. |
+| TagFilterPanel.tsx | MOB-M4: Remove explicit `h-6` class override on add button so Button's responsive sizing applies. |
+| Test files | 8 test files: property-utils (9 new), BlockPropertyDrawer (3 new + 2 updated), PropertyChip (4 new + 6 updated), PagePropertyTable (1 new + updated assertions), PropertiesView (1 new + updated assertions), PageHeader (4 new), JournalPage (1 new). |
+
+**Review findings applied:**
+- Review A (BlockPropertyDrawer + PropertyChip + AgendaView): All pass, approved.
+- Review B (PagePropertyTable + PropertiesView + PageHeader): All pass, approved.
+- Integration fix: PageHeader `aliases.map` crash in App.test.tsx — `getPageAliases` could return non-array from mock; added `Array.isArray` guard.
+
+**Note:** UX-H4 was verified as already implemented — both PagePropertyTable and BlockPropertyDrawer filter out already-added properties.
+
+**Stats:** 17 files changed, 495 insertions, 154 deletions. 3134/3134 frontend tests pass. All prek hooks pass.
+
+**Resolved:** UX-H1, UX-H3, UX-H4, UX-H7, UX-H8, F-21, MOB-M2, MOB-M4 (8 items). 58 open items remain.
+
+---
+
 ## Session 197 — 2026-04-04 — Batch 51: Mobile layout overflow fixes (MOB-H4, MOB-H6, MOB-H7, MOB-H8, MOB-H9, MOB-H10)
 
 ### Summary

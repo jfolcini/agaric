@@ -234,10 +234,12 @@ Text, number, date, select, and reference (link to another block).
 ### Inline Display
 
 - Property chips on blocks (max 3 visible, "+N" overflow indicator)
+- Built-in properties show lucide-react icons (due date, scheduled, created at, completed at, effort, assignee, location, repeat)
+- Property names are title-cased with spaces (e.g. "Created At" not "created_at") via `formatPropertyName()` utility
 - Due/scheduled date chips are clickable to open date picker
 - Reference values show resolved page titles
 - Click-to-edit with type-aware inputs (text field, dropdown, page picker)
-- Block property drawer shows built-in due_date and scheduled_date from block store alongside custom properties
+- Block property drawer renders all built-in properties with icons and formatted names (consistent styling)
 
 ### Repeat Properties
 
