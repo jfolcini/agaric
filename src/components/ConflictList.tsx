@@ -41,7 +41,16 @@ import { formatTimestamp, truncateId, ulidToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import type { BlockRow } from '../lib/tauri'
-import { deleteBlock, editBlock, getBlock, getConflicts, restoreBlock } from '../lib/tauri'
+import {
+  deleteBlock,
+  editBlock,
+  getBlock,
+  getBlockHistory,
+  getConflicts,
+  getDeviceId,
+  listPeerRefs,
+  restoreBlock,
+} from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
 import { renderRichContent } from './StaticBlock'
@@ -196,6 +205,7 @@ export function ConflictList(): React.ReactElement {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [batchAction, setBatchAction] = useState<'keep' | 'discard' | null>(null)
+  const [deviceNames, setDeviceNames] = useState<Map<string, string>>(new Map())
   const fetchedParentsRef = useRef(new Set<string>())
 
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
@@ -259,6 +269,63 @@ export function ConflictList(): React.ReactElement {
       const next = new Set([...prev].filter((id) => blockIds.has(id)))
       return next.size === prev.size ? prev : next
     })
+  }, [blocks])
+
+  // Fetch source device info for each conflict block (#651 C-3)
+  useEffect(() => {
+    if (blocks.length === 0) return
+    let stale = false
+
+    async function fetchDeviceInfo() {
+      try {
+        // Fetch first history entry for each conflict block
+        const deviceIdsByBlock = new Map<string, string>()
+        await Promise.all(
+          blocks.map(async (block) => {
+            try {
+              const hist = await getBlockHistory({ blockId: block.id, limit: 1 })
+              if (hist.items.length > 0) {
+                deviceIdsByBlock.set(block.id, hist.items[0].device_id)
+              }
+            } catch {
+              // Silently skip blocks where history is unavailable
+            }
+          }),
+        )
+
+        // Get device name mapping
+        const [peers, localId] = await Promise.all([
+          listPeerRefs(),
+          getDeviceId(),
+        ])
+
+        const nameMap = new Map<string, string>()
+        for (const peer of peers) {
+          nameMap.set(peer.peer_id, peer.device_name ?? peer.peer_id.slice(0, 8) + '...')
+        }
+        nameMap.set(localId, 'This device')
+
+        // Build blockId -> deviceName map
+        if (!stale) {
+          const result = new Map<string, string>()
+          for (const [blockId, deviceId] of deviceIdsByBlock) {
+            const name = nameMap.get(deviceId)
+            if (name) {
+              result.set(blockId, name)
+            } else {
+              // Show truncated device ID if name not found
+              result.set(blockId, deviceId.slice(0, 8) + '...')
+            }
+          }
+          setDeviceNames(result)
+        }
+      } catch {
+        // Silently handle — device info is non-critical
+      }
+    }
+
+    fetchDeviceInfo()
+    return () => { stale = true }
   }, [blocks])
 
   const toggleExpanded = useCallback((id: string) => {
@@ -511,6 +578,11 @@ export function ConflictList(): React.ReactElement {
                     ID: {truncateId(block.id)}
                   </span>
                   <span className="conflict-timestamp">{getConflictTimestamp(block)}</span>
+                  {deviceNames.has(block.id) && (
+                    <span className="conflict-device" title="Source device">
+                      From: {deviceNames.get(block.id)}
+                    </span>
+                  )}
                 </div>
                 {renderConflictContent(conflictType, block, original, isExpanded)}
               </button>

@@ -225,15 +225,15 @@ describe('ConflictList', () => {
 
     expect(screen.getByText('Discard conflict?')).toBeInTheDocument()
 
-    // Only get_conflicts + get_block have been called (no delete yet)
-    expect(mockedInvoke).toHaveBeenCalledTimes(2)
+    // delete_block should NOT have been called yet
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
 
     // Clicking "No" cancels
     const noBtn = screen.getByRole('button', { name: /No/i })
     await user.click(noBtn)
 
     expect(screen.queryByText('Discard conflict?')).not.toBeInTheDocument()
-    expect(mockedInvoke).toHaveBeenCalledTimes(2)
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
   })
 
   it('pressing Escape dismisses the discard confirmation', async () => {
@@ -256,7 +256,7 @@ describe('ConflictList', () => {
     await user.keyboard('{Escape}')
 
     expect(screen.queryByText('Discard conflict?')).not.toBeInTheDocument()
-    expect(mockedInvoke).toHaveBeenCalledTimes(2) // get_conflicts + get_block only
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
   })
 
   it('Discard executes on confirmation Yes click', async () => {
@@ -2042,5 +2042,87 @@ describe('ConflictList', () => {
         expect.objectContaining({ duration: 5000 }),
       )
     })
+  })
+
+  // --- #651 C-3 Source device info ---
+
+  it('displays source device name for conflict blocks (#651 C-3)', async () => {
+    const page = {
+      items: [makeConflict('C1', 'conflict content')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_conflicts') return page
+      if (cmd === 'get_block') return originalBlock
+      if (cmd === 'get_block_history') {
+        return {
+          items: [{ device_id: 'DEVICE_ABC', seq: 1, op_type: 'CreateBlock', payload: '{}', created_at: '2026-04-03T00:00:00Z' }],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'list_peer_refs') {
+        return [{ peer_id: 'DEVICE_ABC', device_name: 'Phone', synced_at: '2026-04-03T00:00:00Z', last_hash: null, last_sent_hash: null, reset_count: 0, last_reset_at: null, cert_hash: null }]
+      }
+      if (cmd === 'get_device_id') return 'DEVICE_LOCAL'
+      return undefined
+    })
+
+    render(<ConflictList />)
+
+    expect(await screen.findByText(/From: Phone/)).toBeInTheDocument()
+  })
+
+  it('shows truncated device ID when peer name not found (#651 C-3)', async () => {
+    const page = {
+      items: [makeConflict('C2', 'unknown device')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_conflicts') return page
+      if (cmd === 'get_block') return originalBlock
+      if (cmd === 'get_block_history') {
+        return {
+          items: [{ device_id: 'UNKNOWN_DEVICE_ID_LONG', seq: 1, op_type: 'CreateBlock', payload: '{}', created_at: '2026-04-03T00:00:00Z' }],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'list_peer_refs') return []
+      if (cmd === 'get_device_id') return 'DEVICE_LOCAL'
+      return undefined
+    })
+
+    render(<ConflictList />)
+
+    expect(await screen.findByText(/From: UNKNOWN_\.\.\./)).toBeInTheDocument()
+  })
+
+  it('shows "This device" for locally-created conflicts (#651 C-3)', async () => {
+    const page = {
+      items: [makeConflict('C3', 'local conflict')],
+      next_cursor: null,
+      has_more: false,
+    }
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_conflicts') return page
+      if (cmd === 'get_block') return originalBlock
+      if (cmd === 'get_block_history') {
+        return {
+          items: [{ device_id: 'DEVICE_LOCAL', seq: 1, op_type: 'CreateBlock', payload: '{}', created_at: '2026-04-03T00:00:00Z' }],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'list_peer_refs') return []
+      if (cmd === 'get_device_id') return 'DEVICE_LOCAL'
+      return undefined
+    })
+
+    render(<ConflictList />)
+
+    expect(await screen.findByText(/From: This device/)).toBeInTheDocument()
   })
 })
