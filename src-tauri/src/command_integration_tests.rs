@@ -7432,3 +7432,121 @@ async fn alias_collision_returns_error() {
         "alias must still point to page A after collision"
     );
 }
+
+// ======================================================================
+// Journal commands — today_journal / navigate_journal
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn today_journal_creates_page_for_today() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let page = today_journal_inner(&pool, DEV, &mat).await.unwrap();
+    settle(&mat).await;
+
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    assert_eq!(page.block_type, "page", "journal page must be a page block");
+    assert_eq!(
+        page.content,
+        Some(today),
+        "journal page content must be today's date"
+    );
+    assert!(page.deleted_at.is_none(), "page must not be soft-deleted");
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn today_journal_returns_existing_page() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let first = today_journal_inner(&pool, DEV, &mat).await.unwrap();
+    settle(&mat).await;
+
+    let second = today_journal_inner(&pool, DEV, &mat).await.unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        first.id, second.id,
+        "calling today_journal twice must return the same page (idempotent)"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn navigate_journal_creates_page_for_date() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let date = "2025-03-15".to_string();
+    let page = navigate_journal_inner(&pool, DEV, &mat, date.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(page.block_type, "page");
+    assert_eq!(
+        page.content,
+        Some(date),
+        "journal page content must match the requested date"
+    );
+
+    // Verify persisted in DB
+    let fetched = get_block_inner(&pool, page.id.clone()).await.unwrap();
+    assert_eq!(fetched.id, page.id);
+    assert_eq!(fetched.block_type, "page");
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn navigate_journal_returns_existing_page_for_same_date() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let date = "2025-06-01".to_string();
+    let first = navigate_journal_inner(&pool, DEV, &mat, date.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let second = navigate_journal_inner(&pool, DEV, &mat, date.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        first.id, second.id,
+        "navigating to the same date twice must return the same page"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn navigate_journal_different_dates_create_different_pages() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let page_a = navigate_journal_inner(&pool, DEV, &mat, "2025-01-10".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let page_b = navigate_journal_inner(&pool, DEV, &mat, "2025-01-11".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_ne!(
+        page_a.id, page_b.id,
+        "different dates must produce different pages"
+    );
+    assert_eq!(page_a.content, Some("2025-01-10".into()));
+    assert_eq!(page_b.content, Some("2025-01-11".into()));
+
+    mat.shutdown();
+}

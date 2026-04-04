@@ -184,6 +184,42 @@ fn strip_for_fts_with_maps(
 }
 
 // ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/// Load tag name map and page title map for batch FTS processing.
+///
+/// Returns `(tag_names, page_titles)` HashMaps mapping block_id → content
+/// for all active (non-deleted, non-conflict) tag and page blocks.
+async fn load_ref_maps(
+    pool: &SqlitePool,
+) -> Result<(HashMap<String, String>, HashMap<String, String>), AppError> {
+    let tag_rows = sqlx::query!(
+        "SELECT id, content FROM blocks \
+         WHERE block_type = 'tag' AND deleted_at IS NULL AND is_conflict = 0"
+    )
+    .fetch_all(pool)
+    .await?;
+    let tag_names: HashMap<String, String> = tag_rows
+        .into_iter()
+        .filter_map(|r| r.content.map(|c| (r.id, c)))
+        .collect();
+
+    let page_rows = sqlx::query!(
+        "SELECT id, content FROM blocks \
+         WHERE block_type = 'page' AND deleted_at IS NULL AND is_conflict = 0"
+    )
+    .fetch_all(pool)
+    .await?;
+    let page_titles: HashMap<String, String> = page_rows
+        .into_iter()
+        .filter_map(|r| r.content.map(|c| (r.id, c)))
+        .collect();
+
+    Ok((tag_names, page_titles))
+}
+
+// ---------------------------------------------------------------------------
 // FTS index management
 // ---------------------------------------------------------------------------
 
@@ -270,6 +306,12 @@ pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
 /// references it become stale because `strip_for_fts` resolves `#[ULID]` /
 /// `[[ULID]]` tokens to human-readable names. This function finds all
 /// referencing blocks and re-runs FTS indexing for each.
+///
+/// ## Performance
+///
+/// Pre-loads tag/page name maps once (2 queries) and processes all affected
+/// blocks in a single transaction, reducing from O(N × 3) queries to
+/// O(2 + N) — 2 map loads + N DELETE/INSERT pairs in one tx.
 pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
     // Find blocks referencing this ID via block_tags (for tags)
     let tag_refs: Vec<String> =
@@ -285,14 +327,57 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
     .fetch_all(pool)
     .await?;
 
-    // Collect unique block IDs and update each
+    // Collect unique block IDs
     let mut seen = std::collections::HashSet::new();
-    for bid in tag_refs.into_iter().chain(link_refs.into_iter()) {
-        if seen.insert(bid.clone()) {
-            update_fts_for_block(pool, &bid).await?;
+    let unique_ids: Vec<String> = tag_refs
+        .into_iter()
+        .chain(link_refs.into_iter())
+        .filter(|bid| seen.insert(bid.clone()))
+        .collect();
+
+    if unique_ids.is_empty() {
+        return Ok(());
+    }
+
+    // Pre-load tag/page name maps (2 queries instead of 2*N)
+    let (tag_names, page_titles) = load_ref_maps(pool).await?;
+
+    // Single transaction for all updates
+    let mut tx = pool.begin().await?;
+
+    for bid in &unique_ids {
+        // Fetch block metadata + content
+        let row = sqlx::query!(
+            r#"SELECT content, deleted_at, is_conflict as "is_conflict: bool"
+               FROM blocks WHERE id = ?"#,
+            bid
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        // Always delete the old FTS entry
+        sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
+            .bind(bid)
+            .execute(&mut *tx)
+            .await?;
+
+        // Re-insert only if block is active with content
+        if let Some(r) = row {
+            if r.deleted_at.is_none() && !r.is_conflict {
+                if let Some(ref content) = r.content {
+                    let stripped =
+                        strip_for_fts_with_maps(content, &tag_names, &page_titles);
+                    sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
+                        .bind(bid)
+                        .bind(&stripped)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+            }
         }
     }
 
+    tx.commit().await?;
     Ok(())
 }
 
@@ -309,29 +394,8 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
 /// search index"), never incrementally.  Single-block updates go through
 /// [`update_fts_for_block`] instead.
 pub async fn rebuild_fts_index(pool: &SqlitePool) -> Result<(), AppError> {
-    // Load all tag names
-    let tag_rows = sqlx::query!(
-        "SELECT id, content FROM blocks \
-         WHERE block_type = 'tag' AND deleted_at IS NULL AND is_conflict = 0"
-    )
-    .fetch_all(pool)
-    .await?;
-    let tag_names: HashMap<String, String> = tag_rows
-        .into_iter()
-        .filter_map(|r| r.content.map(|c| (r.id, c)))
-        .collect();
-
-    // Load all page titles
-    let page_rows = sqlx::query!(
-        "SELECT id, content FROM blocks \
-         WHERE block_type = 'page' AND deleted_at IS NULL AND is_conflict = 0"
-    )
-    .fetch_all(pool)
-    .await?;
-    let page_titles: HashMap<String, String> = page_rows
-        .into_iter()
-        .filter_map(|r| r.content.map(|c| (r.id, c)))
-        .collect();
+    // Pre-load tag/page name maps (shared helper)
+    let (tag_names, page_titles) = load_ref_maps(pool).await?;
 
     // Start transaction
     let mut tx = pool.begin().await?;
@@ -1889,6 +1953,93 @@ mod tests {
     }
 
     // ── #72: reindex_fts_references after tag/page rename ────────────
+
+    #[tokio::test]
+    async fn reindex_fts_references_batches_correctly() {
+        let (pool, _dir) = test_pool().await;
+
+        // Use 26-char ULID-style IDs
+        let tag_id = "01BBBBBBBBBBBBBBBBBBBBTAG1";
+        let blk1 = "01BBBBBBBBBBBBBBBBBBBBBLK1";
+        let blk2 = "01BBBBBBBBBBBBBBBBBBBBBLK2";
+        let blk3 = "01BBBBBBBBBBBBBBBBBBBBBLK3";
+
+        // Create tag and 3 content blocks referencing it
+        insert_block(&pool, tag_id, "tag", "meeting", None, Some(0)).await;
+        for (i, blk) in [blk1, blk2, blk3].iter().enumerate() {
+            insert_block(
+                &pool,
+                blk,
+                "content",
+                &format!("item {} about #[{tag_id}]", i + 1),
+                None,
+                Some(i as i64 + 1),
+            )
+            .await;
+            sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+                .bind(*blk)
+                .bind(tag_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        // Initial index — all 3 blocks should resolve #[tag_id] → "meeting"
+        rebuild_fts_index(&pool).await.unwrap();
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+        let before = search_fts(&pool, "meeting", &page).await.unwrap();
+        // tag block itself + 3 content blocks
+        assert!(
+            before.items.len() >= 3,
+            "expected at least 3 matches for 'meeting', got {}",
+            before.items.len()
+        );
+
+        // Rename the tag
+        sqlx::query("UPDATE blocks SET content = 'standup' WHERE id = ?")
+            .bind(tag_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Reindex references (batched)
+        reindex_fts_references(&pool, tag_id).await.unwrap();
+
+        // All 3 content blocks should now resolve to "standup"
+        let after = search_fts(&pool, "standup", &page).await.unwrap();
+        let content_ids: Vec<&str> = after
+            .items
+            .iter()
+            .filter(|r| r.block_type == "content")
+            .map(|r| r.id.as_str())
+            .collect();
+        assert_eq!(
+            content_ids.len(),
+            3,
+            "all 3 content blocks should match 'standup' after batched reindex, got: {content_ids:?}"
+        );
+        for blk in [blk1, blk2, blk3] {
+            assert!(
+                content_ids.contains(&blk),
+                "block {blk} should be in results"
+            );
+        }
+
+        // Old tag name should no longer match any content blocks
+        let old = search_fts(&pool, "meeting", &page).await.unwrap();
+        let old_content: Vec<&str> = old
+            .items
+            .iter()
+            .filter(|r| r.block_type == "content")
+            .map(|r| r.id.as_str())
+            .collect();
+        assert_eq!(
+            old_content.len(),
+            0,
+            "no content blocks should match old tag name 'meeting', got: {old_content:?}"
+        );
+    }
 
     #[tokio::test]
     async fn reindex_fts_references_updates_tag_refs() {
