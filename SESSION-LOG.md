@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 154 — 2026-04-03 — Logseq/Markdown file import (#660)
+
+### Build: backend parser + frontend file picker
+
+2 parallel build subagents (Rust backend, frontend). Logseq parser handles indented list items, properties, block ref stripping. Frontend file picker with multi-select + result display.
+
+| File | Change |
+|------|--------|
+| `import.rs` | NEW: `parse_logseq_markdown()`, `ParsedBlock`, `ImportResult`. 6 unit tests. |
+| `commands.rs` | `import_markdown_inner`: creates page + block tree via parent stack. 4 integration tests. |
+| `lib.rs` | Added `pub mod import` + registered command. |
+| `bindings.ts` | Regenerated. |
+| `tauri.ts` | `ImportResult` type + `importMarkdown()` wrapper. |
+| `StatusPanel.tsx` | Import section: file picker, multi-file handling, result display with blocks/properties/warnings count. |
+| `StatusPanel.test.tsx` | 4 new tests (render, invoke, result, warnings). 35/35 pass. |
+| `i18n.ts` | 3 new keys. |
+| `REVIEW-LATER.md` | Removed #660. 2 → 1 open items. |
+
+### Stats
+- Backend: 10 new tests (1515/1515 pass)
+- Frontend: 4 new tests (35/35 StatusPanel pass)
+- Commit: `cb61ddb`
+- REVIEW-LATER: #660 fully resolved. **1 open item remaining** (#641 warning period — LOW impact).
+
 ## Session 153 — 2026-04-03 — Hide-before-scheduled toggle (#641)
 
 ### Build: localStorage toggle in DuePanel
