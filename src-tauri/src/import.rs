@@ -3,8 +3,10 @@
 //! Parses indented markdown into a flat list of blocks with parent/child
 //! relationships determined by indentation level.
 
+use regex::Regex;
 use serde::Serialize;
 use specta::Type;
+use std::sync::LazyLock;
 
 /// A parsed block from the import.
 #[derive(Debug, Clone)]
@@ -107,14 +109,18 @@ pub fn parse_logseq_markdown(content: &str) -> Vec<ParsedBlock> {
     blocks
 }
 
+/// Matches `((uuid))` block references.
+static BLOCK_REF_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\(\([^)]*\)\)").expect("invalid block ref regex"));
+
+/// Matches two or more consecutive spaces.
+static MULTI_SPACE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"  +").expect("invalid multi-space regex"));
+
 /// Strip `((uuid))` block references, replacing with their inner text or removing them.
 fn strip_block_refs(text: &str) -> String {
-    // Replace ((anything)) with empty string
-    let re = regex::Regex::new(r"\(\([^)]*\)\)").unwrap();
-    let result = re.replace_all(text, "");
-    // Collapse multiple spaces left behind by removal, then trim
-    let ws = regex::Regex::new(r"  +").unwrap();
-    ws.replace_all(result.trim(), " ").to_string()
+    let result = BLOCK_REF_RE.replace_all(text, "");
+    MULTI_SPACE_RE.replace_all(result.trim(), " ").to_string()
 }
 
 #[cfg(test)]
@@ -177,7 +183,8 @@ mod tests {
 
     #[test]
     fn parse_yaml_frontmatter_stripped() {
-        let blocks = parse_logseq_markdown("---\ntitle: Test Page\ntags: [a, b]\n---\n- Block 1\n- Block 2");
+        let blocks =
+            parse_logseq_markdown("---\ntitle: Test Page\ntags: [a, b]\n---\n- Block 1\n- Block 2");
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].content, "Block 1");
         assert_eq!(blocks[1].content, "Block 2");

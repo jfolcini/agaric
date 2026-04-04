@@ -99,11 +99,12 @@ const QUEUE_PRESSURE_DENOMINATOR: usize = 4;
 // Lightweight payload hint structs — avoid full serde_json::Value parse
 // ---------------------------------------------------------------------------
 
-/// Extracts only `block_type` from a `create_block` payload; unknown fields
-/// are ignored by serde's default behaviour, making this cheaper than parsing
-/// the full payload into `serde_json::Value`.
+/// Extracts `block_id` and `block_type` from a `create_block` payload in a
+/// single deserialization pass.
 #[derive(Deserialize)]
-struct BlockTypeHint {
+struct CreateBlockHint {
+    #[serde(default)]
+    block_id: String,
     #[serde(default)]
     block_type: String,
 }
@@ -717,10 +718,8 @@ impl Materializer {
         // avoid blocking on a full queue.
         match record.op_type.as_str() {
             "create_block" => {
-                // Targeted deserialization — only extracts the field we need,
-                // cheaper than parsing the full payload into serde_json::Value.
-                let hint: BlockTypeHint = serde_json::from_str(&record.payload)?;
-                let hint2: BlockIdHint = serde_json::from_str(&record.payload)?;
+                // Single deserialization extracts both fields we need.
+                let hint: CreateBlockHint = serde_json::from_str(&record.payload)?;
                 match hint.block_type.as_str() {
                     "tag" => {
                         self.try_enqueue_background(MaterializeTask::RebuildTagsCache)?;
@@ -731,9 +730,9 @@ impl Materializer {
                     _ => {}
                 }
                 // FTS: index the new block
-                if !hint2.block_id.is_empty() {
+                if !hint.block_id.is_empty() {
                     self.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
-                        block_id: hint2.block_id,
+                        block_id: hint.block_id,
                     })?;
                 }
             }
@@ -983,10 +982,15 @@ fn group_tasks_by_block_id(
 
     for task in tasks {
         let block_id = extract_block_id(&task);
-        if !groups.contains_key(&block_id) {
-            order.push(block_id.clone());
+        match groups.entry(block_id) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                order.push(e.key().clone());
+                e.insert(vec![task]);
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                e.get_mut().push(task);
+            }
         }
-        groups.entry(block_id).or_default().push(task);
     }
 
     // Build result in first-seen order, but move None group to the end.

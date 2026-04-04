@@ -554,7 +554,7 @@ fn resolve_filter<'a>(
             }
 
             BacklinkFilter::SourcePage { included, excluded } => {
-                let mut result: FxHashSet<String>;
+                let result: FxHashSet<String>;
 
                 if !included.is_empty() {
                     // Get all descendants of included pages
@@ -571,8 +571,49 @@ fn resolve_filter<'a>(
                         q = q.bind(id);
                     }
                     result = q.fetch_all(pool).await?.into_iter().collect();
+
+                    // Apply exclusion on top of included set if needed
+                    if !excluded.is_empty() {
+                        let excl_placeholders =
+                            excluded.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                        let excl_sql = format!(
+                            "WITH RECURSIVE desc(id) AS ( \
+                                SELECT id FROM blocks WHERE id IN ({excl_placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
+                                UNION ALL \
+                                SELECT b.id FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                            ) SELECT id FROM desc"
+                        );
+                        let mut eq = sqlx::query_scalar::<_, String>(&excl_sql);
+                        for id in excluded {
+                            eq = eq.bind(id);
+                        }
+                        let excluded_set: FxHashSet<String> =
+                            eq.fetch_all(pool).await?.into_iter().collect();
+                        // Shadow with filtered result (result is not mut)
+                        let mut result = result;
+                        result.retain(|id| !excluded_set.contains(id));
+                        return Ok(result);
+                    }
+                } else if !excluded.is_empty() {
+                    // Exclusion-only: push exclusion into SQL to avoid loading full table
+                    let placeholders = excluded.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                    let sql = format!(
+                        "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0 \
+                         AND id NOT IN ( \
+                           WITH RECURSIVE desc(id) AS ( \
+                             SELECT id FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
+                             UNION ALL \
+                             SELECT b.id FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
+                           ) SELECT id FROM desc \
+                         )"
+                    );
+                    let mut q = sqlx::query_scalar::<_, String>(&sql);
+                    for id in excluded {
+                        q = q.bind(id);
+                    }
+                    result = q.fetch_all(pool).await?.into_iter().collect();
                 } else {
-                    // No inclusion filter — start with all non-deleted blocks
+                    // No inclusion AND no exclusion — all blocks
                     result = sqlx::query_scalar::<_, String>(
                         "SELECT id FROM blocks WHERE deleted_at IS NULL AND is_conflict = 0",
                     )
@@ -580,24 +621,6 @@ fn resolve_filter<'a>(
                     .await?
                     .into_iter()
                     .collect();
-                }
-
-                if !excluded.is_empty() {
-                    let placeholders = excluded.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                    let sql = format!(
-                        "WITH RECURSIVE desc(id) AS ( \
-                            SELECT id FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL AND is_conflict = 0 \
-                            UNION ALL \
-                            SELECT b.id FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND b.is_conflict = 0 \
-                        ) SELECT id FROM desc"
-                    );
-                    let mut q = sqlx::query_scalar::<_, String>(&sql);
-                    for id in excluded {
-                        q = q.bind(id);
-                    }
-                    let excluded_set: FxHashSet<String> =
-                        q.fetch_all(pool).await?.into_iter().collect();
-                    result.retain(|id| !excluded_set.contains(id));
                 }
 
                 Ok(result)
@@ -4231,6 +4254,69 @@ mod tests {
         assert!(ids.contains(&"BLK_A2"), "BLK_A2 from PAGE_A");
         assert!(!ids.contains(&"BLK_B1"), "BLK_B1 from PAGE_B excluded");
         assert!(!ids.contains(&"BLK_C1"), "BLK_C1 from PAGE_C not included");
+    }
+
+    #[tokio::test]
+    async fn filter_source_page_exclusion_only_sql_path() {
+        // Verifies the exclusion-only SQL path (no included pages) pushes
+        // the NOT IN subquery into SQL instead of loading all blocks.
+        let (pool, _dir) = test_pool().await;
+        // Page A with children
+        insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_A1",
+            "content",
+            "block a1",
+            Some("PAGE_A"),
+            Some(1),
+        )
+        .await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_A2",
+            "content",
+            "block a2",
+            Some("PAGE_A"),
+            Some(2),
+        )
+        .await;
+        // Page B with children
+        insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+        insert_block_with_parent(
+            &pool,
+            "BLK_B1",
+            "content",
+            "block b1",
+            Some("PAGE_B"),
+            Some(1),
+        )
+        .await;
+        // Target page
+        insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+        insert_block_link(&pool, "BLK_A1", "TARGET").await;
+        insert_block_link(&pool, "BLK_A2", "TARGET").await;
+        insert_block_link(&pool, "BLK_B1", "TARGET").await;
+        let page = default_page();
+
+        // Exclude PAGE_B only (included is empty) — should keep PAGE_A blocks
+        let filters = vec![BacklinkFilter::SourcePage {
+            included: vec![],
+            excluded: vec!["PAGE_B".into()],
+        }];
+
+        let resp = eval_backlink_query(&pool, "TARGET", Some(filters), None, &page)
+            .await
+            .unwrap();
+        assert_eq!(resp.total_count, 3, "base set has 3 backlinks");
+        assert_eq!(
+            resp.filtered_count, 2,
+            "PAGE_B blocks excluded, PAGE_A blocks remain"
+        );
+        let ids: Vec<&str> = resp.items.iter().map(|i| i.id.as_str()).collect();
+        assert!(ids.contains(&"BLK_A1"), "BLK_A1 from PAGE_A present");
+        assert!(ids.contains(&"BLK_A2"), "BLK_A2 from PAGE_A present");
+        assert!(!ids.contains(&"BLK_B1"), "BLK_B1 from PAGE_B excluded");
     }
 
     // ======================================================================
