@@ -5,7 +5,7 @@
  * and a tag badge row with an inline tag picker popover.
  */
 
-import { ArrowLeft, Plus, Redo2, Undo2, X } from 'lucide-react'
+import { ArrowLeft, MoreVertical, Plus, Redo2, Undo2, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -15,7 +15,17 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useBlockTags } from '../hooks/useBlockTags'
-import { editBlock, getBlock, getPageAliases, setPageAliases } from '../lib/tauri'
+import {
+  deleteBlock,
+  deleteProperty,
+  editBlock,
+  exportPageMarkdown,
+  getBlock,
+  getPageAliases,
+  getProperties,
+  setPageAliases,
+  setProperty,
+} from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { useNavigationStore } from '../stores/navigation'
 import { useResolveStore } from '../stores/resolve'
@@ -91,6 +101,80 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       })
       .catch(() => toast.error(t('pageHeader.redoFailed')))
   }, [pageId, t])
+
+  // --- Template state ---
+  const [isTemplate, setIsTemplate] = useState(false)
+  const [isJournalTemplate, setIsJournalTemplate] = useState(false)
+  const [kebabOpen, setKebabOpen] = useState(false)
+
+  useEffect(() => {
+    if (!pageId) return
+    getProperties(pageId)
+      .then((props) => {
+        setIsTemplate(props.some((p) => p.key === 'template' && p.value_text === 'true'))
+        setIsJournalTemplate(
+          props.some((p) => p.key === 'journal-template' && p.value_text === 'true'),
+        )
+      })
+      .catch(() => {})
+  }, [pageId])
+
+  const handleToggleTemplate = useCallback(async () => {
+    try {
+      if (isTemplate) {
+        await deleteProperty(pageId, 'template')
+        setIsTemplate(false)
+        toast.success(t('pageHeader.templateRemoved'))
+      } else {
+        await setProperty({ blockId: pageId, key: 'template', valueText: 'true' })
+        setIsTemplate(true)
+        toast.success(t('pageHeader.templateSaved'))
+      }
+    } catch {
+      toast.error(t('pageHeader.templateFailed'))
+    }
+    setKebabOpen(false)
+  }, [pageId, isTemplate, t])
+
+  const handleToggleJournalTemplate = useCallback(async () => {
+    try {
+      if (isJournalTemplate) {
+        await deleteProperty(pageId, 'journal-template')
+        setIsJournalTemplate(false)
+        toast.success(t('pageHeader.journalTemplateRemoved'))
+      } else {
+        await setProperty({ blockId: pageId, key: 'journal-template', valueText: 'true' })
+        setIsJournalTemplate(true)
+        toast.success(t('pageHeader.journalTemplateSaved'))
+      }
+    } catch {
+      toast.error(t('pageHeader.journalTemplateFailed'))
+    }
+    setKebabOpen(false)
+  }, [pageId, isJournalTemplate, t])
+
+  const handleExport = useCallback(async () => {
+    try {
+      const markdown = await exportPageMarkdown(pageId)
+      await navigator.clipboard.writeText(markdown)
+      toast.success(t('pageHeader.exportCopied'))
+    } catch {
+      toast.error(t('pageHeader.exportFailed'))
+    }
+    setKebabOpen(false)
+  }, [pageId, t])
+
+  const handleDeletePage = useCallback(async () => {
+    if (!confirm(t('pageHeader.deleteConfirm'))) return
+    try {
+      await deleteBlock(pageId)
+      toast.success(t('pageHeader.pageDeleted'))
+      onBack?.()
+    } catch {
+      toast.error(t('pageHeader.deleteFailed'))
+    }
+    setKebabOpen(false)
+  }, [pageId, onBack, t])
 
   // --- Alias state ---
   const [aliases, setAliases] = useState<string[]>([])
@@ -223,6 +307,54 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           >
             <Redo2 size={14} />
           </Button>
+          {/* Kebab overflow menu */}
+          <Popover open={kebabOpen} onOpenChange={setKebabOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t('pageHeader.pageActions')}
+              >
+                <MoreVertical size={14} />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-56 p-1" aria-label={t('pageHeader.pageActions')}>
+              <button
+                type="button"
+                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                onClick={handleToggleTemplate}
+              >
+                {isTemplate
+                  ? t('pageHeader.removeTemplate')
+                  : t('pageHeader.saveAsTemplate')}
+              </button>
+              <button
+                type="button"
+                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                onClick={handleToggleJournalTemplate}
+              >
+                {isJournalTemplate
+                  ? t('pageHeader.removeJournalTemplate')
+                  : t('pageHeader.setJournalTemplate')}
+              </button>
+              <div className="my-1 h-px bg-border" role="separator" />
+              <button
+                type="button"
+                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                onClick={handleExport}
+              >
+                {t('pageHeader.exportMarkdown')}
+              </button>
+              <div className="my-1 h-px bg-border" role="separator" />
+              <button
+                type="button"
+                className="w-full rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent"
+                onClick={handleDeletePage}
+              >
+                {t('pageHeader.deletePage')}
+              </button>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
 

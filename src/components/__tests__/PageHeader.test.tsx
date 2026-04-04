@@ -31,6 +31,7 @@ vi.mock('lucide-react', () => ({
   ArrowLeft: () => <svg data-testid="arrow-left-icon" />,
   ChevronDown: () => <svg data-testid="chevron-down" />,
   ChevronRight: () => <svg data-testid="chevron-right" />,
+  MoreVertical: () => <svg data-testid="more-vertical-icon" />,
   Plus: () => <svg data-testid="plus-icon" />,
   Redo2: () => <svg data-testid="redo2-icon" />,
   Undo2: () => <svg data-testid="undo2-icon" />,
@@ -712,5 +713,149 @@ describe('PageHeader breadcrumb', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+})
+
+// ── Kebab menu (#639) ─────────────────────────────────────────────────────
+
+describe('PageHeader kebab menu (#639)', () => {
+  it('renders page actions menu button', async () => {
+    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /page actions/i })).toBeInTheDocument()
+    })
+  })
+
+  it('shows "Save as template" when page is not a template', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      return null
+    })
+    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+
+    expect(await screen.findByText(/Save as template/i)).toBeInTheDocument()
+  })
+
+  it('shows "Remove template status" when page is a template', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties')
+        return [
+          {
+            key: 'template',
+            value_text: 'true',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+          },
+        ]
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      return null
+    })
+    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+
+    expect(await screen.findByText(/Remove template status/i)).toBeInTheDocument()
+  })
+
+  it('shows "Set as journal template" when page is not a journal template', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      return null
+    })
+    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+
+    expect(await screen.findByText(/Set as journal template/i)).toBeInTheDocument()
+  })
+
+  it('shows "Remove journal template" when page is a journal template', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties')
+        return [
+          {
+            key: 'journal-template',
+            value_text: 'true',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+          },
+        ]
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      return null
+    })
+    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+
+    expect(await screen.findByText(/Remove journal template/i)).toBeInTheDocument()
+  })
+
+  it('toggles template property on click', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs') return []
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'set_property') return null
+      return null
+    })
+    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Save as template/i))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
+        blockId: 'PAGE_1',
+        key: 'template',
+        valueText: 'true',
+        valueNum: null,
+        valueDate: null,
+        valueRef: null,
+      })
+    })
+  })
+
+  it('shows Export as Markdown option', async () => {
+    const user = userEvent.setup()
+    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+
+    expect(await screen.findByText(/Export as Markdown/i)).toBeInTheDocument()
+  })
+
+  it('shows Delete page option', async () => {
+    const user = userEvent.setup()
+    render(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+
+    expect(await screen.findByText(/Delete page/i)).toBeInTheDocument()
   })
 })
