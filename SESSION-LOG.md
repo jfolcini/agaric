@@ -1,5 +1,22 @@
 # Session Log
 
+## Session 150 — 2026-04-03 — Overdue rollover in DuePanel (#641)
+
+### Build: overdue tasks shown on today's view
+
+1 build subagent. DuePanel now fetches overdue blocks (due_date < today, !DONE) when showing today's date. Red "Overdue" section rendered above regular groups with count, priority badges, and due date display.
+
+| File | Change |
+|------|--------|
+| `DuePanel.tsx` | `isToday` detection, `overdueBlocks` state, fetch via `queryByProperty`, "Overdue" section with destructive/5 styling. Updated empty state check. |
+| `DuePanel.test.tsx` | 3 new tests (overdue shown, not for other dates, DONE excluded). 28/28 pass. |
+| `REVIEW-LATER.md` | Updated #641 (overdue done, hide-before + warning periods remain). |
+
+### Stats
+- Frontend: 3 new tests (28/28 DuePanel pass)
+- Commit: `77b940e`
+- REVIEW-LATER: #641 partially resolved (overdue rollover done). 3 open items (unchanged count).
+
 ## Session 149 — 2026-04-03 — Manual IP entry for peer sync (#522)
 
 ### Build: migration + daemon fallback + frontend UI
