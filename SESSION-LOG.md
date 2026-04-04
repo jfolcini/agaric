@@ -53,6 +53,22 @@
 - Commit: `402316d`
 - REVIEW-LATER: H-4, M-2, M-3, L-4 resolved and removed. 106 → **102 open items**.
 
+### Phase 1 (batch 4): BlockTree render perf + doc fix (H-5, H-6, M-1, M-11)
+
+1 build subagent (BlockTree.tsx), orchestrator direct fix (ARCHITECTURE.md), 1 review subagent.
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | H-5: Replaced 21 individual `useBlockStore` selectors with 1 `useShallow` selector (5 reactive state values) + `getState()` (16 stable actions). 21 → 1 subscription. |
+| `BlockTree.tsx` | H-6: Replaced 5 inline arrow functions in SortableBlock render with direct refs (`remove`, `indent`, `dedent`) + 2 `useCallback` wrappers (`handleMoveUpById`, `handleMoveDownById`). |
+| `BlockTree.tsx` | M-1: Moved optimistic `setState` outside for loop in `handleBatchSetTodo` — single `.map()` pass via `idSet.has()`. |
+| `ARCHITECTURE.md` | M-11: Added strikethrough/highlight to content format grammar. Updated "locked mark set" statement. |
+
+### Stats
+- Frontend: 169/169 BlockTree tests pass (no new tests — pure refactor)
+- Commit: `1b602da`
+- REVIEW-LATER: H-5, H-6, M-1, M-11 resolved and removed. 102 → **98 open items**.
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system
