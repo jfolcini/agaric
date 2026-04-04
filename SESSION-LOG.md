@@ -34,6 +34,25 @@
 - Commit: `649cb91`
 - REVIEW-LATER: H-1, TH-7 resolved. 43 → **41 open items**. **HIGH tier fully cleared (0 remaining).**
 
+### Phase 1 (batch 17): Draft autosave + E2E helper dedup (F-17, TM-3)
+
+2 parallel subagents (Rust commands + frontend hook, E2E refactoring).
+
+| File | Change |
+|------|--------|
+| `commands.rs` | F-17: Added `save_draft`, `flush_draft`, `delete_draft` Tauri commands. `flush_draft_inner` computes prev_edit from op_log. 2 new tests. |
+| `lib.rs` | Registered 3 draft commands. |
+| `bindings.ts` + `tauri.ts` | F-17: Regenerated bindings. Added 3 TS wrappers. |
+| `useDraftAutosave.ts` | F-17: New hook with 2s debounce + flush on unmount + discardDraft. |
+| `e2e/helpers.ts` | TM-3: New shared file with `waitForBoot`, `openPage`, `focusBlock`, `saveBlock`. |
+| 10 E2E spec files | TM-3: Removed ~200 lines of duplicate helpers, imported from shared file. |
+
+### Stats
+- Backend: 2 new tests (50/50 draft pass)
+- E2E: ~200 lines of duplication eliminated across 10 files
+- Commit: `9638fdd`
+- REVIEW-LATER: F-17, TM-3 resolved. 41 → **39 open items**.
+
 ## Session 166 — 2026-04-04 — Phase 1 undo/redo batch (H-8, L-15, TL-5)
 
 ### Phase 1: Fix 3 undo/redo items
