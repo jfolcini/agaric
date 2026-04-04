@@ -69,6 +69,7 @@ export function BlockPropertyDrawer({
         // Refresh
         const props = await getProperties(blockId)
         setProperties(Array.isArray(props) ? props : [])
+        announce('Property saved')
       } catch {
         toast.error(t('property.saveFailed'))
       }
@@ -83,6 +84,7 @@ export function BlockPropertyDrawer({
       try {
         await deleteProperty(blockId, key)
         setProperties((prev) => prev.filter((p) => p.key !== key))
+        announce('Property deleted')
       } catch {
         toast.error(t('property.deleteFailed'))
       }

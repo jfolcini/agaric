@@ -106,7 +106,11 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
         blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, priority: current } : b)),
       }))
       toast.error('Failed to update priority')
+      return
     }
+
+    const PRIORITY_LABELS: Record<string, string> = { '1': 'High', '2': 'Medium', '3': 'Low' }
+    announce(`Priority set to ${nextState ? (PRIORITY_LABELS[nextState] ?? nextState) : 'none'}`)
   }, [])
 
   return {

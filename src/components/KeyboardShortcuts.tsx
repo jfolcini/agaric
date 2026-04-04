@@ -47,6 +47,7 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
       { keys: 'Ctrl + Shift + C', condition: 'in editor', description: 'Toggle code block' },
       { keys: 'Ctrl + Shift + Arrow Up', description: 'Move block up' },
       { keys: 'Ctrl + Shift + Arrow Down', description: 'Move block down' },
+      { keys: 'Shift + Enter', condition: 'in editor', description: 'Insert line break (soft return)' },
     ],
   },
   {
@@ -97,9 +98,10 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
     category: 'Global',
     shortcuts: [
       { keys: 'Ctrl + F', description: 'Focus search' },
+      { keys: 'Ctrl + B', description: 'Toggle sidebar' },
       { keys: 'Ctrl + N', description: 'Create new page' },
       { keys: '?', description: 'Show keyboard shortcuts' },
-      { keys: 'Escape', description: 'Close dialog / cancel editing' },
+      { keys: 'Escape', description: 'Close overlays, cancel editing, clear selection' },
     ],
   },
 ]

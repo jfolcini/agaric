@@ -105,7 +105,7 @@ export function SourcePageFilter({
   const getDotColor = (pageId: string): string => {
     if (included.includes(pageId)) return 'bg-green-500'
     if (excluded.includes(pageId)) return 'bg-red-500'
-    return 'bg-gray-400'
+    return 'bg-muted-foreground'
   }
 
   return (

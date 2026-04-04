@@ -70,7 +70,7 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getAllByText('Escape').length).toBeGreaterThanOrEqual(1)
 
     // Verify conditions are rendered separately from keys
-    expect(screen.getAllByText('in editor').length).toBe(4)
+    expect(screen.getAllByText('in editor').length).toBe(5)
     expect(screen.getByText('at start')).toBeInTheDocument()
     expect(screen.getByText('at end')).toBeInTheDocument()
   })
@@ -214,6 +214,6 @@ describe('KeyboardShortcuts', () => {
 
     expect(screen.getByText('at start')).toBeInTheDocument()
     expect(screen.getByText('at end')).toBeInTheDocument()
-    expect(screen.getAllByText('in editor')).toHaveLength(4)
+    expect(screen.getAllByText('in editor')).toHaveLength(5)
   })
 })

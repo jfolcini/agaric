@@ -383,7 +383,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     return { state, label: state ? (groupLabels[state] ?? state) : t('duePanel.groupOther'), items }
   }).filter((g) => g.items.length > 0)
 
-  // Empty state: hidden entirely
+  // Empty state: show message instead of hiding entirely
   if (
     !loading &&
     !projectedLoading &&
@@ -393,7 +393,13 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     overdueBlocks.length === 0 &&
     upcomingBlocks.length === 0
   ) {
-    return null
+    return (
+      <section className="due-panel" aria-label="Due items">
+        <p className="text-sm text-muted-foreground px-4 py-8 text-center">
+          {t('duePanel.empty')}
+        </p>
+      </section>
+    )
   }
 
   const visibleCount = visibleBlocks.length

@@ -114,17 +114,18 @@ describe('DuePanel', () => {
     expect(await screen.findByText('1 Due')).toBeInTheDocument()
   })
 
-  // 2. Returns null / does not render when no items
-  it('does not render when no items', async () => {
+  // 2. Shows empty state message when no items
+  it('shows empty state when no items are due', async () => {
     mockedListBlocks.mockResolvedValue(emptyResponse)
 
-    const { container } = render(<DuePanel date="2025-06-15" />)
+    render(<DuePanel date="2025-06-15" />)
 
     await waitFor(() => {
       expect(mockedListBlocks).toHaveBeenCalled()
     })
 
-    expect(container.querySelector('.due-panel')).not.toBeInTheDocument()
+    expect(await screen.findByText(/Nothing due/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Due items')).toBeInTheDocument()
   })
 
   // 3. Groups blocks by todo_state in correct order (DOING > TODO > DONE > null)

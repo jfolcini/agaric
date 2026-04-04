@@ -10,6 +10,16 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -106,6 +116,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const [isTemplate, setIsTemplate] = useState(false)
   const [isJournalTemplate, setIsJournalTemplate] = useState(false)
   const [kebabOpen, setKebabOpen] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
 
   useEffect(() => {
     if (!pageId) return
@@ -165,7 +176,6 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   }, [pageId, t])
 
   const handleDeletePage = useCallback(async () => {
-    if (!confirm(t('pageHeader.deleteConfirm'))) return
     try {
       await deleteBlock(pageId)
       toast.success(t('pageHeader.pageDeleted'))
@@ -173,6 +183,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     } catch {
       toast.error(t('pageHeader.deleteFailed'))
     }
+    setDeleteDialogOpen(false)
     setKebabOpen(false)
   }, [pageId, onBack, t])
 
@@ -347,7 +358,10 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               <button
                 type="button"
                 className="w-full rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent [@media(pointer:coarse)]:min-h-[44px]"
-                onClick={handleDeletePage}
+                onClick={() => {
+                  setKebabOpen(false)
+                  setDeleteDialogOpen(true)
+                }}
               >
                 {t('pageHeader.deletePage')}
               </button>
@@ -428,7 +442,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             >
               <input
                 type="text"
-                className="w-24 rounded border px-1 py-0.5 text-xs"
+                className="w-24 [@media(pointer:coarse)]:w-full rounded border px-1 py-0.5 text-xs"
                 placeholder={t('pageHeader.newAliasPlaceholder')}
                 value={aliasInput}
                 onChange={(e) => setAliasInput(e.target.value)}
@@ -534,6 +548,24 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       </div>
 
       <PagePropertyTable pageId={pageId} />
+
+      {/* Delete page confirmation dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('pageHeader.deletePageTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('pageHeader.deletePageDescription')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('pageHeader.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeletePage}>
+              {t('pageHeader.deletePage')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

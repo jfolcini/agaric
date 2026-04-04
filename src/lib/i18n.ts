@@ -333,6 +333,10 @@ const resources = {
       'pageHeader.removeJournalTemplate': 'Remove journal template',
       'pageHeader.exportMarkdown': 'Export as Markdown',
       'pageHeader.deletePage': 'Delete page',
+      'pageHeader.deletePageTitle': 'Delete page',
+      'pageHeader.deletePageDescription':
+        'This action cannot be undone. This will permanently delete the page and all its blocks.',
+      'pageHeader.cancel': 'Cancel',
       'pageHeader.templateSaved': 'Saved as template',
       'pageHeader.templateRemoved': 'Template status removed',
       'pageHeader.templateFailed': 'Failed to update template status',
@@ -386,6 +390,7 @@ const resources = {
       'duePanel.loadMoreLabel': 'Load more due items',
       'duePanel.breadcrumbArrow': '\u2192',
       'duePanel.untitled': 'Untitled',
+      'duePanel.empty': 'Nothing due — enjoy your day!',
       'duePanel.filterAll': 'All',
       'duePanel.filterDue': 'Due',
       'duePanel.filterScheduled': 'Scheduled',

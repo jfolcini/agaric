@@ -91,7 +91,7 @@ function syncStateDotClasses(state: string): string {
     case 'error':
       return 'bg-destructive'
     case 'offline':
-      return 'bg-slate-400'
+      return 'bg-muted-foreground'
     default:
       return 'bg-muted-foreground'
   }
