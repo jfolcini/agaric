@@ -176,6 +176,26 @@
 - Commit: `c5fe3f2`
 - REVIEW-LATER: 8 items resolved. 70 → **62 open items**. UX-MED tier fully cleared.
 
+### Phase 1 (batch 11): Features + tests + bench (F-3, F-6, TH-5, TL-1, TL-2, TL-3)
+
+4 parallel subagents (shortcuts, recent pages, useBlockTags tests, bench fixes).
+
+| File | Change |
+|------|--------|
+| `use-roving-editor.ts` | F-3: Added Ctrl+Shift+S (strikethrough) and Ctrl+Shift+H (highlight) keyboard shortcuts. BubbleMenu buttons already existed. |
+| `KeyboardShortcuts.tsx` + test | F-3: Added 2 new shortcuts to help panel. Updated test assertions. |
+| `SearchPanel.tsx` + test | F-6: Recent pages from localStorage shown when query empty. New `recent-pages.ts` utility. 8 new tests. |
+| `useBlockTags.test.ts` | TH-5: New test file with 22 tests covering all hook operations. |
+| `move_reorder_bench.rs` | TL-1: sample_size(20) → sample_size(100). |
+| `draft_bench.rs` | TL-2: Moved Runtime::new() outside per-size loop. |
+| 5 bench files | TL-3: Added Throughput::Elements to batch benchmarks. Merged 3 batch_resolve benches. |
+
+### Stats
+- Frontend: 30 new tests (22 useBlockTags + 8 SearchPanel). 221/221 editor+BlockTree pass. 38/38 SearchPanel pass.
+- Backend: All 14 bench executables compile cleanly.
+- Commit: `dc1a7ad`
+- REVIEW-LATER: F-3, F-6, TH-5, TL-1, TL-2, TL-3 resolved. 62 → **56 open items**.
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system
