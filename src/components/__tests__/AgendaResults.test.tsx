@@ -303,8 +303,20 @@ describe('AgendaResults', () => {
 
   it('sorts blocks by date > state > priority even in flat mode', () => {
     const blocks = [
-      makeBlock({ id: 'B2', due_date: '2025-06-20', todo_state: 'TODO', priority: '2', content: 'Later task' }),
-      makeBlock({ id: 'B1', due_date: '2025-06-15', todo_state: 'TODO', priority: '1', content: 'Earlier task' }),
+      makeBlock({
+        id: 'B2',
+        due_date: '2025-06-20',
+        todo_state: 'TODO',
+        priority: '2',
+        content: 'Later task',
+      }),
+      makeBlock({
+        id: 'B1',
+        due_date: '2025-06-15',
+        todo_state: 'TODO',
+        priority: '1',
+        content: 'Earlier task',
+      }),
     ]
 
     render(<AgendaResults {...defaultProps({ blocks })} />)
@@ -322,9 +334,7 @@ describe('AgendaResults', () => {
       makeBlock({ id: 'B4', priority: null, content: 'None' }),
     ]
 
-    const { container } = render(
-      <AgendaResults {...defaultProps({ blocks })} groupBy="priority" />,
-    )
+    const { container } = render(<AgendaResults {...defaultProps({ blocks })} groupBy="priority" />)
 
     const headers = container.querySelectorAll('.agenda-group-header')
     const labels = [...headers].map((h) => h.textContent?.replace(/\(\d+\)/, '').trim())
@@ -343,9 +353,7 @@ describe('AgendaResults', () => {
       makeBlock({ id: 'B4', todo_state: null, content: 'Unset' }),
     ]
 
-    const { container } = render(
-      <AgendaResults {...defaultProps({ blocks })} groupBy="state" />,
-    )
+    const { container } = render(<AgendaResults {...defaultProps({ blocks })} groupBy="state" />)
 
     const headers = container.querySelectorAll('.agenda-group-header')
     const labels = [...headers].map((h) => h.textContent?.replace(/\(\d+\)/, '').trim())

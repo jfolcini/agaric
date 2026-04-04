@@ -252,7 +252,9 @@ export function KeyboardShortcuts({
           <table className="w-full text-sm mt-6" data-testid="syntax-table">
             <thead>
               <tr className="border-b">
-                <th className="pb-2 text-left font-semibold text-foreground">{t('shortcuts.syntaxSection')}</th>
+                <th className="pb-2 text-left font-semibold text-foreground">
+                  {t('shortcuts.syntaxSection')}
+                </th>
                 <th className="pb-2 text-left font-semibold text-foreground">Description</th>
               </tr>
             </thead>

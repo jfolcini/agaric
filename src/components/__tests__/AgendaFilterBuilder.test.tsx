@@ -16,12 +16,16 @@
  * 12. Apply button is disabled until values are selected
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { invoke } from '@tauri-apps/api/core'
-import type { AgendaFilter, AgendaFilterBuilderProps, AgendaSortGroupControlsProps } from '../AgendaFilterBuilder'
+import type {
+  AgendaFilter,
+  AgendaFilterBuilderProps,
+  AgendaSortGroupControlsProps,
+} from '../AgendaFilterBuilder'
 import { AgendaFilterBuilder, AgendaSortGroupControls, getTaskStates } from '../AgendaFilterBuilder'
 
 const defaultProps: AgendaFilterBuilderProps = {
@@ -404,10 +408,7 @@ describe('AgendaFilterBuilder', () => {
   // 20. Status filter shows custom states from localStorage
   // -----------------------------------------------------------------------
   it('status filter shows custom states from localStorage', async () => {
-    localStorage.setItem(
-      'task_cycle',
-      JSON.stringify([null, 'TODO', 'DOING', 'DONE', 'WAITING']),
-    )
+    localStorage.setItem('task_cycle', JSON.stringify([null, 'TODO', 'DOING', 'DONE', 'WAITING']))
     const user = userEvent.setup()
     renderBuilder()
 

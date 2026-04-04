@@ -310,23 +310,21 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           {/* Kebab overflow menu */}
           <Popover open={kebabOpen} onOpenChange={setKebabOpen}>
             <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t('pageHeader.pageActions')}
-              >
+              <Button variant="ghost" size="icon-xs" aria-label={t('pageHeader.pageActions')}>
                 <MoreVertical size={14} />
               </Button>
             </PopoverTrigger>
-            <PopoverContent align="end" className="w-56 p-1" aria-label={t('pageHeader.pageActions')}>
+            <PopoverContent
+              align="end"
+              className="w-56 p-1"
+              aria-label={t('pageHeader.pageActions')}
+            >
               <button
                 type="button"
                 className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
                 onClick={handleToggleTemplate}
               >
-                {isTemplate
-                  ? t('pageHeader.removeTemplate')
-                  : t('pageHeader.saveAsTemplate')}
+                {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
               </button>
               <button
                 type="button"
@@ -337,7 +335,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                   ? t('pageHeader.removeJournalTemplate')
                   : t('pageHeader.setJournalTemplate')}
               </button>
-              <div className="my-1 h-px bg-border" role="separator" />
+              <hr className="my-1 h-px bg-border border-none" />
               <button
                 type="button"
                 className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
@@ -345,7 +343,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               >
                 {t('pageHeader.exportMarkdown')}
               </button>
-              <div className="my-1 h-px bg-border" role="separator" />
+              <hr className="my-1 h-px bg-border border-none" />
               <button
                 type="button"
                 className="w-full rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent"
@@ -359,30 +357,34 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       </div>
 
       {/* Breadcrumb for namespaced page titles */}
-      {title.includes('/') && (() => {
-        const segments = title.split('/')
-        return (
-          <nav className="flex items-center gap-1 text-xs text-muted-foreground px-1 mt-1" aria-label="Page breadcrumb">
-            {segments.slice(0, -1).map((segment, i) => {
-              const ancestorPath = segments.slice(0, i + 1).join('/')
-              return (
-                <span key={ancestorPath} className="flex items-center gap-1">
-                  {i > 0 && <span className="text-muted-foreground/50">/</span>}
-                  <button
-                    type="button"
-                    className="hover:text-foreground hover:underline transition-colors"
-                    onClick={() => navigateToNamespace()}
-                  >
-                    {segment}
-                  </button>
-                </span>
-              )
-            })}
-            <span className="text-muted-foreground/50">/</span>
-            <span className="font-medium text-foreground">{segments[segments.length - 1]}</span>
-          </nav>
-        )
-      })()}
+      {title.includes('/') &&
+        (() => {
+          const segments = title.split('/')
+          return (
+            <nav
+              className="flex items-center gap-1 text-xs text-muted-foreground px-1 mt-1"
+              aria-label="Page breadcrumb"
+            >
+              {segments.slice(0, -1).map((segment, i) => {
+                const ancestorPath = segments.slice(0, i + 1).join('/')
+                return (
+                  <span key={ancestorPath} className="flex items-center gap-1">
+                    {i > 0 && <span className="text-muted-foreground/50">/</span>}
+                    <button
+                      type="button"
+                      className="hover:text-foreground hover:underline transition-colors"
+                      onClick={() => navigateToNamespace()}
+                    >
+                      {segment}
+                    </button>
+                  </span>
+                )
+              })}
+              <span className="text-muted-foreground/50">/</span>
+              <span className="font-medium text-foreground">{segments[segments.length - 1]}</span>
+            </nav>
+          )
+        })()}
 
       {/* Aliases */}
       {(aliases.length > 0 || editingAliases) && (

@@ -247,9 +247,8 @@ export function DeviceManagement(): React.ReactElement {
               {/* Manual IP hint */}
               <p className="manual-ip-hint text-xs text-muted-foreground mb-4">
                 <Globe className="inline h-3 w-3 mr-1 align-text-bottom" />
-                If mDNS discovery is unavailable, share this device&apos;s IP and
-                sync port with the remote peer, then set it via the address
-                edit button below.
+                If mDNS discovery is unavailable, share this device&apos;s IP and sync port with the
+                remote peer, then set it via the address edit button below.
               </p>
 
               {/* Pair New Device button */}
@@ -333,9 +332,7 @@ export function DeviceManagement(): React.ReactElement {
                                         loadData()
                                       })
                                       .catch(() =>
-                                        toast.error(
-                                          'Invalid address format (expected host:port)',
-                                        ),
+                                        toast.error('Invalid address format (expected host:port)'),
                                       )
                                   }
                                 }}

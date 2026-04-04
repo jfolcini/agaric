@@ -6,17 +6,17 @@
  * AddPropertySection for adding new properties from existing definitions.
  */
 
+import { Plus, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Plus, X } from 'lucide-react'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
-import { createPropertyDef, deleteProperty, getProperties, listPropertyDefs, setProperty } from '../lib/tauri'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
+import { deleteProperty, getProperties, listPropertyDefs, setProperty } from '../lib/tauri'
 
 export interface BlockPropertyDrawerProps {
   blockId: string | null
@@ -24,7 +24,11 @@ export interface BlockPropertyDrawerProps {
   onOpenChange: (open: boolean) => void
 }
 
-export function BlockPropertyDrawer({ blockId, open, onOpenChange }: BlockPropertyDrawerProps): React.ReactElement {
+export function BlockPropertyDrawer({
+  blockId,
+  open,
+  onOpenChange,
+}: BlockPropertyDrawerProps): React.ReactElement {
   const { t } = useTranslation()
   const [loading, setLoading] = useState(true)
   const [properties, setProperties] = useState<PropertyRow[]>([])
@@ -44,43 +48,55 @@ export function BlockPropertyDrawer({ blockId, open, onOpenChange }: BlockProper
   }, [blockId, open, t])
 
   // Save handler
-  const handleSave = useCallback(async (key: string, value: string, type: string) => {
-    if (!blockId) return
-    try {
-      const params: Parameters<typeof setProperty>[0] = { blockId, key }
-      if (type === 'number') {
-        const num = Number(value)
-        if (Number.isNaN(num)) { toast.error(t('property.invalidNumber')); return }
-        params.valueNum = num
-      } else if (type === 'date') {
-        params.valueDate = value || null
-      } else {
-        params.valueText = value || null
+  const handleSave = useCallback(
+    async (key: string, value: string, type: string) => {
+      if (!blockId) return
+      try {
+        const params: Parameters<typeof setProperty>[0] = { blockId, key }
+        if (type === 'number') {
+          const num = Number(value)
+          if (Number.isNaN(num)) {
+            toast.error(t('property.invalidNumber'))
+            return
+          }
+          params.valueNum = num
+        } else if (type === 'date') {
+          params.valueDate = value || null
+        } else {
+          params.valueText = value || null
+        }
+        await setProperty(params)
+        // Refresh
+        const props = await getProperties(blockId)
+        setProperties(Array.isArray(props) ? props : [])
+      } catch {
+        toast.error(t('property.saveFailed'))
       }
-      await setProperty(params)
-      // Refresh
-      const props = await getProperties(blockId)
-      setProperties(Array.isArray(props) ? props : [])
-    } catch {
-      toast.error(t('property.saveFailed'))
-    }
-  }, [blockId, t])
+    },
+    [blockId, t],
+  )
 
   // Delete handler
-  const handleDelete = useCallback(async (key: string) => {
-    if (!blockId) return
-    try {
-      await deleteProperty(blockId, key)
-      setProperties((prev) => prev.filter((p) => p.key !== key))
-    } catch {
-      toast.error(t('property.deleteFailed'))
-    }
-  }, [blockId, t])
+  const handleDelete = useCallback(
+    async (key: string) => {
+      if (!blockId) return
+      try {
+        await deleteProperty(blockId, key)
+        setProperties((prev) => prev.filter((p) => p.key !== key))
+      } catch {
+        toast.error(t('property.deleteFailed'))
+      }
+    },
+    [blockId, t],
+  )
 
   // Determine property type from definitions
-  const getType = useCallback((key: string) => {
-    return definitions.find((d) => d.key === key)?.value_type ?? 'text'
-  }, [definitions])
+  const getType = useCallback(
+    (key: string) => {
+      return definitions.find((d) => d.key === key)?.value_type ?? 'text'
+    },
+    [definitions],
+  )
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -96,14 +112,24 @@ export function BlockPropertyDrawer({ blockId, open, onOpenChange }: BlockProper
           ) : (
             properties.map((prop) => (
               <div key={prop.key} className="flex items-center gap-2">
-                <span className="text-xs font-medium text-muted-foreground w-20 truncate" title={prop.key}>
+                <span
+                  className="text-xs font-medium text-muted-foreground w-20 truncate"
+                  title={prop.key}
+                >
                   {prop.key}
                 </span>
                 <Input
                   className="flex-1 h-7 text-sm"
-                  defaultValue={prop.value_text ?? prop.value_date ?? (prop.value_num != null ? String(prop.value_num) : '') ?? ''}
+                  defaultValue={
+                    prop.value_text ??
+                    prop.value_date ??
+                    (prop.value_num != null ? String(prop.value_num) : '') ??
+                    ''
+                  }
                   onBlur={(e) => handleSave(prop.key, e.target.value, getType(prop.key))}
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                  }}
                 />
                 <button
                   type="button"
@@ -144,7 +170,12 @@ interface AddPropertySectionProps {
   onAdded: () => void | Promise<void>
 }
 
-function AddPropertySection({ blockId, definitions, existingKeys, onAdded }: AddPropertySectionProps): React.ReactElement {
+function AddPropertySection({
+  blockId,
+  definitions,
+  existingKeys,
+  onAdded,
+}: AddPropertySectionProps): React.ReactElement {
   const { t } = useTranslation()
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [newValue, setNewValue] = useState('')
@@ -160,7 +191,10 @@ function AddPropertySection({ blockId, definitions, existingKeys, onAdded }: Add
       const params: Parameters<typeof setProperty>[0] = { blockId, key: selectedKey }
       if (type === 'number') {
         const num = Number(newValue)
-        if (Number.isNaN(num)) { toast.error(t('property.invalidNumber')); return }
+        if (Number.isNaN(num)) {
+          toast.error(t('property.invalidNumber'))
+          return
+        }
         params.valueNum = num
       } else if (type === 'date') {
         params.valueDate = newValue || null
@@ -180,7 +214,11 @@ function AddPropertySection({ blockId, definitions, existingKeys, onAdded }: Add
   return (
     <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" className="w-full justify-start gap-1 text-muted-foreground">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start gap-1 text-muted-foreground"
+        >
           <Plus size={14} />
           {t('property.addProperty')}
         </Button>
@@ -196,7 +234,8 @@ function AddPropertySection({ blockId, definitions, existingKeys, onAdded }: Add
                   className={`w-full text-left rounded px-2 py-1 text-sm hover:bg-accent transition-colors ${selectedKey === def.key ? 'bg-accent' : ''}`}
                   onClick={() => setSelectedKey(def.key)}
                 >
-                  {def.key} <span className="text-xs text-muted-foreground">({def.value_type})</span>
+                  {def.key}{' '}
+                  <span className="text-xs text-muted-foreground">({def.value_type})</span>
                 </button>
               ))}
             </div>
@@ -210,7 +249,9 @@ function AddPropertySection({ blockId, definitions, existingKeys, onAdded }: Add
                 placeholder={selectedKey}
                 value={newValue}
                 onChange={(e) => setNewValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleAdd() }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAdd()
+                }}
               />
               <Button size="sm" className="h-7" onClick={handleAdd}>
                 {t('action.save')}

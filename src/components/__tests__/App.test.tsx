@@ -674,7 +674,7 @@ describe('App', () => {
       fireEvent.keyDown(document, { key: '?' })
 
       await waitFor(() => {
-        expect(screen.getByText('Keyboard Shortcuts')).toBeInTheDocument()
+        expect(screen.getByText('Quick Reference')).toBeInTheDocument()
       })
     })
 
@@ -687,7 +687,7 @@ describe('App', () => {
       fireEvent.keyDown(document, { key: '?' })
 
       await waitFor(() => {
-        expect(screen.getByText('Keyboard Shortcuts')).toBeInTheDocument()
+        expect(screen.getByText('Quick Reference')).toBeInTheDocument()
       })
 
       // Scope to the shortcuts table to avoid collisions with sidebar nav items
@@ -709,7 +709,7 @@ describe('App', () => {
       await user.click(sidebar.getByText('Shortcuts'))
 
       await waitFor(() => {
-        expect(screen.getByText('Keyboard Shortcuts')).toBeInTheDocument()
+        expect(screen.getByText('Quick Reference')).toBeInTheDocument()
       })
     })
   })

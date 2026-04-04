@@ -16,6 +16,21 @@ export function PropertyChip({
   onClick,
   onKeyClick,
 }: PropertyChipProps): React.ReactElement {
+  const keyLabel = onKeyClick ? (
+    <button
+      type="button"
+      className={cn('property-key-label opacity-60 hover:underline cursor-pointer')}
+      onClick={(e) => {
+        e.stopPropagation()
+        onKeyClick()
+      }}
+    >
+      {propKey}:
+    </button>
+  ) : (
+    <span className="property-key-label opacity-60">{propKey}:</span>
+  )
+
   return (
     <button
       type="button"
@@ -27,22 +42,7 @@ export function PropertyChip({
       )}
       onClick={onClick}
     >
-      <span
-        className={cn(
-          'property-key-label opacity-60',
-          onKeyClick && 'hover:underline cursor-pointer',
-        )}
-        onClick={
-          onKeyClick
-            ? (e) => {
-                e.stopPropagation()
-                onKeyClick()
-              }
-            : undefined
-        }
-      >
-        {propKey}:
-      </span>
+      {keyLabel}
       <span>{value}</span>
     </button>
   )

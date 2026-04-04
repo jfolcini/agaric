@@ -23,7 +23,15 @@ import { listPropertyKeys } from '../lib/tauri'
 // Types
 // ---------------------------------------------------------------------------
 
-export type AgendaFilterDimension = 'status' | 'priority' | 'dueDate' | 'scheduledDate' | 'completedDate' | 'createdDate' | 'tag' | 'property'
+export type AgendaFilterDimension =
+  | 'status'
+  | 'priority'
+  | 'dueDate'
+  | 'scheduledDate'
+  | 'completedDate'
+  | 'createdDate'
+  | 'tag'
+  | 'property'
 
 export interface AgendaFilter {
   dimension: AgendaFilterDimension
@@ -61,11 +69,27 @@ const DIMENSION_OPTIONS: Record<
   priority: { labelKey: 'agendaFilter.priority', choices: ['1', '2', '3'] },
   dueDate: {
     labelKey: 'agendaFilter.dueDate',
-    choices: ['Today', 'This week', 'This month', 'Overdue', 'Next 7 days', 'Next 14 days', 'Next 30 days'],
+    choices: [
+      'Today',
+      'This week',
+      'This month',
+      'Overdue',
+      'Next 7 days',
+      'Next 14 days',
+      'Next 30 days',
+    ],
   },
   scheduledDate: {
     labelKey: 'agendaFilter.scheduledDate',
-    choices: ['Today', 'This week', 'This month', 'Overdue', 'Next 7 days', 'Next 14 days', 'Next 30 days'],
+    choices: [
+      'Today',
+      'This week',
+      'This month',
+      'Overdue',
+      'Next 7 days',
+      'Next 14 days',
+      'Next 30 days',
+    ],
   },
   completedDate: {
     labelKey: 'agendaFilter.completedDate',
@@ -202,7 +226,9 @@ function PropertyValuePicker({
   })
 
   useEffect(() => {
-    listPropertyKeys().then(setPropertyKeys).catch(() => setPropertyKeys([]))
+    listPropertyKeys()
+      .then(setPropertyKeys)
+      .catch(() => setPropertyKeys([]))
   }, [])
 
   useEffect(() => {
@@ -212,29 +238,34 @@ function PropertyValuePicker({
     } else {
       onChange([])
     }
-  }, [propertyKey, propertyValue]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [propertyKey, propertyValue, onChange]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-xs font-medium">{t('agendaFilter.propertyKey')}</label>
-      <select
-        className="h-7 text-xs border rounded px-2"
-        value={propertyKey}
-        onChange={(e) => setPropertyKey(e.target.value)}
-        aria-label={t('agendaFilter.propertyKey')}
-      >
-        <option value="">{t('agendaFilter.selectProperty')}</option>
-        {propertyKeys.map((k) => (
-          <option key={k} value={k}>{k}</option>
-        ))}
-      </select>
-      <label className="text-xs font-medium">{t('agendaFilter.propertyValue')}</label>
+      <label className="text-xs font-medium">
+        {t('agendaFilter.propertyKey')}
+        <select
+          className="h-7 text-xs border rounded px-2 mt-1 block w-full"
+          value={propertyKey}
+          onChange={(e) => setPropertyKey(e.target.value)}
+        >
+          <option value="">{t('agendaFilter.selectProperty')}</option>
+          {propertyKeys.map((k) => (
+            <option key={k} value={k}>
+              {k}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label htmlFor="prop-filter-value" className="text-xs font-medium">
+        {t('agendaFilter.propertyValue')}
+      </label>
       <Input
+        id="prop-filter-value"
         className="h-7 text-xs"
         placeholder={t('agendaFilter.propertyValuePlaceholder')}
         value={propertyValue}
         onChange={(e) => setPropertyValue(e.target.value)}
-        aria-label={t('agendaFilter.propertyValue')}
       />
     </div>
   )
@@ -251,12 +282,7 @@ function ValuePicker({ dimension, selected, onChange }: ValuePickerProps): React
 
   if (choices) {
     return (
-      <ChoiceValuePicker
-        choices={choices}
-        label={label}
-        selected={selected}
-        onChange={onChange}
-      />
+      <ChoiceValuePicker choices={choices} label={label} selected={selected} onChange={onChange} />
     )
   }
 
@@ -470,7 +496,7 @@ export function AgendaFilterBuilder({
         {filters.length > 0 && (
           <ul aria-label={t('agendaFilter.appliedFilters')} className="contents list-none m-0 p-0">
             {filters.map((filter, idx) => (
-              <li key={`${filter.dimension}-${idx}`} className="contents">
+              <li key={filter.dimension} className="contents">
                 <div className="flex items-center gap-0 rounded-full bg-muted text-xs shrink-0">
                   <EditFilterPopover
                     filter={filter}
@@ -554,7 +580,11 @@ export function AgendaSortGroupControls({
   const sortLabel = SORT_OPTIONS.find((o) => o.value === sortBy)
 
   return (
-    <div className="agenda-sort-group-controls flex items-center gap-1.5" role="toolbar" aria-label={t('agenda.sortBy') + ' / ' + t('agenda.groupBy')}>
+    <div
+      className="agenda-sort-group-controls flex items-center gap-1.5"
+      role="toolbar"
+      aria-label={`${t('agenda.sortBy')} / ${t('agenda.groupBy')}`}
+    >
       {/* Group by */}
       <Popover open={groupOpen} onOpenChange={setGroupOpen}>
         <PopoverTrigger asChild>

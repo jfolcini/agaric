@@ -124,9 +124,7 @@ describe('PropertyChip', () => {
   })
 
   it('key label has hover:underline class when onKeyClick is provided', () => {
-    render(
-      <PropertyChip propKey="effort" value="2h" onKeyClick={() => {}} />,
-    )
+    render(<PropertyChip propKey="effort" value="2h" onKeyClick={() => {}} />)
 
     const keyLabel = screen.getByText('effort:')
     expect(keyLabel.className).toContain('hover:underline')

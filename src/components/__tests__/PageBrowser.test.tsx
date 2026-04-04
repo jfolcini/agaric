@@ -716,10 +716,7 @@ describe('PageBrowser', () => {
     it('namespace folders are collapsible', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage('P1', 'work/project-a'),
-          makePage('P2', 'work/project-b'),
-        ],
+        items: [makePage('P1', 'work/project-a'), makePage('P2', 'work/project-b')],
         next_cursor: null,
         has_more: false,
       })
@@ -804,10 +801,7 @@ describe('PageBrowser', () => {
 
     it('a11y: + button has proper aria-label with namespace path', async () => {
       mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage('P1', 'work/dev/task-1'),
-          makePage('P2', 'work/dev/task-2'),
-        ],
+        items: [makePage('P1', 'work/dev/task-1'), makePage('P2', 'work/dev/task-2')],
         next_cursor: null,
         has_more: false,
       })
@@ -918,10 +912,7 @@ describe('PageBrowser', () => {
     it('clearing search shows all pages again', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage('P1', 'Meeting notes'),
-          makePage('P2', 'Shopping list'),
-        ],
+        items: [makePage('P1', 'Meeting notes'), makePage('P2', 'Shopping list')],
         next_cursor: null,
         has_more: false,
       })

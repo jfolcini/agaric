@@ -1,0 +1,18 @@
+{
+  "1115805": {
+    "active": true,
+    "notes": "lodash-es via vitest-axe (dev-only transitive dep, not used in production)"
+  },
+  "1115806": {
+    "active": true,
+    "notes": "lodash via depcheck (dev-only transitive dep, not used in production)"
+  },
+  "1115809": {
+    "active": true,
+    "notes": "lodash-es via vitest-axe (dev-only transitive dep, not used in production)"
+  },
+  "1115810": {
+    "active": true,
+    "notes": "lodash via depcheck (dev-only transitive dep, not used in production)"
+  }
+}

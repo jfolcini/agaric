@@ -331,9 +331,7 @@ export function StatusPanel(): React.ReactElement {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-muted-foreground mb-3">
-              {t('status.importDesc')}
-            </p>
+            <p className="text-xs text-muted-foreground mb-3">{t('status.importDesc')}</p>
             <div className="flex gap-2">
               <input
                 type="file"
@@ -357,13 +355,12 @@ export function StatusPanel(): React.ReactElement {
             {importResult && (
               <div className="import-result mt-3 text-xs space-y-1">
                 <p className="text-emerald-600">
-                  Imported &ldquo;{importResult.page_title}&rdquo;: {importResult.blocks_created} blocks
+                  Imported &ldquo;{importResult.page_title}&rdquo;: {importResult.blocks_created}{' '}
+                  blocks
                   {importResult.properties_set > 0 && `, ${importResult.properties_set} properties`}
                 </p>
                 {importResult.warnings.length > 0 && (
-                  <p className="text-amber-600">
-                    {importResult.warnings.length} warning(s)
-                  </p>
+                  <p className="text-amber-600">{importResult.warnings.length} warning(s)</p>
                 )}
               </div>
             )}

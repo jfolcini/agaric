@@ -190,9 +190,9 @@ describe('serialize', () => {
     })
 
     it('serializes multi-line blockquote', () => {
-      expect(
-        serialize(doc(blockquote(paragraph(text('line 1')), paragraph(text('line 2'))))),
-      ).toBe('> line 1\n> line 2')
+      expect(serialize(doc(blockquote(paragraph(text('line 1')), paragraph(text('line 2')))))).toBe(
+        '> line 1\n> line 2',
+      )
     })
 
     it('serializes blockquote with marks', () => {
@@ -200,35 +200,47 @@ describe('serialize', () => {
     })
 
     it('serializes blockquote containing table', () => {
-      expect(serialize(doc(
-        blockquote(
-          table(
-            tableRow(tableHeader(paragraph(text('A')))),
-            tableRow(tableCell(paragraph(text('1')))),
-          )
-        )
-      ))).toBe('> | A |\n> | --- |\n> | 1 |')
+      expect(
+        serialize(
+          doc(
+            blockquote(
+              table(
+                tableRow(tableHeader(paragraph(text('A')))),
+                tableRow(tableCell(paragraph(text('1')))),
+              ),
+            ),
+          ),
+        ),
+      ).toBe('> | A |\n> | --- |\n> | 1 |')
     })
   })
 
   describe('table', () => {
     it('serializes a simple table with header', () => {
-      expect(serialize(doc(
-        table(
-          tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Age')))),
-          tableRow(tableCell(paragraph(text('Alice'))), tableCell(paragraph(text('30')))),
-          tableRow(tableCell(paragraph(text('Bob'))), tableCell(paragraph(text('25')))),
-        )
-      ))).toBe('| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |')
+      expect(
+        serialize(
+          doc(
+            table(
+              tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Age')))),
+              tableRow(tableCell(paragraph(text('Alice'))), tableCell(paragraph(text('30')))),
+              tableRow(tableCell(paragraph(text('Bob'))), tableCell(paragraph(text('25')))),
+            ),
+          ),
+        ),
+      ).toBe('| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |')
     })
 
     it('serializes table with marks', () => {
-      expect(serialize(doc(
-        table(
-          tableRow(tableHeader(paragraph(bold('Header')))),
-          tableRow(tableCell(paragraph(text('cell')))),
-        )
-      ))).toBe('| **Header** |\n| --- |\n| cell |')
+      expect(
+        serialize(
+          doc(
+            table(
+              tableRow(tableHeader(paragraph(bold('Header')))),
+              tableRow(tableCell(paragraph(text('cell')))),
+            ),
+          ),
+        ),
+      ).toBe('| **Header** |\n| --- |\n| cell |')
     })
 
     it('serializes empty table', () => {
@@ -236,12 +248,16 @@ describe('serialize', () => {
     })
 
     it('serializes table cell with pipe character', () => {
-      expect(serialize(doc(
-        table(
-          tableRow(tableHeader(paragraph(text('A|B')))),
-          tableRow(tableCell(paragraph(text('1|2')))),
-        )
-      ))).toBe('| A\\|B |\n| --- |\n| 1\\|2 |')
+      expect(
+        serialize(
+          doc(
+            table(
+              tableRow(tableHeader(paragraph(text('A|B')))),
+              tableRow(tableCell(paragraph(text('1|2')))),
+            ),
+          ),
+        ),
+      ).toBe('| A\\|B |\n| --- |\n| 1\\|2 |')
     })
   })
 
@@ -590,42 +606,42 @@ describe('parse', () => {
       const input = '| Name | Age |\n| --- | --- |\n| Alice | 30 |'
       const result = parse(input)
       expect(result.content).toHaveLength(1)
-      expect(result.content![0].type).toBe('table')
-      const tbl = result.content![0] as TableNode
+      expect(result.content?.[0].type).toBe('table')
+      const tbl = result.content?.[0] as TableNode
       expect(tbl.content).toHaveLength(2)
     })
 
     it('parses table with marks', () => {
       const input = '| **Bold** |\n| --- |\n| normal |'
       const result = parse(input)
-      const tbl = result.content![0] as TableNode
-      const headerCell = tbl.content![0].content![0]
-      expect(headerCell.type).toBe('tableHeader')
+      const tbl = result.content?.[0] as TableNode
+      const headerCell = tbl.content?.[0].content?.[0]
+      expect(headerCell?.type).toBe('tableHeader')
     })
 
     it('table followed by paragraph', () => {
       const input = '| A | B |\n| --- | --- |\n| 1 | 2 |\nNormal text'
       const result = parse(input)
       expect(result.content).toHaveLength(2)
-      expect(result.content![0].type).toBe('table')
-      expect(result.content![1].type).toBe('paragraph')
+      expect(result.content?.[0].type).toBe('table')
+      expect(result.content?.[1].type).toBe('paragraph')
     })
 
     it('handles table rows with fewer columns than header', () => {
       const result = parse('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 |')
       expect(result.content).toHaveLength(1)
-      const tbl = result.content![0] as TableNode
+      const tbl = result.content?.[0] as TableNode
       expect(tbl.content).toHaveLength(2) // header + 1 data row
       // Data row should have 2 cells (fewer than header's 3)
-      expect(tbl.content![1].content!.length).toBe(2)
+      expect(tbl.content?.[1].content?.length).toBe(2)
     })
 
     it('parses header-only table (no data rows)', () => {
       const result = parse('| A | B |\n| --- | --- |')
       expect(result.content).toHaveLength(1)
-      const tbl = result.content![0] as TableNode
+      const tbl = result.content?.[0] as TableNode
       expect(tbl.content).toHaveLength(1) // just the header row
-      expect(tbl.content![0].content![0].type).toBe('tableHeader')
+      expect(tbl.content?.[0].content?.[0].type).toBe('tableHeader')
     })
   })
 })
@@ -1252,8 +1268,8 @@ describe('code blocks', () => {
     const md = '```not a language!\nconsole.log("hi")\n```'
     const result = parse(md)
     expect(result.content).toHaveLength(1)
-    const block = result.content![0]
-    expect(block.type).toBe('codeBlock')
+    const block = result.content?.[0]
+    expect(block?.type).toBe('codeBlock')
     // Language should be stripped because it contains spaces / invalid chars
     expect((block as { attrs?: { language?: string } }).attrs?.language).toBeUndefined()
   })
@@ -1261,8 +1277,8 @@ describe('code blocks', () => {
   it('valid code block language is preserved', () => {
     const md = '```typescript\nconst x = 1\n```'
     const result = parse(md)
-    const block = result.content![0]
-    expect(block.type).toBe('codeBlock')
+    const block = result.content?.[0]
+    expect(block?.type).toBe('codeBlock')
     expect((block as { attrs?: { language?: string } }).attrs?.language).toBe('typescript')
   })
 
@@ -1270,7 +1286,7 @@ describe('code blocks', () => {
     for (const lang of ['c++', 'c#', 'objective-c', 'f#', '.net']) {
       const md = `\`\`\`${lang}\ncode\n\`\`\``
       const result = parse(md)
-      const block = result.content![0]
+      const block = result.content?.[0]
       expect((block as { attrs?: { language?: string } }).attrs?.language).toBe(lang)
     }
   })

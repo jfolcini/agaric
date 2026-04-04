@@ -16,13 +16,11 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import {
+  type AgendaSortBy,
   groupByDate,
   groupByPriority,
   groupByState,
-  sortAgendaBlocks,
   sortAgendaBlocksBy,
-  type AgendaGroup,
-  type AgendaSortBy,
 } from '../lib/agenda-sort'
 import type { BlockRow } from '../lib/tauri'
 
@@ -283,36 +281,32 @@ export function AgendaResults({
       </div>
 
       {groupBy === 'date' || groupBy === 'priority' || groupBy === 'state' ? (
-        <>
-          {(groupBy === 'date'
-            ? groupByDate(blocks)
-            : groupBy === 'priority'
-              ? groupByPriority(blocks)
-              : groupByState(blocks)
-          ).map((group) => {
-            const displayLabel = GROUP_I18N[group.label]
-              ? t(GROUP_I18N[group.label])
-              : group.label
-            return (
-              <div key={group.label} className="agenda-group mb-3">
-                <h3
-                  className={cn(
-                    'agenda-group-header text-xs font-semibold uppercase tracking-wide px-2 py-1',
-                    group.className ?? 'text-muted-foreground',
-                  )}
-                >
-                  {displayLabel}
-                  <span className="ml-1.5 text-muted-foreground font-normal">
-                    ({group.blocks.length})
-                  </span>
-                </h3>
-                <ul className="agenda-results-list space-y-1" aria-label={displayLabel}>
-                  {group.blocks.map((block) => renderItem(block))}
-                </ul>
-              </div>
-            )
-          })}
-        </>
+        (groupBy === 'date'
+          ? groupByDate(blocks)
+          : groupBy === 'priority'
+            ? groupByPriority(blocks)
+            : groupByState(blocks)
+        ).map((group) => {
+          const displayLabel = GROUP_I18N[group.label] ? t(GROUP_I18N[group.label]) : group.label
+          return (
+            <div key={group.label} className="agenda-group mb-3">
+              <h3
+                className={cn(
+                  'agenda-group-header text-xs font-semibold uppercase tracking-wide px-2 py-1',
+                  group.className ?? 'text-muted-foreground',
+                )}
+              >
+                {displayLabel}
+                <span className="ml-1.5 text-muted-foreground font-normal">
+                  ({group.blocks.length})
+                </span>
+              </h3>
+              <ul className="agenda-results-list space-y-1" aria-label={displayLabel}>
+                {group.blocks.map((block) => renderItem(block))}
+              </ul>
+            </div>
+          )
+        })
       ) : (
         <ul className="agenda-results-list space-y-1" aria-label={t('agenda.agendaResults')}>
           {sortedBlocks.map((block) => renderItem(block))}

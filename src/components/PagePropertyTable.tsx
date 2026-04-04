@@ -290,9 +290,7 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t('property.deleteConfirm')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('property.deleteConfirmDesc')}
-            </AlertDialogDescription>
+            <AlertDialogDescription>{t('property.deleteConfirmDesc')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('action.cancel')}</AlertDialogCancel>

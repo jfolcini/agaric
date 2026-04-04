@@ -86,6 +86,24 @@
 - Commit: `8f3a4bb`
 - REVIEW-LATER: M-4, M-5, M-6, M-9, L-5 resolved and removed. 98 → **93 open items**.
 
+### Phase 1 (batch 6): Frontend perf + config + dead code (M-7, M-10, L-11, M-14, L-16, L-12)
+
+3 build subagents (StaticBlock, SortableBlock, EditableBlock), orchestrator direct fixes (Cargo.toml, sync.ts, AGENTS.md), 1 review (skipped for mechanical changes).
+
+| File | Change |
+|------|--------|
+| `StaticBlock.tsx` | M-7: useMemo deps reduced to `[content]` only. Callback props stored in refs. Conditional wrapper preserves stopPropagation. |
+| `SortableBlock.tsx` | M-10: Added `useMemo` for filtered properties — computed once instead of 3 `.filter()` calls. |
+| `EditableBlock.tsx` | L-11: useEffect deps reduced from 4 to 2 (`[isFocused, blockId]`). Mutable deps stored in refs. |
+| `Cargo.toml` | M-14: Added `unsafe_code = "deny"` to `[lints.rust]`. |
+| `sync.ts` + `sync.test.ts` | L-16: Removed unused `incrementOpsReceived`/`incrementOpsSent` methods + 4 tests. |
+| `AGENTS.md` | L-12: Updated test count from ~3200+ to ~2800. |
+
+### Stats
+- Frontend: 44/44 StaticBlock pass, 150/150 SortableBlock pass, 28/28 EditableBlock pass, 17/17 sync pass
+- Commit: `14ca0c3`
+- REVIEW-LATER: M-7, M-10, L-11, M-14, L-16, L-12 resolved and removed. 93 → **87 open items**.
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system

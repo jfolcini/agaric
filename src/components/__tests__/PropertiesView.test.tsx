@@ -143,9 +143,7 @@ describe('PropertiesView', () => {
     await user.click(deleteBtn)
 
     // AlertDialog should appear
-    expect(
-      await screen.findByText('Delete this property definition?'),
-    ).toBeInTheDocument()
+    expect(await screen.findByText('Delete this property definition?')).toBeInTheDocument()
     expect(
       screen.getByText(
         'Blocks using this property will keep their values, but the definition will be removed.',

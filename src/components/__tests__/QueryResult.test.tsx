@@ -1,9 +1,9 @@
+import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import { invoke } from '@tauri-apps/api/core'
-import { QueryResult, parseQueryExpression } from '../QueryResult'
+import { parseQueryExpression, QueryResult } from '../QueryResult'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 const mockedInvoke = vi.mocked(invoke)
@@ -188,13 +188,25 @@ describe('QueryResult', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_property') {
         return {
-          items: [{
-            id: 'B1', block_type: 'content', content: 'High priority task',
-            parent_id: 'P1', position: 1, deleted_at: null, archived_at: null,
-            is_conflict: false, conflict_type: null, todo_state: 'TODO',
-            priority: '1', due_date: null, scheduled_date: null,
-          }],
-          next_cursor: null, has_more: false,
+          items: [
+            {
+              id: 'B1',
+              block_type: 'content',
+              content: 'High priority task',
+              parent_id: 'P1',
+              position: 1,
+              deleted_at: null,
+              archived_at: null,
+              is_conflict: false,
+              conflict_type: null,
+              todo_state: 'TODO',
+              priority: '1',
+              due_date: null,
+              scheduled_date: null,
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
         }
       }
       if (cmd === 'batch_resolve') return []
@@ -225,13 +237,25 @@ describe('QueryResult', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') {
         return {
-          items: [{
-            id: 'B1', block_type: 'content', content: 'Child block',
-            parent_id: 'TARGET1', position: 1, deleted_at: null, archived_at: null,
-            is_conflict: false, conflict_type: null, todo_state: null,
-            priority: null, due_date: null, scheduled_date: null,
-          }],
-          next_cursor: null, has_more: false,
+          items: [
+            {
+              id: 'B1',
+              block_type: 'content',
+              content: 'Child block',
+              parent_id: 'TARGET1',
+              position: 1,
+              deleted_at: null,
+              archived_at: null,
+              is_conflict: false,
+              conflict_type: null,
+              todo_state: null,
+              priority: null,
+              due_date: null,
+              scheduled_date: null,
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
         }
       }
       if (cmd === 'batch_resolve') return []

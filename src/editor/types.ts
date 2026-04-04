@@ -101,7 +101,12 @@ export interface TableNode {
   readonly content?: readonly TableRowNode[]
 }
 
-export type BlockLevelNode = ParagraphNode | HeadingNode | CodeBlockNode | BlockquoteNode | TableNode
+export type BlockLevelNode =
+  | ParagraphNode
+  | HeadingNode
+  | CodeBlockNode
+  | BlockquoteNode
+  | TableNode
 
 export interface DocNode {
   readonly type: 'doc'

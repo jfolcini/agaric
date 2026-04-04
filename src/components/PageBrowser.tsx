@@ -86,7 +86,9 @@ function HighlightMatch({
   return (
     <>
       {text.slice(0, idx)}
-      <mark className="bg-yellow-200 dark:bg-yellow-800 rounded-sm">{text.slice(idx, idx + filterText.length)}</mark>
+      <mark className="bg-yellow-200 dark:bg-yellow-800 rounded-sm">
+        {text.slice(idx, idx + filterText.length)}
+      </mark>
       {text.slice(idx + filterText.length)}
     </>
   )
@@ -135,9 +137,7 @@ function PageTreeItem({
           onClick={() => !forceExpand && setExpanded(!expanded)}
           className="flex-1 text-left px-2 py-1 text-sm text-muted-foreground hover:bg-accent/50 rounded flex items-center gap-1"
         >
-          <ChevronRight
-            className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-90')}
-          />
+          <ChevronRight className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-90')} />
           <HighlightMatch text={node.name} filterText={filterText} />
         </button>
         <button
@@ -313,7 +313,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       {/* Search/filter input */}
       {pages.length > 0 && (
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          <Search
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
+            aria-hidden="true"
+          />
           <Input
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
@@ -360,50 +363,58 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
             <Search className="mx-auto mb-2 h-5 w-5" />
             {t('pageBrowser.noMatches')}
           </div>
-        ) : filteredPages.some((p) => p.content?.includes('/'))
-          ? buildPageTree(filteredPages).map((node) => (
-              <PageTreeItem
-                key={node.fullPath}
-                node={node}
-                depth={0}
-                onNavigate={(pageId, title) => onPageSelect?.(pageId, title)}
-                onCreateUnder={handleCreateUnder}
-                filterText={filterText.trim()}
-                forceExpand={isFiltering}
-              />
-            ))
-          : filteredPages.map((page) => (
-              // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
-              <div
-                key={page.id}
-                role="listitem"
-                className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50"
+        ) : filteredPages.some((p) => p.content?.includes('/')) ? (
+          buildPageTree(filteredPages).map((node) => (
+            <PageTreeItem
+              key={node.fullPath}
+              node={node}
+              depth={0}
+              onNavigate={(pageId, title) => onPageSelect?.(pageId, title)}
+              onCreateUnder={handleCreateUnder}
+              filterText={filterText.trim()}
+              forceExpand={isFiltering}
+            />
+          ))
+        ) : (
+          filteredPages.map((page) => (
+            // biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn
+            <div
+              key={page.id}
+              role="listitem"
+              className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50"
+            >
+              <button
+                type="button"
+                className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+                onClick={() => onPageSelect?.(page.id, page.content ?? t('pageBrowser.untitled'))}
               >
-                <button
-                  type="button"
-                  className="page-browser-item flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
-                  onClick={() => onPageSelect?.(page.id, page.content ?? t('pageBrowser.untitled'))}
+                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span
+                  className="page-browser-item-title truncate"
+                  title={page.content ?? t('pageBrowser.untitled')}
                 >
-                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="page-browser-item-title truncate" title={page.content ?? t('pageBrowser.untitled')}>
-                    <HighlightMatch text={page.content ?? t('pageBrowser.untitled')} filterText={filterText.trim()} />
-                  </span>
-                </button>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t('pageBrowser.deleteButton')}
-                  className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                  disabled={deletingId === page.id}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setDeleteTarget({ id: page.id, name: page.content ?? t('pageBrowser.untitled') })
-                  }}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ))}
+                  <HighlightMatch
+                    text={page.content ?? t('pageBrowser.untitled')}
+                    filterText={filterText.trim()}
+                  />
+                </span>
+              </button>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t('pageBrowser.deleteButton')}
+                className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                disabled={deletingId === page.id}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setDeleteTarget({ id: page.id, name: page.content ?? t('pageBrowser.untitled') })
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))
+        )}
       </div>
 
       {hasMore && (

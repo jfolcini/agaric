@@ -19,9 +19,17 @@ export function formatRepeatLabel(value: string): string {
     const n = match[1]
     const singular = n === '1'
     const unit =
-      match[2] === 'd' ? (singular ? 'day' : 'days')
-      : match[2] === 'w' ? (singular ? 'week' : 'weeks')
-      : singular ? 'month' : 'months'
+      match[2] === 'd'
+        ? singular
+          ? 'day'
+          : 'days'
+        : match[2] === 'w'
+          ? singular
+            ? 'week'
+            : 'weeks'
+          : singular
+            ? 'month'
+            : 'months'
     return `every ${n} ${unit}${mode}`
   }
   return value

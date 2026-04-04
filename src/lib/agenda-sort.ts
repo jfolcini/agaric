@@ -99,7 +99,7 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
     if (groups.has(key)) {
       result.push({
         label: key,
-        blocks: groups.get(key)!,
+        blocks: groups.get(key) ?? [],
         className: key === 'Overdue' ? 'text-red-600 dark:text-red-400' : undefined,
       })
       groups.delete(key)
@@ -137,11 +137,14 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
 
   for (const block of blocks) {
     const key =
-      block.priority === '1' ? 'P1'
-        : block.priority === '2' ? 'P2'
-          : block.priority === '3' ? 'P3'
+      block.priority === '1'
+        ? 'P1'
+        : block.priority === '2'
+          ? 'P2'
+          : block.priority === '3'
+            ? 'P3'
             : 'No priority'
-    buckets.get(key)!.push(block)
+    buckets.get(key)?.push(block)
   }
 
   const sortWithin = (a: BlockRow, b: BlockRow): number => {
@@ -186,11 +189,14 @@ export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
 
   for (const block of blocks) {
     const key =
-      block.todo_state === 'DOING' ? 'DOING'
-        : block.todo_state === 'TODO' ? 'TODO'
-          : block.todo_state === 'DONE' ? 'DONE'
+      block.todo_state === 'DOING'
+        ? 'DOING'
+        : block.todo_state === 'TODO'
+          ? 'TODO'
+          : block.todo_state === 'DONE'
+            ? 'DONE'
             : 'No state'
-    buckets.get(key)!.push(block)
+    buckets.get(key)?.push(block)
   }
 
   const sortWithin = (a: BlockRow, b: BlockRow): number => {
@@ -277,14 +283,26 @@ export function sortAgendaBlocksBy(blocks: BlockRow[], sortBy: AgendaSortBy): Bl
       return sortByPriority(blocks)
     case 'state':
       return sortByState(blocks)
-    case 'date':
     default:
       return sortAgendaBlocks(blocks)
   }
 }
 
 /** Short month names for compact date display. */
-const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const MONTH_SHORT = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+]
 
 /** Format YYYY-MM-DD for group headers. Same year -> "Mon DD", different year -> "Mon DD, YYYY". */
 function formatGroupDate(dateStr: string): string {

@@ -1553,7 +1553,6 @@ describe('BlockTree resolve cache preload', () => {
       due_date: null,
       scheduled_date: null,
     }
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'list_blocks') {
         if (args?.blockType === 'page') return emptyPage
@@ -1614,7 +1613,6 @@ describe('BlockTree handleNavigate', () => {
     const PAGE_ID = '01TESTPAGE00000000000NAV01'
     const onNav = vi.fn()
 
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === PAGE_ID) {
         return {
@@ -1661,7 +1659,6 @@ describe('BlockTree handleNavigate', () => {
     const PARENT_ID = '01TESTPAGE00000000000NAV03'
     const onNav = vi.fn()
 
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === CONTENT_ID) {
         return {
@@ -1727,7 +1724,6 @@ describe('BlockTree handleNavigate', () => {
   it('handles missing/deleted block without crashing', async () => {
     const onNav = vi.fn()
 
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block') throw new Error('Block not found')
       if (cmd === 'get_batch_properties') {
@@ -3047,7 +3043,6 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
     const BLOCK_ID = '01TESTLOCAL0000000000NAV01'
     const onNav = vi.fn()
 
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === BLOCK_ID) {
         return {
@@ -3097,7 +3092,6 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
     const PARENT_ID = '01TESTPAGE00000000000NAV05'
     const onNav = vi.fn()
 
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === CONTENT_ID) {
         return {
@@ -4284,8 +4278,9 @@ describe('BlockTree zoom-in', () => {
     expect(nav).toBeInTheDocument()
 
     // Click the home button (first button inside the nav)
-    const homeButton = nav.querySelector('button')!
-    await user.click(homeButton)
+    const homeButton = nav.querySelector('button')
+    expect(homeButton).not.toBeNull()
+    await user.click(homeButton!)
 
     // All blocks should be visible again
     await waitFor(() => {

@@ -576,7 +576,9 @@ describe('PagePropertyTable validation and confirmation', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Delete this property\?/i)).toBeInTheDocument()
-      expect(screen.getByText(/This will remove the property from the block\./i)).toBeInTheDocument()
+      expect(
+        screen.getByText(/This will remove the property from the block\./i),
+      ).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /^Delete$/i })).toBeInTheDocument()
     })

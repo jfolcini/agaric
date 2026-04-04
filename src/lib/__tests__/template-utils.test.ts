@@ -226,9 +226,7 @@ describe('insertTemplateBlocks', () => {
     expect(createCalls).toHaveLength(3)
 
     // Warning was logged for the failed block
-    expect(warnSpy).toHaveBeenCalledWith(
-      'Template block copy failed for source B, skipping',
-    )
+    expect(warnSpy).toHaveBeenCalledWith('Template block copy failed for source B, skipping')
 
     warnSpy.mockRestore()
   })
@@ -323,7 +321,9 @@ describe('loadTemplatePagesWithPreview', () => {
     })
     // Mock list_blocks(T1) → 1 child
     mockedInvoke.mockResolvedValueOnce({
-      items: [{ id: 'C1', block_type: 'content', content: '## Attendees', parent_id: 'T1', position: 0 }],
+      items: [
+        { id: 'C1', block_type: 'content', content: '## Attendees', parent_id: 'T1', position: 0 },
+      ],
       next_cursor: null,
       has_more: false,
     })
@@ -357,13 +357,15 @@ describe('loadTemplatePagesWithPreview', () => {
       has_more: false,
     })
     mockedInvoke.mockResolvedValueOnce({
-      items: [{ id: 'C1', block_type: 'content', content: longContent, parent_id: 'T1', position: 0 }],
+      items: [
+        { id: 'C1', block_type: 'content', content: longContent, parent_id: 'T1', position: 0 },
+      ],
       next_cursor: null,
       has_more: false,
     })
 
     const result = await loadTemplatePagesWithPreview()
-    expect(result[0].preview).toBe('A'.repeat(60) + '\u2026')
+    expect(result[0].preview).toBe(`${'A'.repeat(60)}\u2026`)
   })
 
   it('handles preview fetch failure gracefully', async () => {

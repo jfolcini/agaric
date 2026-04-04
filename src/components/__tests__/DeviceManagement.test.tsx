@@ -1044,9 +1044,7 @@ describe('DeviceManagement', () => {
       await screen.findByText('peer-abc-123...')
       const editBtn = container.querySelector('.peer-address-edit')
       expect(editBtn).toBeTruthy()
-      expect(editBtn?.getAttribute('aria-label')).toBe(
-        'Edit address for peer-abc-123...',
-      )
+      expect(editBtn?.getAttribute('aria-label')).toBe('Edit address for peer-abc-123...')
     })
 
     it('calls set_peer_address when user enters an address via prompt', async () => {

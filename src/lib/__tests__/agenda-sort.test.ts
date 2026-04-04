@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
+import {
+  groupByDate,
+  groupByPriority,
+  groupByState,
+  sortAgendaBlocks,
+  sortAgendaBlocksBy,
+  sortByPriority,
+  sortByState,
+} from '../agenda-sort'
 import type { BlockRow } from '../tauri'
-import { sortAgendaBlocks, groupByDate, groupByPriority, groupByState, sortByPriority, sortByState, sortAgendaBlocksBy } from '../agenda-sort'
 
 function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
   return {
@@ -43,10 +51,7 @@ describe('sortAgendaBlocks', () => {
   })
 
   it('sorts blocks with no date to bottom', () => {
-    const blocks = [
-      makeBlock({ id: 'B1' }),
-      makeBlock({ id: 'B2', due_date: '2025-06-15' }),
-    ]
+    const blocks = [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2', due_date: '2025-06-15' })]
     const sorted = sortAgendaBlocks(blocks)
     expect(sorted[0].id).toBe('B2')
     expect(sorted[1].id).toBe('B1')
@@ -99,18 +104,14 @@ describe('sortAgendaBlocks', () => {
 
 describe('groupByDate', () => {
   it('puts overdue non-DONE tasks in Overdue group', () => {
-    const blocks = [
-      makeBlock({ id: 'B1', due_date: '2020-01-01', todo_state: 'TODO' }),
-    ]
+    const blocks = [makeBlock({ id: 'B1', due_date: '2020-01-01', todo_state: 'TODO' })]
     const groups = groupByDate(blocks)
     expect(groups[0].label).toBe('Overdue')
     expect(groups[0].blocks.length).toBe(1)
   })
 
   it('does not put DONE tasks in Overdue', () => {
-    const blocks = [
-      makeBlock({ id: 'B1', due_date: '2020-01-01', todo_state: 'DONE' }),
-    ]
+    const blocks = [makeBlock({ id: 'B1', due_date: '2020-01-01', todo_state: 'DONE' })]
     const groups = groupByDate(blocks)
     // Should not be in "Overdue" group
     const overdueGroup = groups.find((g) => g.label === 'Overdue')
@@ -175,17 +176,11 @@ describe('groupByPriority', () => {
     ]
     const groups = groupByPriority(blocks)
     expect(groups.length).toBe(1)
-    expect(groups[0].blocks.map((b) => b.id)).toEqual([
-      'early-doing',
-      'early-done',
-      'late-todo',
-    ])
+    expect(groups[0].blocks.map((b) => b.id)).toEqual(['early-doing', 'early-done', 'late-todo'])
   })
 
   it('omits empty priority groups', () => {
-    const blocks = [
-      makeBlock({ id: 'p1', priority: '1' }),
-    ]
+    const blocks = [makeBlock({ id: 'p1', priority: '1' })]
     const groups = groupByPriority(blocks)
     expect(groups.length).toBe(1)
     expect(groups[0].label).toBe('P1')
@@ -221,17 +216,11 @@ describe('groupByState', () => {
     ]
     const groups = groupByState(blocks)
     expect(groups.length).toBe(1)
-    expect(groups[0].blocks.map((b) => b.id)).toEqual([
-      'early-p1',
-      'early-p3',
-      'late-p1',
-    ])
+    expect(groups[0].blocks.map((b) => b.id)).toEqual(['early-p1', 'early-p3', 'late-p1'])
   })
 
   it('omits empty state groups', () => {
-    const blocks = [
-      makeBlock({ id: 'doing', todo_state: 'DOING' }),
-    ]
+    const blocks = [makeBlock({ id: 'doing', todo_state: 'DOING' })]
     const groups = groupByState(blocks)
     expect(groups.length).toBe(1)
     expect(groups[0].label).toBe('DOING')
@@ -248,7 +237,12 @@ describe('sortByPriority', () => {
     const blocks = [
       makeBlock({ id: 'p3-early', priority: '3', due_date: '2025-06-10', todo_state: 'TODO' }),
       makeBlock({ id: 'p1-late', priority: '1', due_date: '2025-06-20', todo_state: 'TODO' }),
-      makeBlock({ id: 'p1-early-doing', priority: '1', due_date: '2025-06-10', todo_state: 'DOING' }),
+      makeBlock({
+        id: 'p1-early-doing',
+        priority: '1',
+        due_date: '2025-06-10',
+        todo_state: 'DOING',
+      }),
       makeBlock({ id: 'p1-early-done', priority: '1', due_date: '2025-06-10', todo_state: 'DONE' }),
       makeBlock({ id: 'p2', priority: '2', due_date: '2025-06-15', todo_state: 'TODO' }),
     ]
@@ -273,10 +267,7 @@ describe('sortByPriority', () => {
   })
 
   it('does not mutate input array', () => {
-    const blocks = [
-      makeBlock({ id: 'p2', priority: '2' }),
-      makeBlock({ id: 'p1', priority: '1' }),
-    ]
+    const blocks = [makeBlock({ id: 'p2', priority: '2' }), makeBlock({ id: 'p1', priority: '1' })]
     const copy = [...blocks]
     sortByPriority(blocks)
     expect(blocks[0].id).toBe(copy[0].id)
@@ -289,8 +280,18 @@ describe('sortByState', () => {
     const blocks = [
       makeBlock({ id: 'done', todo_state: 'DONE', due_date: '2025-06-10', priority: '1' }),
       makeBlock({ id: 'doing-late', todo_state: 'DOING', due_date: '2025-06-20', priority: '1' }),
-      makeBlock({ id: 'doing-early-p3', todo_state: 'DOING', due_date: '2025-06-10', priority: '3' }),
-      makeBlock({ id: 'doing-early-p1', todo_state: 'DOING', due_date: '2025-06-10', priority: '1' }),
+      makeBlock({
+        id: 'doing-early-p3',
+        todo_state: 'DOING',
+        due_date: '2025-06-10',
+        priority: '3',
+      }),
+      makeBlock({
+        id: 'doing-early-p1',
+        todo_state: 'DOING',
+        due_date: '2025-06-10',
+        priority: '1',
+      }),
       makeBlock({ id: 'todo', todo_state: 'TODO', due_date: '2025-06-10', priority: '1' }),
       makeBlock({ id: 'none', todo_state: null, due_date: '2025-06-10', priority: '1' }),
     ]

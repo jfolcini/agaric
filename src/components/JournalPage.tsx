@@ -43,8 +43,8 @@ import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import type { BlockRow } from '../lib/tauri'
 import type { AgendaGroupBy, AgendaSortBy } from '../lib/agenda-sort'
+import type { BlockRow } from '../lib/tauri'
 import {
   batchResolve,
   countAgendaBatch,
@@ -263,24 +263,37 @@ export function JournalPage({
   const [agendaGroupBy, setAgendaGroupBy] = useState<AgendaGroupBy>(() => {
     try {
       const stored = localStorage.getItem('agaric:agenda:groupBy')
-      if (stored === 'date' || stored === 'priority' || stored === 'state' || stored === 'none') return stored
-    } catch { /* ignore */ }
+      if (stored === 'date' || stored === 'priority' || stored === 'state' || stored === 'none')
+        return stored
+    } catch {
+      /* ignore */
+    }
     return 'date'
   })
   const [agendaSortBy, setAgendaSortBy] = useState<AgendaSortBy>(() => {
     try {
       const stored = localStorage.getItem('agaric:agenda:sortBy')
       if (stored === 'date' || stored === 'priority' || stored === 'state') return stored
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return 'date'
   })
 
   useEffect(() => {
-    try { localStorage.setItem('agaric:agenda:groupBy', agendaGroupBy) } catch { /* ignore */ }
+    try {
+      localStorage.setItem('agaric:agenda:groupBy', agendaGroupBy)
+    } catch {
+      /* ignore */
+    }
   }, [agendaGroupBy])
 
   useEffect(() => {
-    try { localStorage.setItem('agaric:agenda:sortBy', agendaSortBy) } catch { /* ignore */ }
+    try {
+      localStorage.setItem('agaric:agenda:sortBy', agendaSortBy)
+    } catch {
+      /* ignore */
+    }
   }, [agendaSortBy])
 
   /** Fetch all pages and build a dateStr->pageId lookup. */
@@ -607,7 +620,11 @@ export function JournalPage({
               const todayStr = formatDate(today)
               for (const value of filter.values) {
                 if (value === 'Today') {
-                  const resp = await queryByProperty({ key: 'completed_at', valueDate: todayStr, limit: 500 })
+                  const resp = await queryByProperty({
+                    key: 'completed_at',
+                    valueDate: todayStr,
+                    limit: 500,
+                  })
                   for (const b of resp.items) {
                     ids.add(b.id)
                     allBlocks.set(b.id, b)
@@ -619,7 +636,11 @@ export function JournalPage({
                     const date = new Date(today)
                     date.setDate(today.getDate() + mondayOffset + d)
                     const dateStr = formatDate(date)
-                    const resp = await queryByProperty({ key: 'completed_at', valueDate: dateStr, limit: 500 })
+                    const resp = await queryByProperty({
+                      key: 'completed_at',
+                      valueDate: dateStr,
+                      limit: 500,
+                    })
                     for (const b of resp.items) {
                       ids.add(b.id)
                       allBlocks.set(b.id, b)
@@ -631,7 +652,11 @@ export function JournalPage({
                   const daysInMonth = new Date(year, month + 1, 0).getDate()
                   for (let d = 1; d <= daysInMonth; d++) {
                     const dateStr = formatDate(new Date(year, month, d))
-                    const resp = await queryByProperty({ key: 'completed_at', valueDate: dateStr, limit: 500 })
+                    const resp = await queryByProperty({
+                      key: 'completed_at',
+                      valueDate: dateStr,
+                      limit: 500,
+                    })
                     for (const b of resp.items) {
                       ids.add(b.id)
                       allBlocks.set(b.id, b)
@@ -642,7 +667,11 @@ export function JournalPage({
                     const date = new Date(today)
                     date.setDate(today.getDate() - d)
                     const dateStr = formatDate(date)
-                    const resp = await queryByProperty({ key: 'completed_at', valueDate: dateStr, limit: 500 })
+                    const resp = await queryByProperty({
+                      key: 'completed_at',
+                      valueDate: dateStr,
+                      limit: 500,
+                    })
                     for (const b of resp.items) {
                       ids.add(b.id)
                       allBlocks.set(b.id, b)
@@ -653,7 +682,11 @@ export function JournalPage({
                     const date = new Date(today)
                     date.setDate(today.getDate() - d)
                     const dateStr = formatDate(date)
-                    const resp = await queryByProperty({ key: 'completed_at', valueDate: dateStr, limit: 500 })
+                    const resp = await queryByProperty({
+                      key: 'completed_at',
+                      valueDate: dateStr,
+                      limit: 500,
+                    })
                     for (const b of resp.items) {
                       ids.add(b.id)
                       allBlocks.set(b.id, b)
@@ -667,7 +700,11 @@ export function JournalPage({
               const todayStr = formatDate(today)
               for (const value of filter.values) {
                 if (value === 'Today') {
-                  const resp = await queryByProperty({ key: 'created_at', valueDate: todayStr, limit: 500 })
+                  const resp = await queryByProperty({
+                    key: 'created_at',
+                    valueDate: todayStr,
+                    limit: 500,
+                  })
                   for (const b of resp.items) {
                     ids.add(b.id)
                     allBlocks.set(b.id, b)
@@ -679,7 +716,11 @@ export function JournalPage({
                     const date = new Date(today)
                     date.setDate(today.getDate() + mondayOffset + d)
                     const dateStr = formatDate(date)
-                    const resp = await queryByProperty({ key: 'created_at', valueDate: dateStr, limit: 500 })
+                    const resp = await queryByProperty({
+                      key: 'created_at',
+                      valueDate: dateStr,
+                      limit: 500,
+                    })
                     for (const b of resp.items) {
                       ids.add(b.id)
                       allBlocks.set(b.id, b)
@@ -691,7 +732,11 @@ export function JournalPage({
                   const daysInMonth = new Date(year, month + 1, 0).getDate()
                   for (let d = 1; d <= daysInMonth; d++) {
                     const dateStr = formatDate(new Date(year, month, d))
-                    const resp = await queryByProperty({ key: 'created_at', valueDate: dateStr, limit: 500 })
+                    const resp = await queryByProperty({
+                      key: 'created_at',
+                      valueDate: dateStr,
+                      limit: 500,
+                    })
                     for (const b of resp.items) {
                       ids.add(b.id)
                       allBlocks.set(b.id, b)
@@ -702,7 +747,11 @@ export function JournalPage({
                     const date = new Date(today)
                     date.setDate(today.getDate() - d)
                     const dateStr = formatDate(date)
-                    const resp = await queryByProperty({ key: 'created_at', valueDate: dateStr, limit: 500 })
+                    const resp = await queryByProperty({
+                      key: 'created_at',
+                      valueDate: dateStr,
+                      limit: 500,
+                    })
                     for (const b of resp.items) {
                       ids.add(b.id)
                       allBlocks.set(b.id, b)
@@ -713,7 +762,11 @@ export function JournalPage({
                     const date = new Date(today)
                     date.setDate(today.getDate() - d)
                     const dateStr = formatDate(date)
-                    const resp = await queryByProperty({ key: 'created_at', valueDate: dateStr, limit: 500 })
+                    const resp = await queryByProperty({
+                      key: 'created_at',
+                      valueDate: dateStr,
+                      limit: 500,
+                    })
                     for (const b of resp.items) {
                       ids.add(b.id)
                       allBlocks.set(b.id, b)
@@ -827,7 +880,9 @@ export function JournalPage({
             toast.warning(duplicateWarning)
           }
           if (journalTemplate) {
-            const ids = await insertTemplateBlocks(journalTemplate.id, pageId, { pageTitle: dateStr })
+            const ids = await insertTemplateBlocks(journalTemplate.id, pageId, {
+              pageTitle: dateStr,
+            })
             await load(pageId)
             if (autoFocus && ids.length > 0) {
               useBlockStore.setState({ focusedBlockId: ids[0] })

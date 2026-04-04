@@ -22,7 +22,6 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
@@ -1312,11 +1311,9 @@ describe('ConflictList', () => {
     ).length
 
     // Simulate the sync:complete event by invoking the captured listener callback
-    const listenerCall = mockListen.mock.calls.find(
-      ([event]: [string]) => event === 'sync:complete',
-    )
+    const listenerCall = mockListen.mock.calls.find(([event]) => event === 'sync:complete')
     expect(listenerCall).toBeTruthy()
-    const callback = listenerCall![1]
+    const callback = listenerCall?.[1]
     callback({ payload: { ops_received: 3, ops_sent: 0 } })
 
     await waitFor(() => {
@@ -1472,8 +1469,7 @@ describe('ConflictList', () => {
     const conflict = makeConflict('C1', 'incoming changes', 'ORIG001')
     let deleteCallCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_conflicts')
-        return { items: [conflict], next_cursor: null, has_more: false }
+      if (cmd === 'get_conflicts') return { items: [conflict], next_cursor: null, has_more: false }
       if (cmd === 'get_block') return originalBlock
       if (cmd === 'edit_block')
         return { id: 'ORIG001', block_type: 'content', content: 'incoming changes' }
@@ -1514,7 +1510,7 @@ describe('ConflictList', () => {
     )
     expect(retryCall).toBeTruthy()
     // biome-ignore lint/suspicious/noExplicitAny: test mock extraction
-    const retryAction = (retryCall![1] as any).action
+    const retryAction = (retryCall?.[1] as any).action
     retryAction.onClick()
 
     // Verify deleteBlock was called again
@@ -1563,7 +1559,7 @@ describe('ConflictList', () => {
     const undoCall = successCalls.find(([msg]) => msg === 'Kept selected version')
     expect(undoCall).toBeTruthy()
     // biome-ignore lint/suspicious/noExplicitAny: test mock extraction
-    const undoAction = (undoCall![1] as any).action
+    const undoAction = (undoCall?.[1] as any).action
     undoAction.onClick()
 
     // Verify restoreBlock and editBlock were called to reverse
@@ -1621,7 +1617,7 @@ describe('ConflictList', () => {
     const undoCall = successCalls.find(([msg]) => msg === 'Conflict discarded')
     expect(undoCall).toBeTruthy()
     // biome-ignore lint/suspicious/noExplicitAny: test mock extraction
-    const undoAction = (undoCall![1] as any).action
+    const undoAction = (undoCall?.[1] as any).action
     undoAction.onClick()
 
     // Verify restoreBlock was called with the right args
@@ -2057,13 +2053,32 @@ describe('ConflictList', () => {
       if (cmd === 'get_block') return originalBlock
       if (cmd === 'get_block_history') {
         return {
-          items: [{ device_id: 'DEVICE_ABC', seq: 1, op_type: 'CreateBlock', payload: '{}', created_at: '2026-04-03T00:00:00Z' }],
+          items: [
+            {
+              device_id: 'DEVICE_ABC',
+              seq: 1,
+              op_type: 'CreateBlock',
+              payload: '{}',
+              created_at: '2026-04-03T00:00:00Z',
+            },
+          ],
           next_cursor: null,
           has_more: false,
         }
       }
       if (cmd === 'list_peer_refs') {
-        return [{ peer_id: 'DEVICE_ABC', device_name: 'Phone', synced_at: '2026-04-03T00:00:00Z', last_hash: null, last_sent_hash: null, reset_count: 0, last_reset_at: null, cert_hash: null }]
+        return [
+          {
+            peer_id: 'DEVICE_ABC',
+            device_name: 'Phone',
+            synced_at: '2026-04-03T00:00:00Z',
+            last_hash: null,
+            last_sent_hash: null,
+            reset_count: 0,
+            last_reset_at: null,
+            cert_hash: null,
+          },
+        ]
       }
       if (cmd === 'get_device_id') return 'DEVICE_LOCAL'
       return undefined
@@ -2085,7 +2100,15 @@ describe('ConflictList', () => {
       if (cmd === 'get_block') return originalBlock
       if (cmd === 'get_block_history') {
         return {
-          items: [{ device_id: 'UNKNOWN_DEVICE_ID_LONG', seq: 1, op_type: 'CreateBlock', payload: '{}', created_at: '2026-04-03T00:00:00Z' }],
+          items: [
+            {
+              device_id: 'UNKNOWN_DEVICE_ID_LONG',
+              seq: 1,
+              op_type: 'CreateBlock',
+              payload: '{}',
+              created_at: '2026-04-03T00:00:00Z',
+            },
+          ],
           next_cursor: null,
           has_more: false,
         }
@@ -2111,7 +2134,15 @@ describe('ConflictList', () => {
       if (cmd === 'get_block') return originalBlock
       if (cmd === 'get_block_history') {
         return {
-          items: [{ device_id: 'DEVICE_LOCAL', seq: 1, op_type: 'CreateBlock', payload: '{}', created_at: '2026-04-03T00:00:00Z' }],
+          items: [
+            {
+              device_id: 'DEVICE_LOCAL',
+              seq: 1,
+              op_type: 'CreateBlock',
+              payload: '{}',
+              created_at: '2026-04-03T00:00:00Z',
+            },
+          ],
           next_cursor: null,
           has_more: false,
         }

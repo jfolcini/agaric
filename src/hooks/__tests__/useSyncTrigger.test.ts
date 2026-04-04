@@ -60,6 +60,7 @@ describe('useSyncTrigger', () => {
         last_reset_at: null,
         cert_hash: null,
         device_name: null,
+        last_address: null,
       },
     ])
 
@@ -88,6 +89,7 @@ describe('useSyncTrigger', () => {
         last_reset_at: null,
         cert_hash: null,
         device_name: null,
+        last_address: null,
       },
     ])
 
@@ -123,6 +125,7 @@ describe('useSyncTrigger', () => {
         last_reset_at: null,
         cert_hash: null,
         device_name: null,
+        last_address: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('connection failed'))
@@ -149,6 +152,7 @@ describe('useSyncTrigger', () => {
         last_reset_at: null,
         cert_hash: null,
         device_name: null,
+        last_address: null,
       },
     ])
     mockStartSync.mockImplementation(
@@ -202,6 +206,7 @@ describe('useSyncTrigger', () => {
         last_reset_at: null,
         cert_hash: null,
         device_name: null,
+        last_address: null,
       },
     ])
 
@@ -226,6 +231,7 @@ describe('useSyncTrigger', () => {
         last_reset_at: null,
         cert_hash: null,
         device_name: null,
+        last_address: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('connection refused'))
@@ -262,6 +268,7 @@ describe('useSyncTrigger', () => {
         last_reset_at: null,
         cert_hash: null,
         device_name: null,
+        last_address: null,
       },
     ])
 
@@ -291,6 +298,7 @@ describe('useSyncTrigger', () => {
         last_reset_at: null,
         cert_hash: null,
         device_name: null,
+        last_address: null,
       },
     ])
 
@@ -331,6 +339,7 @@ describe('useSyncTrigger', () => {
         last_reset_at: null,
         cert_hash: null,
         device_name: null,
+        last_address: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('fail'))
@@ -366,6 +375,7 @@ describe('useSyncTrigger', () => {
         last_reset_at: null,
         cert_hash: null,
         device_name: null,
+        last_address: null,
       },
     ])
     // First sync fails
@@ -413,6 +423,7 @@ describe('useSyncTrigger', () => {
         last_reset_at: null,
         cert_hash: null,
         device_name: null,
+        last_address: null,
       },
     ])
 
@@ -456,6 +467,7 @@ describe('useSyncTrigger', () => {
         last_reset_at: null,
         cert_hash: null,
         device_name: null,
+        last_address: null,
       },
     ])
 

@@ -42,15 +42,16 @@ vi.mock('../PropertyChip', () => ({
       className="property-chip"
       onClick={props.onClick}
     >
-      <span
+      <button
         data-testid={`property-key-${props.propKey}`}
+        type="button"
         onClick={(e: { stopPropagation: () => void }) => {
           e.stopPropagation()
           props.onKeyClick?.()
         }}
       >
         {props.propKey}:
-      </span>
+      </button>
       <span>{props.value}</span>
     </button>
   ),
@@ -3312,9 +3313,7 @@ describe('SortableBlock ref property picker', () => {
       },
     ])
     mockListBlocks.mockResolvedValue({
-      items: [
-        { id: 'PAGE_1', content: 'Some Page', block_type: 'page' },
-      ],
+      items: [{ id: 'PAGE_1', content: 'Some Page', block_type: 'page' }],
       next_cursor: null,
       has_more: false,
     })
@@ -3359,9 +3358,7 @@ describe('SortableBlock ref property picker', () => {
       },
     ])
     mockListBlocks.mockResolvedValue({
-      items: [
-        { id: 'PAGE_1', content: 'Only Page', block_type: 'page' },
-      ],
+      items: [{ id: 'PAGE_1', content: 'Only Page', block_type: 'page' }],
       next_cursor: null,
       has_more: false,
     })

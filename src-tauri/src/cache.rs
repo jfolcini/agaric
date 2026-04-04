@@ -1597,7 +1597,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         // Insert a block with NULL content
-        insert_block_null_content(&pool, "01HZ0000000000000NULLCONT", "content");
+        insert_block_null_content(&pool, "01HZ0000000000000NULLCONT", "content").await;
 
         // Must not panic or return an error
         reindex_block_links(&pool, "01HZ0000000000000NULLCONT")

@@ -100,9 +100,7 @@ export function QueryResult({
       setResults(items)
 
       // Resolve parent page titles
-      const parentIds = items
-        .map((b) => b.parent_id)
-        .filter((id): id is string => id != null)
+      const parentIds = items.map((b) => b.parent_id).filter((id): id is string => id != null)
       if (parentIds.length > 0) {
         const resolved = await batchResolve([...new Set(parentIds)])
         const titleMap = new Map<string, string>()
@@ -147,21 +145,15 @@ export function QueryResult({
       {/* Results */}
       {!collapsed && (
         <div className="border-t border-dashed border-muted-foreground/20">
-          {loading && (
-            <div className="px-3 py-2 text-xs text-muted-foreground">Loading...</div>
-          )}
-          {error && (
-            <div className="px-3 py-2 text-xs text-destructive">{error}</div>
-          )}
+          {loading && <div className="px-3 py-2 text-xs text-muted-foreground">Loading...</div>}
+          {error && <div className="px-3 py-2 text-xs text-destructive">{error}</div>}
           {!loading && !error && results.length === 0 && (
             <div className="px-3 py-2 text-xs text-muted-foreground italic">No results</div>
           )}
           {!loading && !error && results.length > 0 && (
             <ul className="divide-y divide-muted-foreground/10">
               {results.map((block) => {
-                const pageTitle = block.parent_id
-                  ? pageTitles.get(block.parent_id)
-                  : undefined
+                const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
                 return (
                   <li key={block.id} className="query-result-item">
                     <button

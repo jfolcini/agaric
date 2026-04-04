@@ -90,7 +90,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       toast.error(`Failed to create tag: ${String(error)}`)
     }
     setIsCreating(false)
-  }, [newTagName])
+  }, [newTagName, t])
 
   const handleDeleteTag = useCallback(async (tagId: string) => {
     try {
@@ -158,7 +158,13 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                 className="cursor-pointer border-none bg-transparent p-0"
                 onClick={() => onTagClick?.(tag.id, tag.content || 'Unnamed')}
               >
-                <Badge variant="secondary" className="truncate max-w-[150px]" title={tag.content || 'Unnamed'}>{tag.content || 'Unnamed'}</Badge>
+                <Badge
+                  variant="secondary"
+                  className="truncate max-w-[150px]"
+                  title={tag.content || 'Unnamed'}
+                >
+                  {tag.content || 'Unnamed'}
+                </Badge>
               </button>
               <div className="flex-1" />
               <Button

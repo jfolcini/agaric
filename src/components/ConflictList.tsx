@@ -40,7 +40,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { formatTimestamp, truncateId, ulidToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
-import type { BlockRow } from '../lib/tauri'
+import type { BlockRow, DeleteResponse } from '../lib/tauri'
 import {
   deleteBlock,
   editBlock,
@@ -103,7 +103,8 @@ function renderConflictContent(
       diffs.push(
         <div key="state">
           State: <span className="text-muted-foreground">{original.todo_state ?? '(none)'}</span>
-          {' \u2192 '}<span className="font-medium">{block.todo_state ?? '(none)'}</span>
+          {' \u2192 '}
+          <span className="font-medium">{block.todo_state ?? '(none)'}</span>
         </div>,
       )
     }
@@ -111,7 +112,8 @@ function renderConflictContent(
       diffs.push(
         <div key="priority">
           Priority: <span className="text-muted-foreground">{original.priority ?? '(none)'}</span>
-          {' \u2192 '}<span className="font-medium">{block.priority ?? '(none)'}</span>
+          {' \u2192 '}
+          <span className="font-medium">{block.priority ?? '(none)'}</span>
         </div>,
       )
     }
@@ -119,15 +121,18 @@ function renderConflictContent(
       diffs.push(
         <div key="due">
           Due: <span className="text-muted-foreground">{original.due_date ?? '(none)'}</span>
-          {' \u2192 '}<span className="font-medium">{block.due_date ?? '(none)'}</span>
+          {' \u2192 '}
+          <span className="font-medium">{block.due_date ?? '(none)'}</span>
         </div>,
       )
     }
     if (block.scheduled_date !== original.scheduled_date) {
       diffs.push(
         <div key="sched">
-          Scheduled: <span className="text-muted-foreground">{original.scheduled_date ?? '(none)'}</span>
-          {' \u2192 '}<span className="font-medium">{block.scheduled_date ?? '(none)'}</span>
+          Scheduled:{' '}
+          <span className="text-muted-foreground">{original.scheduled_date ?? '(none)'}</span>
+          {' \u2192 '}
+          <span className="font-medium">{block.scheduled_date ?? '(none)'}</span>
         </div>,
       )
     }
@@ -152,12 +157,18 @@ function renderConflictContent(
         <div className="mt-1 space-y-0.5 text-xs">
           {block.parent_id !== original.parent_id && (
             <div>
-              Parent: <span className="font-mono text-muted-foreground">{truncateId(original.parent_id ?? '?')}</span>
-              {' \u2192 '}<span className="font-mono font-medium">{truncateId(block.parent_id ?? '?')}</span>
+              Parent:{' '}
+              <span className="font-mono text-muted-foreground">
+                {truncateId(original.parent_id ?? '?')}
+              </span>
+              {' \u2192 '}
+              <span className="font-mono font-medium">{truncateId(block.parent_id ?? '?')}</span>
             </div>
           )}
           {block.position !== original.position && (
-            <div>Position: {original.position ?? '?'} \u2192 {block.position ?? '?'}</div>
+            <div>
+              Position: {original.position ?? '?'} \u2192 {block.position ?? '?'}
+            </div>
           )}
         </div>
       </div>
@@ -167,20 +178,26 @@ function renderConflictContent(
   // Default: Text conflict (or fallback)
   return (
     <>
-      <div className={`conflict-original text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}>
+      <div
+        className={`conflict-original text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}
+      >
         <span className="font-medium text-muted-foreground">Current:</span>{' '}
-        {original
-          ? (original.content
-            ? <span>{renderRichContent(original.content, { interactive: false })}</span>
-            : '(empty)')
-          : '(original not available)'}
+        {original ? (
+          original.content ? (
+            <span>{renderRichContent(original.content, { interactive: false })}</span>
+          ) : (
+            '(empty)'
+          )
+        ) : (
+          '(original not available)'
+        )}
       </div>
-      <div className={`conflict-incoming text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}>
+      <div
+        className={`conflict-incoming text-sm${isExpanded ? ' max-h-40 overflow-y-auto' : ' truncate'}`}
+      >
         <span className="font-medium">Incoming:</span>{' '}
         <span className="conflict-item-text">
-          {block.content
-            ? renderRichContent(block.content, { interactive: false })
-            : '(empty)'}
+          {block.content ? renderRichContent(block.content, { interactive: false }) : '(empty)'}
         </span>
       </div>
     </>
@@ -294,14 +311,11 @@ export function ConflictList(): React.ReactElement {
         )
 
         // Get device name mapping
-        const [peers, localId] = await Promise.all([
-          listPeerRefs(),
-          getDeviceId(),
-        ])
+        const [peers, localId] = await Promise.all([listPeerRefs(), getDeviceId()])
 
         const nameMap = new Map<string, string>()
         for (const peer of peers) {
-          nameMap.set(peer.peer_id, peer.device_name ?? peer.peer_id.slice(0, 8) + '...')
+          nameMap.set(peer.peer_id, peer.device_name ?? `${peer.peer_id.slice(0, 8)}...`)
         }
         nameMap.set(localId, 'This device')
 
@@ -314,7 +328,7 @@ export function ConflictList(): React.ReactElement {
               result.set(blockId, name)
             } else {
               // Show truncated device ID if name not found
-              result.set(blockId, deviceId.slice(0, 8) + '...')
+              result.set(blockId, `${deviceId.slice(0, 8)}...`)
             }
           }
           setDeviceNames(result)
@@ -325,7 +339,9 @@ export function ConflictList(): React.ReactElement {
     }
 
     fetchDeviceInfo()
-    return () => { stale = true }
+    return () => {
+      stale = true
+    }
   }, [blocks])
 
   const toggleExpanded = useCallback((id: string) => {
@@ -349,30 +365,27 @@ export function ConflictList(): React.ReactElement {
           await editBlock(block.parent_id, block.content)
         }
         // Delete the conflict block
-        let deleteResp
+        let deleteResp: DeleteResponse | undefined
         try {
           deleteResp = await deleteBlock(block.id)
         } catch (_deleteErr: unknown) {
           // editBlock succeeded but deleteBlock failed — partial success
-          toast.success(
-            'Updated original but failed to remove conflict copy.',
-            {
-              duration: 5000,
-              action: {
-                label: 'Retry delete',
-                onClick: () => {
-                  deleteBlock(block.id)
-                    .then(() => {
-                      setBlocks((prev) => prev.filter((b) => b.id !== block.id))
-                      toast.success('Conflict copy removed')
-                    })
-                    .catch(() => {
-                      toast.error('Retry failed — please delete the conflict manually.')
-                    })
-                },
+          toast.success('Updated original but failed to remove conflict copy.', {
+            duration: 5000,
+            action: {
+              label: 'Retry delete',
+              onClick: () => {
+                deleteBlock(block.id)
+                  .then(() => {
+                    setBlocks((prev) => prev.filter((b) => b.id !== block.id))
+                    toast.success('Conflict copy removed')
+                  })
+                  .catch(() => {
+                    toast.error('Retry failed — please delete the conflict manually.')
+                  })
               },
             },
-          )
+          })
           setConfirmKeepBlock(null)
           return
         }
@@ -486,9 +499,7 @@ export function ConflictList(): React.ReactElement {
 
       {selectedIds.size > 0 && (
         <div className="conflict-batch-toolbar flex items-center gap-2 rounded-lg border bg-muted/50 p-2 mb-2">
-          <span className="text-sm font-medium">
-            {selectedIds.size} selected
-          </span>
+          <span className="text-sm font-medium">{selectedIds.size} selected</span>
           <Button
             variant="ghost"
             size="sm"
@@ -503,19 +514,11 @@ export function ConflictList(): React.ReactElement {
             {selectedIds.size === blocks.length ? 'Deselect all' : 'Select all'}
           </Button>
           <div className="flex-1" />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setBatchAction('keep')}
-          >
+          <Button variant="outline" size="sm" onClick={() => setBatchAction('keep')}>
             <Check className="h-3.5 w-3.5 mr-1" />
             Keep all
           </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => setBatchAction('discard')}
-          >
+          <Button variant="destructive" size="sm" onClick={() => setBatchAction('discard')}>
             <X className="h-3.5 w-3.5 mr-1" />
             Discard all
           </Button>
@@ -532,7 +535,13 @@ export function ConflictList(): React.ReactElement {
               key={block.id}
               className="conflict-item flex items-start justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
             >
-              <label className="flex items-center shrink-0 mr-2" onClick={(e) => e.stopPropagation()}>
+              <label
+                className="flex items-center shrink-0 mr-2"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === ' ') e.stopPropagation()
+                }}
+              >
                 <input
                   type="checkbox"
                   checked={selectedIds.has(block.id)}
@@ -593,7 +602,9 @@ export function ConflictList(): React.ReactElement {
                     size="sm"
                     className="conflict-view-original-btn"
                     aria-label={`View original block for ${truncateId(block.id)}`}
-                    onClick={() => navigateToPage(block.parent_id as string, block.content ?? 'Untitled')}
+                    onClick={() =>
+                      navigateToPage(block.parent_id as string, block.content ?? 'Untitled')
+                    }
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                     View original
@@ -656,8 +667,8 @@ export function ConflictList(): React.ReactElement {
                     <span className="text-muted-foreground">
                       {truncatePreview(
                         confirmKeepBlock.parent_id
-                          ? (originals.get(confirmKeepBlock.parent_id)?.content
-                              ?? '(original not available)')
+                          ? (originals.get(confirmKeepBlock.parent_id)?.content ??
+                              '(original not available)')
                           : '(no original)',
                       )}
                     </span>
@@ -698,17 +709,18 @@ export function ConflictList(): React.ReactElement {
             <AlertDialogTitle>Discard conflict?</AlertDialogTitle>
             <AlertDialogDescription>
               This will permanently remove the conflicting version.
-              {confirmDiscardId && (() => {
-                const discardBlock = blocks.find((b) => b.id === confirmDiscardId)
-                return discardBlock ? (
-                  <span className="mt-2 block text-xs">
-                    <span className="font-medium">Content:</span>{' '}
-                    <span className="text-muted-foreground">
-                      {truncatePreview(discardBlock.content ?? '(empty)')}
+              {confirmDiscardId &&
+                (() => {
+                  const discardBlock = blocks.find((b) => b.id === confirmDiscardId)
+                  return discardBlock ? (
+                    <span className="mt-2 block text-xs">
+                      <span className="font-medium">Content:</span>{' '}
+                      <span className="text-muted-foreground">
+                        {truncatePreview(discardBlock.content ?? '(empty)')}
+                      </span>
                     </span>
-                  </span>
-                ) : null
-              })()}
+                  ) : null
+                })()}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

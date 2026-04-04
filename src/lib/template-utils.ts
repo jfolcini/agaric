@@ -62,10 +62,7 @@ export async function loadTemplatePagesWithPreview(): Promise<
  * - `<% datetime %>` → current date+time in YYYY-MM-DD HH:MM format
  * - `<% page title %>` → title of the target page (where template is being inserted)
  */
-export function expandTemplateVariables(
-  content: string,
-  context: { pageTitle?: string },
-): string {
+export function expandTemplateVariables(content: string, context: { pageTitle?: string }): string {
   const now = new Date()
   const yyyy = now.getFullYear()
   const mm = String(now.getMonth() + 1).padStart(2, '0')

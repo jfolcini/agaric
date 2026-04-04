@@ -53,9 +53,7 @@ export function SearchPanel(): React.ReactElement {
       setNextCursor(resp.next_cursor)
       setHasMore(resp.has_more)
       setSearched(true)
-      const parentIds = resp.items
-        .map((b) => b.parent_id)
-        .filter((id): id is string => id != null)
+      const parentIds = resp.items.map((b) => b.parent_id).filter((id): id is string => id != null)
       if (parentIds.length > 0) {
         try {
           const resolved = await batchResolve(parentIds)
@@ -206,35 +204,35 @@ export function SearchPanel(): React.ReactElement {
         )}
 
         {results.length > 0 && (
-          <div className="search-results space-y-3" role="list">
+          <ul className="search-results space-y-3 list-none m-0 p-0">
             {results.map((block) => (
-              <button
-                key={block.id}
-                type="button"
-                role="listitem"
-                className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                onClick={() => handleResultClick(block)}
-                disabled={loadingResultId === block.id}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="flex-1 text-sm line-clamp-2">
-                    {block.content || '(empty)'}
-                  </span>
-                  {loadingResultId === block.id && (
-                    <Loader2 className="h-4 w-4 animate-spin shrink-0 text-muted-foreground" />
+              <li key={block.id}>
+                <button
+                  type="button"
+                  className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  onClick={() => handleResultClick(block)}
+                  disabled={loadingResultId === block.id}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="flex-1 text-sm line-clamp-2">
+                      {block.content || '(empty)'}
+                    </span>
+                    {loadingResultId === block.id && (
+                      <Loader2 className="h-4 w-4 animate-spin shrink-0 text-muted-foreground" />
+                    )}
+                    {(block.block_type === 'tag' || block.block_type === 'page') && (
+                      <Badge variant="secondary">{block.block_type}</Badge>
+                    )}
+                  </div>
+                  {block.parent_id && pageTitles.get(block.parent_id) && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      in: {pageTitles.get(block.parent_id)}
+                    </p>
                   )}
-                  {(block.block_type === 'tag' || block.block_type === 'page') && (
-                    <Badge variant="secondary">{block.block_type}</Badge>
-                  )}
-                </div>
-                {block.parent_id && pageTitles.get(block.parent_id) && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    in: {pageTitles.get(block.parent_id)}
-                  </p>
-                )}
-              </button>
+                </button>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
         {searched && !loading && <span className="sr-only">{results.length} results found</span>}
       </div>

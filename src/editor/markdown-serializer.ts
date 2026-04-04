@@ -472,7 +472,7 @@ function consumeExternalLink(s: Scanner, match: LinkMatch, outerMarks: PMMark[])
 
   // Parse inner display text (handles bold/italic/code/tokens)
   const innerDoc = parse(match.displayText)
-  const innerContent = innerDoc.content?.[0]?.content
+  const innerContent = innerDoc.content?.[0]?.content as readonly InlineNode[] | undefined
 
   if (!innerContent || innerContent.length === 0) {
     const marks = [...outerMarks, linkMark]

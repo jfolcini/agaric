@@ -19,6 +19,7 @@ import type React from 'react'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useShallow } from 'zustand/react/shallow'
 import { parse, serialize } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
 import type { DocNode } from '../editor/types'
@@ -51,7 +52,6 @@ import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '../lib/templ
 import { getDragDescendants } from '../lib/tree-utils'
 import { cn } from '../lib/utils'
 import { useBlockStore } from '../stores/blocks'
-import { useShallow } from 'zustand/react/shallow'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
 import { BlockPropertyDrawer } from './BlockPropertyDrawer'
@@ -301,9 +301,22 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   // Stable actions — extracted via getState() (0 subscriptions)
   const {
-    load, setFocused, remove, edit, splitBlock, indent, dedent,
-    reorder, moveToParent, moveUp, moveDown, createBelow,
-    toggleSelected, rangeSelect, selectAll, clearSelected,
+    load,
+    setFocused,
+    remove,
+    edit,
+    splitBlock,
+    indent,
+    dedent,
+    reorder,
+    moveToParent,
+    moveUp,
+    moveDown,
+    createBelow,
+    toggleSelected,
+    rangeSelect,
+    selectAll,
+    clearSelected,
   } = useBlockStore.getState()
 
   // ── Collapse state (persisted in localStorage) ────────────────────
@@ -1379,7 +1392,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       handleFlush()
       moveUp(id)
     },
-    [handleFlush],
+    [handleFlush, moveUp],
   )
 
   const handleMoveDownById = useCallback(
@@ -1387,7 +1400,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       handleFlush()
       moveDown(id)
     },
-    [handleFlush],
+    [handleFlush, moveDown],
   )
 
   // ── Merge with previous block (p2-t11) ────────────────────────────

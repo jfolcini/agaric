@@ -189,7 +189,8 @@ const resources = {
       'slash.repeatFailed': 'Failed to set repeat',
       'slash.effortSet': 'Set effort to {{value}}',
       'slash.effortFailed': 'Failed to set effort',
-      'slash.noTemplates': 'No templates found. To create one: make a page, open its properties (click the page title area), and add a "template" property set to "true".',
+      'slash.noTemplates':
+        'No templates found. To create one: make a page, open its properties (click the page title area), and add a "template" property set to "true".',
       'slash.templateLoadFailed': 'Failed to load templates',
       'slash.templateInserted': 'Template inserted',
       'slash.templateInsertFailed': 'Failed to insert template',
@@ -240,7 +241,8 @@ const resources = {
 
       // Agenda
       'agenda.loadingTasks': 'Loading tasks...',
-      'agenda.noTasks': 'No dated tasks found. Add a due date or scheduled date to your tasks to see them here.',
+      'agenda.noTasks':
+        'No dated tasks found. Add a due date or scheduled date to your tasks to see them here.',
       'agenda.noMatch': 'No blocks match your filters.',
       'agenda.clearFilters': 'Clear all filters',
       'agenda.zeroResults': '0 results',
@@ -393,7 +395,8 @@ const resources = {
       'search.parentPage': 'in: {{title}}',
 
       // Editor
-      'editor.templatePlaceholder': 'Type /template to start from a template, or just start typing...',
+      'editor.templatePlaceholder':
+        'Type /template to start from a template, or just start typing...',
 
       // Property table
       'property.drawerTitle': 'Block Properties',
@@ -418,7 +421,8 @@ const resources = {
       'propertiesView.createType': 'Type',
       'propertiesView.create': 'Create',
       'propertiesView.deleteConfirm': 'Delete this property definition?',
-      'propertiesView.deleteDesc': 'Blocks using this property will keep their values, but the definition will be removed.',
+      'propertiesView.deleteDesc':
+        'Blocks using this property will keep their values, but the definition will be removed.',
       'propertiesView.deleted': 'Property definition deleted',
       'propertiesView.created': 'Property definition created',
       'propertiesView.editOptions': 'Edit options',
@@ -429,7 +433,8 @@ const resources = {
       'propertiesView.add': 'Add',
       'propertiesView.taskStatesReload': 'Reload the page to apply changes.',
       'propertiesView.deadlineWarning': 'Deadline Warning',
-      'propertiesView.deadlineWarningDesc': 'Show tasks approaching their deadline in the DuePanel. Set to 0 to disable.',
+      'propertiesView.deadlineWarningDesc':
+        'Show tasks approaching their deadline in the DuePanel. Set to 0 to disable.',
 
       // Tags
       'tags.loadFailed': 'Failed to load tags',
@@ -458,7 +463,8 @@ const resources = {
 
       // Import
       'status.importTitle': 'Import',
-      'status.importDesc': 'Import Logseq or Markdown files. Pages are created from filenames, blocks from indented list items.',
+      'status.importDesc':
+        'Import Logseq or Markdown files. Pages are created from filenames, blocks from indented list items.',
       'status.importButton': 'Select .md files',
     },
   },

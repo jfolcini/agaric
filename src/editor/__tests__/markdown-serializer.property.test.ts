@@ -161,7 +161,7 @@ function normalizeDoc(doc: DocNode): DocNode {
   if (!doc.content) return doc
   const paragraphs = doc.content
     .map((p) => {
-      if (!p.content || p.content.length === 0) return p
+      if (p.type !== 'paragraph' || !p.content || p.content.length === 0) return p
       const merged: InlineNode[] = []
       for (const node of p.content) {
         const last = merged.length > 0 ? merged[merged.length - 1] : null

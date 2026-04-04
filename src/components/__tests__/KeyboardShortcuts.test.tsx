@@ -19,7 +19,9 @@ describe('KeyboardShortcuts', () => {
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
     expect(screen.getByText('Quick Reference')).toBeInTheDocument()
-    expect(screen.getByText('Available keyboard shortcuts and syntax reference for the editor.')).toBeInTheDocument()
+    expect(
+      screen.getByText('Available keyboard shortcuts and syntax reference for the editor.'),
+    ).toBeInTheDocument()
   })
 
   it('does not render sheet content when closed', () => {

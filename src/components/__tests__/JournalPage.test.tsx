@@ -75,7 +75,12 @@ vi.mock('../AgendaFilterBuilder', () => ({
       </div>
     )
   },
-  AgendaSortGroupControls: (props: { groupBy: string; sortBy: string; onGroupByChange: unknown; onSortByChange: unknown }) => (
+  AgendaSortGroupControls: (props: {
+    groupBy: string
+    sortBy: string
+    onGroupByChange: unknown
+    onSortByChange: unknown
+  }) => (
     <div
       data-testid="agenda-sort-group-controls"
       data-group-by={props.groupBy}
@@ -1634,8 +1639,7 @@ describe('JournalPage', () => {
       // Verify it called query_by_property with key=completed_at and valueDate=today
       const completedCalls = mockedInvoke.mock.calls.filter(
         ([cmd, callArgs]) =>
-          cmd === 'query_by_property' &&
-          (callArgs as { key?: string })?.key === 'completed_at',
+          cmd === 'query_by_property' && (callArgs as { key?: string })?.key === 'completed_at',
       )
       expect(completedCalls.length).toBeGreaterThanOrEqual(1)
       expect((completedCalls[0][1] as { valueDate: string }).valueDate).toBe(todayStr)

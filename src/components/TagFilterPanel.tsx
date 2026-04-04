@@ -58,20 +58,23 @@ export function TagFilterPanel(): React.ReactElement {
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
   // Debounced prefix search
-  const searchTags = useCallback(async (p: string) => {
-    try {
-      const tags = await listTagsByPrefix({ prefix: p })
-      setMatchingTags(
-        tags.map((t) => ({
-          tag_id: t.tag_id,
-          name: t.name,
-          usage_count: t.usage_count,
-        })),
-      )
-    } catch {
-      toast.error(t('tags.loadFailed'))
-    }
-  }, [])
+  const searchTags = useCallback(
+    async (p: string) => {
+      try {
+        const tags = await listTagsByPrefix({ prefix: p })
+        setMatchingTags(
+          tags.map((t) => ({
+            tag_id: t.tag_id,
+            name: t.name,
+            usage_count: t.usage_count,
+          })),
+        )
+      } catch {
+        toast.error(t('tags.loadFailed'))
+      }
+    },
+    [t],
+  )
 
   function handlePrefixChange(e: React.ChangeEvent<HTMLInputElement>) {
     const value = e.target.value
@@ -132,7 +135,7 @@ export function TagFilterPanel(): React.ReactElement {
       }
       setLoading(false)
     },
-    [selectedTags, mode],
+    [selectedTags, mode, t],
   )
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: trigger query when selectedTags or mode changes
@@ -171,7 +174,7 @@ export function TagFilterPanel(): React.ReactElement {
         }
       }
     },
-    [navigateToPage],
+    [navigateToPage, t],
   )
 
   // Filter out already-selected tags from matching results
@@ -205,7 +208,12 @@ export function TagFilterPanel(): React.ReactElement {
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm text-muted-foreground">Selected:</span>
           {selectedTags.map((tag) => (
-            <Badge key={tag.id} variant="secondary" className="gap-1 truncate max-w-[150px]" title={tag.name}>
+            <Badge
+              key={tag.id}
+              variant="secondary"
+              className="gap-1 truncate max-w-[150px]"
+              title={tag.name}
+            >
               <span className="truncate">{tag.name}</span>
               <button
                 type="button"

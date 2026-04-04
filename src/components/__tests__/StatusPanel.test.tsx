@@ -593,11 +593,10 @@ describe('StatusPanel', () => {
         properties_set: 2,
         warnings: [],
       }
+      mockedInvoke.mockResolvedValue(mockStatus) // get_status
       mockedInvoke
-        .mockResolvedValue(mockStatus)            // get_status
-      mockedInvoke
-        .mockResolvedValueOnce(mockStatus)         // initial get_status
-        .mockResolvedValueOnce(importResult)       // import_markdown
+        .mockResolvedValueOnce(mockStatus) // initial get_status
+        .mockResolvedValueOnce(importResult) // import_markdown
 
       render(<StatusPanel />)
 

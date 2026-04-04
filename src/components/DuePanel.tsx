@@ -85,7 +85,9 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   const toggleHideBeforeScheduled = useCallback(() => {
     setHideBeforeScheduled((prev) => {
       const next = !prev
-      try { localStorage.setItem('agaric:hideBeforeScheduled', String(next)) } catch {}
+      try {
+        localStorage.setItem('agaric:hideBeforeScheduled', String(next))
+      } catch {}
       return next
     })
   }, [])
@@ -115,9 +117,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
         setOverdueBlocks(overdue)
 
         if (overdue.length > 0) {
-          const parentIds = overdue
-            .map((b) => b.parent_id)
-            .filter((id): id is string => id != null)
+          const parentIds = overdue.map((b) => b.parent_id).filter((id): id is string => id != null)
           if (parentIds.length > 0) {
             const resolved = await batchResolve([...new Set(parentIds)])
             if (!stale) {
@@ -164,14 +164,20 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
         endDate.setDate(endDate.getDate() + warningDays)
         const endStr = formatLocalDate(endDate)
 
-        const upcoming = resp.items.filter((b) =>
-          b.due_date && b.due_date >= tomorrowStr && b.due_date <= endStr && b.todo_state !== 'DONE'
+        const upcoming = resp.items.filter(
+          (b) =>
+            b.due_date &&
+            b.due_date >= tomorrowStr &&
+            b.due_date <= endStr &&
+            b.todo_state !== 'DONE',
         )
         setUpcomingBlocks(upcoming)
 
         // Resolve parent titles
         if (upcoming.length > 0) {
-          const parentIds = upcoming.map((b) => b.parent_id).filter((id): id is string => id != null)
+          const parentIds = upcoming
+            .map((b) => b.parent_id)
+            .filter((id): id is string => id != null)
           if (parentIds.length > 0) {
             const titles = await batchResolve([...new Set(parentIds)])
             if (!stale) {
@@ -191,7 +197,9 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     }
 
     fetchUpcoming()
-    return () => { stale = true }
+    return () => {
+      stale = true
+    }
   }, [isToday, warningDays])
 
   // Fetch blocks due on the given date
@@ -294,17 +302,19 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
             .map((e) => e.block.parent_id)
             .filter((id): id is string => id != null)
           if (parentIds.length > 0) {
-            batchResolve(parentIds).then((resolved) => {
-              if (!stale) {
-                setPageTitles((prev) => {
-                  const next = new Map(prev)
-                  for (const r of resolved) {
-                    next.set(r.id, r.title ?? 'Untitled')
-                  }
-                  return next
-                })
-              }
-            }).catch(() => {})
+            batchResolve(parentIds)
+              .then((resolved) => {
+                if (!stale) {
+                  setPageTitles((prev) => {
+                    const next = new Map(prev)
+                    for (const r of resolved) {
+                      next.set(r.id, r.title ?? 'Untitled')
+                    }
+                    return next
+                  })
+                }
+              })
+              .catch(() => {})
           }
         }
       })
@@ -314,7 +324,9 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
       .finally(() => {
         if (!stale) setProjectedLoading(false)
       })
-    return () => { stale = true }
+    return () => {
+      stale = true
+    }
   }, [date])
 
   const loadMore = useCallback(() => {
@@ -371,7 +383,15 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   }).filter((g) => g.items.length > 0)
 
   // Empty state: hidden entirely
-  if (!loading && !projectedLoading && visibleBlocks.length === 0 && blocks.length === 0 && projectedEntries.length === 0 && overdueBlocks.length === 0 && upcomingBlocks.length === 0) {
+  if (
+    !loading &&
+    !projectedLoading &&
+    visibleBlocks.length === 0 &&
+    blocks.length === 0 &&
+    projectedEntries.length === 0 &&
+    overdueBlocks.length === 0 &&
+    upcomingBlocks.length === 0
+  ) {
     return null
   }
 
@@ -429,9 +449,11 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                 : 'border-muted-foreground/20 text-muted-foreground hover:bg-accent/50',
             )}
             onClick={toggleHideBeforeScheduled}
-            title={hideBeforeScheduled
-              ? 'Showing only tasks scheduled for today or earlier'
-              : 'Showing all tasks regardless of scheduled date'}
+            title={
+              hideBeforeScheduled
+                ? 'Showing only tasks scheduled for today or earlier'
+                : 'Showing all tasks regardless of scheduled date'
+            }
             aria-pressed={hideBeforeScheduled}
           >
             {hideBeforeScheduled ? 'Scheduled: hide future' : 'Scheduled: show all'}
@@ -458,41 +480,27 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
             <div className="overdue-section mb-3">
               <h4 className="text-xs font-semibold text-destructive mb-1.5 flex items-center gap-1">
                 <span>Overdue</span>
-                <span className="text-muted-foreground font-normal">
-                  ({overdueBlocks.length})
-                </span>
+                <span className="text-muted-foreground font-normal">({overdueBlocks.length})</span>
               </h4>
               <ul className="space-y-1">
                 {overdueBlocks
                   .sort((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''))
                   .map((block) => {
-                    const pageTitle = block.parent_id
-                      ? pageTitles.get(block.parent_id)
-                      : undefined
+                    const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
                     return (
                       <li
                         key={`overdue-${block.id}`}
                         className="flex items-center gap-2 rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-sm cursor-pointer hover:bg-destructive/10 transition-colors"
-                        role="button"
-                        tabIndex={0}
                         onClick={() => {
                           if (block.parent_id && onNavigateToPage) {
-                            onNavigateToPage(
-                              block.parent_id,
-                              pageTitle ?? '',
-                              block.id,
-                            )
+                            onNavigateToPage(block.parent_id, pageTitle ?? '', block.id)
                           }
                         }}
                         onKeyDown={(e) => {
                           if (e.key !== 'Enter' && e.key !== ' ') return
                           e.preventDefault()
                           if (block.parent_id && onNavigateToPage) {
-                            onNavigateToPage(
-                              block.parent_id,
-                              pageTitle ?? '',
-                              block.id,
-                            )
+                            onNavigateToPage(block.parent_id, pageTitle ?? '', block.id)
                           }
                         }}
                       >
@@ -511,9 +519,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             P{block.priority}
                           </span>
                         )}
-                        <span className="flex-1 truncate">
-                          {truncateContent(block.content)}
-                        </span>
+                        <span className="flex-1 truncate">{truncateContent(block.content)}</span>
                         <span className="shrink-0 text-[10px] text-destructive/60">
                           {block.due_date}
                         </span>
@@ -540,8 +546,6 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                       <li
                         key={`upcoming-${block.id}`}
                         className="flex items-center gap-2 rounded-md border border-amber-200/30 bg-amber-50/30 dark:border-amber-800/30 dark:bg-amber-950/20 px-2 py-1.5 text-sm cursor-pointer hover:bg-amber-50/50 dark:hover:bg-amber-950/30 transition-colors"
-                        role="button"
-                        tabIndex={0}
                         onClick={() => {
                           if (block.parent_id && onNavigateToPage)
                             onNavigateToPage(block.parent_id, pageTitle ?? '', block.id)
@@ -620,49 +624,50 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
             const realBlockIds = new Set(blocks.map((b) => b.id))
             const uniqueProjected = projectedEntries.filter((e) => !realBlockIds.has(e.block.id))
             return uniqueProjected.length > 0 ? (
-            <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
-              <p className="text-xs font-medium text-muted-foreground mb-2">
-                {t('due.projected', { defaultValue: 'Projected' })}
-              </p>
-              <ul className="space-y-1">
-                {uniqueProjected.map((entry) => (
-                  <li
-                    key={`projected-${entry.block.id}-${entry.source}`}
-                    className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 transition-colors"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => {
-                      if (!entry.block.parent_id || !onNavigateToPage) return
-                      const title = pageTitles.get(entry.block.parent_id) ?? ''
-                      onNavigateToPage(entry.block.parent_id, title, entry.block.id)
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key !== 'Enter' && e.key !== ' ') return
-                      e.preventDefault()
-                      if (!entry.block.parent_id || !onNavigateToPage) return
-                      const title = pageTitles.get(entry.block.parent_id) ?? ''
-                      onNavigateToPage(entry.block.parent_id, title, entry.block.id)
-                    }}
-                  >
-                    <span className="text-xs font-mono opacity-60">
-                      {entry.source === 'due_date' ? '\u23F0' : '\uD83D\uDCC5'}
-                    </span>
-                    <span className="flex-1 truncate">
-                      {truncateContent(entry.block.content, 80)}
-                    </span>
-                    {entry.block.priority && (
-                      <span className={cn(
-                        'inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-[10px] font-bold leading-none',
-                        priorityColor(entry.block.priority),
-                      )}>
-                        P{entry.block.priority}
+              <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
+                <p className="text-xs font-medium text-muted-foreground mb-2">
+                  {t('due.projected', { defaultValue: 'Projected' })}
+                </p>
+                <ul className="space-y-1">
+                  {uniqueProjected.map((entry) => (
+                    <li
+                      key={`projected-${entry.block.id}-${entry.source}`}
+                      className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 transition-colors"
+                      onClick={() => {
+                        if (!entry.block.parent_id || !onNavigateToPage) return
+                        const title = pageTitles.get(entry.block.parent_id) ?? ''
+                        onNavigateToPage(entry.block.parent_id, title, entry.block.id)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter' && e.key !== ' ') return
+                        e.preventDefault()
+                        if (!entry.block.parent_id || !onNavigateToPage) return
+                        const title = pageTitles.get(entry.block.parent_id) ?? ''
+                        onNavigateToPage(entry.block.parent_id, title, entry.block.id)
+                      }}
+                    >
+                      <span className="text-xs font-mono opacity-60">
+                        {entry.source === 'due_date' ? '\u23F0' : '\uD83D\uDCC5'}
                       </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null})()}
+                      <span className="flex-1 truncate">
+                        {truncateContent(entry.block.content, 80)}
+                      </span>
+                      {entry.block.priority && (
+                        <span
+                          className={cn(
+                            'inline-flex h-4 min-w-4 items-center justify-center rounded px-1 text-[10px] font-bold leading-none',
+                            priorityColor(entry.block.priority),
+                          )}
+                        >
+                          P{entry.block.priority}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null
+          })()}
 
           {/* Load more */}
           {hasMore && (
