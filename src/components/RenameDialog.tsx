@@ -63,8 +63,12 @@ export function RenameDialog({
           autoFocus
         />
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={handleSave}>Save</AlertDialogAction>
+          <AlertDialogCancel className="[@media(pointer:coarse)]:min-h-[44px]">
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction className="[@media(pointer:coarse)]:min-h-[44px]" onClick={handleSave}>
+            Save
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

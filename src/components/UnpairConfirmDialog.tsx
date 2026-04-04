@@ -42,8 +42,10 @@ export function UnpairConfirmDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>
+          <AlertDialogCancel className="[@media(pointer:coarse)]:min-h-[44px]">
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction className="[@media(pointer:coarse)]:min-h-[44px]" onClick={onConfirm}>
             Yes, unpair{deviceName ? ` ${deviceName}` : ''}
           </AlertDialogAction>
         </AlertDialogFooter>
