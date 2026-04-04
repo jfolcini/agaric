@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 172 — 2026-04-04 — Phase 1 batch 25: Rust backend cleanup (M-8, L-6, L-9)
+
+### Phase 1 (batch 25): Rust backend perf + cleanup (M-8, L-6, L-9, reject L-1/L-8)
+
+2 parallel build subagents (commands.rs, snapshot.rs) + orchestrator fix (sync_net.rs).
+
+| File | Change |
+|------|--------|
+| `commands.rs` | L-6: `set_property_in_tx` key param `String` -> `&str`. 8 call sites in `set_todo_state_inner` no longer allocate `.to_string()`. |
+| `snapshot.rs` | L-9: `apply_snapshot` batches INSERTs via multi-row VALUES (chunks: blocks=76, tags=499, props=166, links=499, attachments=124). Added `MAX_SQL_PARAMS` const. |
+| `sync_net.rs` | M-8: `recv_binary` returns `data.into()` instead of `data.to_vec()` — avoids redundant clone of `Bytes`. |
+
+Rejected items:
+- **L-1** (won't fix): sqlx `query!` macro requires `String` for TEXT columns, `&str` binding unsupported.
+- **L-8** (incorrect): Snapshots MUST include soft-deleted rows — after compaction, the snapshot is the only record of deletes. Excluding them would break state fidelity on RESET.
+
+### Stats
+- Rust: 1546 tests pass (0 new tests — pure refactor)
+- Commit: `8e0e6d4`
+- REVIEW-LATER: M-8, L-1, L-6, L-8, L-9 resolved/rejected. 27 -> **22 open items**.
+
 ## Session 171 — 2026-04-04 — Phase 1 batch 24: /attach file picker (F-9)
 
 ### Phase 1 (batch 24): Attachment file picker slash command (F-9)
