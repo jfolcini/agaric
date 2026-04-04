@@ -768,19 +768,19 @@ pub async fn eval_backlink_query(
     // 2. Apply filters (AND semantics at top level)
     let filtered_ids = if let Some(ref filter_list) = filters {
         if filter_list.is_empty() {
-            base_ids.clone()
+            base_ids
         } else {
             // Resolve all top-level filters concurrently (#319)
             let futures = filter_list.iter().map(|f| resolve_filter(pool, f, 0));
             let results = try_join_all(futures).await?;
-            let mut result = base_ids.clone();
+            let mut result = base_ids;
             for set in results {
                 result.retain(|id| set.contains(id));
             }
             result
         }
     } else {
-        base_ids.clone()
+        base_ids
     };
 
     // 3. Compute filtered_count before pagination
@@ -984,18 +984,18 @@ pub async fn eval_backlink_query_grouped(
     // 2. Apply filters (AND semantics at top level)
     let filtered_ids = if let Some(ref filter_list) = filters {
         if filter_list.is_empty() {
-            base_ids.clone()
+            base_ids
         } else {
             let futures = filter_list.iter().map(|f| resolve_filter(pool, f, 0));
             let results = try_join_all(futures).await?;
-            let mut result = base_ids.clone();
+            let mut result = base_ids;
             for set in results {
                 result.retain(|id| set.contains(id));
             }
             result
         }
     } else {
-        base_ids.clone()
+        base_ids
     };
 
     let filtered_count = filtered_ids.len();

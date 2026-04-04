@@ -21,11 +21,11 @@ use tauri::State;
 use crate::backlink_query::{
     self, BacklinkFilter, BacklinkQueryResponse, BacklinkSort, GroupedBacklinkResponse,
 };
-use crate::import::{self, ImportResult};
 use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::fts;
+use crate::import::{self, ImportResult};
 use crate::materializer::{Materializer, StatusInfo};
 use crate::now_rfc3339;
 use crate::op::{
@@ -905,35 +905,33 @@ pub async fn move_block_inner(
         // Depth check: count ancestors of the target parent (its depth from
         // root) and the max descendant depth of the block being moved. The
         // deepest descendant will end up at parent_depth + 1 + subtree_depth.
-        let parent_depth = sqlx::query_scalar!(
-            r#"WITH RECURSIVE path(id, depth) AS (
+        let depths = sqlx::query!(
+            r#"WITH RECURSIVE
+               path(id, depth) AS (
                  SELECT ?, 0
                  UNION ALL
                  SELECT b.parent_id, p.depth + 1
-                 FROM path p
-                 JOIN blocks b ON b.id = p.id
+                 FROM path p JOIN blocks b ON b.id = p.id
                  WHERE b.parent_id IS NOT NULL
-             )
-             SELECT MAX(depth) as "max_depth: i64" FROM path"#,
-            pid
-        )
-        .fetch_one(&mut *tx)
-        .await?;
-
-        let subtree_depth = sqlx::query_scalar!(
-            r#"WITH RECURSIVE descendants(id, depth) AS (
+               ),
+               descendants(id, depth) AS (
                  SELECT ?, 0
                  UNION ALL
                  SELECT b.id, d.depth + 1
-                 FROM descendants d
-                 JOIN blocks b ON b.parent_id = d.id
+                 FROM descendants d JOIN blocks b ON b.parent_id = d.id
                  WHERE b.deleted_at IS NULL
-             )
-             SELECT MAX(depth) as "max_depth: i64" FROM descendants"#,
+               )
+             SELECT
+               (SELECT MAX(depth) FROM path) as "parent_depth: i64",
+               (SELECT MAX(depth) FROM descendants) as "subtree_depth: i64""#,
+            pid,
             block_id
         )
         .fetch_one(&mut *tx)
         .await?;
+
+        let parent_depth = depths.parent_depth;
+        let subtree_depth = depths.subtree_depth;
 
         if parent_depth + 1 + subtree_depth > MAX_BLOCK_DEPTH {
             return Err(AppError::Validation(format!(
@@ -2193,9 +2191,7 @@ pub async fn set_todo_state_inner(
 
             // The "reference" shifted date used for end-condition comparison:
             // prefer due_date, fall back to scheduled_date.
-            let reference_date = shifted_due
-                .as_deref()
-                .or(shifted_sched.as_deref());
+            let reference_date = shifted_due.as_deref().or(shifted_sched.as_deref());
 
             // --- End condition: repeat-until ---
             let repeat_until: Option<String> = sqlx::query_scalar(
@@ -3093,25 +3089,21 @@ pub async fn revert_ops_inner(
     // Phase 2: Apply all reverses in a single IMMEDIATE transaction.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let mut results = Vec::with_capacity(reverses.len());
-    let mut op_records = Vec::new();
+    let mut op_records = Vec::with_capacity(reverses.len());
 
-    for (op_ref, reverse_payload, _created_at) in &reverses {
+    for (op_ref, reverse_payload, _created_at) in reverses {
         let new_op_type = reverse_payload.op_type_str().to_owned();
 
-        // Append reverse op to log
-        let op_record = op_log::append_local_op_in_tx(
-            &mut tx,
-            device_id,
-            reverse_payload.clone(),
-            now_rfc3339(),
-        )
-        .await?;
+        // Apply to blocks/tags/properties tables (borrows)
+        apply_reverse_in_tx(&mut tx, &reverse_payload).await?;
 
-        // Apply to blocks/tags/properties tables
-        apply_reverse_in_tx(&mut tx, reverse_payload).await?;
+        // Append reverse op to log (consumes)
+        let op_record =
+            op_log::append_local_op_in_tx(&mut tx, device_id, reverse_payload, now_rfc3339())
+                .await?;
 
         results.push(UndoResult {
-            reversed_op: op_ref.clone(),
+            reversed_op: op_ref,
             new_op_ref: OpRef {
                 device_id: op_record.device_id.clone(),
                 seq: op_record.seq,
@@ -3312,9 +3304,9 @@ pub async fn set_peer_address_inner(
     address: String,
 ) -> Result<(), AppError> {
     // Validate the address format
-    address
-        .parse::<std::net::SocketAddr>()
-        .map_err(|_| AppError::Validation(format!("invalid address: {address}. Expected host:port")))?;
+    address.parse::<std::net::SocketAddr>().map_err(|_| {
+        AppError::Validation(format!("invalid address: {address}. Expected host:port"))
+    })?;
 
     // Verify peer exists
     let peer = peer_refs::get_peer_ref(pool, &peer_id).await?;
@@ -3519,7 +3511,9 @@ pub async fn list_projected_agenda_inner(
         .map_err(|_| AppError::Validation("invalid end_date".into()))?;
 
     if range_start > range_end {
-        return Err(AppError::Validation("start_date must be <= end_date".into()));
+        return Err(AppError::Validation(
+            "start_date must be <= end_date".into(),
+        ));
     }
 
     // Find repeating blocks: non-DONE, non-deleted, has repeat property,
@@ -3586,15 +3580,15 @@ pub async fn list_projected_agenda_inner(
         .await?
         .flatten();
 
-        let until_date = repeat_until.as_deref().and_then(|d| {
-            chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()
-        });
+        let until_date = repeat_until
+            .as_deref()
+            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
 
         let remaining = match (repeat_count, repeat_seq) {
             (Some(count), Some(seq)) if count > seq => Some((count - seq) as usize),
             (Some(count), None) => Some(count as usize),
             (Some(_), Some(_)) => Some(0usize), // already exhausted
-            _ => None, // no limit
+            _ => None,                          // no limit
         };
 
         // Parse mode and interval from rule
@@ -3612,7 +3606,10 @@ pub async fn list_projected_agenda_inner(
         // Project for each date source (due_date, scheduled_date)
         let sources: Vec<(&str, &str)> = [
             block.due_date.as_deref().map(|d| ("due_date", d)),
-            block.scheduled_date.as_deref().map(|d| ("scheduled_date", d)),
+            block
+                .scheduled_date
+                .as_deref()
+                .map(|d| ("scheduled_date", d)),
         ]
         .into_iter()
         .flatten()
@@ -3726,7 +3723,8 @@ pub async fn list_projected_agenda_inner(
 
     // Sort by projected_date, then block_id for determinism
     entries.sort_by(|a, b| {
-        a.projected_date.cmp(&b.projected_date)
+        a.projected_date
+            .cmp(&b.projected_date)
             .then_with(|| a.block.id.cmp(&b.block.id))
     });
 
@@ -4033,10 +4031,7 @@ pub async fn import_markdown_inner(
 
     for block in &parsed {
         // Find the correct parent: pop stack until we find a parent at depth < block.depth
-        while parent_stack.len() > 1
-            && parent_stack
-                .last()
-                .is_some_and(|(d, _)| *d >= block.depth)
+        while parent_stack.len() > 1 && parent_stack.last().is_some_and(|(d, _)| *d >= block.depth)
         {
             parent_stack.pop();
         }
@@ -4077,9 +4072,7 @@ pub async fn import_markdown_inner(
                     .await
                     {
                         Ok(_) => properties_set += 1,
-                        Err(e) => {
-                            warnings.push(format!("Property '{key}' on block failed: {e}"))
-                        }
+                        Err(e) => warnings.push(format!("Property '{key}' on block failed: {e}")),
                     }
                 }
             }
@@ -5071,9 +5064,15 @@ pub async fn import_markdown(
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
 ) -> Result<ImportResult, AppError> {
-    import_markdown_inner(&pool.0, device_id.as_str(), &materializer, content, filename)
-        .await
-        .map_err(sanitize_internal_error)
+    import_markdown_inner(
+        &pool.0,
+        device_id.as_str(),
+        &materializer,
+        content,
+        filename,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -11787,15 +11786,10 @@ mod tests {
 
         mat.flush_background().await.unwrap();
 
-        let result = set_todo_state_inner(
-            &pool,
-            DEV,
-            &mat,
-            block.id.clone(),
-            Some("CANCELLED".into()),
-        )
-        .await
-        .unwrap();
+        let result =
+            set_todo_state_inner(&pool, DEV, &mat, block.id.clone(), Some("CANCELLED".into()))
+                .await
+                .unwrap();
 
         assert_eq!(result.todo_state.as_deref(), Some("CANCELLED"));
 
@@ -13841,18 +13835,12 @@ mod tests {
     #[test]
     fn shift_date_default_mode_shifts_from_original() {
         // Default (+) mode: shift from the original date
-        assert_eq!(
-            shift_date("2025-06-15", "daily"),
-            Some("2025-06-16".into())
-        );
+        assert_eq!(shift_date("2025-06-15", "daily"), Some("2025-06-16".into()));
         assert_eq!(
             shift_date("2025-06-15", "weekly"),
             Some("2025-06-22".into())
         );
-        assert_eq!(
-            shift_date("2025-06-15", "+3d"),
-            Some("2025-06-18".into())
-        );
+        assert_eq!(shift_date("2025-06-15", "+3d"), Some("2025-06-18".into()));
     }
 
     #[test]
@@ -13897,8 +13885,7 @@ mod tests {
         let past_str = past.format("%Y-%m-%d").to_string();
 
         let result = shift_date(&past_str, "++weekly").unwrap();
-        let result_date =
-            chrono::NaiveDate::parse_from_str(&result, "%Y-%m-%d").unwrap();
+        let result_date = chrono::NaiveDate::parse_from_str(&result, "%Y-%m-%d").unwrap();
 
         assert!(
             result_date > today,
@@ -13923,8 +13910,7 @@ mod tests {
         let past_str = past.format("%Y-%m-%d").to_string();
 
         let result = shift_date(&past_str, "++daily").unwrap();
-        let result_date =
-            chrono::NaiveDate::parse_from_str(&result, "%Y-%m-%d").unwrap();
+        let result_date = chrono::NaiveDate::parse_from_str(&result, "%Y-%m-%d").unwrap();
 
         assert!(
             result_date > today,
@@ -14264,7 +14250,9 @@ mod tests {
         let sibling = &new_blocks[0];
 
         // Check repeat-origin points to original block
-        let props = get_properties_inner(&pool, sibling.id.clone()).await.unwrap();
+        let props = get_properties_inner(&pool, sibling.id.clone())
+            .await
+            .unwrap();
         let origin_prop = props.iter().find(|p| p.key == "repeat-origin");
         assert!(origin_prop.is_some(), "sibling should have repeat-origin");
         assert_eq!(
@@ -14347,7 +14335,10 @@ mod tests {
         // Both sibling1 and sibling2 should point to the original block
         let props1 = get_properties_inner(&pool, sibling1_id).await.unwrap();
         let origin1 = props1.iter().find(|p| p.key == "repeat-origin");
-        assert_eq!(origin1.unwrap().value_ref.as_deref(), Some(block.id.as_str()));
+        assert_eq!(
+            origin1.unwrap().value_ref.as_deref(),
+            Some(block.id.as_str())
+        );
 
         let props2 = get_properties_inner(&pool, sibling2_id).await.unwrap();
         let origin2 = props2.iter().find(|p| p.key == "repeat-origin");
@@ -14383,15 +14374,9 @@ mod tests {
         .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_due_date_inner(
-            &pool,
-            DEV,
-            &mat,
-            resp.id.clone(),
-            Some("2025-06-01".into()),
-        )
-        .await
-        .unwrap();
+        set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2025-06-01".into()))
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
         // Set .+ repeat (from completion)
@@ -14477,15 +14462,9 @@ mod tests {
         .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_due_date_inner(
-            &pool,
-            DEV,
-            &mat,
-            resp.id.clone(),
-            Some("2025-01-06".into()),
-        )
-        .await
-        .unwrap();
+        set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2025-01-06".into()))
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
         // Set ++ repeat (catch-up)
@@ -14572,15 +14551,9 @@ mod tests {
         .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_due_date_inner(
-            &pool,
-            DEV,
-            &mat,
-            resp.id.clone(),
-            Some("2026-04-06".into()),
-        )
-        .await
-        .unwrap();
+        set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
         // Set malformed repeat value
@@ -14605,14 +14578,8 @@ mod tests {
         mat.flush_background().await.unwrap();
 
         // Transition to DONE — should still create sibling (graceful degradation)
-        let result = set_todo_state_inner(
-            &pool,
-            DEV,
-            &mat,
-            resp.id.clone(),
-            Some("DONE".into()),
-        )
-        .await;
+        let result =
+            set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("DONE".into())).await;
         assert!(
             result.is_ok(),
             "DONE transition should succeed even with malformed repeat"
@@ -14620,13 +14587,10 @@ mod tests {
         mat.flush_background().await.unwrap();
 
         // Original should be DONE
-        let original = sqlx::query_scalar!(
-            "SELECT todo_state FROM blocks WHERE id = ?1",
-            resp.id
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let original = sqlx::query_scalar!("SELECT todo_state FROM blocks WHERE id = ?1", resp.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(original.as_deref(), Some("DONE"));
 
         mat.shutdown();
@@ -14999,32 +14963,58 @@ mod tests {
         let mat = Materializer::new(pool.clone());
 
         // Create a block with a due date and repeat rule
-        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Weekly task".into(), None, None)
-            .await.unwrap();
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Weekly task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         // Set due date to 2026-04-06 (a Monday)
         set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
         // Set repeat=weekly
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
-            Some("weekly".into()), None, None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some("weekly".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         // Set todo_state=TODO
         set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
         // Project 4 weeks ahead
-        let entries = list_projected_agenda_inner(
-            &pool, "2026-04-07".into(), "2026-05-04".into(), None,
-        ).await.unwrap();
+        let entries =
+            list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-05-04".into(), None)
+                .await
+                .unwrap();
 
-        assert!(entries.len() >= 3, "should project at least 3 weekly occurrences, got {}", entries.len());
+        assert!(
+            entries.len() >= 3,
+            "should project at least 3 weekly occurrences, got {}",
+            entries.len()
+        );
         assert_eq!(entries[0].projected_date, "2026-04-13", "first projection");
         assert_eq!(entries[1].projected_date, "2026-04-20", "second projection");
         assert_eq!(entries[2].projected_date, "2026-04-27", "third projection");
@@ -15039,34 +15029,70 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Limited task".into(), None, None)
-            .await.unwrap();
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Limited task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
-            Some("weekly".into()), None, None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some("weekly".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         // Set repeat-until to 2026-04-20
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat-until".into(),
-            None, None, Some("2026-04-20".into()), None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat-until".into(),
+            None,
+            None,
+            Some("2026-04-20".into()),
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
-        let entries = list_projected_agenda_inner(
-            &pool, "2026-04-07".into(), "2026-06-01".into(), None,
-        ).await.unwrap();
+        let entries =
+            list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-06-01".into(), None)
+                .await
+                .unwrap();
 
-        assert_eq!(entries.len(), 2, "should stop at repeat-until date: {entries:?}");
+        assert_eq!(
+            entries.len(),
+            2,
+            "should stop at repeat-until date: {entries:?}"
+        );
         assert_eq!(entries[0].projected_date, "2026-04-13");
         assert_eq!(entries[1].projected_date, "2026-04-20");
 
@@ -15078,39 +15104,85 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Counted task".into(), None, None)
-            .await.unwrap();
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Counted task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
-            Some("daily".into()), None, None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some("daily".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         // Set repeat-count=3, repeat-seq=1 (1 occurrence done, 2 remaining)
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat-count".into(),
-            None, Some(3.0), None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat-count".into(),
+            None,
+            Some(3.0),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat-seq".into(),
-            None, Some(1.0), None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat-seq".into(),
+            None,
+            Some(1.0),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
-        let entries = list_projected_agenda_inner(
-            &pool, "2026-04-07".into(), "2026-04-30".into(), None,
-        ).await.unwrap();
+        let entries =
+            list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-30".into(), None)
+                .await
+                .unwrap();
 
-        assert_eq!(entries.len(), 2, "should project only 2 remaining occurrences (count=3, seq=1)");
+        assert_eq!(
+            entries.len(),
+            2,
+            "should project only 2 remaining occurrences (count=3, seq=1)"
+        );
 
         mat.shutdown();
     }
@@ -15120,32 +15192,57 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Done task".into(), None, None)
-            .await.unwrap();
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Done task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
-            Some("weekly".into()), None, None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some("weekly".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         // Mark as DONE — should be excluded from projection
         set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("DONE".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
-        let entries = list_projected_agenda_inner(
-            &pool, "2026-04-07".into(), "2026-05-04".into(), None,
-        ).await.unwrap();
+        let entries =
+            list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-05-04".into(), None)
+                .await
+                .unwrap();
 
         // The original block is DONE, but set_todo_state may have created a new
         // TODO sibling with repeat. Filter to only entries from our block.
         let from_original: Vec<_> = entries.iter().filter(|e| e.block.id == resp.id).collect();
-        assert!(from_original.is_empty(), "DONE blocks should not be projected");
+        assert!(
+            from_original.is_empty(),
+            "DONE blocks should not be projected"
+        );
 
         mat.shutdown();
     }
@@ -15155,27 +15252,37 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         // Invalid date format
-        let result = list_projected_agenda_inner(
-            &pool, "not-a-date".into(), "2026-04-30".into(), None,
-        ).await;
-        assert!(matches!(result, Err(AppError::Validation(_))), "should reject invalid date");
+        let result =
+            list_projected_agenda_inner(&pool, "not-a-date".into(), "2026-04-30".into(), None)
+                .await;
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "should reject invalid date"
+        );
 
         // Start > end
-        let result = list_projected_agenda_inner(
-            &pool, "2026-05-01".into(), "2026-04-01".into(), None,
-        ).await;
-        assert!(matches!(result, Err(AppError::Validation(_))), "should reject start > end");
+        let result =
+            list_projected_agenda_inner(&pool, "2026-05-01".into(), "2026-04-01".into(), None)
+                .await;
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "should reject start > end"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn projected_agenda_empty_when_no_repeating_blocks() {
         let (pool, _dir) = test_pool().await;
 
-        let entries = list_projected_agenda_inner(
-            &pool, "2026-04-01".into(), "2026-04-30".into(), None,
-        ).await.unwrap();
+        let entries =
+            list_projected_agenda_inner(&pool, "2026-04-01".into(), "2026-04-30".into(), None)
+                .await
+                .unwrap();
 
-        assert!(entries.is_empty(), "should return empty when no repeating blocks exist");
+        assert!(
+            entries.is_empty(),
+            "should return empty when no repeating blocks exist"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -15183,43 +15290,70 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Water plants".into(), None, None)
-            .await.unwrap();
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Water plants".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         // Due date far in the past
         set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2025-01-01".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
         // From-completion mode: shifts from today
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
-            Some(".+weekly".into()), None, None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some(".+weekly".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
         // Query a wide range that includes today + several weeks
         let today = chrono::Local::now().date_naive();
         let start = today.format("%Y-%m-%d").to_string();
-        let end = (today + chrono::Duration::days(60)).format("%Y-%m-%d").to_string();
+        let end = (today + chrono::Duration::days(60))
+            .format("%Y-%m-%d")
+            .to_string();
 
-        let entries = list_projected_agenda_inner(
-            &pool, start, end, None,
-        ).await.unwrap();
+        let entries = list_projected_agenda_inner(&pool, start, end, None)
+            .await
+            .unwrap();
 
         // .+ mode shifts from today, so first projection should be ~today+7d
         assert!(!entries.is_empty(), ".+ mode should produce projections");
-        let first_date = chrono::NaiveDate::parse_from_str(&entries[0].projected_date, "%Y-%m-%d").unwrap();
+        let first_date =
+            chrono::NaiveDate::parse_from_str(&entries[0].projected_date, "%Y-%m-%d").unwrap();
         // First projection should be within 8 days of today (7 days for weekly + 1 day buffer)
         assert!(
             first_date <= today + chrono::Duration::days(8),
             ".+ weekly first projection {first_date} should be near today+7d ({today})"
         );
-        assert!(first_date > today, ".+ first projection should be in the future");
+        assert!(
+            first_date > today,
+            ".+ first projection should be in the future"
+        );
 
         mat.shutdown();
     }
@@ -15229,41 +15363,71 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Catch-up task".into(), None, None)
-            .await.unwrap();
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Catch-up task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         // Due date far in the past
         set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2025-01-06".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
         // ++ mode: advance on original cadence until > today
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
-            Some("++weekly".into()), None, None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some("++weekly".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
         let today = chrono::Local::now().date_naive();
         let start = today.format("%Y-%m-%d").to_string();
-        let end = (today + chrono::Duration::days(30)).format("%Y-%m-%d").to_string();
+        let end = (today + chrono::Duration::days(30))
+            .format("%Y-%m-%d")
+            .to_string();
 
-        let entries = list_projected_agenda_inner(
-            &pool, start, end, None,
-        ).await.unwrap();
+        let entries = list_projected_agenda_inner(&pool, start, end, None)
+            .await
+            .unwrap();
 
         // ++ mode should produce dates on the original Monday cadence
         // First projection should be the next Monday after today (from 2025-01-06 cadence)
         assert!(!entries.is_empty(), "++ mode should produce projections");
-        let first_date = chrono::NaiveDate::parse_from_str(&entries[0].projected_date, "%Y-%m-%d").unwrap();
-        assert!(first_date > today, "++ first projection should be in the future");
+        let first_date =
+            chrono::NaiveDate::parse_from_str(&entries[0].projected_date, "%Y-%m-%d").unwrap();
+        assert!(
+            first_date > today,
+            "++ first projection should be in the future"
+        );
         // Should be on a Monday (weekday 0 = Monday in chrono)
-        assert_eq!(first_date.weekday(), chrono::Weekday::Mon,
-            "++ weekly from Monday cadence should land on Monday, got {first_date}");
+        assert_eq!(
+            first_date.weekday(),
+            chrono::Weekday::Mon,
+            "++ weekly from Monday cadence should land on Monday, got {first_date}"
+        );
 
         mat.shutdown();
     }
@@ -15273,36 +15437,65 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Dual dates".into(), None, None)
-            .await.unwrap();
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Dual dates".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
         set_scheduled_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
-            Some("weekly".into()), None, None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some("weekly".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
-        let entries = list_projected_agenda_inner(
-            &pool, "2026-04-07".into(), "2026-04-20".into(), None,
-        ).await.unwrap();
+        let entries =
+            list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-20".into(), None)
+                .await
+                .unwrap();
 
         // Should have entries from both due_date and scheduled_date
         let due_entries: Vec<_> = entries.iter().filter(|e| e.source == "due_date").collect();
-        let sched_entries: Vec<_> = entries.iter().filter(|e| e.source == "scheduled_date").collect();
+        let sched_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| e.source == "scheduled_date")
+            .collect();
         assert!(!due_entries.is_empty(), "should have due_date projections");
-        assert!(!sched_entries.is_empty(), "should have scheduled_date projections");
+        assert!(
+            !sched_entries.is_empty(),
+            "should have scheduled_date projections"
+        );
 
         mat.shutdown();
     }
@@ -15312,40 +15505,85 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Exhausted".into(), None, None)
-            .await.unwrap();
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Exhausted".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
-            Some("daily".into()), None, None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some("daily".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         // repeat-count=3, repeat-seq=3 → exhausted
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat-count".into(),
-            None, Some(3.0), None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat-count".into(),
+            None,
+            Some(3.0),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat-seq".into(),
-            None, Some(3.0), None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat-seq".into(),
+            None,
+            Some(3.0),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
-        let entries = list_projected_agenda_inner(
-            &pool, "2026-04-07".into(), "2026-04-30".into(), None,
-        ).await.unwrap();
+        let entries =
+            list_projected_agenda_inner(&pool, "2026-04-07".into(), "2026-04-30".into(), None)
+                .await
+                .unwrap();
 
         let from_block: Vec<_> = entries.iter().filter(|e| e.block.id == resp.id).collect();
-        assert!(from_block.is_empty(), "exhausted repeat-count should produce zero projections");
+        assert!(
+            from_block.is_empty(),
+            "exhausted repeat-count should produce zero projections"
+        );
 
         mat.shutdown();
     }
@@ -15355,27 +15593,49 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let resp = create_block_inner(&pool, DEV, &mat, "content".into(), "Daily task".into(), None, None)
-            .await.unwrap();
+        let resp = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "Daily task".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_due_date_inner(&pool, DEV, &mat, resp.id.clone(), Some("2026-04-06".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_property_inner(&pool, DEV, &mat, resp.id.clone(), "repeat".into(),
-            Some("daily".into()), None, None, None)
-            .await.unwrap();
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            resp.id.clone(),
+            "repeat".into(),
+            Some("daily".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         set_todo_state_inner(&pool, DEV, &mat, resp.id.clone(), Some("TODO".into()))
-            .await.unwrap();
+            .await
+            .unwrap();
         mat.flush_background().await.unwrap();
 
         // Request 365 days of daily projections but limit to 5
-        let entries = list_projected_agenda_inner(
-            &pool, "2026-04-07".into(), "2027-04-06".into(), Some(5),
-        ).await.unwrap();
+        let entries =
+            list_projected_agenda_inner(&pool, "2026-04-07".into(), "2027-04-06".into(), Some(5))
+                .await
+                .unwrap();
 
         assert_eq!(entries.len(), 5, "limit should cap results to 5");
 
@@ -15407,8 +15667,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         peer_refs::upsert_peer_ref(&pool, "peer-1").await.unwrap();
 
-        let result =
-            set_peer_address_inner(&pool, "peer-1".into(), "not-an-address".into()).await;
+        let result = set_peer_address_inner(&pool, "peer-1".into(), "not-an-address".into()).await;
         assert!(matches!(result, Err(AppError::Validation(_))));
     }
 
@@ -15431,15 +15690,10 @@ mod tests {
         let mat = Materializer::new(pool.clone());
 
         let content = "- Block 1\n  - Child 1\n  - Child 2\n- Block 2";
-        let result = import_markdown_inner(
-            &pool,
-            DEV,
-            &mat,
-            content.into(),
-            Some("TestPage.md".into()),
-        )
-        .await
-        .unwrap();
+        let result =
+            import_markdown_inner(&pool, DEV, &mat, content.into(), Some("TestPage.md".into()))
+                .await
+                .unwrap();
 
         assert_eq!(result.page_title, "TestPage");
         assert_eq!(result.blocks_created, 4);
@@ -15454,15 +15708,10 @@ mod tests {
         let mat = Materializer::new(pool.clone());
 
         let content = "- Task\n  priority:: high\n  status:: TODO";
-        let result = import_markdown_inner(
-            &pool,
-            DEV,
-            &mat,
-            content.into(),
-            Some("Props.md".into()),
-        )
-        .await
-        .unwrap();
+        let result =
+            import_markdown_inner(&pool, DEV, &mat, content.into(), Some("Props.md".into()))
+                .await
+                .unwrap();
 
         assert_eq!(result.blocks_created, 1);
         assert_eq!(result.properties_set, 2);
@@ -15491,15 +15740,9 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let result = import_markdown_inner(
-            &pool,
-            DEV,
-            &mat,
-            "".into(),
-            Some("Empty.md".into()),
-        )
-        .await
-        .unwrap();
+        let result = import_markdown_inner(&pool, DEV, &mat, "".into(), Some("Empty.md".into()))
+            .await
+            .unwrap();
 
         assert_eq!(result.page_title, "Empty");
         assert_eq!(result.blocks_created, 0);

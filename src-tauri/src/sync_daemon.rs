@@ -325,6 +325,8 @@ async fn daemon_loop(
                     .map(|p| (p.peer_id.clone(), p.synced_at.clone()))
                     .collect();
                 let due = scheduler.peers_due_for_resync(&peer_tuples);
+                let refs_by_id: std::collections::HashMap<&str, &peer_refs::PeerRef> =
+                    refs.iter().map(|r| (r.peer_id.as_str(), r)).collect();
                 for pid in due {
                     if let Some(dp) = discovered.get(&pid) {
                         try_sync_with_peer(
@@ -338,7 +340,7 @@ async fn daemon_loop(
                             &cancel,
                         )
                         .await;
-                    } else if let Some(ref addr) = refs.iter().find(|r| r.peer_id == pid).and_then(|r| r.last_address.clone()) {
+                    } else if let Some(ref addr) = refs_by_id.get(pid.as_str()).and_then(|r| r.last_address.clone()) {
                         // Fallback: use last-known address (manual IP / stored from previous sync)
                         if let Ok(socket_addr) = addr.parse::<std::net::SocketAddr>() {
                             let fallback_peer = DiscoveredPeer {
