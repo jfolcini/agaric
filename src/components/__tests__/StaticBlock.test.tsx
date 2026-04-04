@@ -14,11 +14,25 @@
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import type { AttachmentRow } from '../../lib/tauri'
 import { StaticBlock } from '../StaticBlock'
 
 vi.mock('../../lib/open-url', () => ({ openUrl: vi.fn() }))
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+  convertFileSrc: vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`),
+}))
+
+vi.mock('../../hooks/useBlockAttachments', () => ({
+  useBlockAttachments: vi.fn(),
+}))
+
+// Lazy-import after mocks are hoisted so we get the mocked version.
+const { useBlockAttachments } = await import('../../hooks/useBlockAttachments')
+const mockedUseBlockAttachments = vi.mocked(useBlockAttachments)
 
 // Valid 26-char ULID-format test IDs (parser requires [0-9A-Z]{26}).
 const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
@@ -34,6 +48,17 @@ const MIX_PAGE = '01KRZ3NDEKTSV4RRFFQ69G5FAV'
 const MIX_TAG = '01MRZ3NDEKTSV4RRFFQ69G5FAV'
 
 describe('StaticBlock', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockedUseBlockAttachments.mockReturnValue({
+      attachments: [],
+      loading: false,
+      handleAddAttachment: vi.fn(),
+      handleDeleteAttachment: vi.fn(),
+    })
+    delete (window as Record<string, unknown>).__TAURI_INTERNALS__
+  })
+
   it('renders plain text', () => {
     render(<StaticBlock blockId="B1" content="Hello world" onFocus={vi.fn()} />)
     expect(screen.getByText('Hello world')).toBeInTheDocument()
@@ -596,6 +621,210 @@ describe('StaticBlock', () => {
       render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
       const button = screen.getByRole('button', { name: 'Edit block' })
       expect(button).toBeInTheDocument()
+    })
+  })
+
+  // -- Attachment inline rendering --------------------------------------------
+
+  describe('attachment rendering', () => {
+    function makeAttachment(overrides: Partial<AttachmentRow> = {}): AttachmentRow {
+      return {
+        id: 'att-1',
+        block_id: 'B1',
+        filename: 'photo.png',
+        mime_type: 'image/png',
+        size_bytes: 1024,
+        fs_path: '/path/to/photo.png',
+        created_at: '2024-01-01T00:00:00Z',
+        ...overrides,
+      }
+    }
+
+    it('renders image attachment as <img> when Tauri is available', () => {
+      ;(window as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+      mockedUseBlockAttachments.mockReturnValue({
+        attachments: [makeAttachment()],
+        loading: false,
+        handleAddAttachment: vi.fn(),
+        handleDeleteAttachment: vi.fn(),
+      })
+
+      const { container } = render(
+        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
+      )
+
+      const img = container.querySelector('img')
+      expect(img).toBeInTheDocument()
+      expect(img?.getAttribute('alt')).toBe('photo.png')
+      expect(img?.getAttribute('loading')).toBe('lazy')
+      expect(img?.getAttribute('src')).toContain('photo.png')
+      expect(img?.style.maxWidth).toBe('100%')
+      expect(img?.style.maxHeight).toBe('400px')
+      expect(img?.style.objectFit).toBe('contain')
+    })
+
+    it('renders non-image attachment as file chip', () => {
+      mockedUseBlockAttachments.mockReturnValue({
+        attachments: [
+          makeAttachment({
+            id: 'att-2',
+            filename: 'document.pdf',
+            mime_type: 'application/pdf',
+            size_bytes: 2048,
+            fs_path: '/path/to/document.pdf',
+          }),
+        ],
+        loading: false,
+        handleAddAttachment: vi.fn(),
+        handleDeleteAttachment: vi.fn(),
+      })
+
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+
+      expect(screen.getByText('document.pdf')).toBeInTheDocument()
+      expect(screen.getByText('2.0 KB')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Open file document.pdf' })).toBeInTheDocument()
+    })
+
+    it('shows nothing when no attachments', () => {
+      // Default mock returns empty attachments
+      const { container } = render(
+        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
+      )
+
+      expect(container.querySelector('[data-testid="attachment-section"]')).not.toBeInTheDocument()
+    })
+
+    it('shows nothing when attachments are loading', () => {
+      mockedUseBlockAttachments.mockReturnValue({
+        attachments: [],
+        loading: true,
+        handleAddAttachment: vi.fn(),
+        handleDeleteAttachment: vi.fn(),
+      })
+
+      const { container } = render(
+        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
+      )
+
+      expect(container.querySelector('[data-testid="attachment-section"]')).not.toBeInTheDocument()
+    })
+
+    it('handles multiple attachments (mix of images and files)', () => {
+      ;(window as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+      mockedUseBlockAttachments.mockReturnValue({
+        attachments: [
+          makeAttachment({ id: 'att-1', filename: 'photo.png', mime_type: 'image/png' }),
+          makeAttachment({
+            id: 'att-2',
+            filename: 'notes.txt',
+            mime_type: 'text/plain',
+            size_bytes: 512,
+          }),
+          makeAttachment({
+            id: 'att-3',
+            filename: 'archive.zip',
+            mime_type: 'application/zip',
+            size_bytes: 1048576,
+          }),
+        ],
+        loading: false,
+        handleAddAttachment: vi.fn(),
+        handleDeleteAttachment: vi.fn(),
+      })
+
+      const { container } = render(
+        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
+      )
+
+      // Image renders as <img>
+      const img = container.querySelector('img')
+      expect(img).toBeInTheDocument()
+      expect(img?.getAttribute('alt')).toBe('photo.png')
+
+      // Non-image files render as chips
+      expect(screen.getByText('notes.txt')).toBeInTheDocument()
+      expect(screen.getByText('512 B')).toBeInTheDocument()
+      expect(screen.getByText('archive.zip')).toBeInTheDocument()
+      expect(screen.getByText('1.0 MB')).toBeInTheDocument()
+    })
+
+    it('does not render image when Tauri is not available', () => {
+      // __TAURI_INTERNALS__ is not set (cleaned up by beforeEach)
+      mockedUseBlockAttachments.mockReturnValue({
+        attachments: [makeAttachment()],
+        loading: false,
+        handleAddAttachment: vi.fn(),
+        handleDeleteAttachment: vi.fn(),
+      })
+
+      const { container } = render(
+        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
+      )
+
+      // Image should not render without Tauri; no attachment section if only images
+      expect(container.querySelector('img')).not.toBeInTheDocument()
+    })
+
+    it('renders text chip for text/plain attachment with FileText icon', () => {
+      mockedUseBlockAttachments.mockReturnValue({
+        attachments: [
+          makeAttachment({
+            id: 'att-txt',
+            filename: 'readme.txt',
+            mime_type: 'text/plain',
+            size_bytes: 256,
+          }),
+        ],
+        loading: false,
+        handleAddAttachment: vi.fn(),
+        handleDeleteAttachment: vi.fn(),
+      })
+
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+
+      expect(screen.getByText('readme.txt')).toBeInTheDocument()
+      expect(screen.getByText('256 B')).toBeInTheDocument()
+    })
+
+    it('has no a11y violations with attachments', async () => {
+      mockedUseBlockAttachments.mockReturnValue({
+        attachments: [
+          makeAttachment({
+            id: 'att-pdf',
+            filename: 'report.pdf',
+            mime_type: 'application/pdf',
+            size_bytes: 2048,
+          }),
+        ],
+        loading: false,
+        handleAddAttachment: vi.fn(),
+        handleDeleteAttachment: vi.fn(),
+      })
+
+      const { container } = render(
+        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
+      )
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+
+    it('has no a11y violations with image attachment (Tauri available)', async () => {
+      ;(window as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+      mockedUseBlockAttachments.mockReturnValue({
+        attachments: [makeAttachment()],
+        loading: false,
+        handleAddAttachment: vi.fn(),
+        handleDeleteAttachment: vi.fn(),
+      })
+
+      const { container } = render(
+        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
+      )
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 })
