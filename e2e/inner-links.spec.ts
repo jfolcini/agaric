@@ -177,7 +177,7 @@ test.describe('Inner links — [[ picker', () => {
     await page.keyboard.type(' [[', { delay: 30 })
 
     const list = page.locator('.suggestion-list')
-    await expect(list).toBeVisible({ timeout: 3000 })
+    await expect(list).toBeVisible()
 
     // Should show at least Getting Started and Quick Notes
     await expect(list.locator('.suggestion-item')).toHaveCount(3) // 3 pages + daily
@@ -191,7 +191,7 @@ test.describe('Inner links — [[ picker', () => {
     await page.keyboard.type(' [[Quick', { delay: 30 })
 
     const list = page.locator('.suggestion-list')
-    await expect(list).toBeVisible({ timeout: 3000 })
+    await expect(list).toBeVisible()
 
     // Should show Quick Notes
     await expect(list.locator('.suggestion-item', { hasText: 'Quick Notes' })).toBeVisible()
@@ -206,14 +206,14 @@ test.describe('Inner links — [[ picker', () => {
     await page.keyboard.type(' [[', { delay: 30 })
 
     const list = page.locator('.suggestion-list')
-    await expect(list).toBeVisible({ timeout: 3000 })
+    await expect(list).toBeVisible()
 
     // Click "Quick Notes" in the suggestion list
     await list.locator('.suggestion-item', { hasText: 'Quick Notes' }).click()
 
     // The editor should now contain a block-link chip
     const chip = page.locator('.block-editor .block-link-chip', { hasText: 'Quick Notes' })
-    await expect(chip).toBeVisible({ timeout: 3000 })
+    await expect(chip).toBeVisible()
   })
 
   test('picker shows "Create" option for non-matching queries', async ({ page }) => {
@@ -230,9 +230,7 @@ test.describe('Inner links — [[ picker', () => {
     await page.keyboard.type('zzz_nonexistent', { delay: 20 })
 
     // Should show create option (wait for suggestion list to update)
-    await expect(list.locator('.suggestion-item', { hasText: 'Create' })).toBeVisible({
-      timeout: 3000,
-    })
+    await expect(list.locator('.suggestion-item', { hasText: 'Create' })).toBeVisible()
   })
 
   test('Escape dismisses the picker without inserting', async ({ page }) => {
@@ -242,7 +240,7 @@ test.describe('Inner links — [[ picker', () => {
 
     await page.keyboard.press('End')
     await page.keyboard.type(' [[', { delay: 30 })
-    await expect(page.locator('.suggestion-list')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.suggestion-list')).toBeVisible()
 
     await page.keyboard.press('Escape')
 
@@ -257,14 +255,14 @@ test.describe('Inner links — [[ picker', () => {
 
     await page.keyboard.press('End')
     await page.keyboard.type(' [[', { delay: 30 })
-    await expect(page.locator('.suggestion-list')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.suggestion-list')).toBeVisible()
 
     // Arrow down to select second item, then Enter
     await page.keyboard.press('ArrowDown')
     await page.keyboard.press('Enter')
 
     // A link chip should have been inserted (exact page depends on order)
-    await expect(page.locator('.block-editor .block-link-chip')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.block-editor .block-link-chip')).toBeVisible()
   })
 })
 
@@ -290,7 +288,7 @@ test.describe('Inner links — link persistence', () => {
     await list.locator('.suggestion-item', { hasText: 'Quick Notes' }).click()
     await expect(
       page.locator('.block-editor .block-link-chip', { hasText: 'Quick Notes' }),
-    ).toBeVisible({ timeout: 3000 })
+    ).toBeVisible()
 
     // Press Enter to save and close editor
     await page.keyboard.press('Enter')
@@ -298,7 +296,7 @@ test.describe('Inner links — link persistence', () => {
     // Should have one MORE "Quick Notes" chip than before
     await expect(page.locator('.block-link-chip', { hasText: 'Quick Notes' })).toHaveCount(
       chipsBefore + 1,
-      { timeout: 3000 },
+      ,
     )
   })
 

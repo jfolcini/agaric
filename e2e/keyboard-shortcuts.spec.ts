@@ -42,7 +42,7 @@ test.describe('Formatting shortcuts', () => {
 
     // Verify the Bold button shows aria-pressed="true"
     const boldBtn = page.getByRole('button', { name: 'Bold' })
-    await expect(boldBtn).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 })
+    await expect(boldBtn).toHaveAttribute('aria-pressed', 'true')
   })
 
   test('Ctrl+I toggles italic on selected text', async ({ page }) => {
@@ -59,7 +59,7 @@ test.describe('Formatting shortcuts', () => {
 
     // Verify the Italic button shows aria-pressed="true"
     const italicBtn = page.getByRole('button', { name: 'Italic' })
-    await expect(italicBtn).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 })
+    await expect(italicBtn).toHaveAttribute('aria-pressed', 'true')
   })
 
   test('Ctrl+Shift+C toggles code block', async ({ page }) => {
@@ -75,7 +75,7 @@ test.describe('Formatting shortcuts', () => {
 
     // Verify Code block button shows aria-pressed="true"
     const codeBlockBtn = page.getByRole('button', { name: 'Code block' })
-    await expect(codeBlockBtn).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 })
+    await expect(codeBlockBtn).toHaveAttribute('aria-pressed', 'true')
   })
 })
 
@@ -103,7 +103,7 @@ test.describe('Block navigation', () => {
 
     // Wait for the editor to appear on the second block
     const editor = page.locator('.block-editor [contenteditable="true"]')
-    await expect(editor).toBeVisible({ timeout: 3000 })
+    await expect(editor).toBeVisible()
 
     // The editor content should be different from the first block
     const newText = await editor.innerText()
@@ -117,7 +117,7 @@ test.describe('Block navigation', () => {
     // Click the second block directly (skip the editor.focus() from focusBlock helper)
     await page.locator('.block-static').nth(1).click()
     const editor = page.locator('.block-editor [contenteditable="true"]')
-    await expect(editor).toBeVisible({ timeout: 3000 })
+    await expect(editor).toBeVisible()
     const secondBlockId = await page.locator('.block-editor').getAttribute('data-block-id')
 
     // Ensure editor is focused and interactive (React keydown listener attached)
@@ -167,7 +167,7 @@ test.describe('Block organization', () => {
           const p = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
           return Number.parseInt(p, 10)
         },
-        { timeout: 3000 },
+        ,
       )
       .toBeGreaterThan(Number.parseInt(initialPadding, 10))
   })
@@ -190,7 +190,7 @@ test.describe('Block organization', () => {
           const p = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
           return Number.parseInt(p, 10)
         },
-        { timeout: 3000 },
+        ,
       )
       .toBeGreaterThan(Number.parseInt(basePadding, 10))
 
@@ -209,7 +209,7 @@ test.describe('Block organization', () => {
           const p = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
           return Number.parseInt(p, 10)
         },
-        { timeout: 3000 },
+        ,
       )
       .toBeLessThan(Number.parseInt(indentedPadding, 10))
   })
@@ -287,7 +287,7 @@ test.describe('Task and priority shortcuts', () => {
 
     // The first sortable block before Ctrl+Enter should have the empty checkbox
     const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('.task-checkbox-empty')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-empty')).toBeVisible()
 
     // Press Ctrl+Enter to cycle task state: none -> TODO
     await page.keyboard.down('Control')
@@ -311,19 +311,19 @@ test.describe('Task and priority shortcuts', () => {
     await page.keyboard.press('Escape')
 
     // Wait for editor to close after Escape
-    await expect(page.locator('.block-editor')).not.toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.block-editor')).not.toBeVisible()
 
     // The third block (GS_3) should now have a collapse chevron (hasChildren)
     const parentBlock = page.locator('.sortable-block').nth(2)
     const chevron = parentBlock.locator('.collapse-toggle')
-    await expect(chevron).toBeVisible({ timeout: 3000 })
+    await expect(chevron).toBeVisible()
     await expect(chevron).toHaveAttribute('aria-expanded', 'true')
 
     // Click the collapse chevron to toggle collapse
     await chevron.click()
 
     // Verify the chevron now shows collapsed (aria-expanded=false)
-    await expect(chevron).toHaveAttribute('aria-expanded', 'false', { timeout: 3000 })
+    await expect(chevron).toHaveAttribute('aria-expanded', 'false')
   })
 })
 
@@ -343,9 +343,7 @@ test.describe('Global shortcuts', () => {
     await page.keyboard.up('Control')
 
     // Verify the search view is active (header shows Search label)
-    await expect(page.locator('[data-testid="header-label"]', { hasText: 'Search' })).toBeVisible({
-      timeout: 3000,
-    })
+    await expect(page.locator('[data-testid="header-label"]', { hasText: 'Search' })).toBeVisible()
   })
 
   test('Ctrl+N creates new page', async ({ page }) => {
@@ -355,7 +353,7 @@ test.describe('Global shortcuts', () => {
     await page.keyboard.up('Control')
 
     // Verify navigation to the new page (page editor with "Untitled" title)
-    await expect(page.locator('[aria-label="Page title"]')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
     await expect(page.locator('[aria-label="Page title"]')).toContainText('Untitled')
   })
 
@@ -369,9 +367,7 @@ test.describe('Global shortcuts', () => {
     await page.keyboard.up('Alt')
 
     // Wait for the date display to change
-    await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(initialDate, {
-      timeout: 3000,
-    })
+    await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(initialDate)
   })
 
   test('Alt+Right navigates journal forward', async ({ page }) => {
@@ -384,9 +380,7 @@ test.describe('Global shortcuts', () => {
     await page.keyboard.up('Alt')
 
     // Wait for the date to change from today
-    await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(todayDate, {
-      timeout: 3000,
-    })
+    await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(todayDate)
 
     const backDate = await page.locator('[data-testid="date-display"]').innerText()
 
@@ -396,9 +390,7 @@ test.describe('Global shortcuts', () => {
     await page.keyboard.up('Alt')
 
     // Wait for the date display to change from the back date
-    await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(backDate, {
-      timeout: 3000,
-    })
+    await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(backDate)
   })
 
   test('Alt+T goes to today', async ({ page }) => {
@@ -411,9 +403,7 @@ test.describe('Global shortcuts', () => {
     await page.keyboard.up('Alt')
 
     // Wait for the date to change from today
-    await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(todayDate, {
-      timeout: 3000,
-    })
+    await expect(page.locator('[data-testid="date-display"]')).not.toHaveText(todayDate)
 
     // Press Alt+T to go to today
     await page.keyboard.down('Alt')
@@ -421,9 +411,7 @@ test.describe('Global shortcuts', () => {
     await page.keyboard.up('Alt')
 
     // Wait for the date to return to today
-    await expect(page.locator('[data-testid="date-display"]')).toHaveText(todayDate, {
-      timeout: 3000,
-    })
+    await expect(page.locator('[data-testid="date-display"]')).toHaveText(todayDate)
   })
 
   test('? opens keyboard shortcuts panel', async ({ page }) => {
@@ -434,12 +422,10 @@ test.describe('Global shortcuts', () => {
     await page.keyboard.type('?')
 
     // Verify the shortcuts sheet is visible (it has a data-testid="shortcuts-table")
-    await expect(page.locator('[data-testid="shortcuts-table"]')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('[data-testid="shortcuts-table"]')).toBeVisible()
 
     // Also verify the heading title (use role to avoid ambiguity with body text)
-    await expect(page.getByRole('heading', { name: 'Keyboard Shortcuts' })).toBeVisible({
-      timeout: 3000,
-    })
+    await expect(page.getByRole('heading', { name: 'Keyboard Shortcuts' })).toBeVisible()
   })
 })
 
@@ -462,7 +448,7 @@ test.describe('Link shortcuts', () => {
     await page.keyboard.up('Control')
 
     // Verify the link edit popover opens
-    await expect(page.getByTestId('link-edit-popover')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByTestId('link-edit-popover')).toBeVisible()
     await expect(page.getByPlaceholder('https://...')).toBeVisible()
   })
 })

@@ -67,9 +67,7 @@ test.describe('Block-level undo/redo', () => {
 
     // Create a new block
     await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1, {
-      timeout: 3000,
-    })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1)
 
     // Escape out of the editor so Ctrl+Z hits useUndoShortcuts
     await blurEditors(page)
@@ -78,15 +76,13 @@ test.describe('Block-level undo/redo', () => {
     await page.keyboard.press('Control+z')
 
     // Wait for the "Undone" toast to confirm undo fired
-    await expect(page.getByText('Undone')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Undone')).toBeVisible()
 
     // Navigate away and back to re-fetch blocks from mock's updated state
     await reopenPage(page, 'Getting Started')
 
     // Block count should be back to original
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore, {
-      timeout: 3000,
-    })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore)
   })
 
   test('undo reverses block deletion', async ({ page }) => {
@@ -99,28 +95,24 @@ test.describe('Block-level undo/redo', () => {
     const firstBlock = page.locator('.sortable-block').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
     // Verify block was deleted
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore - 1, {
-      timeout: 3000,
-    })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore - 1)
 
     // Escape and blur out of any contentEditable
     await blurEditors(page)
 
     // Press Ctrl+Z — triggers block-level undo
     await page.keyboard.press('Control+z')
-    await expect(page.getByText('Undone')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Undone')).toBeVisible()
 
     // Navigate away and back to re-fetch from mock
     await reopenPage(page, 'Getting Started')
 
     // Block count should be restored
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore, {
-      timeout: 3000,
-    })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore)
   })
 
   test('redo re-applies after undo', async ({ page }) => {
@@ -130,27 +122,23 @@ test.describe('Block-level undo/redo', () => {
 
     // Create a new block
     await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1, {
-      timeout: 3000,
-    })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1)
 
     // Escape and blur out of any contentEditable
     await blurEditors(page)
 
     // Press Ctrl+Z — triggers undo
     await page.keyboard.press('Control+z')
-    await expect(page.getByText('Undone')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Undone')).toBeVisible()
 
     // Now redo with Ctrl+Y
     await page.keyboard.press('Control+y')
-    await expect(page.getByText('Redone')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Redone')).toBeVisible()
 
     // Navigate away and back to verify
     await reopenPage(page, 'Getting Started')
 
     // Block should be back (countBefore + 1)
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1, {
-      timeout: 3000,
-    })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1)
   })
 })

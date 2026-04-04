@@ -30,7 +30,7 @@ async function typeSlashCommand(page: import('@playwright/test').Page, command: 
   await page.keyboard.press('End')
   await page.keyboard.type(` /${command}`, { delay: 30 })
   const list = page.locator('.suggestion-list')
-  await expect(list).toBeVisible({ timeout: 3000 })
+  await expect(list).toBeVisible()
   return list
 }
 
@@ -56,8 +56,8 @@ test.describe('Query block creation', () => {
 
     // The editor should now contain the query template
     const editor = page.locator('.block-editor [contenteditable="true"]')
-    await expect(editor).toBeVisible({ timeout: 3000 })
-    await expect(editor).toContainText('{{query', { timeout: 3000 })
+    await expect(editor).toBeVisible()
+    await expect(editor).toContainText('{{query')
   })
 
   test('/query block renders QueryResult after save', async ({ page }) => {
@@ -110,9 +110,9 @@ test.describe('Tag-based query blocks', () => {
     await expect(queryResult).toContainText('3 result', { timeout: 5000 })
 
     // Verify specific result items are rendered
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Ship v2.0 release' })).toBeVisible({ timeout: 3000 })
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Fix login bug' })).toBeVisible({ timeout: 3000 })
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Weekly standup notes' })).toBeVisible({ timeout: 3000 })
+    await expect(queryResult.locator('.query-result-item', { hasText: 'Ship v2.0 release' })).toBeVisible()
+    await expect(queryResult.locator('.query-result-item', { hasText: 'Fix login bug' })).toBeVisible()
+    await expect(queryResult.locator('.query-result-item', { hasText: 'Weekly standup notes' })).toBeVisible()
   })
 
   test('tag:personal query shows matching blocks', async ({ page }) => {
@@ -131,7 +131,7 @@ test.describe('Tag-based query blocks', () => {
 
     // Seed data has 1 block tagged with TAG_PERSONAL: BLOCK_DAILY_3 ("Buy groceries")
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Buy groceries' })).toBeVisible({ timeout: 3000 })
+    await expect(queryResult.locator('.query-result-item', { hasText: 'Buy groceries' })).toBeVisible()
   })
 
   test('tag query with no matches shows empty state', async ({ page }) => {
@@ -150,7 +150,7 @@ test.describe('Tag-based query blocks', () => {
 
     // Should show "No results" for a non-matching tag
     await expect(queryResult).toContainText('0 result', { timeout: 5000 })
-    await expect(queryResult.locator('text=No results')).toBeVisible({ timeout: 3000 })
+    await expect(queryResult.locator('text=No results')).toBeVisible()
   })
 })
 
@@ -180,7 +180,7 @@ test.describe('Property-based query blocks', () => {
 
     // Seed data: BLOCK_MTG_1 has context=@office
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Weekly standup notes' })).toBeVisible({ timeout: 3000 })
+    await expect(queryResult.locator('.query-result-item', { hasText: 'Weekly standup notes' })).toBeVisible()
   })
 
   test('property:project=beta query shows matching blocks', async ({ page }) => {
@@ -199,7 +199,7 @@ test.describe('Property-based query blocks', () => {
 
     // Seed data: BLOCK_MTG_2 has project=beta
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Design review feedback' })).toBeVisible({ timeout: 3000 })
+    await expect(queryResult.locator('.query-result-item', { hasText: 'Design review feedback' })).toBeVisible()
   })
 })
 
@@ -279,13 +279,13 @@ test.describe('Query result interactions', () => {
     await expect(queryResult.locator('code')).toContainText('tag:work')
 
     // Results should be visible initially
-    await expect(queryResult.locator('.query-result-item').first()).toBeVisible({ timeout: 3000 })
+    await expect(queryResult.locator('.query-result-item').first()).toBeVisible()
 
     // Click the header to collapse
     await queryResult.locator('button').first().click()
 
     // Results should be hidden after collapse
-    await expect(queryResult.locator('.query-result-item')).not.toBeVisible({ timeout: 3000 })
+    await expect(queryResult.locator('.query-result-item')).not.toBeVisible()
   })
 
   test('query result shows todo state badges for task blocks', async ({ page }) => {
@@ -305,8 +305,8 @@ test.describe('Query result interactions', () => {
 
     // Seed data: BLOCK_PROJ_1 (TODO), BLOCK_PROJ_2 (DOING) have todo_state set
     // The QueryResult renders todo_state badges for blocks that have them
-    await expect(queryResult.locator('text=TODO')).toBeVisible({ timeout: 3000 })
-    await expect(queryResult.locator('text=DOING')).toBeVisible({ timeout: 3000 })
+    await expect(queryResult.locator('text=TODO')).toBeVisible()
+    await expect(queryResult.locator('text=DOING')).toBeVisible()
   })
 })
 
@@ -338,7 +338,7 @@ test.describe('Query result reactivity', () => {
     // Now click to re-enter edit mode and change to tag:personal
     await firstBlock.locator('.block-static').click()
     const editor = page.locator('.block-editor [contenteditable="true"]')
-    await expect(editor).toBeVisible({ timeout: 3000 })
+    await expect(editor).toBeVisible()
 
     await page.keyboard.press('Meta+a')
     await page.keyboard.type('{{query tag:personal}}', { delay: 20 })
@@ -349,6 +349,6 @@ test.describe('Query result reactivity', () => {
     await expect(queryResult).toBeVisible({ timeout: 5000 })
     await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Buy groceries' })).toBeVisible({ timeout: 3000 })
+    await expect(queryResult.locator('.query-result-item', { hasText: 'Buy groceries' })).toBeVisible()
   })
 })

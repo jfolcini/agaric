@@ -34,7 +34,7 @@ test.describe('Journal view modes', () => {
 
     // Weekly view renders 7 day sections (Mon-Sun)
     const sections = page.locator('section[aria-label^="Journal for"]')
-    await expect(sections.first()).toBeVisible({ timeout: 3000 })
+    await expect(sections.first()).toBeVisible()
     const count = await sections.count()
     expect(count).toBe(7)
   })
@@ -45,7 +45,7 @@ test.describe('Journal view modes', () => {
 
     // Monthly view renders 28-31 day sections
     const sections = page.locator('section[aria-label^="Journal for"]')
-    await expect(sections.first()).toBeVisible({ timeout: 3000 })
+    await expect(sections.first()).toBeVisible()
     const count = await sections.count()
     expect(count).toBeGreaterThanOrEqual(28)
   })
@@ -55,7 +55,7 @@ test.describe('Journal view modes', () => {
     await page.getByRole('tab', { name: 'Agenda view' }).click()
 
     // Verify the agenda view container and all three task sections are visible
-    await expect(page.locator('.agenda-view')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.agenda-view')).toBeVisible()
     await expect(page.getByRole('button', { name: 'To Do tasks' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'In Progress tasks' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Completed tasks' })).toBeVisible()
@@ -72,9 +72,7 @@ test.describe('Search', () => {
 
     // Navigate to Search view via sidebar
     await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Search' }).click()
-    await expect(page.locator('[data-testid="header-label"]', { hasText: 'Search' })).toBeVisible({
-      timeout: 3000,
-    })
+    await expect(page.locator('[data-testid="header-label"]', { hasText: 'Search' })).toBeVisible()
 
     // Type a query matching seed data and submit
     const input = page.getByPlaceholder('Search blocks...')
@@ -111,7 +109,7 @@ test.describe('Page editor', () => {
     await page.keyboard.press('Enter')
 
     // Verify the title changed
-    await expect(titleEl).toContainText('Renamed Page', { timeout: 3000 })
+    await expect(titleEl).toContainText('Renamed Page')
   })
 
   test('Add block button creates a new block in page', async ({ page }) => {
@@ -124,7 +122,7 @@ test.describe('Page editor', () => {
     await page.getByRole('button', { name: 'Add block' }).click()
 
     // Verify a new block appears
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1, { timeout: 3000 })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1)
   })
 })
 
@@ -144,14 +142,14 @@ test.describe('Trash', () => {
     const firstBlock = page.locator('.sortable-block').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
     // Navigate to Trash
     await page.getByRole('button', { name: 'Trash' }).click()
 
     // Verify at least one trash item is visible
-    await expect(page.locator('.trash-item').first()).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-item').first()).toBeVisible()
   })
 
   test('restore button in trash restores block', async ({ page }) => {
@@ -161,20 +159,20 @@ test.describe('Trash', () => {
     const firstBlock = page.locator('.sortable-block').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
     // Navigate to Trash
     await page.getByRole('button', { name: 'Trash' }).click()
 
     // Verify trash has items
-    await expect(page.locator('.trash-item').first()).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-item').first()).toBeVisible()
 
     // Click Restore on the first trash item
     await page.locator('.trash-restore-btn').first().click()
 
     // Verify the item was removed from trash
-    await expect(page.locator('.trash-item')).toHaveCount(0, { timeout: 3000 })
+    await expect(page.locator('.trash-item')).toHaveCount(0)
   })
 
   test('purge button shows confirmation before deleting', async ({ page }) => {
@@ -184,18 +182,18 @@ test.describe('Trash', () => {
     const firstBlock = page.locator('.sortable-block').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
     // Navigate to Trash
     await page.getByRole('button', { name: 'Trash' }).click()
-    await expect(page.locator('.trash-item').first()).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-item').first()).toBeVisible()
 
     // Click Purge on the first trash item
     await page.locator('.trash-purge-btn').first().click()
 
     // Verify confirmation UI appears
-    await expect(page.locator('.trash-purge-confirm')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-purge-confirm')).toBeVisible()
 
     // Verify Yes and No buttons are visible
     await expect(page.locator('.trash-purge-yes')).toBeVisible()
@@ -209,25 +207,25 @@ test.describe('Trash', () => {
     const firstBlock = page.locator('.sortable-block').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
     // Navigate to Trash
     await page.getByRole('button', { name: 'Trash' }).click()
-    await expect(page.locator('.trash-item').first()).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-item').first()).toBeVisible()
 
     // Click Purge → confirmation appears
     await page.locator('.trash-purge-btn').first().click()
-    await expect(page.locator('.trash-purge-confirm')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-purge-confirm')).toBeVisible()
 
     // Click No to dismiss
     await page.locator('.trash-purge-no').click()
 
     // Verify confirmation disappears
-    await expect(page.locator('.trash-purge-confirm')).not.toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-purge-confirm')).not.toBeVisible()
 
     // Verify the trash item is still present
-    await expect(page.locator('.trash-item').first()).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-item').first()).toBeVisible()
   })
 
   test('purge confirmation Yes permanently removes block', async ({ page }) => {
@@ -237,23 +235,23 @@ test.describe('Trash', () => {
     const firstBlock = page.locator('.sortable-block').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
     // Navigate to Trash
     await page.getByRole('button', { name: 'Trash' }).click()
-    await expect(page.locator('.trash-item').first()).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-item').first()).toBeVisible()
 
     // Count trash items before purge
     const countBefore = await page.locator('.trash-item').count()
 
     // Click Purge → then confirm with Yes
     await page.locator('.trash-purge-btn').first().click()
-    await expect(page.locator('.trash-purge-confirm')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-purge-confirm')).toBeVisible()
     await page.locator('.trash-purge-yes').click()
 
     // Verify the item is removed from trash (count decreased)
-    await expect(page.locator('.trash-item')).toHaveCount(countBefore - 1, { timeout: 3000 })
+    await expect(page.locator('.trash-item')).toHaveCount(countBefore - 1)
 
     // Navigate back to Getting Started page
     await openPage(page, 'Getting Started')
@@ -273,24 +271,24 @@ test.describe('Trash', () => {
     const firstBlock = page.locator('.sortable-block').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
     // Navigate to Trash
     await page.getByRole('button', { name: 'Trash' }).click()
-    await expect(page.locator('.trash-item').first()).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-item').first()).toBeVisible()
     const countBefore = await page.locator('.trash-item').count()
 
     // Click Purge → confirmation appears
     await page.locator('.trash-purge-btn').first().click()
-    await expect(page.locator('.trash-purge-confirm')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.trash-purge-confirm')).toBeVisible()
 
     // Press Escape to dismiss
     await page.keyboard.press('Escape')
 
     // Verify confirmation disappears and item remains
-    await expect(page.locator('.trash-purge-confirm')).not.toBeVisible({ timeout: 3000 })
-    await expect(page.locator('.trash-item')).toHaveCount(countBefore, { timeout: 3000 })
+    await expect(page.locator('.trash-purge-confirm')).not.toBeVisible()
+    await expect(page.locator('.trash-item')).toHaveCount(countBefore)
   })
 })
 
@@ -310,7 +308,7 @@ test.describe('Sidebar', () => {
     await sidebar.getByRole('button', { name: 'Collapse' }).click()
 
     // Verify sidebar collapsed
-    await expect(sidebar).toHaveAttribute('data-state', 'collapsed', { timeout: 3000 })
+    await expect(sidebar).toHaveAttribute('data-state', 'collapsed')
   })
 })
 
@@ -334,11 +332,11 @@ test.describe('Context menu actions', () => {
 
     // Click Delete in the context menu
     const menu = page.locator('[role="menu"]')
-    await expect(menu).toBeVisible({ timeout: 3000 })
+    await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Delete' }).click()
 
     // Verify block count decreased
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore - 1, { timeout: 3000 })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore - 1)
   })
 
   test('context menu Set TODO sets task state', async ({ page }) => {
@@ -351,11 +349,11 @@ test.describe('Context menu actions', () => {
 
     // Click "Set as TODO" in context menu
     const menu = page.locator('[role="menu"]')
-    await expect(menu).toBeVisible({ timeout: 3000 })
+    await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Set as TODO' }).click()
 
     // Verify TODO checkbox appears on the block
-    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible()
   })
 
   test('context menu Set Priority cycles priority', async ({ page }) => {
@@ -368,12 +366,12 @@ test.describe('Context menu actions', () => {
 
     // Click "Set priority 1" in context menu
     const menu = page.locator('[role="menu"]')
-    await expect(menu).toBeVisible({ timeout: 3000 })
+    await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Set priority 1' }).click()
 
     // Verify priority badge with "1" appears
     const badge = firstBlock.locator('.priority-badge')
-    await expect(badge).toBeVisible({ timeout: 3000 })
+    await expect(badge).toBeVisible()
     await expect(badge).toHaveText('1')
   })
 })
@@ -397,16 +395,16 @@ test.describe('External link editing and removal', () => {
     // Open link popover and apply a URL
     await page.getByRole('button', { name: 'External link' }).click()
     const urlInput = page.getByPlaceholder('https://...')
-    await expect(urlInput).toBeVisible({ timeout: 3000 })
+    await expect(urlInput).toBeVisible()
     await urlInput.fill('https://example.com')
     await urlInput.press('Enter')
 
     // Verify link exists in editor
     const link = page.locator('.block-editor .external-link')
-    await expect(link).toBeVisible({ timeout: 3000 })
+    await expect(link).toBeVisible()
 
     // Wait for popover to close
-    await expect(page.getByTestId('link-edit-popover')).not.toBeVisible({ timeout: 3000 })
+    await expect(page.getByTestId('link-edit-popover')).not.toBeVisible()
 
     // Click on the link text to ensure cursor is inside the link
     await link.click()
@@ -415,7 +413,7 @@ test.describe('External link editing and removal', () => {
     await page.getByRole('button', { name: 'External link' }).click()
 
     // Verify popover shows "Update" button and pre-filled URL
-    await expect(page.getByTestId('link-edit-popover')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByTestId('link-edit-popover')).toBeVisible()
     await expect(page.getByTestId('link-url-input')).toHaveValue('https://example.com')
     await expect(
       page.getByTestId('link-edit-popover').getByRole('button', { name: 'Update' }),
@@ -430,16 +428,16 @@ test.describe('External link editing and removal', () => {
     await page.keyboard.press('Control+a')
     await page.getByRole('button', { name: 'External link' }).click()
     const urlInput = page.getByPlaceholder('https://...')
-    await expect(urlInput).toBeVisible({ timeout: 3000 })
+    await expect(urlInput).toBeVisible()
     await urlInput.fill('https://example.com')
     await urlInput.press('Enter')
 
     // Verify link exists
     const link = page.locator('.block-editor .external-link')
-    await expect(link).toBeVisible({ timeout: 3000 })
+    await expect(link).toBeVisible()
 
     // Wait for popover to close
-    await expect(page.getByTestId('link-edit-popover')).not.toBeVisible({ timeout: 3000 })
+    await expect(page.getByTestId('link-edit-popover')).not.toBeVisible()
 
     // Click on the link to place cursor inside
     await link.click()
@@ -447,7 +445,7 @@ test.describe('External link editing and removal', () => {
     // Re-open popover in edit mode — use Ctrl+K which dispatches the custom event
     // directly on the editor DOM, keeping the popover anchored in-viewport
     await page.keyboard.press('Control+k')
-    await expect(page.getByTestId('link-edit-popover')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByTestId('link-edit-popover')).toBeVisible()
 
     // Click Remove — the popover portal may position outside the viewport,
     // so use dispatchEvent to bypass the viewport check
@@ -455,7 +453,7 @@ test.describe('External link editing and removal', () => {
     await removeBtn.dispatchEvent('click')
 
     // Verify the link is gone from the editor
-    await expect(page.locator('.block-editor .external-link')).not.toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.block-editor .external-link')).not.toBeVisible()
   })
 })
 
@@ -480,7 +478,7 @@ test.describe('Undo/Redo', () => {
     await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute(
       'aria-pressed',
       'true',
-      { timeout: 3000 },
+      ,
     )
 
     // Undo
@@ -490,7 +488,7 @@ test.describe('Undo/Redo', () => {
     await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute(
       'aria-pressed',
       'false',
-      { timeout: 3000 },
+      ,
     )
   })
 
@@ -506,7 +504,7 @@ test.describe('Undo/Redo', () => {
     await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute(
       'aria-pressed',
       'true',
-      { timeout: 3000 },
+      ,
     )
 
     // Undo
@@ -514,7 +512,7 @@ test.describe('Undo/Redo', () => {
     await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute(
       'aria-pressed',
       'false',
-      { timeout: 3000 },
+      ,
     )
 
     // Redo
@@ -524,7 +522,7 @@ test.describe('Undo/Redo', () => {
     await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute(
       'aria-pressed',
       'true',
-      { timeout: 3000 },
+      ,
     )
   })
 })

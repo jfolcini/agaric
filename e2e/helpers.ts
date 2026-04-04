@@ -17,7 +17,7 @@ export async function openPage(page: Page, title: string) {
 export async function focusBlock(page: Page, index = 0) {
   await page.locator('.block-static').nth(index).click()
   const editor = page.locator('.block-editor [contenteditable="true"]')
-  await expect(editor).toBeVisible({ timeout: 3000 })
+  await expect(editor).toBeVisible()
   await editor.focus()
   return editor
 }
@@ -26,9 +26,7 @@ export async function focusBlock(page: Page, index = 0) {
 export async function saveBlock(page: Page) {
   await page.keyboard.press('Enter')
   // Wait for the editor to disappear and static block to re-render
-  await expect(page.locator('.block-editor [contenteditable="true"]')).not.toBeVisible({
-    timeout: 3000,
-  })
+  await expect(page.locator('.block-editor [contenteditable="true"]')).not.toBeVisible()
 }
 
 /**

@@ -28,7 +28,7 @@ async function addBlock(page: import('@playwright/test').Page, text: string) {
   await expect(editor).toBeVisible({ timeout: 5000 })
   await editor.pressSequentially(text, { delay: 30 })
   await editor.press('Enter')
-  await expect(page.getByText(text)).toBeVisible({ timeout: 3000 })
+  await expect(page.getByText(text)).toBeVisible()
 }
 
 test.describe('Error scenarios', () => {
@@ -60,7 +60,7 @@ test.describe('Error scenarios', () => {
     await page.getByRole('button', { name: /add block/i }).click()
 
     // Verify error feedback appears (toast or error message)
-    await expect(page.getByText(/failed|error/i)).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText(/failed|error/i)).toBeVisible()
   })
 
   test('shows error toast when edit fails', async ({ page }) => {
@@ -77,14 +77,14 @@ test.describe('Error scenarios', () => {
 
     // Type additional content to trigger an edit on blur
     const editor = page.getByRole('textbox', { name: 'Block editor' })
-    await expect(editor).toBeVisible({ timeout: 3000 })
+    await expect(editor).toBeVisible()
     await editor.pressSequentially(' modified', { delay: 30 })
 
     // Press Enter to save (triggers edit_block which will fail)
     await editor.press('Enter')
 
     // Verify error feedback appears
-    await expect(page.getByText(/failed|error/i)).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText(/failed|error/i)).toBeVisible()
   })
 
   test('app does not crash when delete fails', async ({ page }) => {

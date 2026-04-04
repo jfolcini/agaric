@@ -29,19 +29,19 @@ test.describe('Toolbar visibility', () => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
-    await expect(page.locator('.formatting-toolbar')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.formatting-toolbar')).toBeVisible()
   })
 
   test('formatting toolbar disappears when block loses focus', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
-    await expect(page.locator('.formatting-toolbar')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.formatting-toolbar')).toBeVisible()
 
     // Press Escape to unfocus the block
     await page.keyboard.press('Escape')
 
-    await expect(page.locator('.formatting-toolbar')).not.toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.formatting-toolbar')).not.toBeVisible()
   })
 })
 
@@ -71,7 +71,7 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
 
     // Verify mark is active in editor
     const boldEl = editor.locator('strong')
-    await expect(boldEl).toBeVisible({ timeout: 3000 })
+    await expect(boldEl).toBeVisible()
     await expect(boldEl).toHaveText('bold')
 
     // Save and verify static render
@@ -94,7 +94,7 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     await page.getByRole('button', { name: 'Italic' }).click()
 
     const italicEl = editor.locator('em')
-    await expect(italicEl).toBeVisible({ timeout: 3000 })
+    await expect(italicEl).toBeVisible()
     await expect(italicEl).toHaveText('italic')
 
     await saveBlock(page)
@@ -121,7 +121,7 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
 
     // Verify code element appears in editor with background styling
     const codeEl = editor.locator('code')
-    await expect(codeEl).toBeVisible({ timeout: 3000 })
+    await expect(codeEl).toBeVisible()
     await expect(codeEl).toHaveText('code')
     // The CSS rule .ProseMirror code adds bg-muted rounded — verify border-radius
     await expect(codeEl).toHaveCSS('border-radius', /\dpx/)
@@ -146,7 +146,7 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     await expect(page.getByRole('button', { name: 'Code block' })).toHaveAttribute(
       'aria-pressed',
       'true',
-      { timeout: 3000 },
+      ,
     )
 
     // Type code content
@@ -156,7 +156,7 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     // Save and verify static render has <pre>
     await saveBlock(page)
     const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
-    await expect(staticBlock.locator('pre')).toBeVisible({ timeout: 3000 })
+    await expect(staticBlock.locator('pre')).toBeVisible()
     await expect(staticBlock.locator('pre')).toContainText('const x = 42')
   })
 
@@ -182,8 +182,8 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     // Save and verify static render has both <strong> and <em>
     await saveBlock(page)
     const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
-    await expect(staticBlock.locator('strong')).toBeVisible({ timeout: 3000 })
-    await expect(staticBlock.locator('em')).toBeVisible({ timeout: 3000 })
+    await expect(staticBlock.locator('strong')).toBeVisible()
+    await expect(staticBlock.locator('em')).toBeVisible()
   })
 })
 
@@ -204,7 +204,7 @@ test.describe('Link buttons', () => {
     await page.getByRole('button', { name: 'External link' }).click()
 
     // The LinkEditPopover should appear with its URL input
-    await expect(page.getByTestId('link-edit-popover')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByTestId('link-edit-popover')).toBeVisible()
     await expect(page.getByPlaceholder('https://...')).toBeVisible()
   })
 
@@ -221,19 +221,19 @@ test.describe('Link buttons', () => {
     await page.getByRole('button', { name: 'External link' }).click()
 
     const urlInput = page.getByPlaceholder('https://...')
-    await expect(urlInput).toBeVisible({ timeout: 3000 })
+    await expect(urlInput).toBeVisible()
 
     // Type a URL and press Enter to apply
     await urlInput.fill('https://example.com')
     await urlInput.press('Enter')
 
     // Verify link appears in editor
-    await expect(page.locator('.block-editor .external-link')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.block-editor .external-link')).toBeVisible()
 
     // Save and verify static render has the external link
     await saveBlock(page)
     const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
-    await expect(staticBlock.locator('.external-link')).toBeVisible({ timeout: 3000 })
+    await expect(staticBlock.locator('.external-link')).toBeVisible()
   })
 
   test('Internal link button triggers [[ picker', async ({ page }) => {
@@ -276,12 +276,12 @@ test.describe('Link buttons', () => {
     await firstItem.click()
 
     // Verify block-link chip appears in editor
-    await expect(editor.locator('.block-link-chip')).toBeVisible({ timeout: 3000 })
+    await expect(editor.locator('.block-link-chip')).toBeVisible()
 
     // Save and verify static render has the block-link chip
     await saveBlock(page)
     const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
-    await expect(staticBlock.locator('.block-link-chip')).toBeVisible({ timeout: 3000 })
+    await expect(staticBlock.locator('.block-link-chip')).toBeVisible()
   })
 
   test('Tag: select tag from picker, save, verify chip in static render', async ({ page }) => {
@@ -300,12 +300,12 @@ test.describe('Link buttons', () => {
     await firstItem.click()
 
     // Verify tag-ref chip appears in editor
-    await expect(editor.locator('.tag-ref-chip')).toBeVisible({ timeout: 3000 })
+    await expect(editor.locator('.tag-ref-chip')).toBeVisible()
 
     // Save and verify static render has the tag-ref chip
     await saveBlock(page)
     const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
-    await expect(staticBlock.locator('.tag-ref-chip')).toBeVisible({ timeout: 3000 })
+    await expect(staticBlock.locator('.tag-ref-chip')).toBeVisible()
   })
 })
 
@@ -326,12 +326,12 @@ test.describe('Priority buttons', () => {
 
     const firstBlock = page.locator('.sortable-block').first()
     const badge = firstBlock.locator('.priority-badge')
-    await expect(badge).toBeVisible({ timeout: 3000 })
+    await expect(badge).toBeVisible()
     await expect(badge).toHaveText('1')
 
     // Save and verify persists
     await saveBlock(page)
-    await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.priority-badge')).toBeVisible()
     await expect(firstBlock.locator('.priority-badge')).toHaveText('1')
   })
 
@@ -343,12 +343,12 @@ test.describe('Priority buttons', () => {
 
     const firstBlock = page.locator('.sortable-block').first()
     const badge = firstBlock.locator('.priority-badge')
-    await expect(badge).toBeVisible({ timeout: 3000 })
+    await expect(badge).toBeVisible()
     await expect(badge).toHaveText('2')
 
     // Save and verify persists
     await saveBlock(page)
-    await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.priority-badge')).toBeVisible()
     await expect(firstBlock.locator('.priority-badge')).toHaveText('2')
   })
 
@@ -360,12 +360,12 @@ test.describe('Priority buttons', () => {
 
     const firstBlock = page.locator('.sortable-block').first()
     const badge = firstBlock.locator('.priority-badge')
-    await expect(badge).toBeVisible({ timeout: 3000 })
+    await expect(badge).toBeVisible()
     await expect(badge).toHaveText('3')
 
     // Save and verify persists
     await saveBlock(page)
-    await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.priority-badge')).toBeVisible()
     await expect(firstBlock.locator('.priority-badge')).toHaveText('3')
   })
 })
@@ -387,7 +387,7 @@ test.describe('Date button', () => {
     await page.getByRole('button', { name: 'Insert date' }).click()
 
     // The floating date picker popup should appear
-    await expect(page.locator('.date-picker-popup')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.date-picker-popup')).toBeVisible()
   })
 })
 
@@ -409,15 +409,15 @@ test.describe('Block interactions', () => {
 
     // First click: none -> TODO
     await taskMarker.click()
-    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible()
 
     // Second click: TODO -> DOING
     await taskMarker.click()
-    await expect(firstBlock.locator('.task-checkbox-doing')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-doing')).toBeVisible()
 
     // Third click: DOING -> DONE
     await taskMarker.click()
-    await expect(firstBlock.locator('.task-checkbox-done')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-done')).toBeVisible()
   })
 
   test('delete button removes block on hover', async ({ page }) => {
@@ -433,11 +433,11 @@ test.describe('Block interactions', () => {
 
     // Click the Delete block button
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
     // Block count should decrease by one
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore - 1, { timeout: 3000 })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore - 1)
   })
 
   test('drag handle is visible on hover/focus', async ({ page }) => {
@@ -450,7 +450,7 @@ test.describe('Block interactions', () => {
     // After hover on the block group, it becomes visible
     await firstBlock.hover()
 
-    await expect(dragHandle).toBeVisible({ timeout: 3000 })
+    await expect(dragHandle).toBeVisible()
   })
 
   test('drag-and-drop reorders blocks', async ({ page }) => {
@@ -458,7 +458,7 @@ test.describe('Block interactions', () => {
     await openPage(page, 'Quick Notes')
 
     const blocks = page.locator('.sortable-block')
-    await expect(blocks).toHaveCount(2, { timeout: 3000 })
+    await expect(blocks).toHaveCount(2)
 
     // Capture original order
     const firstText = await blocks.nth(0).locator('.block-static').innerText()
@@ -470,7 +470,7 @@ test.describe('Block interactions', () => {
 
     // Hover to reveal drag handle
     await blocks.nth(1).hover()
-    await expect(source).toBeVisible({ timeout: 3000 })
+    await expect(source).toBeVisible()
 
     // Perform drag using shared helper (handles dnd-kit PointerSensor delay)
     await dragBlock(page, source, target)
@@ -489,7 +489,7 @@ test.describe('Block interactions', () => {
 
     // Context menu with role="menu" should appear
     const menu = page.locator('[role="menu"]')
-    await expect(menu).toBeVisible({ timeout: 3000 })
+    await expect(menu).toBeVisible()
 
     // Verify menu items are present
     await expect(menu.locator('[role="menuitem"]', { hasText: 'Delete' })).toBeVisible()
@@ -507,7 +507,7 @@ test.describe('Block interactions', () => {
 
     // The first sortable block before Ctrl+Enter should have the empty checkbox
     const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('.task-checkbox-empty')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-empty')).toBeVisible()
 
     // Press Ctrl+Enter to cycle task state: none -> TODO
     await page.keyboard.down('Control')
@@ -545,7 +545,7 @@ test.describe('Undo / Redo', () => {
     await page.getByRole('button', { name: 'Undo' }).click()
 
     // Editor content should revert to original
-    await expect(editor).toHaveText(originalText ?? '', { timeout: 3000 })
+    await expect(editor).toHaveText(originalText ?? '')
   })
 
   test('Redo button re-applies undone change', async ({ page }) => {
@@ -564,7 +564,7 @@ test.describe('Undo / Redo', () => {
     await page.getByRole('button', { name: 'Redo' }).click()
 
     // Should have the extra text back
-    await expect(editor).toHaveText(withExtra ?? '', { timeout: 3000 })
+    await expect(editor).toHaveText(withExtra ?? '')
   })
 
   test('Undo via Ctrl+Z in editor reverts last change', async ({ page }) => {
@@ -577,7 +577,7 @@ test.describe('Undo / Redo', () => {
 
     await page.keyboard.press('Control+z')
 
-    await expect(editor).toHaveText(originalText ?? '', { timeout: 3000 })
+    await expect(editor).toHaveText(originalText ?? '')
   })
 
   test('Redo via Ctrl+Y in editor re-applies change', async ({ page }) => {
@@ -591,7 +591,7 @@ test.describe('Undo / Redo', () => {
     await page.keyboard.press('Control+z')
     await page.keyboard.press('Control+y')
 
-    await expect(editor).toHaveText(withTyped ?? '', { timeout: 3000 })
+    await expect(editor).toHaveText(withTyped ?? '')
   })
 })
 

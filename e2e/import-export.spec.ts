@@ -24,7 +24,7 @@ import { openPage, waitForBoot } from './helpers'
 async function triggerExport(page: import('@playwright/test').Page) {
   // Open the kebab (⋮) overflow menu in PageHeader
   const kebabButton = page.getByRole('button', { name: 'Page actions' })
-  await expect(kebabButton).toBeVisible({ timeout: 3000 })
+  await expect(kebabButton).toBeVisible()
   await kebabButton.click()
 
   // Click the "Export as Markdown" option
@@ -37,7 +37,7 @@ async function triggerExport(page: import('@playwright/test').Page) {
 
 async function navigateToStatus(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Status' }).click()
-  await expect(page.locator('header').getByText('Status')).toBeVisible({ timeout: 3000 })
+  await expect(page.locator('header').getByText('Status')).toBeVisible()
 }
 
 // ===========================================================================
@@ -94,7 +94,7 @@ test.describe('Import markdown', () => {
     await navigateToStatus(page)
 
     // The import section should be visible in the Status panel
-    await expect(page.locator('.import-panel-title')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.import-panel-title')).toBeVisible()
 
     // Create a synthetic file and set it on the hidden file input
     const fileInput = page.locator('[data-testid="import-file-input"]')
@@ -112,7 +112,7 @@ test.describe('Import markdown', () => {
 
     // The import result card should show the page title and block count
     const importResult = page.locator('.import-result')
-    await expect(importResult).toBeVisible({ timeout: 3000 })
+    await expect(importResult).toBeVisible()
     await expect(importResult).toContainText('Test Import Page')
     await expect(importResult).toContainText('3 blocks')
   })
@@ -151,7 +151,7 @@ test.describe('Import markdown', () => {
 
     // Import result should show filename-derived title
     const importResult = page.locator('.import-result')
-    await expect(importResult).toBeVisible({ timeout: 3000 })
+    await expect(importResult).toBeVisible()
     await expect(importResult).toContainText('no-heading-page')
   })
 })

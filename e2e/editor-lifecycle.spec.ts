@@ -25,7 +25,7 @@ async function addBlock(page: import('@playwright/test').Page, text: string) {
   await editor.pressSequentially(text, { delay: 30 })
   await editor.press('Enter')
   // Wait for the static block with the new text to appear
-  await expect(page.getByText(text)).toBeVisible({ timeout: 3000 })
+  await expect(page.getByText(text)).toBeVisible()
 }
 
 test.describe('Editor lifecycle', () => {
@@ -73,7 +73,7 @@ test.describe('Editor lifecycle', () => {
 
     // TipTap editor should appear
     const editor = page.getByRole('textbox', { name: 'Block editor' })
-    await expect(editor).toBeVisible({ timeout: 3000 })
+    await expect(editor).toBeVisible()
 
     // Press Escape to discard and unfocus without changing
     await editor.press('Escape')
@@ -101,23 +101,23 @@ test.describe('Editor lifecycle', () => {
   test('navigates between sidebar views', async ({ page }) => {
     // Navigate to Tags
     await page.getByRole('button', { name: 'Tags' }).click()
-    await expect(page.locator('header').getByText('Tags')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('header').getByText('Tags')).toBeVisible()
 
     // Navigate to Trash
     await page.getByRole('button', { name: 'Trash' }).click()
-    await expect(page.locator('header').getByText('Trash')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('header').getByText('Trash')).toBeVisible()
 
     // Navigate to Status
     await page.getByRole('button', { name: 'Status' }).click()
-    await expect(page.locator('header').getByText('Status')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('header').getByText('Status')).toBeVisible()
 
     // Navigate to Conflicts
     await page.getByRole('button', { name: 'Conflicts' }).click()
-    await expect(page.locator('header').getByText('Conflicts')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('header').getByText('Conflicts')).toBeVisible()
 
     // Navigate back to Journal (no header label — has mode tabs instead)
     await page.getByRole('button', { name: 'Journal' }).click()
-    await expect(page.getByRole('tab', { name: /daily/i })).toBeVisible({ timeout: 3000 })
+    await expect(page.getByRole('tab', { name: /daily/i })).toBeVisible()
   })
 
   test('pages view allows creating a new page', async ({ page }) => {

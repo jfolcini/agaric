@@ -29,7 +29,7 @@ import { focusBlock, openPage, waitForBoot } from './helpers'
 /** Open the kebab (page actions) menu on the current page. */
 async function openKebabMenu(page: import('@playwright/test').Page) {
   const kebab = page.getByRole('button', { name: 'Page actions' })
-  await expect(kebab).toBeVisible({ timeout: 3000 })
+  await expect(kebab).toBeVisible()
   await kebab.click()
 }
 
@@ -38,7 +38,7 @@ async function typeSlashCommand(page: import('@playwright/test').Page, command: 
   await page.keyboard.press('End')
   await page.keyboard.type(` /${command}`, { delay: 30 })
   const list = page.locator('.suggestion-list')
-  await expect(list).toBeVisible({ timeout: 3000 })
+  await expect(list).toBeVisible()
   return list
 }
 
@@ -56,7 +56,7 @@ test.describe('Save page as template', () => {
     await openKebabMenu(page)
 
     // Should show "Save as template" (not "Remove template status")
-    await expect(page.getByText('Save as template')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Save as template')).toBeVisible()
   })
 
   test('clicking "Save as template" shows success toast', async ({ page }) => {
@@ -66,7 +66,7 @@ test.describe('Save page as template', () => {
     await page.getByText('Save as template').click()
 
     // Success toast should appear
-    await expect(page.getByText('Saved as template')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Saved as template')).toBeVisible()
   })
 
   test('after saving as template, kebab shows "Remove template status"', async ({ page }) => {
@@ -75,11 +75,11 @@ test.describe('Save page as template', () => {
     // Save as template
     await openKebabMenu(page)
     await page.getByText('Save as template').click()
-    await expect(page.getByText('Saved as template')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Saved as template')).toBeVisible()
 
     // Re-open kebab — should now show "Remove template status"
     await openKebabMenu(page)
-    await expect(page.getByText('Remove template status')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Remove template status')).toBeVisible()
   })
 })
 
@@ -96,7 +96,7 @@ test.describe('Remove template status', () => {
     await openPage(page, 'Meeting Notes Template')
     await openKebabMenu(page)
 
-    await expect(page.getByText('Remove template status')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Remove template status')).toBeVisible()
   })
 
   test('removing template status shows success toast', async ({ page }) => {
@@ -105,7 +105,7 @@ test.describe('Remove template status', () => {
 
     await page.getByText('Remove template status').click()
 
-    await expect(page.getByText('Template status removed')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Template status removed')).toBeVisible()
   })
 
   test('after removing, kebab shows "Save as template" again', async ({ page }) => {
@@ -114,11 +114,11 @@ test.describe('Remove template status', () => {
     // Remove template status
     await openKebabMenu(page)
     await page.getByText('Remove template status').click()
-    await expect(page.getByText('Template status removed')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Template status removed')).toBeVisible()
 
     // Re-open kebab — should now show "Save as template"
     await openKebabMenu(page)
-    await expect(page.getByText('Save as template')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Save as template')).toBeVisible()
   })
 })
 
@@ -138,15 +138,15 @@ test.describe('Template picker via slash command', () => {
 
     // Select the TEMPLATE item from the slash menu
     const templateItem = list.locator('.suggestion-item', { hasText: 'TEMPLATE' })
-    await expect(templateItem).toBeVisible({ timeout: 3000 })
+    await expect(templateItem).toBeVisible()
     await templateItem.click()
 
     // The template picker dialog should appear
     const dialog = page.locator('[role="dialog"]')
-    await expect(dialog).toBeVisible({ timeout: 3000 })
+    await expect(dialog).toBeVisible()
 
     // Should show the seeded template
-    await expect(dialog.getByText('Meeting Notes Template')).toBeVisible({ timeout: 3000 })
+    await expect(dialog.getByText('Meeting Notes Template')).toBeVisible()
   })
 
   test('template picker shows preview text', async ({ page }) => {
@@ -157,13 +157,13 @@ test.describe('Template picker via slash command', () => {
     await list.locator('.suggestion-item', { hasText: 'TEMPLATE' }).click()
 
     const dialog = page.locator('[role="dialog"]')
-    await expect(dialog).toBeVisible({ timeout: 3000 })
+    await expect(dialog).toBeVisible()
 
     // Should show "Select a template" heading
-    await expect(dialog.getByText('Select a template')).toBeVisible({ timeout: 3000 })
+    await expect(dialog.getByText('Select a template')).toBeVisible()
 
     // Preview text from first child block should be visible
-    await expect(dialog.getByText('## Attendees')).toBeVisible({ timeout: 3000 })
+    await expect(dialog.getByText('## Attendees')).toBeVisible()
   })
 
   test('Escape closes the template picker', async ({ page }) => {
@@ -174,11 +174,11 @@ test.describe('Template picker via slash command', () => {
     await list.locator('.suggestion-item', { hasText: 'TEMPLATE' }).click()
 
     const dialog = page.locator('[role="dialog"]')
-    await expect(dialog).toBeVisible({ timeout: 3000 })
+    await expect(dialog).toBeVisible()
 
     await page.keyboard.press('Escape')
 
-    await expect(dialog).not.toBeVisible({ timeout: 3000 })
+    await expect(dialog).not.toBeVisible()
   })
 })
 
@@ -201,7 +201,7 @@ test.describe('Apply template', () => {
 
     // Pick the Meeting Notes Template from the picker
     const dialog = page.locator('[role="dialog"]')
-    await expect(dialog).toBeVisible({ timeout: 3000 })
+    await expect(dialog).toBeVisible()
     await dialog.getByText('Meeting Notes Template').click()
 
     // Success toast
@@ -215,7 +215,7 @@ test.describe('Apply template', () => {
 
     await list.locator('.suggestion-item', { hasText: 'TEMPLATE' }).click()
     const dialog = page.locator('[role="dialog"]')
-    await expect(dialog).toBeVisible({ timeout: 3000 })
+    await expect(dialog).toBeVisible()
     await dialog.getByText('Meeting Notes Template').click()
 
     await expect(page.getByText('Template inserted')).toBeVisible({ timeout: 5000 })
@@ -244,7 +244,7 @@ test.describe('Template variable expansion', () => {
 
     await list.locator('.suggestion-item', { hasText: 'TEMPLATE' }).click()
     const dialog = page.locator('[role="dialog"]')
-    await expect(dialog).toBeVisible({ timeout: 3000 })
+    await expect(dialog).toBeVisible()
     await dialog.getByText('Meeting Notes Template').click()
     await expect(page.getByText('Template inserted')).toBeVisible({ timeout: 5000 })
 
@@ -267,7 +267,7 @@ test.describe('Template variable expansion', () => {
 
     await list.locator('.suggestion-item', { hasText: 'TEMPLATE' }).click()
     const dialog = page.locator('[role="dialog"]')
-    await expect(dialog).toBeVisible({ timeout: 3000 })
+    await expect(dialog).toBeVisible()
     await dialog.getByText('Meeting Notes Template').click()
     await expect(page.getByText('Template inserted')).toBeVisible({ timeout: 5000 })
 
@@ -292,7 +292,7 @@ test.describe('Journal template toggle', () => {
     await openPage(page, 'Getting Started')
     await openKebabMenu(page)
 
-    await expect(page.getByText('Set as journal template')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Set as journal template')).toBeVisible()
   })
 
   test('setting journal template shows success toast', async ({ page }) => {
@@ -301,9 +301,7 @@ test.describe('Journal template toggle', () => {
 
     await page.getByText('Set as journal template').click()
 
-    await expect(page.getByText('Set as journal template', { exact: false })).toBeVisible({
-      timeout: 3000,
-    })
+    await expect(page.getByText('Set as journal template', { exact: false })).toBeVisible()
   })
 
   test('after setting, kebab shows "Remove journal template"', async ({ page }) => {
@@ -318,6 +316,6 @@ test.describe('Journal template toggle', () => {
 
     // Re-open kebab
     await openKebabMenu(page)
-    await expect(page.getByText('Remove journal template')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Remove journal template')).toBeVisible()
   })
 })

@@ -23,7 +23,7 @@ test.describe('HistoryView batch revert', () => {
     // Perform some mutations first
     await openPage(page, 'Getting Started')
     await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('.sortable-block').last()).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.sortable-block').last()).toBeVisible()
 
     // Navigate to History view
     await page.getByRole('button', { name: 'History' }).click()
@@ -39,7 +39,7 @@ test.describe('HistoryView batch revert', () => {
     // Create a block to generate an op
     await openPage(page, 'Getting Started')
     await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('.sortable-block').last()).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.sortable-block').last()).toBeVisible()
 
     // Navigate to History
     await page.getByRole('button', { name: 'History' }).click()
@@ -51,14 +51,14 @@ test.describe('HistoryView batch revert', () => {
     await checkbox.click()
 
     // Selection toolbar should appear with "Revert selected"
-    await expect(page.getByText('1 selected')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('1 selected')).toBeVisible()
     await expect(page.getByRole('button', { name: /Revert selected/i })).toBeVisible()
 
     // Click "Revert selected" to trigger confirmation dialog
     await page.getByRole('button', { name: /Revert selected/i }).click()
 
     // Confirmation dialog should appear
-    await expect(page.getByText(/Revert 1 operation/i)).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText(/Revert 1 operation/i)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Revert' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible()
   })
@@ -70,9 +70,7 @@ test.describe('HistoryView batch revert', () => {
 
     // Create a new block
     await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1, {
-      timeout: 3000,
-    })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1)
 
     // Navigate to History
     await page.getByRole('button', { name: 'History' }).click()
@@ -85,7 +83,7 @@ test.describe('HistoryView batch revert', () => {
         has: page.locator('.history-item-type', { hasText: 'create_block' }),
       })
       .first()
-    await expect(createEntry).toBeVisible({ timeout: 3000 })
+    await expect(createEntry).toBeVisible()
     const checkbox = createEntry.locator('input[type="checkbox"]')
     await checkbox.click()
 
@@ -93,17 +91,15 @@ test.describe('HistoryView batch revert', () => {
     await page.getByRole('button', { name: /Revert selected/i }).click()
 
     // Confirm revert
-    await expect(page.getByRole('button', { name: 'Revert' })).toBeVisible({ timeout: 3000 })
+    await expect(page.getByRole('button', { name: 'Revert' })).toBeVisible()
     await page.getByRole('button', { name: 'Revert' }).click()
 
     // Selection should be cleared after revert
-    await expect(page.getByText(/selected/)).not.toBeVisible({ timeout: 3000 })
+    await expect(page.getByText(/selected/)).not.toBeVisible()
 
     // Navigate back to the page and verify block is gone
     await openPage(page, 'Getting Started')
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore, {
-      timeout: 3000,
-    })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore)
   })
 
   test('batch revert restores a deleted block', async ({ page }) => {
@@ -116,11 +112,9 @@ test.describe('HistoryView batch revert', () => {
     const firstBlock = page.locator('.sortable-block').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
-    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore - 1, {
-      timeout: 3000,
-    })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore - 1)
 
     // Navigate to History
     await page.getByRole('button', { name: 'History' }).click()
@@ -133,27 +127,25 @@ test.describe('HistoryView batch revert', () => {
         has: page.locator('.history-item-type', { hasText: 'delete_block' }),
       })
       .first()
-    await expect(deleteEntry).toBeVisible({ timeout: 3000 })
+    await expect(deleteEntry).toBeVisible()
     await deleteEntry.locator('input[type="checkbox"]').click()
 
     // Revert
     await page.getByRole('button', { name: /Revert selected/i }).click()
-    await expect(page.getByRole('button', { name: 'Revert' })).toBeVisible({ timeout: 3000 })
+    await expect(page.getByRole('button', { name: 'Revert' })).toBeVisible()
     await page.getByRole('button', { name: 'Revert' }).click()
-    await expect(page.getByText(/selected/)).not.toBeVisible({ timeout: 3000 })
+    await expect(page.getByText(/selected/)).not.toBeVisible()
 
     // Navigate back and verify block is restored
     await openPage(page, 'Getting Started')
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore, {
-      timeout: 3000,
-    })
+    await expect(page.locator('.sortable-block')).toHaveCount(countBefore)
   })
 
   test('cancel in confirmation dialog does not revert', async ({ page }) => {
     await openPage(page, 'Getting Started')
     const blocksBefore = await page.locator('.sortable-block').count()
     await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('.sortable-block')).toHaveCount(blocksBefore + 1, { timeout: 3000 })
+    await expect(page.locator('.sortable-block')).toHaveCount(blocksBefore + 1)
 
     // Navigate to History and select
     await page.getByRole('button', { name: 'History' }).click()
@@ -162,12 +154,12 @@ test.describe('HistoryView batch revert', () => {
 
     // Click revert
     await page.getByRole('button', { name: /Revert selected/i }).click()
-    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible({ timeout: 3000 })
+    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible()
 
     // Cancel
     await page.getByRole('button', { name: 'Cancel' }).click()
 
     // Selection should still be active
-    await expect(page.getByText('1 selected')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('1 selected')).toBeVisible()
   })
 })

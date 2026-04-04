@@ -45,7 +45,7 @@ test.describe('Due date filtering', () => {
 
     // The collapsible header should be visible and expanded
     const header = duePanel.locator('.due-panel-header')
-    await expect(header).toBeVisible({ timeout: 3000 })
+    await expect(header).toBeVisible()
     await expect(header).toHaveAttribute('aria-expanded', 'true')
 
     // Verify at least one due-panel item is rendered.
@@ -62,12 +62,12 @@ test.describe('Due date filtering', () => {
 
     // Click "Due" filter pill inside the filter bar
     const filterBar = duePanel.locator('.due-panel-filters')
-    await expect(filterBar).toBeVisible({ timeout: 3000 })
+    await expect(filterBar).toBeVisible()
     const dueFilter = filterBar.getByText('Due', { exact: true })
     await dueFilter.click()
 
     // Wait for the filter to take effect
-    await expect(dueFilter).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 })
+    await expect(dueFilter).toHaveAttribute('aria-pressed', 'true')
 
     // Due-only blocks for today: BLOCK_DAILY_3, BLOCK_DAILY_4, BLOCK_DAILY_5, BLOCK_PROJ_2
     const items = duePanel.locator('.due-panel-item')
@@ -92,12 +92,12 @@ test.describe('Scheduled date filtering', () => {
 
     // Click "Scheduled" filter pill
     const filterBar = duePanel.locator('.due-panel-filters')
-    await expect(filterBar).toBeVisible({ timeout: 3000 })
+    await expect(filterBar).toBeVisible()
     const scheduledFilter = filterBar.getByText('Scheduled', { exact: true })
     await scheduledFilter.click()
 
     // Verify the filter is active
-    await expect(scheduledFilter).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 })
+    await expect(scheduledFilter).toHaveAttribute('aria-pressed', 'true')
 
     // Scheduled-only block for today: BLOCK_PROJ_1 ("Ship v2.0 release")
     // Wait for content to reload after filter change
@@ -125,7 +125,7 @@ test.describe('Scheduled date filtering', () => {
     await expect(filterBar.getByText('All', { exact: true })).toHaveAttribute(
       'aria-pressed',
       'true',
-      { timeout: 3000 },
+      ,
     )
 
     // Count should be restored to the initial value
@@ -152,13 +152,13 @@ test.describe('Task state changes in agenda', () => {
 
     // The parent button has aria-label "Task: TODO. Click to cycle."
     const todoButton = page.locator('button[aria-label*="Task: TODO"]').first()
-    await expect(todoButton).toBeVisible({ timeout: 3000 })
+    await expect(todoButton).toBeVisible()
 
     // Click the checkbox to cycle: TODO → DOING
     await todoButton.click()
 
     // After cycling, the checkbox should change to task-checkbox-doing
-    await expect(page.locator('.task-checkbox-doing').first()).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.task-checkbox-doing').first()).toBeVisible()
   })
 
   test('clicking task checkbox cycles DOING to DONE', async ({ page }) => {
@@ -172,7 +172,7 @@ test.describe('Task state changes in agenda', () => {
     // Verify a new DONE checkbox appeared
     // (there's already one DONE block — BLOCK_DAILY_5 — so we check for at least 2)
     const doneCheckboxes = page.locator('.task-checkbox-done')
-    await expect(doneCheckboxes.first()).toBeVisible({ timeout: 3000 })
+    await expect(doneCheckboxes.first()).toBeVisible()
     const doneCount = await doneCheckboxes.count()
     expect(doneCount).toBeGreaterThanOrEqual(2)
   })
@@ -184,11 +184,11 @@ test.describe('Task state changes in agenda', () => {
     await firstBlock.click({ button: 'right' })
 
     const menu = page.locator('[role="menu"]')
-    await expect(menu).toBeVisible({ timeout: 3000 })
+    await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Set as TODO' }).click()
 
     // Verify the block now has a TODO checkbox
-    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible()
   })
 })
 
@@ -215,7 +215,7 @@ test.describe('Overdue tasks', () => {
     await expect(items.first()).toBeVisible({ timeout: 5000 })
 
     // Check that "Submit report" text is present
-    await expect(duePanel.getByText('Submit report')).toBeVisible({ timeout: 3000 })
+    await expect(duePanel.getByText('Submit report')).toBeVisible()
   })
 
   test('overdue block shows priority badge in DuePanel', async ({ page }) => {
@@ -228,7 +228,7 @@ test.describe('Overdue tasks', () => {
 
     // BLOCK_OVERDUE_1 has priority '1', so "P1" badge should appear
     const priorityBadge = duePanel.locator('.due-panel-priority')
-    await expect(priorityBadge.first()).toBeVisible({ timeout: 3000 })
+    await expect(priorityBadge.first()).toBeVisible()
     await expect(priorityBadge.first()).toContainText('P1')
   })
 })
@@ -245,58 +245,58 @@ test.describe('Date navigation', () => {
   test('previous day button changes the displayed date', async ({ page }) => {
     // Capture the initial date display
     const dateDisplay = page.locator('[data-testid="date-display"]')
-    await expect(dateDisplay).toBeVisible({ timeout: 3000 })
+    await expect(dateDisplay).toBeVisible()
     const initialDate = await dateDisplay.textContent()
 
     // Click "Previous day"
     await page.getByRole('button', { name: 'Previous day' }).click()
 
     // The date display should change
-    await expect(dateDisplay).not.toHaveText(initialDate ?? '', { timeout: 3000 })
+    await expect(dateDisplay).not.toHaveText(initialDate ?? '')
   })
 
   test('next day button changes the displayed date', async ({ page }) => {
     // Capture the initial date display
     const dateDisplay = page.locator('[data-testid="date-display"]')
-    await expect(dateDisplay).toBeVisible({ timeout: 3000 })
+    await expect(dateDisplay).toBeVisible()
     const initialDate = await dateDisplay.textContent()
 
     // Click "Next day"
     await page.getByRole('button', { name: 'Next day' }).click()
 
     // The date display should change
-    await expect(dateDisplay).not.toHaveText(initialDate ?? '', { timeout: 3000 })
+    await expect(dateDisplay).not.toHaveText(initialDate ?? '')
   })
 
   test('navigating forward then backward returns to original date', async ({ page }) => {
     const dateDisplay = page.locator('[data-testid="date-display"]')
-    await expect(dateDisplay).toBeVisible({ timeout: 3000 })
+    await expect(dateDisplay).toBeVisible()
     const originalDate = await dateDisplay.textContent()
 
     // Go forward one day
     await page.getByRole('button', { name: 'Next day' }).click()
-    await expect(dateDisplay).not.toHaveText(originalDate ?? '', { timeout: 3000 })
+    await expect(dateDisplay).not.toHaveText(originalDate ?? '')
 
     // Go backward one day — should return to original date
     await page.getByRole('button', { name: 'Previous day' }).click()
-    await expect(dateDisplay).toHaveText(originalDate ?? '', { timeout: 3000 })
+    await expect(dateDisplay).toHaveText(originalDate ?? '')
   })
 
   test('Today button returns to current date after navigation', async ({ page }) => {
     const dateDisplay = page.locator('[data-testid="date-display"]')
-    await expect(dateDisplay).toBeVisible({ timeout: 3000 })
+    await expect(dateDisplay).toBeVisible()
     const todayText = await dateDisplay.textContent()
 
     // Navigate away (two days back)
     await page.getByRole('button', { name: 'Previous day' }).click()
     await page.getByRole('button', { name: 'Previous day' }).click()
-    await expect(dateDisplay).not.toHaveText(todayText ?? '', { timeout: 3000 })
+    await expect(dateDisplay).not.toHaveText(todayText ?? '')
 
     // Click "Today" to return
     await page.getByRole('button', { name: 'Go to today' }).click()
 
     // Date display should match original
-    await expect(dateDisplay).toHaveText(todayText ?? '', { timeout: 3000 })
+    await expect(dateDisplay).toHaveText(todayText ?? '')
   })
 
   test('DuePanel content updates after navigating to a different day', async ({ page }) => {
@@ -318,7 +318,7 @@ test.describe('Date navigation', () => {
     // The count may differ from today's count (yesterday has BLOCK_OVERDUE_1)
     // We just verify the panel refreshed and is still functional
     const header = duePanel.locator('.due-panel-header')
-    await expect(header).toBeVisible({ timeout: 3000 })
+    await expect(header).toBeVisible()
   })
 })
 
@@ -337,7 +337,7 @@ test.describe('View mode interactions', () => {
 
     // Weekly view renders 7 day sections (Mon-Sun)
     const sections = page.locator('section[aria-label^="Journal for"]')
-    await expect(sections.first()).toBeVisible({ timeout: 3000 })
+    await expect(sections.first()).toBeVisible()
     const count = await sections.count()
     expect(count).toBe(7)
 
@@ -354,7 +354,7 @@ test.describe('View mode interactions', () => {
 
     // Monthly view renders 28-31 day sections
     const sections = page.locator('section[aria-label^="Journal for"]')
-    await expect(sections.first()).toBeVisible({ timeout: 3000 })
+    await expect(sections.first()).toBeVisible()
     const count = await sections.count()
     expect(count).toBeGreaterThanOrEqual(28)
     expect(count).toBeLessThanOrEqual(31)
@@ -365,16 +365,16 @@ test.describe('View mode interactions', () => {
     await page.getByRole('tab', { name: 'Agenda view' }).click()
 
     // Verify the agenda view container is visible
-    await expect(page.locator('.agenda-view')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.agenda-view')).toBeVisible()
 
     // Verify the filter builder is present
-    await expect(page.locator('.agenda-filter-builder')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.agenda-filter-builder')).toBeVisible()
 
     // Verify the "Add filter" button is available
     await expect(page.getByRole('button', { name: 'Add filter' })).toBeVisible()
 
     // Verify sort/group toolbar is present
-    await expect(page.locator('.agenda-sort-group-controls')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.agenda-sort-group-controls')).toBeVisible()
 
     // Verify Group by and Sort by controls are visible
     await expect(page.getByRole('button', { name: 'Group by' })).toBeVisible()
@@ -384,7 +384,7 @@ test.describe('View mode interactions', () => {
   test('agenda view date navigation is hidden', async ({ page }) => {
     // Switch to agenda view
     await page.getByRole('tab', { name: 'Agenda view' }).click()
-    await expect(page.locator('.agenda-view')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.agenda-view')).toBeVisible()
 
     // In agenda mode, the prev/next day buttons should not be visible
     await expect(page.getByRole('button', { name: 'Previous day' })).not.toBeVisible()
@@ -398,14 +398,14 @@ test.describe('View mode interactions', () => {
   test('switching back to daily from agenda restores date navigation', async ({ page }) => {
     // Go to agenda
     await page.getByRole('tab', { name: 'Agenda view' }).click()
-    await expect(page.locator('.agenda-view')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.agenda-view')).toBeVisible()
 
     // Switch back to daily
     await page.getByRole('tab', { name: 'Daily view' }).click()
 
     // Date navigation should be restored
-    await expect(page.getByRole('button', { name: 'Previous day' })).toBeVisible({ timeout: 3000 })
-    await expect(page.getByRole('button', { name: 'Next day' })).toBeVisible({ timeout: 3000 })
+    await expect(page.getByRole('button', { name: 'Previous day' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Next day' })).toBeVisible()
 
     // DuePanel should reappear with today's items
     const duePanel = page.locator('.due-panel')
@@ -415,47 +415,45 @@ test.describe('View mode interactions', () => {
   test('agenda view group by control changes grouping', async ({ page }) => {
     // Switch to agenda view
     await page.getByRole('tab', { name: 'Agenda view' }).click()
-    await expect(page.locator('.agenda-view')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.agenda-view')).toBeVisible()
 
     // Click "Group by" to open the popover
     await page.getByRole('button', { name: 'Group by' }).click()
 
     // Verify group options are visible
     const groupList = page.locator('ul[aria-label="Group by"]')
-    await expect(groupList).toBeVisible({ timeout: 3000 })
+    await expect(groupList).toBeVisible()
 
     // Select "Priority" grouping
     await groupList.getByText('Priority').click()
 
     // The popover should close and the Group by button text should update
-    await expect(groupList).not.toBeVisible({ timeout: 3000 })
+    await expect(groupList).not.toBeVisible()
   })
 
   test('agenda view sort by control changes sorting', async ({ page }) => {
     // Switch to agenda view
     await page.getByRole('tab', { name: 'Agenda view' }).click()
-    await expect(page.locator('.agenda-view')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.agenda-view')).toBeVisible()
 
     // Click "Sort by" to open the popover
     await page.getByRole('button', { name: 'Sort by' }).click()
 
     // Verify sort options are visible
     const sortList = page.locator('ul[aria-label="Sort by"]')
-    await expect(sortList).toBeVisible({ timeout: 3000 })
+    await expect(sortList).toBeVisible()
 
     // Select "Priority" sorting
     await sortList.getByText('Priority').click()
 
     // The popover should close
-    await expect(sortList).not.toBeVisible({ timeout: 3000 })
+    await expect(sortList).not.toBeVisible()
   })
 
   test('weekly view previous/next week navigation works', async ({ page }) => {
     // Switch to weekly view
     await page.getByRole('tab', { name: 'Weekly view' }).click()
-    await expect(page.locator('section[aria-label^="Journal for"]').first()).toBeVisible({
-      timeout: 3000,
-    })
+    await expect(page.locator('section[aria-label^="Journal for"]').first()).toBeVisible()
 
     // Capture the week range text
     const dateDisplay = page.locator('[data-testid="date-display"]')
@@ -465,6 +463,6 @@ test.describe('View mode interactions', () => {
     await page.getByRole('button', { name: 'Previous week' }).click()
 
     // Verify the week range changed
-    await expect(dateDisplay).not.toHaveText(initialWeek ?? '', { timeout: 3000 })
+    await expect(dateDisplay).not.toHaveText(initialWeek ?? '')
   })
 })

@@ -38,16 +38,16 @@ test.describe('Tags view — seed tags', () => {
     await navigateToTags(page)
 
     // All three seed tags should be visible as Badge text
-    await expect(page.getByText('work', { exact: true })).toBeVisible({ timeout: 3000 })
-    await expect(page.getByText('personal', { exact: true })).toBeVisible({ timeout: 3000 })
-    await expect(page.getByText('idea', { exact: true })).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('work', { exact: true })).toBeVisible()
+    await expect(page.getByText('personal', { exact: true })).toBeVisible()
+    await expect(page.getByText('idea', { exact: true })).toBeVisible()
   })
 
   test('Tags view shows the create-tag form', async ({ page }) => {
     await navigateToTags(page)
 
     // The "New tag name..." input and "Add Tag" button should be visible
-    await expect(page.getByPlaceholder('New tag name...')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByPlaceholder('New tag name...')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Add Tag' })).toBeVisible()
   })
 })
@@ -68,7 +68,7 @@ test.describe('Tag creation', () => {
     await page.getByRole('button', { name: 'Add Tag' }).click()
 
     // The new tag should appear in the list
-    await expect(page.getByText('urgent', { exact: true })).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('urgent', { exact: true })).toBeVisible()
   })
 })
 
@@ -88,15 +88,15 @@ test.describe('Tag deletion', () => {
       .locator('div.rounded-lg')
       .filter({ has: page.getByRole('button', { name: 'Delete tag' }) })
       .filter({ hasText: 'idea' })
-    await expect(tagRow).toBeVisible({ timeout: 3000 })
+    await expect(tagRow).toBeVisible()
     await tagRow.hover()
 
     const deleteBtn = tagRow.getByRole('button', { name: 'Delete tag' })
-    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
     // Confirmation dialog should appear
-    await expect(page.getByText('Delete tag?')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Delete tag?')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Delete' })).toBeVisible()
   })
@@ -106,7 +106,7 @@ test.describe('Tag deletion', () => {
       .locator('div.rounded-lg')
       .filter({ has: page.getByRole('button', { name: 'Delete tag' }) })
       .filter({ hasText: 'idea' })
-    await expect(tagRow).toBeVisible({ timeout: 3000 })
+    await expect(tagRow).toBeVisible()
     await tagRow.hover()
     await tagRow.getByRole('button', { name: 'Delete tag' }).click()
 
@@ -114,7 +114,7 @@ test.describe('Tag deletion', () => {
     await page.getByRole('button', { name: 'Cancel' }).click()
 
     // Tag should still be visible
-    await expect(page.getByText('idea', { exact: true })).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('idea', { exact: true })).toBeVisible()
   })
 
   test('confirming deletion removes the tag from the list', async ({ page }) => {
@@ -122,7 +122,7 @@ test.describe('Tag deletion', () => {
       .locator('div.rounded-lg')
       .filter({ has: page.getByRole('button', { name: 'Delete tag' }) })
       .filter({ hasText: 'idea' })
-    await expect(tagRow).toBeVisible({ timeout: 3000 })
+    await expect(tagRow).toBeVisible()
     await tagRow.hover()
     await tagRow.getByRole('button', { name: 'Delete tag' }).click()
 
@@ -130,7 +130,7 @@ test.describe('Tag deletion', () => {
     await page.getByRole('button', { name: 'Delete' }).click()
 
     // "idea" tag should no longer be visible
-    await expect(page.getByText('idea', { exact: true })).not.toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('idea', { exact: true })).not.toBeVisible()
 
     // Other tags should still be present
     await expect(page.getByText('work', { exact: true })).toBeVisible()
@@ -153,11 +153,11 @@ test.describe('Tag filter panel', () => {
     await searchInput.fill('wor')
 
     // Wait for debounce (300ms) + rendering
-    await expect(page.getByText('Matching tags')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Matching tags')).toBeVisible()
 
     // "work" tag should appear in the matching section with an "Add" button
     const matchingSection = page.locator('section', { hasText: 'Matching tags' })
-    await expect(matchingSection.getByText('work')).toBeVisible({ timeout: 3000 })
+    await expect(matchingSection.getByText('work')).toBeVisible()
     await expect(matchingSection.getByRole('button', { name: 'Add' })).toBeVisible()
   })
 
@@ -165,14 +165,14 @@ test.describe('Tag filter panel', () => {
     const searchInput = page.getByLabel('Search tags by prefix')
     await searchInput.fill('per')
 
-    await expect(page.getByText('Matching tags')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Matching tags')).toBeVisible()
 
     // Click "Add" next to "personal"
     const matchingSection = page.locator('section', { hasText: 'Matching tags' })
     await matchingSection.getByRole('button', { name: 'Add' }).click()
 
     // "personal" should now appear in the "Selected:" area
-    await expect(page.getByText('Selected:')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Selected:')).toBeVisible()
     await expect(
       page.locator('.flex-wrap', { hasText: 'Selected:' }).getByText('personal'),
     ).toBeVisible()
@@ -235,7 +235,7 @@ test.describe('Tag insertion via @ picker', () => {
     await suggestionList.locator('.suggestion-item').first().click()
 
     // Verify tag-ref chip appears in the editor
-    await expect(editor.locator('.tag-ref-chip')).toBeVisible({ timeout: 3000 })
+    await expect(editor.locator('.tag-ref-chip')).toBeVisible()
   })
 
   test('tag chip persists after saving the block', async ({ page }) => {
@@ -250,18 +250,16 @@ test.describe('Tag insertion via @ picker', () => {
     const suggestionList = page.locator('.suggestion-list')
     await expect(suggestionList).toBeVisible({ timeout: 5000 })
     await suggestionList.locator('.suggestion-item').first().click()
-    await expect(editor.locator('.tag-ref-chip')).toBeVisible({ timeout: 3000 })
+    await expect(editor.locator('.tag-ref-chip')).toBeVisible()
 
     // Re-focus the editor so keyboard events reach TipTap, then save via Enter
     await editor.click()
     await page.keyboard.press('Enter')
-    await expect(page.locator('.block-editor [contenteditable="true"]')).not.toBeVisible({
-      timeout: 3000,
-    })
+    await expect(page.locator('.block-editor [contenteditable="true"]')).not.toBeVisible()
 
     // Verify tag chip appears in the static render
     const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
-    await expect(staticBlock.locator('.tag-ref-chip')).toBeVisible({ timeout: 3000 })
+    await expect(staticBlock.locator('.tag-ref-chip')).toBeVisible()
   })
 
   test('seed block GS_4 renders existing tag-ref chips', async ({ page }) => {

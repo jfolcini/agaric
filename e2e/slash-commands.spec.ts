@@ -33,7 +33,7 @@ async function typeSlashCommand(page: import('@playwright/test').Page, command: 
   await page.keyboard.press('End')
   await page.keyboard.type(` /${command}`, { delay: 30 })
   const list = page.locator('.suggestion-list')
-  await expect(list).toBeVisible({ timeout: 3000 })
+  await expect(list).toBeVisible()
   return list
 }
 
@@ -70,7 +70,7 @@ test.describe('Slash menu basics', () => {
 
     await page.keyboard.press('Escape')
 
-    await expect(list).not.toBeVisible({ timeout: 3000 })
+    await expect(list).not.toBeVisible()
   })
 })
 
@@ -90,18 +90,16 @@ test.describe('Task commands', () => {
     await page.keyboard.press('Enter')
 
     const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible()
 
     // Save the block and verify TODO persists in static view
     await saveBlock(page)
-    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible()
 
     // Re-open the block and verify TODO is still there
     await firstBlock.locator('.block-static').click()
-    await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible({
-      timeout: 3000,
-    })
-    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible()
+    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible()
   })
 
   test('/doing sets block as DOING and persists after save', async ({ page }) => {
@@ -110,10 +108,10 @@ test.describe('Task commands', () => {
     await page.keyboard.press('Enter')
 
     const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('.task-checkbox-doing')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-doing')).toBeVisible()
 
     await saveBlock(page)
-    await expect(firstBlock.locator('.task-checkbox-doing')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-doing')).toBeVisible()
   })
 
   test('/done sets block as DONE and persists after save', async ({ page }) => {
@@ -122,10 +120,10 @@ test.describe('Task commands', () => {
     await page.keyboard.press('Enter')
 
     const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('.task-checkbox-done')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-done')).toBeVisible()
 
     await saveBlock(page)
-    await expect(firstBlock.locator('.task-checkbox-done')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.task-checkbox-done')).toBeVisible()
   })
 })
 
@@ -157,12 +155,12 @@ test.describe('Priority commands', () => {
 
     const firstBlock = page.locator('.sortable-block').first()
     const badge = firstBlock.locator('.priority-badge')
-    await expect(badge).toBeVisible({ timeout: 3000 })
+    await expect(badge).toBeVisible()
     await expect(badge).toContainText('1')
 
     // Save and verify persists
     await saveBlock(page)
-    await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.priority-badge')).toBeVisible()
     await expect(firstBlock.locator('.priority-badge')).toContainText('1')
   })
 
@@ -175,11 +173,11 @@ test.describe('Priority commands', () => {
 
     const firstBlock = page.locator('.sortable-block').first()
     const badge = firstBlock.locator('.priority-badge')
-    await expect(badge).toBeVisible({ timeout: 3000 })
+    await expect(badge).toBeVisible()
     await expect(badge).toContainText('2')
 
     await saveBlock(page)
-    await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.priority-badge')).toBeVisible()
     await expect(firstBlock.locator('.priority-badge')).toContainText('2')
   })
 
@@ -192,11 +190,11 @@ test.describe('Priority commands', () => {
 
     const firstBlock = page.locator('.sortable-block').first()
     const badge = firstBlock.locator('.priority-badge')
-    await expect(badge).toBeVisible({ timeout: 3000 })
+    await expect(badge).toBeVisible()
     await expect(badge).toContainText('3')
 
     await saveBlock(page)
-    await expect(firstBlock.locator('.priority-badge')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('.priority-badge')).toBeVisible()
     await expect(firstBlock.locator('.priority-badge')).toContainText('3')
   })
 })
@@ -220,16 +218,14 @@ test.describe('Heading commands', () => {
     await page.keyboard.press('Enter')
 
     // Editor re-mounts with # prefix -- wait for it to settle
-    await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible({
-      timeout: 3000,
-    })
+    await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible()
 
     // Save the block (Enter) instead of Escape (which cancels)
     await saveBlock(page)
 
     // The first block should render an <h1> heading in static view
     const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('h1')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('h1')).toBeVisible()
   })
 
   test('/h2 sets heading level 2 and persists after save', async ({ page }) => {
@@ -242,16 +238,14 @@ test.describe('Heading commands', () => {
     await h2Item.click()
 
     // Editor re-mounts with ## prefix
-    await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible({
-      timeout: 3000,
-    })
+    await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible()
 
     // Save the block (Enter) instead of Escape (which cancels)
     await saveBlock(page)
 
     // The first block should render an <h2> heading in static view
     const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('h2')).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock.locator('h2')).toBeVisible()
   })
 })
 
@@ -270,6 +264,6 @@ test.describe('Date command', () => {
     await typeSlashCommand(page, 'date')
     await page.keyboard.press('Enter')
 
-    await expect(page.locator('.date-picker-popup')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('.date-picker-popup')).toBeVisible()
   })
 })

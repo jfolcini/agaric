@@ -37,9 +37,9 @@ test.describe('Property chips on blocks', () => {
 
     // First block (Weekly standup notes) should have property chips
     const firstBlock = blocks.first()
-    await expect(firstBlock).toContainText('Weekly standup notes', { timeout: 3000 })
+    await expect(firstBlock).toContainText('Weekly standup notes')
     const firstChips = firstBlock.locator('.property-chip')
-    await expect(firstChips.first()).toBeVisible({ timeout: 3000 })
+    await expect(firstChips.first()).toBeVisible()
 
     // Verify context and project property chips are shown
     // PropertyChip renders "key:" label + value span
@@ -53,15 +53,11 @@ test.describe('Property chips on blocks', () => {
     await openPage(page, 'Meetings')
 
     const secondBlock = page.locator('.sortable-block').nth(1)
-    await expect(secondBlock).toContainText('Design review feedback', { timeout: 3000 })
+    await expect(secondBlock).toContainText('Design review feedback')
 
     // Should show context: @remote and project: beta
-    await expect(secondBlock.locator('.property-chip', { hasText: '@remote' })).toBeVisible({
-      timeout: 3000,
-    })
-    await expect(secondBlock.locator('.property-chip', { hasText: 'beta' })).toBeVisible({
-      timeout: 3000,
-    })
+    await expect(secondBlock.locator('.property-chip', { hasText: '@remote' })).toBeVisible()
+    await expect(secondBlock.locator('.property-chip', { hasText: 'beta' })).toBeVisible()
   })
 })
 
@@ -79,20 +75,20 @@ test.describe('Property drawer', () => {
 
     // Right-click the first block to open context menu
     const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock).toBeVisible({ timeout: 3000 })
+    await expect(firstBlock).toBeVisible()
     await firstBlock.click({ button: 'right' })
 
     // Click "Properties..." in the context menu
     const menu = page.locator('[role="menu"]')
-    await expect(menu).toBeVisible({ timeout: 3000 })
+    await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Properties' }).click()
 
     // The property drawer (Sheet) should open with title "Block Properties"
-    await expect(page.getByText('Block Properties')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Block Properties')).toBeVisible()
 
     // Verify both properties are listed: context and project
-    await expect(page.getByText('context', { exact: true })).toBeVisible({ timeout: 3000 })
-    await expect(page.getByText('project', { exact: true })).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('context', { exact: true })).toBeVisible()
+    await expect(page.getByText('project', { exact: true })).toBeVisible()
   })
 
   test('property drawer shows editable input with current values', async ({ page }) => {
@@ -102,15 +98,15 @@ test.describe('Property drawer', () => {
     const firstBlock = page.locator('.sortable-block').first()
     await firstBlock.click({ button: 'right' })
     const menu = page.locator('[role="menu"]')
-    await expect(menu).toBeVisible({ timeout: 3000 })
+    await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Properties' }).click()
 
-    await expect(page.getByText('Block Properties')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Block Properties')).toBeVisible()
 
     // The drawer shows Input elements with defaultValues from properties
     // context = "@office", project = "alpha"
     const inputs = page.locator('[role="dialog"] input.flex-1')
-    await expect(inputs.first()).toBeVisible({ timeout: 3000 })
+    await expect(inputs.first()).toBeVisible()
 
     // Verify input values match seed data
     await expect(inputs.first()).toHaveValue('@office')
@@ -134,37 +130,37 @@ test.describe('Set property via drawer', () => {
     const firstBlock = page.locator('.sortable-block').first()
     await firstBlock.click({ button: 'right' })
     const menu = page.locator('[role="menu"]')
-    await expect(menu).toBeVisible({ timeout: 3000 })
+    await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Properties' }).click()
 
-    await expect(page.getByText('Block Properties')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Block Properties')).toBeVisible()
 
     // Should show "No properties set" initially for GS_1
-    await expect(page.getByText('No properties set')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('No properties set')).toBeVisible()
 
     // Click the "Add property" button to open the popover
     await page.getByRole('button', { name: 'Add property' }).click()
 
     // Available property definitions should appear (context and project)
-    await expect(page.getByText('context')).toBeVisible({ timeout: 3000 })
-    await expect(page.getByText('project')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('context')).toBeVisible()
+    await expect(page.getByText('project')).toBeVisible()
 
     // Select "context" definition
     await page.getByText('context').click()
 
     // An input field should appear for the value
     const valueInput = page.locator('[role="dialog"] input[placeholder="context"]')
-    await expect(valueInput).toBeVisible({ timeout: 3000 })
+    await expect(valueInput).toBeVisible()
     await valueInput.fill('@home')
 
     // Click Save to apply
     await page.getByRole('button', { name: 'Save' }).click()
 
     // The "No properties set" message should disappear
-    await expect(page.getByText('No properties set')).not.toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('No properties set')).not.toBeVisible()
 
     // The new property should now appear in the drawer
-    await expect(page.getByText('context', { exact: true })).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('context', { exact: true })).toBeVisible()
   })
 })
 
@@ -184,27 +180,27 @@ test.describe('Delete property via drawer', () => {
     const firstBlock = page.locator('.sortable-block').first()
     await firstBlock.click({ button: 'right' })
     const menu = page.locator('[role="menu"]')
-    await expect(menu).toBeVisible({ timeout: 3000 })
+    await expect(menu).toBeVisible()
     await menu.locator('[role="menuitem"]', { hasText: 'Properties' }).click()
-    await expect(page.getByText('Block Properties')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Block Properties')).toBeVisible()
 
     // Both properties should be visible
-    await expect(page.getByText('context', { exact: true })).toBeVisible({ timeout: 3000 })
-    await expect(page.getByText('project', { exact: true })).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('context', { exact: true })).toBeVisible()
+    await expect(page.getByText('project', { exact: true })).toBeVisible()
 
     // Click the delete (X) button for the first property
     const deleteButtons = page.locator('[role="dialog"] button[aria-label="Delete property"]')
-    await expect(deleteButtons.first()).toBeVisible({ timeout: 3000 })
+    await expect(deleteButtons.first()).toBeVisible()
     await deleteButtons.first().click()
 
     // The "context" property should disappear from the drawer
     // (project should remain)
     await expect(
       page.locator('[role="dialog"]').getByText('context', { exact: true }),
-    ).not.toBeVisible({ timeout: 3000 })
+    ).not.toBeVisible()
     await expect(
       page.locator('[role="dialog"]').getByText('project', { exact: true }),
-    ).toBeVisible({ timeout: 3000 })
+    ).toBeVisible()
   })
 })
 
@@ -225,15 +221,15 @@ test.describe('Property definitions view', () => {
       .click()
 
     // Should show the "Property Definitions" heading
-    await expect(page.getByText('Property Definitions')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // Seed definitions: context (text) and project (select)
-    await expect(page.getByText('context')).toBeVisible({ timeout: 3000 })
-    await expect(page.getByText('project')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('context')).toBeVisible()
+    await expect(page.getByText('project')).toBeVisible()
 
     // Type badges should be visible
-    await expect(page.getByText('text')).toBeVisible({ timeout: 3000 })
-    await expect(page.getByText('select')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('text')).toBeVisible()
+    await expect(page.getByText('select')).toBeVisible()
   })
 
   test('search filters property definitions by key', async ({ page }) => {
@@ -241,18 +237,18 @@ test.describe('Property definitions view', () => {
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Properties' })
       .click()
-    await expect(page.getByText('Property Definitions')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // Type into the search input
     const searchInput = page.getByLabel('Search properties...')
     await searchInput.fill('proj')
 
     // Only "project" should remain visible, "context" should be filtered out
-    await expect(page.getByText('project')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('project')).toBeVisible()
 
     // The definitions list should only contain the project definition
     const defItems = page.locator('ul > li')
-    await expect(defItems).toHaveCount(1, { timeout: 3000 })
+    await expect(defItems).toHaveCount(1)
   })
 
   test('creating a new property definition adds it to the list', async ({ page }) => {
@@ -260,7 +256,7 @@ test.describe('Property definitions view', () => {
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Properties' })
       .click()
-    await expect(page.getByText('Property Definitions')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // Fill in the create form
     const keyInput = page.getByLabel('Property key')
@@ -270,7 +266,7 @@ test.describe('Property definitions view', () => {
     await page.getByRole('button', { name: 'Create' }).click()
 
     // New definition should appear in the list
-    await expect(page.getByText('status')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('status')).toBeVisible()
   })
 
   test('deleting a property definition with confirmation removes it', async ({ page }) => {
@@ -278,27 +274,25 @@ test.describe('Property definitions view', () => {
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Properties' })
       .click()
-    await expect(page.getByText('Property Definitions')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // Hover over the "context" row and click the delete button
     const contextRow = page.locator('ul > li', { hasText: 'context' })
-    await expect(contextRow).toBeVisible({ timeout: 3000 })
+    await expect(contextRow).toBeVisible()
     await contextRow.hover()
 
     const deleteBtn = contextRow.getByRole('button', { name: 'Delete property context' })
-    await expect(deleteBtn).toBeVisible({ timeout: 3000 })
+    await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
     // Confirmation dialog should appear
-    await expect(page.getByText('Delete this property definition?')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Delete this property definition?')).toBeVisible()
 
     // Confirm deletion
     await page.getByRole('button', { name: 'Delete' }).click()
 
     // "context" should no longer be in the list
-    await expect(page.locator('ul > li', { hasText: 'context' })).not.toBeVisible({
-      timeout: 3000,
-    })
+    await expect(page.locator('ul > li', { hasText: 'context' })).not.toBeVisible()
 
     // "project" should still be there
     await expect(page.locator('ul > li', { hasText: 'project' })).toBeVisible()
@@ -309,13 +303,11 @@ test.describe('Property definitions view', () => {
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Properties' })
       .click()
-    await expect(page.getByText('Property Definitions')).toBeVisible({ timeout: 3000 })
+    await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // The "project" definition (type: select) should have an "Edit options" button
     const projectRow = page.locator('ul > li', { hasText: 'project' })
-    await expect(projectRow).toBeVisible({ timeout: 3000 })
-    await expect(projectRow.getByRole('button', { name: 'Edit options' })).toBeVisible({
-      timeout: 3000,
-    })
+    await expect(projectRow).toBeVisible()
+    await expect(projectRow.getByRole('button', { name: 'Edit options' })).toBeVisible()
   })
 })
