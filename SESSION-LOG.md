@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 144 — 2026-04-03 — Table support in editor (#654)
+
+### Build: types + serializer + TipTap extensions + slash command
+
+1 build subagent. Installed @tiptap/extension-table + row/header/cell. Added table types (TableNode, TableRowNode, TableHeaderNode, TableCellNode). Serializer renders pipe-delimited Markdown with separator row. Parser detects |-prefixed lines. /table slash command inserts 3x3 with header.
+
+| File | Change |
+|------|--------|
+| `types.ts` | 4 new interfaces + helpers. BlockLevelNode extended. |
+| `markdown-serializer.ts` | serializeTable + table parsing in parse(). |
+| `use-roving-editor.ts` | Registered Table + TableRow + TableHeader + TableCell extensions. |
+| `BlockTree.tsx` | /table slash command. |
+| `markdown-serializer.test.ts` | 8 new tests (serialize, parse, round-trip). 240/240 pass. |
+| `BlockTree.test.tsx` | Updated command count to 17. 169/169 pass. |
+| `REVIEW-LATER.md` | Removed #654. 5 → 4 open items. |
+
+### Stats
+- Frontend: 8 new tests
+- Commit: `267883c`
+- REVIEW-LATER: #654 fully resolved. 4 open items.
+
 ## Session 143 — 2026-04-03 — Device info in ConflictList (#651 C-3 completion)
 
 ### Build: device name lookup via getBlockHistory + listPeerRefs

@@ -689,7 +689,6 @@ trailing-whitespace, end-of-file-fixer, check-yaml/toml/json, check-merge-confli
 | 642 | Agenda filter by creation/completion dates, custom properties | Tasks |
 | 644 | Repeating tasks (modes, end conditions, agenda projection) | Tasks |
 | 651 | Conflicts view — metadata, resolution, rendering gaps | Sync |
-| 654 | Editor block types (tables) | Editor |
 | 660 | Logseq/Markdown import | Import |
 
 ---
