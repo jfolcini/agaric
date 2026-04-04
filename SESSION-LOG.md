@@ -1,5 +1,31 @@
 # Session Log
 
+## Session 177 — 2026-04-04 — Phase 1 batch 30: PDF viewer + JournalPage split (F-15, F-23)
+
+### Phase 1 (batch 30): PDF viewer dialog + JournalPage component split (F-15, F-23)
+
+2 parallel subagents (independent files).
+
+| File | Change |
+|------|--------|
+| `PdfViewerDialog.tsx` | F-15: New pdf.js viewer dialog — canvas-based page rendering, prev/next navigation, page count indicator, loading/error states, cleanup on close. |
+| `ui/dialog.tsx` | F-15: New shadcn/ui Dialog component (Radix-based). |
+| `StaticBlock.tsx` | F-15: PDF attachment chips open PdfViewerDialog instead of external handler. |
+| `PdfViewerDialog.test.tsx` | F-15: 11 new tests + axe a11y audit. |
+| `journal/DailyView.tsx` | F-23: Single day rendering (32 lines). |
+| `journal/WeeklyView.tsx` | F-23: 7-day grid (83 lines). |
+| `journal/MonthlyView.tsx` | F-23: Month calendar grid (85 lines). |
+| `journal/AgendaView.tsx` | F-23: Self-contained agenda with filters/sort/group (552 lines). |
+| `journal/DaySection.tsx` | F-23: Shared day section renderer (205 lines). |
+| `lib/date-utils.ts` | F-23: Shared date helpers (57 lines). |
+| `JournalPage.tsx` | F-23: Reduced from 1410 to 559 lines (thin mode-switch). |
+
+### Stats
+- Frontend: 11 new tests (PdfViewerDialog), 75 existing JournalPage tests unchanged
+- New dependency: pdfjs-dist (+~400KB worker bundle)
+- Commits: `d3e2c35` (F-15), `8d08fdf` (F-23)
+- REVIEW-LATER: F-15, F-23 resolved. 14 -> **12 open items**.
+
 ## Session 176 — 2026-04-04 — Phase 1 batch 29: sync serialization tests + agenda E2E (TL-4, TL-8)
 
 ### Phase 1 (batch 29): Sync message tests + agenda advanced E2E (TL-4, TL-8)
