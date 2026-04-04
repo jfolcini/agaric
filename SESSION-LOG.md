@@ -156,6 +156,26 @@
 - Commit: `cb183dc`
 - REVIEW-LATER: UX-H4, UX-H7, UX-H8, UX-H9, UX-H10, UX-H12, UX-M6 resolved. 77 → **70 open items**.
 
+### Phase 1 (batch 10): UX cleanup (UX-H11, UX-H14, UX-M1-M5, UX-M7)
+
+3 build subagents (announce, AlertDialog, empty states) + 5 orchestrator direct (colors, shortcuts docs, focus-visible, focus trap, input width).
+
+| File | Change |
+|------|--------|
+| 4 files | UX-H11: Added 7 `announce()` calls for priority/date/filter/property changes. |
+| `PageHeader.tsx` + `i18n.ts` | UX-H14: Replaced `window.confirm()` with Radix AlertDialog. 3 new i18n keys. |
+| 2 files | UX-M1: Replaced `bg-slate-400`/`bg-gray-400` with `bg-muted-foreground`. |
+| `DuePanel.tsx` + test | UX-M2: Added empty state message. PageBrowser already had one. 1 new i18n key. |
+| `KeyboardShortcuts.tsx` + test | UX-M3: Added Shift+Enter, Ctrl+B. Improved Escape description. Updated test assertions. |
+| `SuggestionList.tsx` | UX-M4: Added `focus-visible:outline-2 focus-visible:outline-ring`. |
+| `BlockTree.tsx` | UX-M5: Expanded focus trap selector to include `a[href], select, textarea`. |
+| `PageHeader.tsx` | UX-M7: Added `[@media(pointer:coarse)]:w-full` to alias input. |
+
+### Stats
+- Frontend: All tests pass (2778 total after KeyboardShortcuts fix)
+- Commit: `c5fe3f2`
+- REVIEW-LATER: 8 items resolved. 70 → **62 open items**. UX-MED tier fully cleared.
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system
