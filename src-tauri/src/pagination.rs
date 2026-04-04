@@ -2740,3 +2740,59 @@ mod tests {
         );
     }
 }
+
+// ===========================================================================
+// Property-based tests (proptest)
+// ===========================================================================
+
+#[cfg(test)]
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Strategy for arbitrary Cursor values.
+    fn arb_cursor() -> impl Strategy<Value = Cursor> {
+        (
+            "[a-zA-Z0-9_-]{1,40}",           // id
+            proptest::option::of(0i64..=i64::MAX), // position
+            proptest::option::of("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\+00:00"), // deleted_at
+            proptest::option::of(1i64..100000),    // seq
+            proptest::option::of(-100.0f64..0.0),  // rank (FTS ranks are negative)
+        )
+            .prop_map(|(id, position, deleted_at, seq, rank)| Cursor {
+                id,
+                position,
+                deleted_at,
+                seq,
+                rank,
+            })
+    }
+
+    proptest! {
+        /// Cursor encode/decode is a perfect round-trip for any valid cursor.
+        #[test]
+        fn cursor_encode_decode_roundtrip(cursor in arb_cursor()) {
+            let encoded = cursor.encode().expect("encode must succeed");
+            let decoded = Cursor::decode(&encoded).expect("decode must succeed");
+            prop_assert_eq!(&cursor.id, &decoded.id);
+            prop_assert_eq!(cursor.position, decoded.position);
+            prop_assert_eq!(&cursor.deleted_at, &decoded.deleted_at);
+            prop_assert_eq!(cursor.seq, decoded.seq);
+            // Compare rank with tolerance for floating-point
+            match (cursor.rank, decoded.rank) {
+                (Some(a), Some(b)) => prop_assert!((a - b).abs() < 1e-9,
+                    "rank mismatch: {} vs {}", a, b),
+                (None, None) => {}
+                _ => prop_assert!(false, "rank Some/None mismatch"),
+            }
+        }
+
+        /// Encoding is deterministic: the same cursor always produces the same string.
+        #[test]
+        fn cursor_encode_deterministic(cursor in arb_cursor()) {
+            let enc1 = cursor.encode().unwrap();
+            let enc2 = cursor.encode().unwrap();
+            prop_assert_eq!(&enc1, &enc2, "encoding must be deterministic");
+        }
+    }
+}

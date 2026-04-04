@@ -383,172 +383,213 @@ pub async fn merge_diverged_blocks(
     }
 
     // ── 2. set_property conflicts (LWW) ──────────────────────────────────
-    let prop_rows = sqlx::query(
-        "SELECT json_extract(payload, '$.block_id') as block_id, \
-                json_extract(payload, '$.key') as prop_key \
-         FROM op_log \
-         WHERE device_id IN (?, ?) AND op_type = 'set_property' \
-         GROUP BY json_extract(payload, '$.block_id'), json_extract(payload, '$.key') \
-         HAVING COUNT(DISTINCT device_id) > 1",
+    // Batch query: find all conflicting (block_id, key) pairs AND fetch the
+    // latest op per device per pair in a single pass using ROW_NUMBER().
+    // This replaces the former N+1 pattern (1 query to find pairs + 2
+    // queries per pair).
+    let prop_op_rows = sqlx::query(
+        "WITH conflict_keys AS ( \
+             SELECT json_extract(payload, '$.block_id') as block_id, \
+                    json_extract(payload, '$.key') as prop_key \
+             FROM op_log \
+             WHERE device_id IN (?, ?) AND op_type = 'set_property' \
+             GROUP BY json_extract(payload, '$.block_id'), \
+                      json_extract(payload, '$.key') \
+             HAVING COUNT(DISTINCT device_id) > 1 \
+         ), \
+         ranked AS ( \
+             SELECT o.device_id, o.seq, o.parent_seqs, o.hash, o.op_type, \
+                    o.payload, o.created_at, \
+                    json_extract(o.payload, '$.block_id') as block_id, \
+                    json_extract(o.payload, '$.key') as prop_key, \
+                    ROW_NUMBER() OVER ( \
+                        PARTITION BY o.device_id, \
+                            json_extract(o.payload, '$.block_id'), \
+                            json_extract(o.payload, '$.key') \
+                        ORDER BY o.seq DESC \
+                    ) as rn \
+             FROM op_log o \
+             INNER JOIN conflict_keys ck \
+               ON json_extract(o.payload, '$.block_id') = ck.block_id \
+              AND json_extract(o.payload, '$.key') = ck.prop_key \
+             WHERE o.device_id IN (?, ?) AND o.op_type = 'set_property' \
+         ) \
+         SELECT device_id, seq, parent_seqs, hash, op_type, payload, \
+                created_at, block_id, prop_key \
+         FROM ranked WHERE rn = 1 \
+         ORDER BY block_id, prop_key, device_id",
     )
+    .bind(device_id)
+    .bind(remote_device_id)
     .bind(device_id)
     .bind(remote_device_id)
     .fetch_all(pool)
     .await?;
 
-    for row in prop_rows {
-        let block_id: String = row.try_get("block_id")?;
-        let prop_key: String = row.try_get("prop_key")?;
-
-        // Fetch latest set_property op from each device for this (block_id, key)
-        let op_a_row = sqlx::query(
-            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
-             FROM op_log \
-             WHERE device_id = ? AND op_type = 'set_property' \
-               AND json_extract(payload, '$.block_id') = ? \
-               AND json_extract(payload, '$.key') = ? \
-             ORDER BY seq DESC LIMIT 1",
-        )
-        .bind(device_id)
-        .bind(&block_id)
-        .bind(&prop_key)
-        .fetch_one(pool)
-        .await?;
-
-        let op_b_row = sqlx::query(
-            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
-             FROM op_log \
-             WHERE device_id = ? AND op_type = 'set_property' \
-               AND json_extract(payload, '$.block_id') = ? \
-               AND json_extract(payload, '$.key') = ? \
-             ORDER BY seq DESC LIMIT 1",
-        )
-        .bind(remote_device_id)
-        .bind(&block_id)
-        .bind(&prop_key)
-        .fetch_one(pool)
-        .await?;
-
-        let op_a = OpRecord {
-            device_id: op_a_row.try_get::<String, _>("device_id")?,
-            seq: op_a_row.try_get::<i64, _>("seq")?,
-            parent_seqs: op_a_row.try_get::<Option<String>, _>("parent_seqs")?,
-            hash: op_a_row.try_get::<String, _>("hash")?,
-            op_type: op_a_row.try_get::<String, _>("op_type")?,
-            payload: op_a_row.try_get::<String, _>("payload")?,
-            created_at: op_a_row.try_get::<String, _>("created_at")?,
-        };
-
-        let op_b = OpRecord {
-            device_id: op_b_row.try_get::<String, _>("device_id")?,
-            seq: op_b_row.try_get::<i64, _>("seq")?,
-            parent_seqs: op_b_row.try_get::<Option<String>, _>("parent_seqs")?,
-            hash: op_b_row.try_get::<String, _>("hash")?,
-            op_type: op_b_row.try_get::<String, _>("op_type")?,
-            payload: op_b_row.try_get::<String, _>("payload")?,
-            created_at: op_b_row.try_get::<String, _>("created_at")?,
-        };
-
-        let resolution = merge::resolve_property_conflict(&op_a, &op_b)?;
-
-        // Idempotent guard: skip if the local device already has the winning
-        // value (e.g. from a previous merge pass).  Without this check we
-        // would append a redundant resolution op on every subsequent sync
-        // because the historical ops still satisfy the HAVING clause.
-        let current_local: crate::op::SetPropertyPayload = serde_json::from_str(&op_a.payload)?;
-        if current_local == resolution.winner_value {
-            continue;
+    // Group batch rows by (block_id, prop_key), then resolve each conflict.
+    {
+        use std::collections::HashMap;
+        let mut groups: HashMap<(String, String), (Option<OpRecord>, Option<OpRecord>)> =
+            HashMap::new();
+        for row in &prop_op_rows {
+            let bid: String = row.try_get("block_id")?;
+            let pk: String = row.try_get("prop_key")?;
+            let dev: String = row.try_get("device_id")?;
+            let op = OpRecord {
+                device_id: dev.clone(),
+                seq: row.try_get::<i64, _>("seq")?,
+                parent_seqs: row.try_get::<Option<String>, _>("parent_seqs")?,
+                hash: row.try_get::<String, _>("hash")?,
+                op_type: row.try_get::<String, _>("op_type")?,
+                payload: row.try_get::<String, _>("payload")?,
+                created_at: row.try_get::<String, _>("created_at")?,
+            };
+            let entry = groups.entry((bid, pk)).or_insert((None, None));
+            if dev == device_id {
+                entry.0 = Some(op);
+            } else {
+                entry.1 = Some(op);
+            }
         }
 
-        // Apply the winner by appending a new set_property op
-        let winning_payload = crate::op::OpPayload::SetProperty(resolution.winner_value);
-        let new_record =
-            op_log::append_local_op_at(pool, device_id, winning_payload, crate::now_rfc3339())
+        for ((_bid, _pk), (op_a_opt, op_b_opt)) in groups {
+            if let (Some(op_a), Some(op_b)) = (op_a_opt, op_b_opt) {
+                let resolution = merge::resolve_property_conflict(&op_a, &op_b)?;
+
+                // Idempotent guard: skip if the local device already has the
+                // winning value (e.g. from a previous merge pass).  Without
+                // this check we would append a redundant resolution op on
+                // every subsequent sync because the historical ops still
+                // satisfy the HAVING clause.
+                let current_local: crate::op::SetPropertyPayload =
+                    serde_json::from_str(&op_a.payload)?;
+                if current_local == resolution.winner_value {
+                    continue;
+                }
+
+                // Apply the winner by appending a new set_property op
+                let winning_payload =
+                    crate::op::OpPayload::SetProperty(resolution.winner_value);
+                let new_record = op_log::append_local_op_at(
+                    pool,
+                    device_id,
+                    winning_payload,
+                    crate::now_rfc3339(),
+                )
                 .await?;
 
-        materializer
-            .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
-            .await?;
-        results.property_lww += 1;
+                materializer
+                    .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
+                    .await?;
+                results.property_lww += 1;
+            }
+        }
     }
 
     // ── 3. move_block conflicts (LWW) ────────────────────────────────────
-    let move_rows = sqlx::query(
-        "SELECT json_extract(payload, '$.block_id') as block_id \
-         FROM op_log \
-         WHERE device_id IN (?, ?) AND op_type = 'move_block' \
-         GROUP BY json_extract(payload, '$.block_id') \
-         HAVING COUNT(DISTINCT device_id) > 1",
+    // Batch query: find all conflicting block_ids AND fetch the latest
+    // move_block op per device per block in a single pass using
+    // ROW_NUMBER().  Replaces the former N+1 pattern.
+    let move_op_rows = sqlx::query(
+        "WITH conflict_blocks AS ( \
+             SELECT json_extract(payload, '$.block_id') as block_id \
+             FROM op_log \
+             WHERE device_id IN (?, ?) AND op_type = 'move_block' \
+             GROUP BY json_extract(payload, '$.block_id') \
+             HAVING COUNT(DISTINCT device_id) > 1 \
+         ), \
+         ranked AS ( \
+             SELECT o.device_id, o.seq, o.parent_seqs, o.hash, o.op_type, \
+                    o.payload, o.created_at, \
+                    json_extract(o.payload, '$.block_id') as block_id, \
+                    ROW_NUMBER() OVER ( \
+                        PARTITION BY o.device_id, \
+                            json_extract(o.payload, '$.block_id') \
+                        ORDER BY o.seq DESC \
+                    ) as rn \
+             FROM op_log o \
+             INNER JOIN conflict_blocks cb \
+               ON json_extract(o.payload, '$.block_id') = cb.block_id \
+             WHERE o.device_id IN (?, ?) AND o.op_type = 'move_block' \
+         ) \
+         SELECT device_id, seq, parent_seqs, hash, op_type, payload, \
+                created_at, block_id \
+         FROM ranked WHERE rn = 1 \
+         ORDER BY block_id, device_id",
     )
+    .bind(device_id)
+    .bind(remote_device_id)
     .bind(device_id)
     .bind(remote_device_id)
     .fetch_all(pool)
     .await?;
 
-    for row in move_rows {
-        let block_id: String = row.try_get("block_id")?;
-
-        let move_a_row = sqlx::query(
-            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
-             FROM op_log \
-             WHERE device_id = ? AND op_type = 'move_block' \
-               AND json_extract(payload, '$.block_id') = ? \
-             ORDER BY seq DESC LIMIT 1",
-        )
-        .bind(device_id)
-        .bind(&block_id)
-        .fetch_one(pool)
-        .await?;
-
-        let move_b_row = sqlx::query(
-            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at \
-             FROM op_log \
-             WHERE device_id = ? AND op_type = 'move_block' \
-               AND json_extract(payload, '$.block_id') = ? \
-             ORDER BY seq DESC LIMIT 1",
-        )
-        .bind(remote_device_id)
-        .bind(&block_id)
-        .fetch_one(pool)
-        .await?;
-
-        let ts_a: String = move_a_row.try_get("created_at")?;
-        let ts_b: String = move_b_row.try_get("created_at")?;
-        let dev_a: String = move_a_row.try_get("device_id")?;
-        let dev_b: String = move_b_row.try_get("device_id")?;
-
-        // LWW: later created_at wins, with device_id tiebreaker
-        let winner_row = match ts_a.cmp(&ts_b) {
-            std::cmp::Ordering::Greater => &move_a_row,
-            std::cmp::Ordering::Less => &move_b_row,
-            std::cmp::Ordering::Equal => {
-                if dev_a >= dev_b {
-                    &move_a_row
-                } else {
-                    &move_b_row
-                }
+    // Group batch rows by block_id, then resolve each conflict.
+    {
+        use std::collections::HashMap;
+        let mut groups: HashMap<String, (Option<OpRecord>, Option<OpRecord>)> = HashMap::new();
+        for row in &move_op_rows {
+            let bid: String = row.try_get("block_id")?;
+            let dev: String = row.try_get("device_id")?;
+            let op = OpRecord {
+                device_id: dev.clone(),
+                seq: row.try_get::<i64, _>("seq")?,
+                parent_seqs: row.try_get::<Option<String>, _>("parent_seqs")?,
+                hash: row.try_get::<String, _>("hash")?,
+                op_type: row.try_get::<String, _>("op_type")?,
+                payload: row.try_get::<String, _>("payload")?,
+                created_at: row.try_get::<String, _>("created_at")?,
+            };
+            let entry = groups.entry(bid).or_insert((None, None));
+            if dev == device_id {
+                entry.0 = Some(op);
+            } else {
+                entry.1 = Some(op);
             }
-        };
-
-        let winner_payload_json: String = winner_row.try_get("payload")?;
-        let winner_move: crate::op::MoveBlockPayload = serde_json::from_str(&winner_payload_json)?;
-
-        // Idempotent guard: skip if the local device's latest move already
-        // matches the winning move (avoids infinite re-resolution).
-        let local_payload_json: String = move_a_row.try_get("payload")?;
-        let local_move: crate::op::MoveBlockPayload = serde_json::from_str(&local_payload_json)?;
-        if local_move == winner_move {
-            continue;
         }
 
-        let move_payload = crate::op::OpPayload::MoveBlock(winner_move);
-        let new_record =
-            op_log::append_local_op_at(pool, device_id, move_payload, crate::now_rfc3339()).await?;
+        for (_bid, (op_a_opt, op_b_opt)) in groups {
+            if let (Some(op_a), Some(op_b)) = (op_a_opt, op_b_opt) {
+                // LWW: later created_at wins, with device_id tiebreaker
+                let winner = match op_a.created_at.cmp(&op_b.created_at) {
+                    std::cmp::Ordering::Greater => &op_a,
+                    std::cmp::Ordering::Less => &op_b,
+                    std::cmp::Ordering::Equal => {
+                        if op_a.device_id >= op_b.device_id {
+                            &op_a
+                        } else {
+                            &op_b
+                        }
+                    }
+                };
 
-        materializer
-            .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
-            .await?;
-        results.move_lww += 1;
+                let winner_move: crate::op::MoveBlockPayload =
+                    serde_json::from_str(&winner.payload)?;
+
+                // Idempotent guard: skip if the local device's latest move
+                // already matches the winning move (avoids infinite
+                // re-resolution).
+                let local_move: crate::op::MoveBlockPayload =
+                    serde_json::from_str(&op_a.payload)?;
+                if local_move == winner_move {
+                    continue;
+                }
+
+                let move_payload = crate::op::OpPayload::MoveBlock(winner_move);
+                let new_record = op_log::append_local_op_at(
+                    pool,
+                    device_id,
+                    move_payload,
+                    crate::now_rfc3339(),
+                )
+                .await?;
+
+                materializer
+                    .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
+                    .await?;
+                results.move_lww += 1;
+            }
+        }
     }
 
     // ── 4. delete_block vs edit_block (edit wins → resurrect) ────────────
@@ -1943,6 +1984,186 @@ mod tests {
         assert_eq!(
             r2.move_lww, 0,
             "second merge should not re-resolve already-resolved move conflict"
+        );
+
+        materializer.shutdown();
+    }
+
+    // ── Batch conflict resolution test ──────────────────────────────────
+
+    /// Multiple property conflicts AND a move conflict resolved in one pass
+    /// via the batch ROW_NUMBER() queries.  Verifies that the batched query
+    /// approach produces the same results as the former per-conflict N+1
+    /// queries.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn batch_conflict_resolution_multiple_properties_and_move() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00Z";
+        let ts_b = "2025-01-15T12:01:00Z"; // B wins on LWW
+
+        // Create blocks
+        for blk in &["BLK1", "BLK2", "BLK3", "PARENT-A", "PARENT-B"] {
+            append_local_op_at(
+                &pool,
+                "device-A",
+                test_create_payload(blk),
+                ts_a.into(),
+            )
+            .await
+            .unwrap();
+        }
+
+        // ── 3 property conflicts on 2 different blocks ──────────────────
+        // BLK1.priority: A="high" vs B="low"
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("high".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("low".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        // BLK1.status: A="todo" vs B="done"
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "status".into(),
+                value_text: Some("todo".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "status".into(),
+                value_text: Some("done".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        // BLK2.tag: A="work" vs B="personal"
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK2"),
+                key: "tag".into(),
+                value_text: Some("work".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK2"),
+                key: "tag".into(),
+                value_text: Some("personal".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        // ── 1 move conflict ─────────────────────────────────────────────
+        // BLK3: A moves to PARENT-A, B moves to PARENT-B
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLK3"),
+                new_parent_id: Some(BlockId::test_id("PARENT-A")),
+                new_position: 0,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLK3"),
+                new_parent_id: Some(BlockId::test_id("PARENT-B")),
+                new_position: 1,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        // ── Resolve all conflicts in one merge pass ─────────────────────
+        let results = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            results.property_lww, 3,
+            "should resolve 3 property conflicts in one batch pass"
+        );
+        assert_eq!(
+            results.move_lww, 1,
+            "should resolve 1 move conflict in one batch pass"
+        );
+
+        // Second merge should be fully idempotent
+        let r2 = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+        assert_eq!(
+            r2.property_lww, 0,
+            "second merge should skip already-resolved property conflicts"
+        );
+        assert_eq!(
+            r2.move_lww, 0,
+            "second merge should skip already-resolved move conflict"
         );
 
         materializer.shutdown();

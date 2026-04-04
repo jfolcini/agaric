@@ -1276,3 +1276,65 @@ mod tests {
         );
     }
 }
+
+// ===========================================================================
+// Property-based tests (proptest)
+// ===========================================================================
+
+#[cfg(test)]
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::str::FromStr;
+
+    // ── ULID normalization is idempotent ────────────────────────────────
+
+    proptest! {
+        /// Normalizing a BlockId via `from_trusted` is idempotent: applying
+        /// the normalization twice yields the same result as applying it once.
+        #[test]
+        fn normalize_block_id_idempotent(s in "[0-9A-Za-z]{26}") {
+            let normalized = BlockId::from_trusted(&s).as_str().to_string();
+            let double_normalized = BlockId::from_trusted(&normalized).as_str().to_string();
+            prop_assert_eq!(&normalized, &double_normalized);
+        }
+    }
+
+    // ── OpType as_str / FromStr round-trip ──────────────────────────────
+
+    /// Strategy that produces one of the 12 known OpType variants.
+    fn arb_op_type() -> impl Strategy<Value = OpType> {
+        prop_oneof![
+            Just(OpType::CreateBlock),
+            Just(OpType::EditBlock),
+            Just(OpType::DeleteBlock),
+            Just(OpType::RestoreBlock),
+            Just(OpType::PurgeBlock),
+            Just(OpType::MoveBlock),
+            Just(OpType::AddTag),
+            Just(OpType::RemoveTag),
+            Just(OpType::SetProperty),
+            Just(OpType::DeleteProperty),
+            Just(OpType::AddAttachment),
+            Just(OpType::DeleteAttachment),
+        ]
+    }
+
+    proptest! {
+        /// Every OpType variant survives a round-trip through `as_str` → `FromStr`.
+        #[test]
+        fn op_type_as_str_from_str_roundtrip(variant in arb_op_type()) {
+            let s = variant.as_str();
+            let parsed = OpType::from_str(s).unwrap();
+            prop_assert_eq!(variant, parsed);
+        }
+
+        /// Every OpType variant maps to a unique string — no two variants
+        /// share the same `as_str` value.
+        #[test]
+        fn op_type_as_str_unique(a in arb_op_type(), b in arb_op_type()) {
+            prop_assume!(a != b);
+            prop_assert_ne!(a.as_str(), b.as_str());
+        }
+    }
+}

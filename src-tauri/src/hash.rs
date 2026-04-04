@@ -412,3 +412,62 @@ mod tests {
         let _ = compute_op_hash("dev", 1, None, "create\0block", "{}");
     }
 }
+
+// ===========================================================================
+// Property-based tests (proptest)
+// ===========================================================================
+
+#[cfg(test)]
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // ── Hash determinism: same inputs → same output ─────────────────────
+
+    proptest! {
+        #[test]
+        fn compute_op_hash_deterministic(
+            device_id in "[a-z0-9-]{10,40}",
+            seq in 1i64..10000,
+            op_type in "create_block|edit_block|delete_block|add_tag|remove_tag",
+            payload in "\\{[a-z_:\" ,0-9]{0,100}\\}",
+        ) {
+            let hash1 = compute_op_hash(&device_id, seq, None, &op_type, &payload);
+            let hash2 = compute_op_hash(&device_id, seq, None, &op_type, &payload);
+            prop_assert_eq!(&hash1, &hash2, "identical inputs must produce identical hashes");
+        }
+    }
+
+    // ── Different inputs → different hashes (collision resistance) ──────
+
+    proptest! {
+        #[test]
+        fn compute_op_hash_different_seqs_differ(
+            device_id in "[a-z0-9-]{10,40}",
+            seq1 in 1i64..5000,
+            seq2 in 5001i64..10000,
+        ) {
+            let hash1 = compute_op_hash(&device_id, seq1, None, "edit_block", "{}");
+            let hash2 = compute_op_hash(&device_id, seq2, None, "edit_block", "{}");
+            prop_assert_ne!(hash1, hash2, "different seq values must produce different hashes");
+        }
+    }
+
+    // ── Hash output format is always 64-char lowercase hex ──────────────
+
+    proptest! {
+        #[test]
+        fn compute_op_hash_always_valid_format(
+            device_id in "[a-z0-9]{1,20}",
+            seq in 0i64..100000,
+            payload in "[a-z0-9 ]{0,50}",
+        ) {
+            let h = compute_op_hash(&device_id, seq, None, "create_block", &payload);
+            prop_assert_eq!(h.len(), 64, "hash length must be 64");
+            prop_assert!(
+                h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                "hash must be lowercase hex, got: {}", h
+            );
+        }
+    }
+}
