@@ -3205,4 +3205,487 @@ mod tests {
 
         materializer.shutdown();
     }
+
+    // ======================================================================
+    // Message serialization round-trip tests
+    // ======================================================================
+
+    // ── DeviceHead serde roundtrip ──────────────────────────────────────
+
+    #[test]
+    fn serde_roundtrip_device_head() {
+        let head = DeviceHead {
+            device_id: "device-A".into(),
+            seq: 42,
+            hash: "abc123def456".into(),
+        };
+        let json = serde_json::to_string(&head)
+            .expect("DeviceHead serialization must succeed");
+        let deser: DeviceHead = serde_json::from_str(&json)
+            .expect("DeviceHead deserialization must succeed");
+        assert_eq!(deser, head, "DeviceHead must survive serde roundtrip");
+    }
+
+    // ── OpTransfer serde roundtrip ──────────────────────────────────────
+
+    #[test]
+    fn serde_roundtrip_op_transfer() {
+        let transfer = OpTransfer {
+            device_id: "dev-X".into(),
+            seq: 7,
+            parent_seqs: Some("5,6".into()),
+            hash: "fedcba987654".into(),
+            op_type: "edit_block".into(),
+            payload: r#"{"block_id":"BLK1","to_text":"hello"}"#.into(),
+            created_at: "2025-01-15T12:00:00+00:00".into(),
+        };
+        let json = serde_json::to_string(&transfer)
+            .expect("OpTransfer serialization must succeed");
+        let deser: OpTransfer = serde_json::from_str(&json)
+            .expect("OpTransfer deserialization must succeed");
+        assert_eq!(deser, transfer, "OpTransfer must survive serde roundtrip");
+    }
+
+    #[test]
+    fn serde_roundtrip_op_transfer_null_parent_seqs() {
+        let transfer = OpTransfer {
+            device_id: "dev-Y".into(),
+            seq: 1,
+            parent_seqs: None,
+            hash: "0000000000".into(),
+            op_type: "create_block".into(),
+            payload: "{}".into(),
+            created_at: "2025-01-01T00:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&transfer)
+            .expect("OpTransfer with null parent_seqs serialization must succeed");
+        let deser: OpTransfer = serde_json::from_str(&json)
+            .expect("OpTransfer with null parent_seqs deserialization must succeed");
+        assert_eq!(
+            deser, transfer,
+            "OpTransfer with null parent_seqs must survive serde roundtrip"
+        );
+    }
+
+    // ── SyncMessage individual variant roundtrips ────────────────────────
+
+    #[test]
+    fn serde_roundtrip_sync_message_head_exchange() {
+        let msg = SyncMessage::HeadExchange {
+            heads: vec![
+                DeviceHead { device_id: "A".into(), seq: 1, hash: "h1".into() },
+                DeviceHead { device_id: "B".into(), seq: 5, hash: "h5".into() },
+            ],
+        };
+        let json = serde_json::to_string(&msg).expect("serialize HeadExchange");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize HeadExchange");
+        assert_eq!(deser, msg, "HeadExchange must survive serde roundtrip");
+    }
+
+    #[test]
+    fn serde_roundtrip_sync_message_op_batch() {
+        let msg = SyncMessage::OpBatch {
+            ops: vec![OpTransfer {
+                device_id: "A".into(),
+                seq: 1,
+                parent_seqs: None,
+                hash: "h1".into(),
+                op_type: "create_block".into(),
+                payload: r#"{"block_id":"BLK1"}"#.into(),
+                created_at: "2025-01-01T00:00:00Z".into(),
+            }],
+            is_last: false,
+        };
+        let json = serde_json::to_string(&msg).expect("serialize OpBatch");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize OpBatch");
+        assert_eq!(deser, msg, "OpBatch must survive serde roundtrip");
+    }
+
+    #[test]
+    fn serde_roundtrip_sync_message_reset_required() {
+        let msg = SyncMessage::ResetRequired {
+            reason: "op log compacted".into(),
+        };
+        let json = serde_json::to_string(&msg).expect("serialize ResetRequired");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize ResetRequired");
+        assert_eq!(deser, msg, "ResetRequired must survive serde roundtrip");
+    }
+
+    #[test]
+    fn serde_roundtrip_sync_message_snapshot_offer() {
+        let msg = SyncMessage::SnapshotOffer { size_bytes: 1_048_576 };
+        let json = serde_json::to_string(&msg).expect("serialize SnapshotOffer");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SnapshotOffer");
+        assert_eq!(deser, msg, "SnapshotOffer must survive serde roundtrip");
+    }
+
+    #[test]
+    fn serde_roundtrip_sync_message_snapshot_accept() {
+        let msg = SyncMessage::SnapshotAccept;
+        let json = serde_json::to_string(&msg).expect("serialize SnapshotAccept");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SnapshotAccept");
+        assert_eq!(deser, msg, "SnapshotAccept must survive serde roundtrip");
+    }
+
+    #[test]
+    fn serde_roundtrip_sync_message_snapshot_reject() {
+        let msg = SyncMessage::SnapshotReject;
+        let json = serde_json::to_string(&msg).expect("serialize SnapshotReject");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SnapshotReject");
+        assert_eq!(deser, msg, "SnapshotReject must survive serde roundtrip");
+    }
+
+    #[test]
+    fn serde_roundtrip_sync_message_sync_complete() {
+        let msg = SyncMessage::SyncComplete {
+            last_hash: "deadbeef".into(),
+        };
+        let json = serde_json::to_string(&msg).expect("serialize SyncComplete");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SyncComplete");
+        assert_eq!(deser, msg, "SyncComplete must survive serde roundtrip");
+    }
+
+    #[test]
+    fn serde_roundtrip_sync_message_error() {
+        let msg = SyncMessage::Error {
+            message: "peer disconnected unexpectedly".into(),
+        };
+        let json = serde_json::to_string(&msg).expect("serialize Error");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize Error");
+        assert_eq!(deser, msg, "Error must survive serde roundtrip");
+    }
+
+    // ── Known JSON shape — wire format stability ────────────────────────
+
+    #[test]
+    fn json_shape_head_exchange_matches_wire_format() {
+        let msg = SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "dev-A".into(),
+                seq: 3,
+                hash: "abc".into(),
+            }],
+        };
+        let json: serde_json::Value = serde_json::to_value(&msg)
+            .expect("SyncMessage must serialize to Value");
+
+        assert_eq!(
+            json["type"], "HeadExchange",
+            "HeadExchange must use internally-tagged 'type' field"
+        );
+        assert!(json["heads"].is_array(), "HeadExchange must have 'heads' array");
+        let head = &json["heads"][0];
+        assert_eq!(head["device_id"], "dev-A", "head device_id must match");
+        assert_eq!(head["seq"], 3, "head seq must match");
+        assert_eq!(head["hash"], "abc", "head hash must match");
+    }
+
+    #[test]
+    fn json_shape_op_batch_matches_wire_format() {
+        let msg = SyncMessage::OpBatch {
+            ops: vec![OpTransfer {
+                device_id: "dev-B".into(),
+                seq: 1,
+                parent_seqs: Some("0".into()),
+                hash: "h1".into(),
+                op_type: "create_block".into(),
+                payload: r#"{"block_id":"BLK1"}"#.into(),
+                created_at: "2025-06-01T00:00:00Z".into(),
+            }],
+            is_last: true,
+        };
+        let json: serde_json::Value = serde_json::to_value(&msg)
+            .expect("SyncMessage must serialize to Value");
+
+        assert_eq!(
+            json["type"], "OpBatch",
+            "OpBatch must use internally-tagged 'type' field"
+        );
+        assert!(json["ops"].is_array(), "OpBatch must have 'ops' array");
+        assert_eq!(json["is_last"], true, "is_last must be a boolean true");
+        let op = &json["ops"][0];
+        assert_eq!(op["device_id"], "dev-B", "op device_id must match");
+        assert_eq!(op["seq"], 1, "op seq must match");
+        assert_eq!(op["parent_seqs"], "0", "op parent_seqs must match");
+        assert_eq!(op["hash"], "h1", "op hash must match");
+        assert_eq!(op["op_type"], "create_block", "op op_type must match");
+        assert_eq!(op["created_at"], "2025-06-01T00:00:00Z", "op created_at must match");
+    }
+
+    #[test]
+    fn json_shape_all_variants_have_type_tag() {
+        let variants: Vec<(&str, SyncMessage)> = vec![
+            ("HeadExchange", SyncMessage::HeadExchange { heads: vec![] }),
+            ("OpBatch", SyncMessage::OpBatch { ops: vec![], is_last: true }),
+            ("ResetRequired", SyncMessage::ResetRequired { reason: "r".into() }),
+            ("SnapshotOffer", SyncMessage::SnapshotOffer { size_bytes: 0 }),
+            ("SnapshotAccept", SyncMessage::SnapshotAccept),
+            ("SnapshotReject", SyncMessage::SnapshotReject),
+            ("SyncComplete", SyncMessage::SyncComplete { last_hash: "h".into() }),
+            ("Error", SyncMessage::Error { message: "e".into() }),
+        ];
+
+        for (expected_tag, msg) in &variants {
+            let json: serde_json::Value = serde_json::to_value(msg)
+                .unwrap_or_else(|e| panic!("serialize {expected_tag} failed: {e}"));
+            assert_eq!(
+                json["type"].as_str().unwrap_or("MISSING"),
+                *expected_tag,
+                "variant {expected_tag} must have correct 'type' tag in JSON"
+            );
+        }
+    }
+
+    #[test]
+    fn json_shape_snapshot_offer_has_size_bytes() {
+        let msg = SyncMessage::SnapshotOffer { size_bytes: 999_999 };
+        let json: serde_json::Value = serde_json::to_value(&msg)
+            .expect("serialize SnapshotOffer");
+        assert_eq!(json["type"], "SnapshotOffer");
+        assert_eq!(
+            json["size_bytes"], 999_999,
+            "SnapshotOffer must contain size_bytes field"
+        );
+    }
+
+    #[test]
+    fn json_shape_sync_complete_has_last_hash() {
+        let msg = SyncMessage::SyncComplete { last_hash: "xyz789".into() };
+        let json: serde_json::Value = serde_json::to_value(&msg)
+            .expect("serialize SyncComplete");
+        assert_eq!(json["type"], "SyncComplete");
+        assert_eq!(
+            json["last_hash"], "xyz789",
+            "SyncComplete must contain last_hash field"
+        );
+    }
+
+    #[test]
+    fn json_shape_error_has_message() {
+        let msg = SyncMessage::Error { message: "something broke".into() };
+        let json: serde_json::Value = serde_json::to_value(&msg)
+            .expect("serialize Error");
+        assert_eq!(json["type"], "Error");
+        assert_eq!(
+            json["message"], "something broke",
+            "Error must contain message field"
+        );
+    }
+
+    #[test]
+    fn json_shape_reset_required_has_reason() {
+        let msg = SyncMessage::ResetRequired { reason: "compacted".into() };
+        let json: serde_json::Value = serde_json::to_value(&msg)
+            .expect("serialize ResetRequired");
+        assert_eq!(json["type"], "ResetRequired");
+        assert_eq!(
+            json["reason"], "compacted",
+            "ResetRequired must contain reason field"
+        );
+    }
+
+    // ── Edge cases ──────────────────────────────────────────────────────
+
+    #[test]
+    fn serde_roundtrip_empty_heads() {
+        let msg = SyncMessage::HeadExchange { heads: vec![] };
+        let json = serde_json::to_string(&msg).expect("serialize empty HeadExchange");
+        let deser: SyncMessage =
+            serde_json::from_str(&json).expect("deserialize empty HeadExchange");
+        assert_eq!(
+            deser, msg,
+            "HeadExchange with empty heads must survive roundtrip"
+        );
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            val["heads"].as_array().unwrap().len(),
+            0,
+            "empty heads must serialize to empty array"
+        );
+    }
+
+    #[test]
+    fn serde_roundtrip_empty_op_batch() {
+        let msg = SyncMessage::OpBatch {
+            ops: vec![],
+            is_last: true,
+        };
+        let json = serde_json::to_string(&msg).expect("serialize empty OpBatch");
+        let deser: SyncMessage =
+            serde_json::from_str(&json).expect("deserialize empty OpBatch");
+        assert_eq!(
+            deser, msg,
+            "OpBatch with empty ops must survive roundtrip"
+        );
+    }
+
+    #[test]
+    fn serde_roundtrip_unicode_content() {
+        let msg = SyncMessage::OpBatch {
+            ops: vec![OpTransfer {
+                device_id: "デバイスA".into(),
+                seq: 1,
+                parent_seqs: None,
+                hash: "hash_unicode".into(),
+                op_type: "edit_block".into(),
+                payload: r#"{"block_id":"BLK1","to_text":"Hello 🌍 世界 مرحبا"}"#.into(),
+                created_at: "2025-01-15T12:00:00Z".into(),
+            }],
+            is_last: true,
+        };
+        let json = serde_json::to_string(&msg).expect("serialize unicode OpBatch");
+        let deser: SyncMessage =
+            serde_json::from_str(&json).expect("deserialize unicode OpBatch");
+        assert_eq!(deser, msg, "OpBatch with unicode content must survive roundtrip");
+
+        // Verify the unicode is preserved in the JSON string
+        assert!(
+            json.contains("🌍"),
+            "emoji must be preserved in serialized JSON"
+        );
+        assert!(
+            json.contains("世界"),
+            "CJK characters must be preserved in serialized JSON"
+        );
+        assert!(
+            json.contains("デバイスA"),
+            "Japanese device_id must be preserved in serialized JSON"
+        );
+    }
+
+    #[test]
+    fn serde_roundtrip_unicode_error_message() {
+        let msg = SyncMessage::Error {
+            message: "连接失败: タイムアウト 🔥".into(),
+        };
+        let json = serde_json::to_string(&msg).expect("serialize unicode Error");
+        let deser: SyncMessage =
+            serde_json::from_str(&json).expect("deserialize unicode Error");
+        assert_eq!(deser, msg, "Error with unicode message must survive roundtrip");
+    }
+
+    #[test]
+    fn serde_roundtrip_large_op_batch() {
+        let ops: Vec<OpTransfer> = (0..500)
+            .map(|i| OpTransfer {
+                device_id: "bulk-device".into(),
+                seq: i,
+                parent_seqs: if i > 0 { Some(format!("{}", i - 1)) } else { None },
+                hash: format!("hash_{i:04}"),
+                op_type: "create_block".into(),
+                payload: format!(r#"{{"block_id":"BLK{i}","content":"content for block {i}"}}"#),
+                created_at: "2025-01-15T12:00:00Z".into(),
+            })
+            .collect();
+
+        let msg = SyncMessage::OpBatch {
+            ops: ops.clone(),
+            is_last: true,
+        };
+        let json = serde_json::to_string(&msg).expect("serialize large OpBatch");
+        let deser: SyncMessage =
+            serde_json::from_str(&json).expect("deserialize large OpBatch");
+        assert_eq!(
+            deser, msg,
+            "OpBatch with 500 ops must survive serde roundtrip"
+        );
+
+        // Verify the count is preserved
+        if let SyncMessage::OpBatch { ops: deser_ops, is_last } = &deser {
+            assert_eq!(deser_ops.len(), 500, "deserialized batch must contain all 500 ops");
+            assert!(is_last, "is_last flag must be preserved");
+        } else {
+            panic!("deserialized message must be OpBatch");
+        }
+    }
+
+    #[test]
+    fn serde_roundtrip_large_payload_content() {
+        // Simulate a block with a very large text content (100KB)
+        let large_text = "A".repeat(100_000);
+        let payload = format!(r#"{{"block_id":"BLK1","to_text":"{large_text}"}}"#);
+        let msg = SyncMessage::OpBatch {
+            ops: vec![OpTransfer {
+                device_id: "dev-A".into(),
+                seq: 1,
+                parent_seqs: None,
+                hash: "large_hash".into(),
+                op_type: "edit_block".into(),
+                payload,
+                created_at: "2025-01-15T12:00:00Z".into(),
+            }],
+            is_last: true,
+        };
+        let json = serde_json::to_string(&msg).expect("serialize large payload");
+        let deser: SyncMessage =
+            serde_json::from_str(&json).expect("deserialize large payload");
+        assert_eq!(
+            deser, msg,
+            "OpBatch with 100KB payload must survive serde roundtrip"
+        );
+    }
+
+    #[test]
+    fn serde_roundtrip_many_heads() {
+        let heads: Vec<DeviceHead> = (0..100)
+            .map(|i| DeviceHead {
+                device_id: format!("device-{i:03}"),
+                seq: i as i64 * 10,
+                hash: format!("hash_{i:03}"),
+            })
+            .collect();
+
+        let msg = SyncMessage::HeadExchange { heads: heads.clone() };
+        let json = serde_json::to_string(&msg).expect("serialize many-heads HeadExchange");
+        let deser: SyncMessage =
+            serde_json::from_str(&json).expect("deserialize many-heads HeadExchange");
+        assert_eq!(
+            deser, msg,
+            "HeadExchange with 100 heads must survive serde roundtrip"
+        );
+    }
+
+    #[test]
+    fn serde_roundtrip_empty_string_fields() {
+        let msg = SyncMessage::SyncComplete {
+            last_hash: String::new(),
+        };
+        let json = serde_json::to_string(&msg).expect("serialize empty last_hash");
+        let deser: SyncMessage =
+            serde_json::from_str(&json).expect("deserialize empty last_hash");
+        assert_eq!(
+            deser, msg,
+            "SyncComplete with empty last_hash must survive roundtrip"
+        );
+
+        let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            val["last_hash"], "",
+            "empty string must serialize to empty string, not null"
+        );
+    }
+
+    #[test]
+    fn serde_roundtrip_zero_size_snapshot_offer() {
+        let msg = SyncMessage::SnapshotOffer { size_bytes: 0 };
+        let json = serde_json::to_string(&msg).expect("serialize zero-size SnapshotOffer");
+        let deser: SyncMessage =
+            serde_json::from_str(&json).expect("deserialize zero-size SnapshotOffer");
+        assert_eq!(
+            deser, msg,
+            "SnapshotOffer with size_bytes=0 must survive roundtrip"
+        );
+    }
+
+    #[test]
+    fn serde_roundtrip_max_u64_snapshot_offer() {
+        let msg = SyncMessage::SnapshotOffer { size_bytes: u64::MAX };
+        let json = serde_json::to_string(&msg).expect("serialize max-u64 SnapshotOffer");
+        let deser: SyncMessage =
+            serde_json::from_str(&json).expect("deserialize max-u64 SnapshotOffer");
+        assert_eq!(
+            deser, msg,
+            "SnapshotOffer with u64::MAX must survive roundtrip"
+        );
+    }
 }
