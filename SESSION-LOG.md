@@ -1,5 +1,21 @@
 # Session Log
 
+## Session 180 — 2026-04-04 — Phase 1 batch 33: recurrence undo grouping (M-12)
+
+### Phase 1 (batch 33): Automatic batch undo for recurrence ops (M-12)
+
+1 focused subagent (frontend undo store).
+
+| File | Change |
+|------|--------|
+| `undo.ts` | M-12: Batch undo/redo by timestamp proximity. `undo()` peeks at page history, auto-undoes consecutive ops within 200ms by same device. `redo()` replays the recorded group size. New `isWithinUndoGroup()` helper, `redoGroupSizes` tracking, `performSingleUndo/Redo` internal helpers. Graceful fallback on history fetch failure. |
+| `undo.test.ts` | M-12: 17 new tests (7 isWithinUndoGroup, 6 batch undo, 4 batch redo). |
+
+### Stats
+- Frontend: 17 new tests (40 total in undo.test.ts)
+- Commit: `edd07c4`
+- REVIEW-LATER: M-12 resolved. 8 -> **7 open items**. MEDIUM tier has only M-16 remaining.
+
 ## Session 179 — 2026-04-04 — Phase 1 batch 32: recurrence module + range query (F-20, M-13)
 
 ### Phase 1 (batch 32): Recurrence extraction + date range query (F-20, M-13)
