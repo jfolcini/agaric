@@ -1,5 +1,20 @@
 # Session Log
 
+## Session 156 — 2026-04-03 — Phase 2 review + import parser hardening (#669)
+
+### Phase 2: Review recent features (import, templates, scheduling)
+
+1 review subagent. Cross-validated 11 findings: 4 P1 → 1 confirmed P2 (tab indentation), 1 confirmed P2 (YAML frontmatter), 2 rejected (deduplication false positive, empty blocks intentional). Fixed both confirmed issues directly.
+
+| File | Change |
+|------|--------|
+| `import.rs` | Tab normalization (`\t` → 2 spaces). YAML frontmatter stripping (`---` delimited block at file start). 3 new tests. 13/13 pass. |
+
+### Stats
+- Backend: 3 new tests (13/13 import tests pass)
+- Commit: `cba2a56`
+- REVIEW-LATER: remains at 0.
+
 ## Session 155 — 2026-04-03 — Deadline warning period (#641 completion) — REVIEW-LATER CLEARED
 
 ### Build: configurable warning days + DuePanel "Upcoming" section
