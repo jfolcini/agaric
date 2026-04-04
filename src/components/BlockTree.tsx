@@ -51,6 +51,7 @@ import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '../lib/templ
 import { getDragDescendants } from '../lib/tree-utils'
 import { cn } from '../lib/utils'
 import { useBlockStore } from '../stores/blocks'
+import { useShallow } from 'zustand/react/shallow'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
 import { BlockPropertyDrawer } from './BlockPropertyDrawer'
@@ -287,27 +288,23 @@ interface BlockTreeProps {
 
 export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): React.ReactElement {
   const { t } = useTranslation()
-  const blocks = useBlockStore((s) => s.blocks)
-  const rootParentId = useBlockStore((s) => s.rootParentId)
-  const focusedBlockId = useBlockStore((s) => s.focusedBlockId)
-  const loading = useBlockStore((s) => s.loading)
-  const load = useBlockStore((s) => s.load)
-  const setFocused = useBlockStore((s) => s.setFocused)
-  const remove = useBlockStore((s) => s.remove)
-  const edit = useBlockStore((s) => s.edit)
-  const splitBlock = useBlockStore((s) => s.splitBlock)
-  const indent = useBlockStore((s) => s.indent)
-  const dedent = useBlockStore((s) => s.dedent)
-  const reorder = useBlockStore((s) => s.reorder)
-  const moveToParent = useBlockStore((s) => s.moveToParent)
-  const moveUp = useBlockStore((s) => s.moveUp)
-  const moveDown = useBlockStore((s) => s.moveDown)
-  const createBelow = useBlockStore((s) => s.createBelow)
-  const selectedBlockIds = useBlockStore((s) => s.selectedBlockIds)
-  const toggleSelected = useBlockStore((s) => s.toggleSelected)
-  const rangeSelect = useBlockStore((s) => s.rangeSelect)
-  const selectAll = useBlockStore((s) => s.selectAll)
-  const clearSelected = useBlockStore((s) => s.clearSelected)
+  // Reactive state — single shallow-compared subscription
+  const { blocks, rootParentId, focusedBlockId, loading, selectedBlockIds } = useBlockStore(
+    useShallow((s) => ({
+      blocks: s.blocks,
+      rootParentId: s.rootParentId,
+      focusedBlockId: s.focusedBlockId,
+      loading: s.loading,
+      selectedBlockIds: s.selectedBlockIds,
+    })),
+  )
+
+  // Stable actions — extracted via getState() (0 subscriptions)
+  const {
+    load, setFocused, remove, edit, splitBlock, indent, dedent,
+    reorder, moveToParent, moveUp, moveDown, createBelow,
+    toggleSelected, rangeSelect, selectAll, clearSelected,
+  } = useBlockStore.getState()
 
   // ── Collapse state (persisted in localStorage) ────────────────────
   const [collapsedIds, setCollapsedIdsRaw] = useState<Set<string>>(() => {
@@ -371,14 +368,16 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       setBatchInProgress(true)
       try {
         const ids = [...selectedBlockIds]
+        const idSet = new Set(ids)
+        // Single optimistic update for all blocks
+        useBlockStore.setState((s) => ({
+          blocks: s.blocks.map((b) => (idSet.has(b.id) ? { ...b, todo_state: state } : b)),
+        }))
         let successCount = 0
         let failCount = 0
         for (const id of ids) {
           try {
             await setTodoStateCmd(id, state)
-            useBlockStore.setState((s) => ({
-              blocks: s.blocks.map((b) => (b.id === id ? { ...b, todo_state: state } : b)),
-            }))
             successCount++
           } catch {
             failCount++
@@ -1374,6 +1373,23 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     announce('Block moved down')
   }, [focusedBlockId, handleFlush, moveDown])
 
+  // ── Move by ID callbacks (for SortableBlock props) ────────────────
+  const handleMoveUpById = useCallback(
+    (id: string) => {
+      handleFlush()
+      moveUp(id)
+    },
+    [handleFlush],
+  )
+
+  const handleMoveDownById = useCallback(
+    (id: string) => {
+      handleFlush()
+      moveDown(id)
+    },
+    [handleFlush],
+  )
+
   // ── Merge with previous block (p2-t11) ────────────────────────────
   const handleMergeWithPrev = useCallback(async () => {
     if (!focusedBlockId) return
@@ -1859,7 +1875,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                     depth={block.id === dnd.activeId ? projectedDepth : block.depth}
                     rovingEditor={rovingEditor}
                     onNavigate={handleNavigate}
-                    onDelete={(id) => remove(id)}
+                    onDelete={remove}
                     resolveBlockTitle={resolve.resolveBlockTitle}
                     resolveTagName={resolve.resolveTagName}
                     resolveBlockStatus={resolve.resolveBlockStatus}
@@ -1874,16 +1890,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
                     dueDate={block.due_date ?? null}
                     scheduledDate={block.scheduled_date ?? null}
                     properties={blockProperties[block.id]}
-                    onIndent={(id) => indent(id)}
-                    onDedent={(id) => dedent(id)}
-                    onMoveUp={(id) => {
-                      handleFlush()
-                      moveUp(id)
-                    }}
-                    onMoveDown={(id) => {
-                      handleFlush()
-                      moveDown(id)
-                    }}
+                    onIndent={indent}
+                    onDedent={dedent}
+                    onMoveUp={handleMoveUpById}
+                    onMoveDown={handleMoveDownById}
                     onMerge={handleMergeById}
                     onShowHistory={handleShowHistory}
                     onShowProperties={handleShowProperties}

@@ -404,10 +404,12 @@ header_row     := '|' (cell '|')+
 separator      := '|' ('-'+  '|')+                 -- e.g. |---|---|
 data_row       := '|' (cell '|')+
 cell           := span*
-span           := plain_text | bold | italic | code_span | tag_ref | block_link | ext_link
+span           := plain_text | bold | italic | code_span | strikethrough | highlight | tag_ref | block_link | ext_link
 bold           := '**' span+ '**'
 italic         := '*' span+ '*'
 code_span      := '`' plain_text '`'               -- no nesting inside code
+strikethrough  := '~~' span+ '~~'
+highlight      := '==' span+ '=='
 tag_ref        := '#[' ULID ']'
 block_link     := '[[' ULID ']]'
 ext_link       := '[' text '](' url ')'
@@ -420,8 +422,9 @@ ULID           := [0-9A-Z]{26}                     -- Crockford base32, exactly 
 - No `\n\n` paragraph breaks. The block tree is the structural separator.
 - `code_span` content is plain text — marks and tokens inside backticks are not parsed.
 
-**The inline mark set is locked.** Adding any mark (strikethrough, highlight, underline) requires
-extending the serializer, FTS5 stripping, export mapping, and a migration audit.
+**The inline mark set is locked.** Bold, italic, code, strikethrough, and highlight are the
+supported marks. Adding any new mark (underline, etc.) requires extending the serializer, FTS5
+stripping, export mapping, and a migration audit.
 
 ### Custom serializer
 
