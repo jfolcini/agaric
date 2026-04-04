@@ -28,8 +28,6 @@ interface SyncStore {
   setState: (state: SyncState, error?: string | null) => void
   setPeers: (peers: PeerInfo[]) => void
   updateLastSynced: (timestamp: string) => void
-  incrementOpsReceived: (count: number) => void
-  incrementOpsSent: (count: number) => void
   setOpsReceived: (count: number) => void
   setOpsSent: (count: number) => void
   reset: () => void
@@ -57,14 +55,6 @@ export const useSyncStore = create<SyncStore>((set) => ({
 
   updateLastSynced: (timestamp: string) => {
     set({ lastSyncedAt: timestamp })
-  },
-
-  incrementOpsReceived: (count: number) => {
-    set((s) => ({ opsReceived: s.opsReceived + count }))
-  },
-
-  incrementOpsSent: (count: number) => {
-    set((s) => ({ opsSent: s.opsSent + count }))
   },
 
   setOpsReceived: (count: number) => {

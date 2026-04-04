@@ -11,7 +11,7 @@
 import { toHtml } from 'hast-util-to-html'
 import { common, createLowlight } from 'lowlight'
 import type React from 'react'
-import { memo, useMemo } from 'react'
+import { memo, useMemo, useRef } from 'react'
 import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
 import { openUrl } from '../lib/open-url'
@@ -262,11 +262,41 @@ function StaticBlockInner({
   isSelected,
   onSelect,
 }: StaticBlockProps): React.ReactElement {
+  // Keep callback refs so the expensive useMemo only re-runs when `content` changes.
+  // Callbacks don't affect the rendered output — they only affect click behaviour —
+  // so they can safely live in refs that are read at call-time.
+  const onNavigateRef = useRef(onNavigate)
+  onNavigateRef.current = onNavigate
+  const resolveBlockTitleRef = useRef(resolveBlockTitle)
+  resolveBlockTitleRef.current = resolveBlockTitle
+  const resolveTagNameRef = useRef(resolveTagName)
+  resolveTagNameRef.current = resolveTagName
+  const resolveBlockStatusRef = useRef(resolveBlockStatus)
+  resolveBlockStatusRef.current = resolveBlockStatus
+  const resolveTagStatusRef = useRef(resolveTagStatus)
+  resolveTagStatusRef.current = resolveTagStatus
+
+  const richContent = useMemo(
+    () =>
+      content
+        ? renderRichContent(content, {
+            onNavigate: onNavigate ? (id: string) => onNavigateRef.current?.(id) : undefined,
+            resolveBlockTitle: (id) =>
+              resolveBlockTitleRef.current?.(id) ?? `[[${id.slice(0, 8)}...]]`,
+            resolveTagName: (id) => resolveTagNameRef.current?.(id) ?? `#${id.slice(0, 8)}...`,
+            resolveBlockStatus: (id) => resolveBlockStatusRef.current?.(id) ?? 'active',
+            resolveTagStatus: (id) => resolveTagStatusRef.current?.(id) ?? 'active',
+          })
+        : null,
+    [content, onNavigate],
+  )
+
   // Detect {{query ...}} blocks and render QueryResult instead of the text
   if (content?.startsWith('{{query ') && content.endsWith('}}')) {
     const expression = content.slice(8, -2).trim()
     return (
-      <div
+      <button
+        type="button"
         className="block-static w-full min-h-[1.75rem] rounded-md text-left text-sm"
         data-block-id={blockId}
         onClick={() => onFocus(blockId)}
@@ -276,23 +306,9 @@ function StaticBlockInner({
           onNavigate={onNavigate ? (pageId) => onNavigate(pageId) : undefined}
           resolveBlockTitle={resolveBlockTitle}
         />
-      </div>
+      </button>
     )
   }
-
-  const richContent = useMemo(
-    () =>
-      content
-        ? renderRichContent(content, {
-            onNavigate,
-            resolveBlockTitle,
-            resolveTagName,
-            resolveBlockStatus,
-            resolveTagStatus,
-          })
-        : null,
-    [content, onNavigate, resolveBlockTitle, resolveTagName, resolveBlockStatus, resolveTagStatus],
-  )
 
   return (
     <button

@@ -66,6 +66,16 @@ function EditableBlockInner({
   const splitBlock = useBlockStore((s) => s.splitBlock)
   const wrapperRef = useRef<HTMLElement>(null)
 
+  // Stable refs for values the auto-mount effect needs to READ but should
+  // not RE-RUN when they change.  `rovingEditor` is a mutable handle whose
+  // object identity changes on every render; `content` is only needed as the
+  // initial value passed to `mount()` — a content change while the editor is
+  // already mounted should not trigger a re-mount.
+  const rovingEditorRef = useRef(rovingEditor)
+  rovingEditorRef.current = rovingEditor
+  const contentRef = useRef(content)
+  contentRef.current = content
+
   // Scroll the editor wrapper into view when the block becomes focused.
   // Uses requestAnimationFrame to avoid layout thrashing after mount.
   useEffect(() => {
@@ -80,10 +90,11 @@ function EditableBlockInner({
   // PageEditor's "Add block" button) without going through handleFocus.
   // Without this, activeBlockId remains null and blur/Enter cannot save.
   useEffect(() => {
-    if (isFocused && rovingEditor.activeBlockId !== blockId) {
-      rovingEditor.mount(blockId, content)
+    const re = rovingEditorRef.current
+    if (isFocused && re.activeBlockId !== blockId) {
+      re.mount(blockId, contentRef.current)
     }
-  }, [isFocused, blockId, content, rovingEditor])
+  }, [isFocused, blockId])
 
   const handleFocus = useCallback(
     (id: string) => {

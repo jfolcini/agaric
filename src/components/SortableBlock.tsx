@@ -24,7 +24,7 @@ import {
   Repeat,
   Trash2,
 } from 'lucide-react'
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
@@ -195,6 +195,11 @@ function SortableBlockInner({
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const touchStartPos = useRef<{ x: number; y: number } | null>(null)
   const blockRef = useRef<HTMLDivElement>(null)
+
+  const filteredProperties = useMemo(
+    () => (properties ?? []).filter((p) => p.key !== 'repeat'),
+    [properties],
+  )
 
   const clearLongPress = useCallback(() => {
     if (longPressTimer.current) {
@@ -494,8 +499,8 @@ function SortableBlockInner({
 
           {/* Due date chip — clickable to open date picker */}
           {dueDate && (
-            <span
-              role="img"
+            <button
+              type="button"
               className={cn(
                 'due-date-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none cursor-pointer',
                 dueDateColor(dueDate),
@@ -507,13 +512,13 @@ function SortableBlockInner({
             >
               <CalendarDays size={14} className="flex-shrink-0" />
               {formatCompactDate(dueDate)}
-            </span>
+            </button>
           )}
 
           {/* Scheduled date chip — clickable to open date picker */}
           {scheduledDate && (
-            <span
-              role="img"
+            <button
+              type="button"
               className={cn(
                 'scheduled-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none cursor-pointer',
                 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
@@ -525,7 +530,7 @@ function SortableBlockInner({
             >
               <Calendar size={14} className="flex-shrink-0" />
               {formatCompactDate(scheduledDate)}
-            </span>
+            </button>
           )}
 
           {/* Repeat indicator — special-case for repeat property */}
@@ -543,28 +548,25 @@ function SortableBlockInner({
           )}
 
           {/* Custom property chips — up to 3 shown (excluding repeat) */}
-          {properties && properties.filter((p) => p.key !== 'repeat').length > 0 && (
+          {filteredProperties.length > 0 && (
             <>
-              {properties
-                .filter((p) => p.key !== 'repeat')
-                .slice(0, 3)
-                .map((p) => {
-                  const displayValue = resolveBlockTitle
-                    ? resolveBlockTitle(p.value) || p.value
-                    : p.value
-                  return (
-                    <PropertyChip
-                      key={p.key}
-                      propKey={p.key}
-                      value={displayValue}
-                      onClick={() => setEditingProp({ key: p.key, value: p.value })}
-                      onKeyClick={() => setEditingKey({ oldKey: p.key, value: p.value })}
-                    />
-                  )
-                })}
-              {properties.filter((p) => p.key !== 'repeat').length > 3 && (
+              {filteredProperties.slice(0, 3).map((p) => {
+                const displayValue = resolveBlockTitle
+                  ? resolveBlockTitle(p.value) || p.value
+                  : p.value
+                return (
+                  <PropertyChip
+                    key={p.key}
+                    propKey={p.key}
+                    value={displayValue}
+                    onClick={() => setEditingProp({ key: p.key, value: p.value })}
+                    onKeyClick={() => setEditingKey({ oldKey: p.key, value: p.value })}
+                  />
+                )
+              })}
+              {filteredProperties.length > 3 && (
                 <span className="text-[10px] text-muted-foreground select-none">
-                  +{properties.filter((p) => p.key !== 'repeat').length - 3}
+                  +{filteredProperties.length - 3}
                 </span>
               )}
             </>
@@ -598,8 +600,8 @@ function SortableBlockInner({
                 ))}
               </div>
             ) : isRefProp ? (
-              <div
-                className="flex flex-col gap-0.5 w-56"
+              <fieldset
+                className="flex flex-col gap-0.5 w-56 border-none p-0 m-0"
                 data-testid="ref-picker"
                 aria-label={t('block.refPickerLabel')}
                 onKeyDown={(e) => {
@@ -657,7 +659,7 @@ function SortableBlockInner({
                     ))
                   })()}
                 </div>
-              </div>
+              </fieldset>
             ) : (
               <input
                 ref={(el) => el?.focus()}

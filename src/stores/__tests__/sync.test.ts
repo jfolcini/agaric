@@ -100,38 +100,6 @@ describe('useSyncStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // incrementOpsReceived
-  // ---------------------------------------------------------------------------
-  describe('incrementOpsReceived', () => {
-    it('increments by the given count', () => {
-      useSyncStore.getState().incrementOpsReceived(5)
-      expect(useSyncStore.getState().opsReceived).toBe(5)
-    })
-
-    it('accumulates across multiple calls', () => {
-      useSyncStore.getState().incrementOpsReceived(3)
-      useSyncStore.getState().incrementOpsReceived(7)
-      expect(useSyncStore.getState().opsReceived).toBe(10)
-    })
-  })
-
-  // ---------------------------------------------------------------------------
-  // incrementOpsSent
-  // ---------------------------------------------------------------------------
-  describe('incrementOpsSent', () => {
-    it('increments by the given count', () => {
-      useSyncStore.getState().incrementOpsSent(4)
-      expect(useSyncStore.getState().opsSent).toBe(4)
-    })
-
-    it('accumulates across multiple calls', () => {
-      useSyncStore.getState().incrementOpsSent(2)
-      useSyncStore.getState().incrementOpsSent(8)
-      expect(useSyncStore.getState().opsSent).toBe(10)
-    })
-  })
-
-  // ---------------------------------------------------------------------------
   // setOpsReceived
   // ---------------------------------------------------------------------------
   describe('setOpsReceived', () => {
@@ -174,8 +142,8 @@ describe('useSyncStore', () => {
         .getState()
         .setPeers([{ peerId: 'peer-1', lastSyncedAt: '2025-01-15T00:00:00Z', resetCount: 0 }])
       useSyncStore.getState().updateLastSynced('2025-01-15T12:00:00Z')
-      useSyncStore.getState().incrementOpsReceived(42)
-      useSyncStore.getState().incrementOpsSent(17)
+      useSyncStore.getState().setOpsReceived(42)
+      useSyncStore.getState().setOpsSent(17)
 
       // Reset
       useSyncStore.getState().reset()
@@ -197,7 +165,7 @@ describe('useSyncStore', () => {
   describe('state independence', () => {
     it('setState does not affect peers or counters', () => {
       useSyncStore.getState().setPeers([{ peerId: 'peer-1', lastSyncedAt: null, resetCount: 0 }])
-      useSyncStore.getState().incrementOpsReceived(5)
+      useSyncStore.getState().setOpsReceived(5)
 
       useSyncStore.getState().setState('syncing')
 
@@ -207,7 +175,7 @@ describe('useSyncStore', () => {
 
     it('setPeers does not affect sync state or counters', () => {
       useSyncStore.getState().setState('syncing')
-      useSyncStore.getState().incrementOpsSent(3)
+      useSyncStore.getState().setOpsSent(3)
 
       useSyncStore.getState().setPeers([])
 
