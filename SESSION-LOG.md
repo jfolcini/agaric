@@ -104,6 +104,22 @@
 - Commit: `14ca0c3`
 - REVIEW-LATER: M-7, M-10, L-11, M-14, L-16, L-12 resolved and removed. 93 → **87 open items**.
 
+### Phase 1 (batch 7): Rust perf + test gaps (L-7, L-10, TL-6, TL-7)
+
+4 parallel build subagents (dag.rs, cache.rs, integration tests, op_log test).
+
+| File | Change |
+|------|--------|
+| `dag.rs` | L-7: find_lca uses Vec + HashSet<(&str, i64)> instead of cloning into owned HashSets. |
+| `cache.rs` | L-10: rebuild_agenda_cache uses HashMap<(&str, &str), &str> borrowing from source Vecs. |
+| `command_integration_tests.rs` | TL-6: 3 new alias integration tests (set+get, resolve, collision). |
+| `op_log.rs` | TL-7: 1 new test documenting that UPDATE/DELETE are not blocked by schema. |
+
+### Stats
+- Backend: 4 new tests (32/32 DAG, 67/67 cache, 10/10 alias, 52/52 op_log)
+- Commit: `175b905`
+- REVIEW-LATER: L-7, L-10, TL-6, TL-7 resolved. L-5 orphan row removed. 87 → **82 open items**.
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system
