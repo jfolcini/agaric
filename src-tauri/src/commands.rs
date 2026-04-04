@@ -4036,7 +4036,7 @@ pub async fn import_markdown_inner(
         while parent_stack.len() > 1
             && parent_stack
                 .last()
-                .map_or(false, |(d, _)| *d >= block.depth)
+                .is_some_and(|(d, _)| *d >= block.depth)
         {
             parent_stack.pop();
         }

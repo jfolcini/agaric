@@ -10,9 +10,6 @@
 //!
 //! `rebuild_tags_cache` and `rebuild_pages_cache` still use a full
 //! DELETE + INSERT cycle wrapped in a transaction for atomicity.
-
-#![allow(dead_code)]
-
 use regex::Regex;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};

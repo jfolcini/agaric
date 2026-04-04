@@ -10,9 +10,6 @@
 //! (de)serialization time but do **not** validate domain invariants such as
 //! non-empty `block_id`. Domain validation is the responsibility of the command
 //! layer that constructs payloads before appending to the op log.
-
-#![allow(dead_code)]
-
 use std::fmt;
 use std::str::FromStr;
 

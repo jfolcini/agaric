@@ -6,9 +6,6 @@
 //! proper `edit_block` op and removes the draft row.
 //!
 //! Drafts never participate in sync, undo, or compaction.
-
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 

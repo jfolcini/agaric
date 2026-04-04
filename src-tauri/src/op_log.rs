@@ -2,9 +2,6 @@
 //!
 //! Phase 1 implementation: single-device, linear chain. Each new op references
 //! the immediately preceding op from the same device as its sole parent.
-
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 

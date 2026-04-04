@@ -4,9 +4,6 @@
 //! application, block-level merge, and peer-ref bookkeeping.  The transport
 //! layer (WebSocket, BLE, …) is handled elsewhere — this module operates
 //! purely on typed [`SyncMessage`] values.
-
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::VecDeque;

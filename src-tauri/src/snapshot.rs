@@ -16,9 +16,6 @@
 //!
 //! [`compact_op_log`] creates a snapshot and then purges `op_log` rows older
 //! than the configured retention window (default 90 days).
-
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::BTreeMap;

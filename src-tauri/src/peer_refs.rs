@@ -3,9 +3,6 @@
 //! Each row tracks a remote sync peer: the last hash received, the last hash
 //! sent, the most recent sync timestamp, and a reset counter for detecting
 //! protocol resets.
-
-#![allow(dead_code)]
-
 use serde::Serialize;
 use sqlx::SqlitePool;
 

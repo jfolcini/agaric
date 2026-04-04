@@ -58,7 +58,7 @@ jobs:
 
       - name: Cargo clippy
         working-directory: src-tauri
-        run: cargo clippy -- -D warnings -A dead_code
+        run: cargo clippy -- -D warnings
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest

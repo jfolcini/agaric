@@ -13,9 +13,6 @@
 //! - `rebuild_fts_index` — full reindex of all active blocks
 //! - `fts_optimize` — run FTS5 segment merge
 //! - `search_fts` — FTS5 MATCH query with cursor-based pagination
-
-#![allow(dead_code)]
-
 use regex::Regex;
 use sqlx::SqlitePool;
 use std::collections::HashMap;

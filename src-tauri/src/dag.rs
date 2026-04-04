@@ -6,9 +6,6 @@
 //! - Lowest Common Ancestor (LCA) for edit chains
 //! - Text extraction at a given op
 //! - Edit head discovery across devices
-
-#![allow(dead_code)]
-
 use std::collections::HashSet;
 
 use sqlx::SqlitePool;

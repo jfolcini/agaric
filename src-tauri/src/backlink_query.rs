@@ -53,6 +53,7 @@ fn escape_like(input: &str) -> String {
 
 /// Decode the first 10 characters of a ULID (Crockford base32) into Unix
 /// milliseconds.  This is the timestamp component of the ULID.
+#[cfg(test)]
 fn ulid_to_ms(ulid: &str) -> Option<u64> {
     if ulid.len() < 10 {
         return None;
@@ -67,6 +68,7 @@ fn ulid_to_ms(ulid: &str) -> Option<u64> {
 }
 
 /// Decode a single Crockford base32 character to its numeric value (0-31).
+#[cfg(test)]
 fn crockford_decode_char(c: char) -> Option<u8> {
     match c.to_ascii_uppercase() {
         '0' | 'O' => Some(0),

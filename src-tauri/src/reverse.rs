@@ -15,9 +15,6 @@
 //! exists in the op log — the reverse restores the attachment metadata.
 //! When no prior `add_attachment` op is found, it falls back to
 //! [`AppError::NonReversible`].
-
-#![allow(dead_code)]
-
 use sqlx::SqlitePool;
 use std::str::FromStr;
 

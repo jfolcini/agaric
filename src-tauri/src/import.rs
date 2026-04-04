@@ -37,9 +37,9 @@ pub fn parse_logseq_markdown(content: &str) -> Vec<ParsedBlock> {
     let normalized = content.replace('\t', "  ");
 
     // Skip YAML frontmatter (--- delimited block at start of file)
-    let body = if normalized.starts_with("---") {
-        if let Some(end) = normalized[3..].find("\n---") {
-            &normalized[3 + end + 4..] // skip past closing ---
+    let body = if let Some(stripped) = normalized.strip_prefix("---") {
+        if let Some(end) = stripped.find("\n---") {
+            &stripped[end + 4..] // skip past closing ---
         } else {
             &normalized // no closing ---, treat as content
         }

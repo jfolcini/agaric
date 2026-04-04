@@ -10,8 +10,8 @@
  */
 
 import type {
-  BlockLinkNode,
   BlockLevelNode,
+  BlockLinkNode,
   BlockquoteNode,
   CodeBlockNode,
   DocNode,
@@ -197,7 +197,13 @@ function serializeInlineNodes(nodes: readonly InlineNode[]): string {
       // Compute desired bold/italic/strike/highlight mark set for this node
       const desired = new Set<string>()
       for (const m of marks) {
-        if (m.type === 'bold' || m.type === 'italic' || m.type === 'strike' || m.type === 'highlight') desired.add(m.type)
+        if (
+          m.type === 'bold' ||
+          m.type === 'italic' ||
+          m.type === 'strike' ||
+          m.type === 'highlight'
+        )
+          desired.add(m.type)
       }
 
       // Emit delimiters for any mark changes
@@ -297,9 +303,10 @@ function serializeTable(node: TableNode): string {
     const cells: string[] = []
     if (row.content) {
       for (const cell of row.content) {
-        const text = cell.content && cell.content.length > 0
-          ? serializeParagraph(cell.content[0]).replace(/\|/g, '\\|')
-          : ''
+        const text =
+          cell.content && cell.content.length > 0
+            ? serializeParagraph(cell.content[0]).replace(/\|/g, '\\|')
+            : ''
         cells.push(text)
       }
     }
@@ -627,8 +634,6 @@ function parseLine(line: string): InlineNode[] {
   // Track positions where marks were opened so we can revert if unclosed
   let boldOpenPos = -1
   let italicOpenPos = -1
-  let strikeOpenPos = -1
-  let highlightOpenPos = -1
   // Snapshots of nodes array length at mark open (for unclosed mark revert)
   let boldOpenNodeLen = 0
   let italicOpenNodeLen = 0
@@ -735,7 +740,6 @@ function parseLine(line: string): InlineNode[] {
       }
       // Open strike
       buf = flushText(buf, currentMarks(), nodes)
-      strikeOpenPos = s.pos
       strikeOpenNodeLen = nodes.length
       inStrike = true
       s.pos += 2
@@ -753,7 +757,6 @@ function parseLine(line: string): InlineNode[] {
       }
       // Open highlight
       buf = flushText(buf, currentMarks(), nodes)
-      highlightOpenPos = s.pos
       highlightOpenNodeLen = nodes.length
       inHighlight = true
       s.pos += 2

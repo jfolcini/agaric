@@ -5,9 +5,6 @@
 //! - `create_conflict_copy()` — creates a conflict copy block when merge fails
 //! - `resolve_property_conflict()` — LWW for concurrent property changes
 //! - `merge_block()` — high-level merge orchestrator for a single block
-
-#![allow(dead_code)]
-
 use std::collections::HashSet;
 
 use sqlx::SqlitePool;

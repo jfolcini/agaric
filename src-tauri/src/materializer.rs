@@ -29,9 +29,6 @@
 //!   handler panic cannot crash the consumer loop.
 //! - **Metrics**: Atomic counters track fg/bg processed counts and dedup
 //!   coalescing.
-
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};

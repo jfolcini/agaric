@@ -2,9 +2,6 @@
 //!
 //! Each op log row stores a content-addressable hash of its fields so that
 //! replicas can detect corruption or tampering during sync.
-
-#![allow(dead_code)]
-
 /// Compute the blake3 hash of an op log entry.
 ///
 /// The hash input is the concatenation of all fields separated by null bytes

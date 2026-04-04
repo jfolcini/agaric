@@ -22,9 +22,6 @@
 //! [`RecoveryReport::draft_errors`] and processing continues with the remaining
 //! drafts. This ensures a single corrupt draft cannot block the entire boot
 //! sequence.
-
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashSet;
