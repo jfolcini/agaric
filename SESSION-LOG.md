@@ -1,6 +1,6 @@
 # Session Log
 
-## Session 168 — 2026-04-04 — Phase 1 batch 20: LWW conflict auto-resolve + import bench
+## Session 168 — 2026-04-04 — Phase 1 batch 20-21: LWW conflicts + query table + dead code
 
 ### Phase 1 (batch 20): LWW conflicts + import benchmarks (F-21, TM-9)
 
@@ -15,6 +15,22 @@
 - Backend: 3 new tests (205/205 sync pass). 2 new benchmarks compile cleanly.
 - Commit: `3029847`
 - REVIEW-LATER: F-21, TM-9 resolved. 35 → **33 open items**.
+
+### Phase 1 (batch 21): Query table view + dead code removal (F-2, L-14)
+
+2 parallel subagents (QueryResult frontend, commands.rs dead code).
+
+| File | Change |
+|------|--------|
+| `QueryResult.tsx` + test | F-2: Table rendering mode via `table:true` query param. Auto-detect columns from properties. Sortable headers with aria-sort. 7 new tests. |
+| `commands.rs` | L-14: Removed `reorder_block_inner` (204 lines) + 13 tests + helper. -395 lines dead code. |
+| `move_reorder_bench.rs` | L-14: Removed `bench_reorder_block` benchmark. |
+
+### Stats
+- Frontend: 7 new tests (23/23 QueryResult pass)
+- Backend: 1546/1546 pass after removing 13 dead tests. -395 lines.
+- Commit: `a8fe74b`
+- REVIEW-LATER: F-2, L-14 resolved. 33 → **31 open items**.
 
 ## Session 167 — 2026-04-04 — Phase 1 batch 15-16: FTS reindex + journal + sync N+1 + proptest
 
