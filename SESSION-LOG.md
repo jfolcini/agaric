@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 178 — 2026-04-04 — Phase 1 batch 31: BlockTree split + E2E timeout cleanup (F-22, TM-1)
+
+### Phase 1 (batch 31): BlockTree component split + E2E timeout cleanup (F-22, TM-1)
+
+2 parallel subagents (independent domains).
+
+| File | Change |
+|------|--------|
+| `block-tree/BlockDatePicker.tsx` | F-22: Extracted date picker overlay (126 lines). |
+| `block-tree/BlockContextMenu.tsx` | F-22: Extracted batch ops toolbar + AlertDialog (112 lines). |
+| `block-tree/BlockDndOverlay.tsx` | F-22: Extracted DnD overlay + SR announcement (46 lines). |
+| `BlockTree.tsx` | F-22: Reduced from 2086 to 1898 lines. Removed unused imports. |
+| `playwright.config.ts` | TM-1: Added `expect: { timeout: 3000 }` global default. |
+| 19 E2E spec files + helpers.ts | TM-1: Removed 355+ redundant `{ timeout: 3000 }` instances (-247 lines). |
+
+### Stats
+- All 186 BlockTree tests pass unchanged
+- 355+ timeout instances removed across 21 files
+- Commits: `fb84957` (F-22), `905b345` (TM-1)
+- REVIEW-LATER: F-22, TM-1 resolved. 12 -> **10 open items**.
+
 ## Session 177 — 2026-04-04 — Phase 1 batch 30: PDF viewer + JournalPage split (F-15, F-23)
 
 ### Phase 1 (batch 30): PDF viewer dialog + JournalPage component split (F-15, F-23)
