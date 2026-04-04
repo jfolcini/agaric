@@ -530,7 +530,7 @@ impl SyncConnection {
                         Self::MAX_MSG_SIZE
                     )));
                 }
-                Ok(data.to_vec())
+                Ok(data.into())
             }
             other => Err(sync_err(format!(
                 "expected binary message, got {:?}",

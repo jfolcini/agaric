@@ -28,6 +28,10 @@ use crate::error::AppError;
 
 const SCHEMA_VERSION: u32 = 2;
 
+/// Maximum number of SQL bind parameters per statement.
+/// SQLite default is 999 (conservative; 32766 since 3.32).
+const MAX_SQL_PARAMS: usize = 999;
+
 // ---------------------------------------------------------------------------
 // Row types (CBOR + DB round-trip)
 // ---------------------------------------------------------------------------
@@ -346,78 +350,122 @@ pub async fn apply_snapshot(
     // blocks last (parent of all FK references)
     sqlx::query("DELETE FROM blocks").execute(&mut *tx).await?;
 
-    // Insert snapshot data
-    for b in &data.tables.blocks {
-        sqlx::query(
+    // Insert snapshot data using multi-row INSERT batches.
+    // Each table uses a chunk size derived from MAX_SQL_PARAMS / num_columns
+    // to stay within SQLite's bind-parameter limit.
+
+    // -- blocks (13 columns) --
+    const BLOCKS_COLS: usize = 13;
+    const BLOCKS_CHUNK: usize = MAX_SQL_PARAMS / BLOCKS_COLS; // 76
+    for chunk in data.tables.blocks.chunks(BLOCKS_CHUNK) {
+        let placeholders: Vec<&str> = chunk
+            .iter()
+            .map(|_| "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .collect();
+        let sql = format!(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, \
              deleted_at, archived_at, is_conflict, conflict_source, \
-             todo_state, priority, due_date, scheduled_date) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&b.id)
-        .bind(&b.block_type)
-        .bind(&b.content)
-        .bind(&b.parent_id)
-        .bind(b.position)
-        .bind(&b.deleted_at)
-        .bind(&b.archived_at)
-        .bind(b.is_conflict)
-        .bind(&b.conflict_source)
-        .bind(&b.todo_state)
-        .bind(&b.priority)
-        .bind(&b.due_date)
-        .bind(&b.scheduled_date)
-        .execute(&mut *tx)
-        .await?;
+             todo_state, priority, due_date, scheduled_date) VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query(&sql);
+        for b in chunk {
+            query = query
+                .bind(&b.id)
+                .bind(&b.block_type)
+                .bind(&b.content)
+                .bind(&b.parent_id)
+                .bind(b.position)
+                .bind(&b.deleted_at)
+                .bind(&b.archived_at)
+                .bind(b.is_conflict)
+                .bind(&b.conflict_source)
+                .bind(&b.todo_state)
+                .bind(&b.priority)
+                .bind(&b.due_date)
+                .bind(&b.scheduled_date);
+        }
+        query.execute(&mut *tx).await?;
     }
 
-    for bt in &data.tables.block_tags {
-        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-            .bind(&bt.block_id)
-            .bind(&bt.tag_id)
-            .execute(&mut *tx)
-            .await?;
+    // -- block_tags (2 columns) --
+    const BLOCK_TAGS_COLS: usize = 2;
+    const BLOCK_TAGS_CHUNK: usize = MAX_SQL_PARAMS / BLOCK_TAGS_COLS; // 499
+    for chunk in data.tables.block_tags.chunks(BLOCK_TAGS_CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?)").collect();
+        let sql = format!(
+            "INSERT INTO block_tags (block_id, tag_id) VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query(&sql);
+        for bt in chunk {
+            query = query.bind(&bt.block_id).bind(&bt.tag_id);
+        }
+        query.execute(&mut *tx).await?;
     }
 
-    for bp in &data.tables.block_properties {
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&bp.block_id)
-        .bind(&bp.key)
-        .bind(&bp.value_text)
-        .bind(bp.value_num)
-        .bind(&bp.value_date)
-        .bind(&bp.value_ref)
-        .execute(&mut *tx)
-        .await?;
+    // -- block_properties (6 columns) --
+    const BLOCK_PROPS_COLS: usize = 6;
+    const BLOCK_PROPS_CHUNK: usize = MAX_SQL_PARAMS / BLOCK_PROPS_COLS; // 166
+    for chunk in data.tables.block_properties.chunks(BLOCK_PROPS_CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?)").collect();
+        let sql = format!(
+            "INSERT INTO block_properties (block_id, key, value_text, value_num, \
+             value_date, value_ref) VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query(&sql);
+        for bp in chunk {
+            query = query
+                .bind(&bp.block_id)
+                .bind(&bp.key)
+                .bind(&bp.value_text)
+                .bind(bp.value_num)
+                .bind(&bp.value_date)
+                .bind(&bp.value_ref);
+        }
+        query.execute(&mut *tx).await?;
     }
 
-    for bl in &data.tables.block_links {
-        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
-            .bind(&bl.source_id)
-            .bind(&bl.target_id)
-            .execute(&mut *tx)
-            .await?;
+    // -- block_links (2 columns) --
+    const BLOCK_LINKS_COLS: usize = 2;
+    const BLOCK_LINKS_CHUNK: usize = MAX_SQL_PARAMS / BLOCK_LINKS_COLS; // 499
+    for chunk in data.tables.block_links.chunks(BLOCK_LINKS_CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?)").collect();
+        let sql = format!(
+            "INSERT INTO block_links (source_id, target_id) VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query(&sql);
+        for bl in chunk {
+            query = query.bind(&bl.source_id).bind(&bl.target_id);
+        }
+        query.execute(&mut *tx).await?;
     }
 
-    for a in &data.tables.attachments {
-        sqlx::query(
+    // -- attachments (8 columns) --
+    const ATTACH_COLS: usize = 8;
+    const ATTACH_CHUNK: usize = MAX_SQL_PARAMS / ATTACH_COLS; // 124
+    for chunk in data.tables.attachments.chunks(ATTACH_CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?, ?, ?)").collect();
+        let sql = format!(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, \
-             fs_path, created_at, deleted_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&a.id)
-        .bind(&a.block_id)
-        .bind(&a.mime_type)
-        .bind(&a.filename)
-        .bind(a.size_bytes)
-        .bind(&a.fs_path)
-        .bind(&a.created_at)
-        .bind(&a.deleted_at)
-        .execute(&mut *tx)
-        .await?;
+             fs_path, created_at, deleted_at) VALUES {}",
+            placeholders.join(", ")
+        );
+        let mut query = sqlx::query(&sql);
+        for a in chunk {
+            query = query
+                .bind(&a.id)
+                .bind(&a.block_id)
+                .bind(&a.mime_type)
+                .bind(&a.filename)
+                .bind(a.size_bytes)
+                .bind(&a.fs_path)
+                .bind(&a.created_at)
+                .bind(&a.deleted_at);
+        }
+        query.execute(&mut *tx).await?;
     }
 
     tx.commit().await?;

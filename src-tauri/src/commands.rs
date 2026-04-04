@@ -1550,7 +1550,7 @@ async fn set_property_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
     block_id: String,
-    key: String,
+    key: &str,
     value_text: Option<String>,
     value_num: Option<f64>,
     value_date: Option<String>,
@@ -1559,7 +1559,7 @@ async fn set_property_in_tx(
     // 1. Build and validate the payload before touching the DB
     let prop_payload = SetPropertyPayload {
         block_id: BlockId::from_trusted(&block_id),
-        key: key.clone(),
+        key: key.to_owned(),
         value_text: value_text.clone(),
         value_num,
         value_date: value_date.clone(),
@@ -1581,7 +1581,7 @@ async fn set_property_in_tx(
     let is_clear =
         value_text.is_none() && value_num.is_none() && value_date.is_none() && value_ref.is_none();
     if !is_clear {
-        match key.as_str() {
+        match key {
             "due_date" | "scheduled_date" => {
                 if value_date.is_none() {
                     return Err(AppError::Validation(format!(
@@ -1658,7 +1658,7 @@ async fn set_property_in_tx(
 
     // 4. Materialize: route reserved keys to blocks columns, others to block_properties
     if is_reserved_property_key(&key) {
-        let col = match key.as_str() {
+        let col = match key {
             "todo_state" => "todo_state",
             "priority" => "priority",
             "due_date" => "due_date",
@@ -1744,7 +1744,7 @@ pub async fn set_property_inner(
 ) -> Result<BlockRow, AppError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let (block, op_record) = set_property_in_tx(
-        &mut tx, device_id, block_id, key, value_text, value_num, value_date, value_ref,
+        &mut tx, device_id, block_id, &key, value_text, value_num, value_date, value_ref,
     )
     .await?;
     tx.commit().await?;
@@ -2106,7 +2106,7 @@ pub async fn set_todo_state_inner(
                 &mut tx,
                 device_id,
                 new_block.id.clone(),
-                "todo_state".to_string(),
+                "todo_state",
                 Some("TODO".to_string()),
                 None,
                 None,
@@ -2120,7 +2120,7 @@ pub async fn set_todo_state_inner(
                 &mut tx,
                 device_id,
                 new_block.id.clone(),
-                "repeat".to_string(),
+                "repeat",
                 Some(rule.clone()),
                 None,
                 None,
@@ -2140,7 +2140,7 @@ pub async fn set_todo_state_inner(
                         &mut tx,
                         device_id,
                         new_block.id.clone(),
-                        "due_date".to_string(),
+                        "due_date",
                         None,
                         None,
                         Some(shifted),
@@ -2167,7 +2167,7 @@ pub async fn set_todo_state_inner(
                         &mut tx,
                         device_id,
                         new_block.id.clone(),
-                        "scheduled_date".to_string(),
+                        "scheduled_date",
                         None,
                         None,
                         Some(shifted),
@@ -2189,7 +2189,7 @@ pub async fn set_todo_state_inner(
                     &mut tx,
                     device_id,
                     new_block.id.clone(),
-                    "repeat-until".to_string(),
+                    "repeat-until",
                     None,
                     None,
                     Some(until_str.clone()),
@@ -2214,7 +2214,7 @@ pub async fn set_todo_state_inner(
                     &mut tx,
                     device_id,
                     new_block.id.clone(),
-                    "repeat-count".to_string(),
+                    "repeat-count",
                     None,
                     Some(count),
                     None,
@@ -2233,7 +2233,7 @@ pub async fn set_todo_state_inner(
                     &mut tx,
                     device_id,
                     new_block.id.clone(),
-                    "repeat-seq".to_string(),
+                    "repeat-seq",
                     None,
                     Some(next_seq as f64),
                     None,
@@ -2253,7 +2253,7 @@ pub async fn set_todo_state_inner(
                 &mut tx,
                 device_id,
                 new_block.id.clone(),
-                "repeat-origin".to_string(),
+                "repeat-origin",
                 None,
                 None,
                 None,
