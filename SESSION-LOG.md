@@ -1,5 +1,27 @@
 # Session Log
 
+## Session 166 — 2026-04-04 — Phase 1 undo/redo batch (H-8, L-15, TL-5)
+
+### Phase 1: Fix 3 undo/redo items
+
+2 parallel build subagents (frontend + backend), 2 parallel review subagents. Orchestrator applied review fixes (2 missing mutation sites, dep arrays, test type fix).
+
+| File | Change |
+|------|--------|
+| `useBlockProperties.ts` | H-8: Added `onNewAction(rootParentId)` after `setTodoStateCmd` and `setPriorityCmd` succeed. |
+| `useBlockTags.ts` | H-8: Added `onNewAction(rootParentId)` after `addTag`, `removeTag`, and `createBlock+addTag` succeed. |
+| `BlockTree.tsx` | H-8: Added `onNewAction(rootParentId)` at 19 property/tag mutation sites (slash commands, keyboard shortcuts, date picker, checkbox syntax). Fixed exhaustive deps for 4 callbacks. |
+| `undo.ts` | L-15: Removed `canUndo` stub from interface and implementation (always returned true, never called in production). |
+| `undo.test.ts` | L-15: Removed `canUndo` test. |
+| `command_integration_tests.rs` | TL-5: 3 new integration tests: undo reverses edit, undo+redo round-trip, undo property change. |
+| `useBlockProperties.test.ts` | 4 new tests: onNewAction called on success (todo + priority), NOT called on failure (todo + priority). |
+
+### Stats
+- Frontend: 4 new tests (25/25 useBlockProperties pass, 23/23 undo store pass)
+- Backend: 3 new tests (21/21 undo-related pass, 1521/1521 total pass)
+- Commit: `e27004c`
+- REVIEW-LATER: H-8, L-15, TL-5 resolved and removed. **109 → 109 open items** (112 → 109).
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system
