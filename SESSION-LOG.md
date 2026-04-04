@@ -1,5 +1,29 @@
 # Session Log
 
+## Session 173 — 2026-04-04 — Phase 1 batch 26: noNonNullAssertion + inline attachments (M-17, F-10)
+
+### Phase 1 (batch 26): Lint strictness + attachment rendering (M-17, F-10)
+
+Orchestrator fix (M-17) + 1 build subagent (F-10).
+
+| File | Change |
+|------|--------|
+| `biome.json` | M-17: `noNonNullAssertion` promoted from "warn" to "error". |
+| `ConflictList.tsx` | M-17: Replace `parent_id!` with `parent_id ?? ''` null coalesce. |
+| `PageBrowser.tsx` | M-17: Replace `pageId!` with guarded `if (pageId)` check. |
+| `PropertiesView.tsx` | M-17: Replace `s!` with guarded `if (s)` check. |
+| `QueryResult.tsx` | M-17: Replace `.get(id)!` with `.filter((b): b is BlockRow => b != null)`. |
+| `BlockTree.test.tsx` | M-17: 6 `biome-ignore` comments for test assertions guarded by prior `expect().not.toBeNull()`. |
+| `StaticBlock.tsx` | F-10: Inline attachment rendering. Images via `<img src={convertFileSrc()}>` with lazy loading + constrained dimensions. Non-image files as clickable chips with MIME icon + filename + size. `getAssetUrl()` wrapper for Tauri/browser detection. |
+| `StaticBlock.test.tsx` | F-10: 9 new tests (image rendering, file chips, empty/loading states, mixed attachments, Tauri-unavailable fallback, 2 axe a11y audits). |
+
+Also updated M-16 cost estimate from M to L (484 violations across 51 files verified via `tsc --noUncheckedIndexedAccess`).
+
+### Stats
+- Frontend: 9 new tests (53 total in StaticBlock.test.tsx)
+- Commits: `d794953` (M-17), `5102093` (F-10)
+- REVIEW-LATER: M-17, F-10 resolved. 22 -> **20 open items**.
+
 ## Session 172 — 2026-04-04 — Phase 1 batch 25: Rust backend cleanup (M-8, L-6, L-9)
 
 ### Phase 1 (batch 25): Rust backend perf + cleanup (M-8, L-6, L-9, reject L-1/L-8)
