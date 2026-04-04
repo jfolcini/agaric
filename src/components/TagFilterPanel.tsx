@@ -3,7 +3,7 @@
  *
  * Lets users select multiple tags via prefix search and see blocks
  * matching all (AND) or any (OR) of the selected tags.
- * Results are paginated with cursor-based "Load more".
+ * Results are paginated with cursor-based "Load more" via usePaginatedQuery.
  */
 
 import { Plus, Search, X } from 'lucide-react'
@@ -17,9 +17,11 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import type { BlockRow } from '../lib/tauri'
 import { getBlock, listTagsByPrefix, queryByTags } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
+import { ResultCard } from './ResultCard'
 
 interface SelectedTag {
   id: string
@@ -51,10 +53,6 @@ export function TagFilterPanel(): React.ReactElement {
   const [matchingTags, setMatchingTags] = useState<MatchingTag[]>([])
   const [selectedTags, setSelectedTags] = useState<SelectedTag[]>([])
   const [mode, setMode] = useState<'and' | 'or'>('and')
-  const [results, setResults] = useState<BlockRow[]>([])
-  const [loading, setLoading] = useState(false)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
   // Debounced prefix search
@@ -94,44 +92,34 @@ export function TagFilterPanel(): React.ReactElement {
     debounced.schedule(value)
   }
 
-  // Execute block query when selectedTags or mode changes
-  const executeQuery = useCallback(
-    async (cursor?: string) => {
-      if (selectedTags.length === 0) {
-        setResults([])
-        setNextCursor(null)
-        setHasMore(false)
-        return
-      }
-
-      setLoading(true)
-      try {
-        const resp = await queryByTags({
-          tagIds: selectedTags.map((t) => t.id),
-          prefixes: [],
-          mode,
-          ...(cursor != null && { cursor }),
-          limit: 50,
-        })
-        if (cursor) {
-          setResults((prev) => [...prev, ...resp.items])
-        } else {
-          setResults(resp.items)
-        }
-        setNextCursor(resp.next_cursor)
-        setHasMore(resp.has_more)
-      } catch {
-        toast.error(t('tags.loadFailed'))
-      }
-      setLoading(false)
-    },
-    [selectedTags, mode, t],
+  // Block results via usePaginatedQuery
+  const blockQueryFn = useCallback(
+    (cursor?: string) =>
+      queryByTags({
+        tagIds: selectedTags.map((t) => t.id),
+        prefixes: [],
+        mode,
+        ...(cursor != null && { cursor }),
+        limit: 50,
+      }),
+    [selectedTags, mode],
   )
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: trigger query when selectedTags or mode changes
+  const {
+    items: results,
+    loading,
+    hasMore,
+    loadMore,
+    setItems,
+  } = usePaginatedQuery(blockQueryFn, {
+    enabled: selectedTags.length > 0,
+    onError: t('tags.loadFailed'),
+  })
+
+  // Clear items when all tags are removed
   useEffect(() => {
-    executeQuery()
-  }, [selectedTags, mode, executeQuery])
+    if (selectedTags.length === 0) setItems([])
+  }, [selectedTags.length, setItems])
 
   const handleAddTag = useCallback(
     (tag: MatchingTag) => {
@@ -144,10 +132,6 @@ export function TagFilterPanel(): React.ReactElement {
   const handleRemoveTag = useCallback((tagId: string) => {
     setSelectedTags((prev) => prev.filter((t) => t.id !== tagId))
   }, [])
-
-  const loadMore = useCallback(() => {
-    if (nextCursor) executeQuery(nextCursor)
-  }, [nextCursor, executeQuery])
 
   const handleResultClick = useCallback(
     async (block: BlockRow) => {
@@ -327,21 +311,12 @@ export function TagFilterPanel(): React.ReactElement {
             {t('tagFilter.resultsTitle')} ({results.length})
           </h4>
           {results.map((block) => (
-            <button
+            <ResultCard
               key={block.id}
-              type="button"
-              className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+              block={block}
               onClick={() => handleResultClick(block)}
-            >
-              <div className="flex items-center gap-2">
-                <span className="flex-1 text-sm whitespace-pre-wrap">
-                  {block.content || t('tagFilter.emptyContent')}
-                </span>
-                {(block.block_type === 'tag' || block.block_type === 'page') && (
-                  <Badge variant="secondary">{block.block_type}</Badge>
-                )}
-              </div>
-            </button>
+              contentClassName="whitespace-pre-wrap"
+            />
           ))}
         </section>
       )}

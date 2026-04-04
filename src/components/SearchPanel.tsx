@@ -4,7 +4,7 @@
  * Features:
  *  - Debounced search (300ms) on input change
  *  - Immediate search on form submit (Enter / button click)
- *  - Cursor-based pagination ("Load more")
+ *  - Cursor-based pagination ("Load more") via usePaginatedQuery
  *  - CJK limitation notice (p3-t6)
  */
 
@@ -13,16 +13,17 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
+import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, getBlock, searchBlocks } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
+import { ResultCard } from './ResultCard'
 
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
@@ -34,10 +35,7 @@ function hasCJK(text: string): boolean {
 export function SearchPanel(): React.ReactElement {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<BlockRow[]>([])
-  const [loading, setLoading] = useState(false)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
+  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [searched, setSearched] = useState(false)
   const [typing, setTyping] = useState(false)
   const [loadingResultId, setLoadingResultId] = useState<string | null>(null)
@@ -50,53 +48,48 @@ export function SearchPanel(): React.ReactElement {
     setRecentPages(getRecentPages())
   }, [])
 
-  const executeSearch = useCallback(
-    async (q: string, cursor?: string) => {
-      setLoading(true)
-      try {
-        const resp = await searchBlocks({ query: q, ...(cursor != null && { cursor }), limit: 50 })
-        if (cursor) {
-          setResults((prev) => [...prev, ...resp.items])
-        } else {
-          setResults(resp.items)
-        }
-        setNextCursor(resp.next_cursor)
-        setHasMore(resp.has_more)
-        setSearched(true)
-        const parentIds = resp.items
-          .map((b) => b.parent_id)
-          .filter((id): id is string => id != null)
-        if (parentIds.length > 0) {
-          try {
-            const resolved = await batchResolve(parentIds)
-            if (Array.isArray(resolved)) {
-              setPageTitles((prev) => {
-                const next = new Map(prev)
-                for (const r of resolved) {
-                  next.set(r.id, r.title ?? 'Untitled')
-                }
-                return next
-              })
-            }
-          } catch {
-            // breadcrumbs are non-critical
-          }
-        }
-      } catch {
-        toast.error(t('search.failed'))
-      }
-      setLoading(false)
-    },
-    [t],
+  const queryFn = useCallback(
+    (cursor?: string) => searchBlocks({ query: debouncedQuery, cursor, limit: 50 }),
+    [debouncedQuery],
   )
 
-  const loadMore = useCallback(() => {
-    if (nextCursor) executeSearch(query, nextCursor)
-  }, [nextCursor, query, executeSearch])
+  const {
+    items: results,
+    loading: searchLoading,
+    hasMore,
+    loadMore,
+    error,
+    setItems,
+  } = usePaginatedQuery(queryFn, {
+    enabled: debouncedQuery.length > 0,
+    onError: t('search.failed'),
+  })
 
-  const debounced = useDebouncedCallback((value) => {
+  // Resolve page titles for breadcrumbs when results change
+  useEffect(() => {
+    const parentIds = results.map((b) => b.parent_id).filter((id): id is string => id != null)
+    if (parentIds.length === 0) return
+    batchResolve(parentIds)
+      .then((resolved) => {
+        if (Array.isArray(resolved)) {
+          setPageTitles((prev) => {
+            const next = new Map(prev)
+            for (const r of resolved) {
+              next.set(r.id, r.title ?? 'Untitled')
+            }
+            return next
+          })
+        }
+      })
+      .catch(() => {
+        // breadcrumbs are non-critical
+      })
+  }, [results])
+
+  const debounced = useDebouncedCallback((value: string) => {
     setTyping(false)
-    executeSearch(value)
+    setDebouncedQuery(value)
+    setSearched(true)
   }, 300)
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -106,10 +99,9 @@ export function SearchPanel(): React.ReactElement {
     debounced.cancel()
 
     if (!value.trim()) {
-      setResults([])
+      setDebouncedQuery('')
+      setItems([])
       setSearched(false)
-      setNextCursor(null)
-      setHasMore(false)
       setTyping(false)
       return
     }
@@ -129,7 +121,8 @@ export function SearchPanel(): React.ReactElement {
     debounced.cancel()
     setTyping(false)
     if (query.trim()) {
-      executeSearch(query)
+      setDebouncedQuery(query.trim())
+      setSearched(true)
     }
   }
 
@@ -190,7 +183,9 @@ export function SearchPanel(): React.ReactElement {
         <Button type="submit" variant="outline" disabled={!query.trim()}>
           Search
         </Button>
-        {(typing || loading) && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+        {(typing || searchLoading) && (
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        )}
       </form>
 
       {hasCJK(query) && (
@@ -227,7 +222,7 @@ export function SearchPanel(): React.ReactElement {
         </div>
       )}
 
-      {loading && !searched && (
+      {searchLoading && results.length === 0 && (
         <div className="search-loading space-y-2">
           <Skeleton className="h-12 w-full rounded-lg" />
           <Skeleton className="h-12 w-full rounded-lg" />
@@ -235,7 +230,7 @@ export function SearchPanel(): React.ReactElement {
       )}
 
       <div aria-live="polite">
-        {searched && !loading && results.length === 0 && (
+        {searched && !searchLoading && results.length === 0 && !error && (
           <EmptyState icon={Search} message={t('search.noResultsFound')} />
         )}
 
@@ -243,34 +238,26 @@ export function SearchPanel(): React.ReactElement {
           <ul className="search-results space-y-3 list-none m-0 p-0" data-testid="search-results">
             {results.map((block) => (
               <li key={block.id}>
-                <button
-                  type="button"
-                  className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                <ResultCard
+                  block={block}
                   onClick={() => handleResultClick(block)}
                   disabled={loadingResultId === block.id}
+                  showSpinner={loadingResultId === block.id}
+                  contentClassName="line-clamp-2"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="flex-1 text-sm line-clamp-2">
-                      {block.content || '(empty)'}
-                    </span>
-                    {loadingResultId === block.id && (
-                      <Loader2 className="h-4 w-4 animate-spin shrink-0 text-muted-foreground" />
-                    )}
-                    {(block.block_type === 'tag' || block.block_type === 'page') && (
-                      <Badge variant="secondary">{block.block_type}</Badge>
-                    )}
-                  </div>
                   {block.parent_id && pageTitles.get(block.parent_id) && (
                     <p className="text-xs text-muted-foreground mt-1">
                       in: {pageTitles.get(block.parent_id)}
                     </p>
                   )}
-                </button>
+                </ResultCard>
               </li>
             ))}
           </ul>
         )}
-        {searched && !loading && <span className="sr-only">{results.length} results found</span>}
+        {searched && !searchLoading && !error && (
+          <span className="sr-only">{results.length} results found</span>
+        )}
       </div>
 
       {hasMore && (
@@ -279,9 +266,9 @@ export function SearchPanel(): React.ReactElement {
           size="sm"
           className="search-load-more w-full"
           onClick={loadMore}
-          disabled={loading}
+          disabled={searchLoading}
         >
-          {loading ? t('search.loadingMessage') : t('search.loadMoreButton')}
+          {searchLoading ? t('search.loadingMessage') : t('search.loadMoreButton')}
         </Button>
       )}
     </div>

@@ -72,9 +72,7 @@ describe('LoadingSkeleton', () => {
   })
 
   it('has no a11y violations with custom props', async () => {
-    const { container } = render(
-      <LoadingSkeleton count={2} height="h-10" className="custom" />,
-    )
+    const { container } = render(<LoadingSkeleton count={2} height="h-10" className="custom" />)
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })

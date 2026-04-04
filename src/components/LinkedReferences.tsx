@@ -22,6 +22,7 @@ import {
   listTagsByPrefix,
 } from '../lib/tauri'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
+import { CollapsibleGroupList } from './CollapsibleGroupList'
 import { LoadMoreButton } from './LoadMoreButton'
 import { SourcePageFilter } from './SourcePageFilter'
 import { renderRichContent } from './StaticBlock'
@@ -391,62 +392,42 @@ export function LinkedReferences({
             </div>
           )}
 
-          {groups.map((group) => (
-            <div key={group.page_id} className="linked-references-group">
-              {/* Group header -- collapsible */}
-              <button
-                type="button"
-                onClick={() => toggleGroup(group.page_id)}
-                className="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 transition-colors"
-                aria-expanded={groupExpanded[group.page_id] ?? false}
+          <CollapsibleGroupList
+            groups={groups}
+            expandedGroups={groupExpanded}
+            onToggleGroup={toggleGroup}
+            untitledLabel={t('references.untitled')}
+            groupClassName="linked-references-group"
+            headerClassName="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 transition-colors"
+            listClassName="linked-references-blocks ml-4 mt-1 space-y-1"
+            listAriaLabel={(title) => t('references.backlinksFrom', { title })}
+            renderBlock={(block, group) => (
+              <li
+                key={block.id}
+                className="linked-reference-item flex flex-wrap items-center gap-3 border-b py-2 px-1 last:border-b-0 cursor-pointer hover:bg-muted/50"
+                // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
+                tabIndex={0}
+                onClick={() => handleBlockClick(block, group.page_id, group.page_title)}
+                onKeyDown={(e) => handleBlockKeyDown(e, block, group.page_id, group.page_title)}
               >
-                {groupExpanded[group.page_id] ? (
-                  <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                )}
-                {group.page_title ?? t('references.untitled')} ({group.blocks.length})
-              </button>
-
-              {groupExpanded[group.page_id] && (
-                <ul
-                  className="linked-references-blocks ml-4 mt-1 space-y-1"
-                  aria-label={t('references.backlinksFrom', {
-                    title: group.page_title ?? t('references.untitled'),
-                  })}
-                >
-                  {group.blocks.map((block) => (
-                    <li
-                      key={block.id}
-                      className="linked-reference-item flex flex-wrap items-center gap-3 border-b py-2 px-1 last:border-b-0 cursor-pointer hover:bg-muted/50"
-                      // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
-                      tabIndex={0}
-                      onClick={() => handleBlockClick(block, group.page_id, group.page_title)}
-                      onKeyDown={(e) =>
-                        handleBlockKeyDown(e, block, group.page_id, group.page_title)
-                      }
-                    >
-                      <Badge variant="secondary" className="linked-reference-item-type shrink-0">
-                        {block.block_type}
-                      </Badge>
-                      <span className="linked-reference-item-text text-sm flex-1 truncate">
-                        {block.content
-                          ? renderRichContent(block.content, {
-                              resolveBlockTitle,
-                              resolveTagName,
-                              resolveBlockStatus,
-                            })
-                          : t('references.empty')}
-                      </span>
-                      <span className="linked-reference-item-id text-xs text-muted-foreground font-mono">
-                        {block.id.slice(0, 8)}...
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ))}
+                <Badge variant="secondary" className="linked-reference-item-type shrink-0">
+                  {block.block_type}
+                </Badge>
+                <span className="linked-reference-item-text text-sm flex-1 truncate">
+                  {block.content
+                    ? renderRichContent(block.content, {
+                        resolveBlockTitle,
+                        resolveTagName,
+                        resolveBlockStatus,
+                      })
+                    : t('references.empty')}
+                </span>
+                <span className="linked-reference-item-id text-xs text-muted-foreground font-mono">
+                  {block.id.slice(0, 8)}...
+                </span>
+              </li>
+            )}
+          />
 
           <LoadMoreButton
             hasMore={hasMore}

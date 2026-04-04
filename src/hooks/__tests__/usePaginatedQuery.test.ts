@@ -190,6 +190,21 @@ describe('usePaginatedQuery', () => {
     expect(queryFn).not.toHaveBeenCalled()
   })
 
+  it('clears hasMore when enabled transitions from true to false', async () => {
+    const queryFn = vi.fn().mockResolvedValue(makePage(['a', 'b'], true, 'c1'))
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => usePaginatedQuery(queryFn, { enabled }),
+      { initialProps: { enabled: true } },
+    )
+
+    await waitFor(() => expect(result.current.hasMore).toBe(true))
+
+    rerender({ enabled: false })
+
+    await waitFor(() => expect(result.current.hasMore).toBe(false))
+    expect(result.current.items).toEqual(['a', 'b'])
+  })
+
   it('fetches when enabled transitions from false to true', async () => {
     const queryFn = vi.fn().mockResolvedValue(makePage(['a']))
     const { rerender } = renderHook(

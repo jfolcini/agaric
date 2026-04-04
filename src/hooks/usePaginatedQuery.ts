@@ -84,11 +84,13 @@ export function usePaginatedQuery<T>(
   )
 
   // Auto-load on mount and when queryFn identity changes (deps changed).
+  // Always reset cursor/hasMore when deps change (stale pagination state).
+  // Only call load() when enabled — this lets callers gate auto-fetch.
   const enabled = options?.enabled ?? true
   useEffect(() => {
-    if (!enabled) return
     setNextCursor(null)
     setHasMore(false)
+    if (!enabled) return
     load()
   }, [load, enabled])
 

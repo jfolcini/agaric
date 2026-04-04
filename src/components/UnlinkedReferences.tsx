@@ -12,10 +12,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { LoadMoreButton } from './LoadMoreButton'
 import type { BacklinkGroup } from '../lib/tauri'
 import { editBlock, listUnlinkedReferences } from '../lib/tauri'
+import { CollapsibleGroupList } from './CollapsibleGroupList'
 import { EmptyState } from './EmptyState'
+import { LoadMoreButton } from './LoadMoreButton'
 
 export interface UnlinkedReferencesProps {
   pageId: string
@@ -36,7 +37,7 @@ export function UnlinkedReferences({
   const { t } = useTranslation()
   const [groups, setGroups] = useState<BacklinkGroup[]>([])
   const [collapsed, setCollapsed] = useState(true)
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
@@ -86,7 +87,7 @@ export function UnlinkedReferences({
     setNextCursor(null)
     setHasMore(false)
     setTotalCount(0)
-    setCollapsedGroups(new Set())
+    setExpandedGroups({})
     if (!collapsed) {
       fetchGroups()
     }
@@ -126,15 +127,10 @@ export function UnlinkedReferences({
   }, [])
 
   const toggleGroup = useCallback((groupPageId: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev)
-      if (next.has(groupPageId)) {
-        next.delete(groupPageId)
-      } else {
-        next.add(groupPageId)
-      }
-      return next
-    })
+    setExpandedGroups((prev) => ({
+      ...prev,
+      [groupPageId]: !(prev[groupPageId] ?? true),
+    }))
   }, [])
 
   const loadMore = useCallback(() => {
@@ -186,67 +182,47 @@ export function UnlinkedReferences({
           )}
 
           {/* Group list */}
-          {groups.map((group) => {
-            const isGroupCollapsed = collapsedGroups.has(group.page_id)
-            return (
-              <div key={group.page_id} className="unlinked-references-group">
-                {/* Group header — collapsible */}
+          <CollapsibleGroupList
+            groups={groups}
+            expandedGroups={expandedGroups}
+            onToggleGroup={toggleGroup}
+            untitledLabel={t('unlinkedRefs.untitled')}
+            defaultExpanded
+            groupClassName="unlinked-references-group"
+            headerClassName="unlinked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1 text-sm font-medium hover:bg-accent/50 transition-colors"
+            listClassName="unlinked-references-blocks ml-4 mt-1 space-y-1"
+            listAriaLabel={(title) => t('unlinkedRefs.mentionsFrom', { title })}
+            renderBlock={(block, group) => (
+              <li
+                key={block.id}
+                className="unlinked-reference-item flex items-center gap-3 border-b py-2 px-1 last:border-b-0"
+              >
                 <button
                   type="button"
-                  onClick={() => toggleGroup(group.page_id)}
-                  className="unlinked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1 text-sm font-medium hover:bg-accent/50 transition-colors"
-                  aria-expanded={!isGroupCollapsed}
+                  className="unlinked-reference-item-text text-sm flex-1 truncate cursor-pointer hover:bg-muted/50 text-left"
+                  onClick={() =>
+                    onNavigateToPage?.(
+                      group.page_id,
+                      group.page_title ?? t('unlinkedRefs.untitled'),
+                      block.id,
+                    )
+                  }
                 >
-                  {!isGroupCollapsed ? (
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-                  )}
-                  {group.page_title ?? t('unlinkedRefs.untitled')} ({group.blocks.length})
+                  {block.content || t('unlinkedRefs.empty')}
                 </button>
-
-                {!isGroupCollapsed && (
-                  <ul
-                    className="unlinked-references-blocks ml-4 mt-1 space-y-1"
-                    aria-label={t('unlinkedRefs.mentionsFrom', {
-                      title: group.page_title ?? t('unlinkedRefs.untitled'),
-                    })}
-                  >
-                    {group.blocks.map((block) => (
-                      <li
-                        key={block.id}
-                        className="unlinked-reference-item flex items-center gap-3 border-b py-2 px-1 last:border-b-0"
-                      >
-                        <button
-                          type="button"
-                          className="unlinked-reference-item-text text-sm flex-1 truncate cursor-pointer hover:bg-muted/50 text-left"
-                          onClick={() =>
-                            onNavigateToPage?.(
-                              group.page_id,
-                              group.page_title ?? t('unlinkedRefs.untitled'),
-                              block.id,
-                            )
-                          }
-                        >
-                          {block.content || t('unlinkedRefs.empty')}
-                        </button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="link-it-button shrink-0 text-xs text-muted-foreground hover:text-primary"
-                          onClick={() => handleLinkIt(block.id, block.content ?? '')}
-                          aria-label={`Link it: replace mention in block ${block.id.slice(0, 8)}`}
-                        >
-                          <Link2 className="h-3.5 w-3.5 mr-1" />
-                          {t('unlinkedRefs.linkIt')}
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )
-          })}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="link-it-button shrink-0 text-xs text-muted-foreground hover:text-primary"
+                  onClick={() => handleLinkIt(block.id, block.content ?? '')}
+                  aria-label={`Link it: replace mention in block ${block.id.slice(0, 8)}`}
+                >
+                  <Link2 className="h-3.5 w-3.5 mr-1" />
+                  {t('unlinkedRefs.linkIt')}
+                </Button>
+              </li>
+            )}
+          />
 
           {/* Load more pagination */}
           <LoadMoreButton
