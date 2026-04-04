@@ -376,6 +376,9 @@ pub fn run() {
             let cancel_flag = Arc::new(AtomicBool::new(false));
             app.manage(SyncCancelFlag(cancel_flag.clone()));
 
+            // Install rustls CryptoProvider before any TLS usage (#sync)
+            let _ = rustls::crypto::ring::default_provider().install_default();
+
             // Spawn SyncDaemon (#382, #383, #278)
             tauri::async_runtime::spawn(async move {
                 match sync_daemon::SyncDaemon::start(
