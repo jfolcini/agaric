@@ -22,6 +22,21 @@
 - Commit: `e27004c`
 - REVIEW-LATER: H-8, L-15, TL-5 resolved and removed. **109 → 109 open items** (112 → 109).
 
+### Phase 1 (batch 2): FTS fixes + op_log perf (H-3, H-7, L-2)
+
+1 build subagent (fts.rs), orchestrator direct fix (op_log.rs), 1 review subagent. L-1 investigated but not fixable (sqlx query! requires String for TEXT columns).
+
+| File | Change |
+|------|--------|
+| `fts.rs` | H-7: Added `STRIKE_RE` and `HIGHLIGHT_RE` LazyLock regexes. Applied in both `strip_for_fts()` and `strip_for_fts_with_maps()` after CODE_RE step. Added `\~` and `\=` unescape. 4 new tests. |
+| `fts.rs` | H-3: Extracted cursor data before mapping, changed `.iter()` → `.into_iter()`, removed 13 `.clone()` calls per search result row. |
+| `op_log.rs` | L-2: Replaced `Vec` allocation + sort + `serde_json::to_string` with direct `format!()` for single-parent `parent_seqs`. |
+
+### Stats
+- Backend: 4 new tests (83/83 FTS pass, 51/51 op_log pass)
+- Commit: `3ca15c2`
+- REVIEW-LATER: H-3, H-7, L-2 resolved and removed. 109 → **106 open items**.
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system
