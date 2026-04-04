@@ -69,6 +69,7 @@ export function PdfViewerDialog({
       const renderTask = page.render({
         canvasContext: ctx,
         viewport,
+        canvas: null,
       })
       renderTaskRef.current = renderTask
 

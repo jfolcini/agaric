@@ -28,7 +28,7 @@ export function BlockDatePicker({
   /** Convert a parsed YYYY-MM-DD string to a Date and call onSelect. */
   const handleDateSelected = useCallback(
     (dateStr: string) => {
-      const [y, m, d] = dateStr.split('-').map(Number)
+      const [y, m, d] = dateStr.split('-').map(Number) as [number, number, number]
       const date = new Date(y, m - 1, d)
       onSelect(date)
     },
@@ -49,8 +49,8 @@ export function BlockDatePicker({
           'a[href], input, select, textarea, button:not([disabled]), [tabindex]:not([tabindex="-1"])',
         )
         if (focusable.length === 0) return
-        const first = focusable[0]
-        const last = focusable[focusable.length - 1]
+        const first = focusable[0]!
+        const last = focusable[focusable.length - 1]!
         if (e.shiftKey && document.activeElement === first) {
           e.preventDefault()
           last.focus()

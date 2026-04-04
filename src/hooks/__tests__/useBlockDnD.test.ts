@@ -228,7 +228,7 @@ describe('useBlockDnD', () => {
       // The last call to getProjection should include 48 as the dragOffset
       const calls = mockedGetProjection.mock.calls
       const lastCall = calls[calls.length - 1]
-      expect(lastCall[3]).toBe(48) // dragOffset param
+      expect(lastCall![3]).toBe(48) // dragOffset param
     })
   })
 
@@ -699,14 +699,14 @@ describe('useBlockDnD', () => {
       expect(sensors).toHaveLength(2)
 
       // First sensor: PointerSensor
-      expect(sensors[0].sensor).toBe('PointerSensor')
-      expect(sensors[0].opts).toEqual({
+      expect(sensors[0]!.sensor).toBe('PointerSensor')
+      expect(sensors[0]!.opts).toEqual({
         activationConstraint: { distance: 8 },
       })
 
       // Second sensor: KeyboardSensor
-      expect(sensors[1].sensor).toBe('KeyboardSensor')
-      expect(sensors[1].opts).toHaveProperty('coordinateGetter')
+      expect(sensors[1]!.sensor).toBe('KeyboardSensor')
+      expect(sensors[1]!.opts).toHaveProperty('coordinateGetter')
     })
 
     it('configures PointerSensor with delay constraint on mobile', () => {
@@ -719,14 +719,14 @@ describe('useBlockDnD', () => {
       expect(sensors).toHaveLength(2)
 
       // First sensor: PointerSensor with delay-only (long press to drag)
-      expect(sensors[0].sensor).toBe('PointerSensor')
-      expect(sensors[0].opts).toEqual({
+      expect(sensors[0]!.sensor).toBe('PointerSensor')
+      expect(sensors[0]!.opts).toEqual({
         activationConstraint: { delay: 250, tolerance: 5 },
       })
 
       // Second sensor: KeyboardSensor (unchanged)
-      expect(sensors[1].sensor).toBe('KeyboardSensor')
-      expect(sensors[1].opts).toHaveProperty('coordinateGetter')
+      expect(sensors[1]!.sensor).toBe('KeyboardSensor')
+      expect(sensors[1]!.opts).toHaveProperty('coordinateGetter')
     })
   })
 

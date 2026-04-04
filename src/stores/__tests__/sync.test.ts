@@ -73,7 +73,7 @@ describe('useSyncStore', () => {
         .setPeers([{ peerId: 'peer-2', lastSyncedAt: '2025-01-15T00:00:00Z', resetCount: 2 }])
       const peers = useSyncStore.getState().peers
       expect(peers).toHaveLength(1)
-      expect(peers[0].peerId).toBe('peer-2')
+      expect(peers[0]!.peerId).toBe('peer-2')
     })
 
     it('can set empty peers array', () => {

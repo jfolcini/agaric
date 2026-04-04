@@ -146,7 +146,7 @@ describe('TagFilterPanel', () => {
     // The matching portion should be bolded
     const strongElements = document.querySelectorAll('.tag-filter-panel strong')
     expect(strongElements.length).toBeGreaterThanOrEqual(2)
-    expect(strongElements[0].textContent).toBe('work')
+    expect(strongElements[0]!.textContent).toBe('work')
   })
 
   it('clears matching tags when prefix cleared', async () => {
@@ -481,7 +481,7 @@ describe('TagFilterPanel', () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
     await act(async () => {
-      fireEvent.click(addBtns[0])
+      fireEvent.click(addBtns[0]!)
       await vi.advanceTimersByTimeAsync(0)
     })
 
@@ -552,8 +552,8 @@ describe('TagFilterPanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(navState.pageStack[0].pageId).toBe('PARENT1')
-    expect(navState.pageStack[0].title).toBe('Parent Page')
+    expect(navState.pageStack[0]!.pageId).toBe('PARENT1')
+    expect(navState.pageStack[0]!.title).toBe('Parent Page')
     expect(navState.selectedBlockId).toBe('CHILD1')
   })
 
@@ -596,8 +596,8 @@ describe('TagFilterPanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(navState.pageStack[0].pageId).toBe('PAGE1')
-    expect(navState.pageStack[0].title).toBe('My Tagged Page')
+    expect(navState.pageStack[0]!.pageId).toBe('PAGE1')
+    expect(navState.pageStack[0]!.title).toBe('My Tagged Page')
     expect(navState.selectedBlockId).toBeNull()
   })
 

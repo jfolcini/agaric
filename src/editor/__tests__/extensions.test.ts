@@ -22,7 +22,7 @@ const schema = getSchema([
 // -- TagRef -------------------------------------------------------------------
 
 describe('TagRef extension', () => {
-  const nodeType = schema.nodes.tag_ref
+  const nodeType = schema.nodes.tag_ref!
 
   it('exists in the schema', () => {
     expect(nodeType).toBeDefined()
@@ -46,7 +46,7 @@ describe('TagRef extension', () => {
   })
 
   it('id attribute defaults to null', () => {
-    expect(nodeType.spec.attrs?.id.default).toBeNull()
+    expect(nodeType.spec.attrs?.id!.default).toBeNull()
   })
 
   it('renders as a span with data-type="tag-ref"', () => {
@@ -72,14 +72,14 @@ describe('TagRef extension', () => {
     const parseRules = nodeType.spec.parseDOM
     expect(parseRules).toBeDefined()
     expect(parseRules?.length).toBeGreaterThan(0)
-    expect(parseRules?.[0].tag).toBe('span[data-type="tag-ref"]')
+    expect(parseRules![0]!.tag).toBe('span[data-type="tag-ref"]')
   })
 })
 
 // -- BlockLink ----------------------------------------------------------------
 
 describe('BlockLink extension', () => {
-  const nodeType = schema.nodes.block_link
+  const nodeType = schema.nodes.block_link!
 
   it('exists in the schema', () => {
     expect(nodeType).toBeDefined()
@@ -103,7 +103,7 @@ describe('BlockLink extension', () => {
   })
 
   it('id attribute defaults to null', () => {
-    expect(nodeType.spec.attrs?.id.default).toBeNull()
+    expect(nodeType.spec.attrs?.id!.default).toBeNull()
   })
 
   it('renders as a span with data-type="block-link"', () => {
@@ -124,7 +124,7 @@ describe('BlockLink extension', () => {
     const parseRules = nodeType.spec.parseDOM
     expect(parseRules).toBeDefined()
     expect(parseRules?.length).toBeGreaterThan(0)
-    expect(parseRules?.[0].tag).toBe('span[data-type="block-link"]')
+    expect(parseRules![0]!.tag).toBe('span[data-type="block-link"]')
   })
 })
 
@@ -133,16 +133,16 @@ describe('BlockLink extension', () => {
 describe('Schema integration', () => {
   it('tag_ref can be content of paragraph', () => {
     // Paragraph allows inline content — tag_ref is inline group
-    const tagNode = schema.nodes.tag_ref.create({ id: 'TEST00000000000000000000' })
+    const tagNode = schema.nodes.tag_ref!.create({ id: 'TEST00000000000000000000' })
     // Should not throw when creating a paragraph with tag_ref content
-    const para = schema.nodes.paragraph.create(null, tagNode)
+    const para = schema.nodes.paragraph!.create(null, tagNode)
     expect(para.content.childCount).toBe(1)
     expect(para.content.child(0).type.name).toBe('tag_ref')
   })
 
   it('block_link can be content of paragraph', () => {
-    const linkNode = schema.nodes.block_link.create({ id: 'TEST00000000000000000000' })
-    const para = schema.nodes.paragraph.create(null, linkNode)
+    const linkNode = schema.nodes.block_link!.create({ id: 'TEST00000000000000000000' })
+    const para = schema.nodes.paragraph!.create(null, linkNode)
     expect(para.content.childCount).toBe(1)
     expect(para.content.child(0).type.name).toBe('block_link')
   })
@@ -150,12 +150,12 @@ describe('Schema integration', () => {
   it('tag_ref and block_link can coexist with text in a paragraph', () => {
     const nodes = [
       schema.text('before '),
-      schema.nodes.tag_ref.create({ id: 'TAG00000000000000000000000' }),
+      schema.nodes.tag_ref!.create({ id: 'TAG00000000000000000000000' }),
       schema.text(' and '),
-      schema.nodes.block_link.create({ id: 'LINK0000000000000000000000' }),
+      schema.nodes.block_link!.create({ id: 'LINK0000000000000000000000' }),
       schema.text(' after'),
     ]
-    const para = schema.nodes.paragraph.create(null, nodes)
+    const para = schema.nodes.paragraph!.create(null, nodes)
     expect(para.content.childCount).toBe(5)
   })
 })
@@ -296,3 +296,4 @@ describe('ExternalLink extension', () => {
     expect(ExternalLink.options.HTMLAttributes.rel).toBe('noopener noreferrer')
   })
 })
+

@@ -554,7 +554,7 @@ describe('JournalPage', () => {
 
       // Click the "Add block" button in today's section
       const sections = screen.getAllByRole('region')
-      const todaySection = sections[0]
+      const todaySection = sections[0]!
       const addBtn = within(todaySection).getByRole('button', { name: /add.*block/i })
       await user.click(addBtn)
 
@@ -606,7 +606,7 @@ describe('JournalPage', () => {
         })
 
       const sections = screen.getAllByRole('region')
-      const todaySection = sections[0]
+      const todaySection = sections[0]!
       const addBtn = within(todaySection).getByRole('button', { name: /add.*block/i })
       await user.click(addBtn)
 
@@ -697,7 +697,7 @@ describe('JournalPage', () => {
       const weekTab = screen.getByRole('tab', { name: /weekly view/i })
       await user.click(weekTab)
       const dayButtons = screen.getAllByRole('button', { name: /go to daily view for/i })
-      await user.click(dayButtons[0])
+      await user.click(dayButtons[0]!)
       expect(screen.getByRole('tab', { name: /daily view/i })).toHaveAttribute(
         'aria-selected',
         'true',
@@ -1487,7 +1487,7 @@ describe('JournalPage', () => {
         // Should be a single range call instead of 7 individual day calls
         expect(listBlockCalls).toHaveLength(1)
 
-        const callArgs = listBlockCalls[0][1] as {
+        const callArgs = listBlockCalls[0]![1] as {
           agendaDateRange?: { start: string; end: string }
         }
         expect(callArgs.agendaDateRange).toBeDefined()
@@ -1566,7 +1566,7 @@ describe('JournalPage', () => {
           (callArgs as { agendaSource?: string })?.agendaSource === 'column:scheduled_date',
       )
       expect(listBlockCalls.length).toBeGreaterThanOrEqual(1)
-      expect((listBlockCalls[0][1] as { agendaDate: string }).agendaDate).toBe(todayStr)
+      expect((listBlockCalls[0]![1] as { agendaDate: string }).agendaDate).toBe(todayStr)
     })
 
     it("completedDate 'Today' filter queries completed_at with today's date", async () => {
@@ -1631,7 +1631,7 @@ describe('JournalPage', () => {
           cmd === 'query_by_property' && (callArgs as { key?: string })?.key === 'completed_at',
       )
       expect(completedCalls.length).toBeGreaterThanOrEqual(1)
-      expect((completedCalls[0][1] as { valueDate: string }).valueDate).toBe(todayStr)
+      expect((completedCalls[0]![1] as { valueDate: string }).valueDate).toBe(todayStr)
     })
   })
 

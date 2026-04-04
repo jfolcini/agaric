@@ -79,10 +79,10 @@ export function getDragDescendants(items: FlatBlock[], activeId: string): Set<st
   const activeIndex = items.findIndex((item) => item.id === activeId)
   if (activeIndex < 0) return descendants
 
-  const activeDepth = items[activeIndex].depth
+  const activeDepth = items[activeIndex]!.depth
   for (let i = activeIndex + 1; i < items.length; i++) {
-    if (items[i].depth <= activeDepth) break
-    descendants.add(items[i].id)
+    if (items[i]!.depth <= activeDepth) break
+    descendants.add(items[i]!.id)
   }
   return descendants
 }
@@ -135,7 +135,7 @@ export function getProjection(
   // Simulate the array after moving active to over's position
   const clonedItems = [...items]
   const [moved] = clonedItems.splice(activeIndex, 1)
-  clonedItems.splice(overIndex > activeIndex ? overIndex - 1 : overIndex, 0, moved)
+  clonedItems.splice(overIndex > activeIndex ? overIndex - 1 : overIndex, 0, moved!)
 
   // The item is now at this index in the cloned array
   const projectedIndex = overIndex > activeIndex ? overIndex - 1 : overIndex
@@ -225,7 +225,7 @@ export function computePosition(
 
   if (!insertAfterSibling) {
     // Inserting before all siblings
-    const firstPos = siblings[0].position ?? 1
+    const firstPos = siblings[0]!.position ?? 1
     return firstPos - 1
   }
 

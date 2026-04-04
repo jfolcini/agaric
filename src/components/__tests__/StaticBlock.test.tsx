@@ -61,7 +61,7 @@ describe('StaticBlock', () => {
       handleAddAttachment: vi.fn(),
       handleDeleteAttachment: vi.fn(),
     })
-    delete (window as Record<string, unknown>).__TAURI_INTERNALS__
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
   })
 
   it('renders plain text', () => {
@@ -646,7 +646,7 @@ describe('StaticBlock', () => {
     }
 
     it('renders image attachment as <img> when Tauri is available', () => {
-      ;(window as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+      ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
       mockedUseBlockAttachments.mockReturnValue({
         attachments: [makeAttachment()],
         loading: false,
@@ -716,7 +716,7 @@ describe('StaticBlock', () => {
     })
 
     it('handles multiple attachments (mix of images and files)', () => {
-      ;(window as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+      ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
       mockedUseBlockAttachments.mockReturnValue({
         attachments: [
           makeAttachment({ id: 'att-1', filename: 'photo.png', mime_type: 'image/png' }),
@@ -816,7 +816,7 @@ describe('StaticBlock', () => {
     })
 
     it('has no a11y violations with image attachment (Tauri available)', async () => {
-      ;(window as Record<string, unknown>).__TAURI_INTERNALS__ = {}
+      ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
       mockedUseBlockAttachments.mockReturnValue({
         attachments: [makeAttachment()],
         loading: false,

@@ -285,7 +285,7 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
 
     expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
     expect(result.current.attachments).toHaveLength(1)
-    expect(result.current.attachments[0].id).toBe('ATT_2')
+    expect(result.current.attachments[0]!.id).toBe('ATT_2')
   })
 
   it('does not notify undo on failure', async () => {

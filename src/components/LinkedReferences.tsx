@@ -107,7 +107,7 @@ export function LinkedReferences({
           // Set default expand state
           const expandState: Record<string, boolean> = {}
           for (let i = 0; i < resp.groups.length; i++) {
-            expandState[resp.groups[i].page_id] = resp.groups.length <= 5 || i < 3
+            expandState[resp.groups[i]!.page_id] = resp.groups.length <= 5 || i < 3
           }
           setGroupExpanded(expandState)
         }
@@ -176,8 +176,8 @@ export function LinkedReferences({
 
     for (const block of allBlocks) {
       if (!block.content) continue
-      for (const m of block.content.matchAll(ULID_RE)) idsToResolve.add(m[1])
-      for (const m of block.content.matchAll(TAG_RE)) idsToResolve.add(m[1])
+      for (const m of block.content.matchAll(ULID_RE)) idsToResolve.add(m[1]!)
+      for (const m of block.content.matchAll(TAG_RE)) idsToResolve.add(m[1]!)
     }
 
     // Remove already-cached IDs (skip expired entries so they get re-fetched)

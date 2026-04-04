@@ -380,8 +380,8 @@ describe('SearchPanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(navState.pageStack[0].pageId).toBe('PARENT1')
-    expect(navState.pageStack[0].title).toBe('Parent Page Title')
+    expect(navState.pageStack[0]!.pageId).toBe('PARENT1')
+    expect(navState.pageStack[0]!.title).toBe('Parent Page Title')
     expect(navState.selectedBlockId).toBe('CHILD1')
   })
 
@@ -416,8 +416,8 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       const navState = useNavigationStore.getState()
       expect(navState.currentView).toBe('page-editor')
-      expect(navState.pageStack[0].pageId).toBe('PAGE1')
-      expect(navState.pageStack[0].title).toBe('My Page')
+      expect(navState.pageStack[0]!.pageId).toBe('PAGE1')
+      expect(navState.pageStack[0]!.title).toBe('My Page')
       expect(navState.selectedBlockId).toBeNull()
     })
   })
@@ -800,8 +800,8 @@ describe('SearchPanel', () => {
 
     const navState = useNavigationStore.getState()
     expect(navState.currentView).toBe('page-editor')
-    expect(navState.pageStack[0].pageId).toBe('P1')
-    expect(navState.pageStack[0].title).toBe('Page One')
+    expect(navState.pageStack[0]!.pageId).toBe('P1')
+    expect(navState.pageStack[0]!.title).toBe('Page One')
   })
 
   it('updates recent pages in localStorage when clicking a search result (page type)', async () => {

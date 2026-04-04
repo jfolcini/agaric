@@ -17,6 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { deleteProperty, getProperties, listPropertyDefs, setProperty } from '../lib/tauri'
+import { announce } from '../lib/announcer'
 
 export interface BlockPropertyDrawerProps {
   blockId: string | null

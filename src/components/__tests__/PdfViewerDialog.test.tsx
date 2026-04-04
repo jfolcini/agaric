@@ -40,7 +40,7 @@ const mockGetDocument = vi.fn(() => ({
 
 vi.mock('pdfjs-dist', () => ({
   GlobalWorkerOptions: { workerSrc: '' },
-  getDocument: (...args: unknown[]) => mockGetDocument(...args),
+  getDocument: mockGetDocument as never,
 }))
 
 const { PdfViewerDialog } = await import('../PdfViewerDialog')
@@ -95,7 +95,7 @@ describe('PdfViewerDialog', () => {
     let resolveDoc: (value: unknown) => void = () => {}
     mockGetDocument.mockReturnValue({
       promise: new Promise((resolve) => {
-        resolveDoc = resolve
+        resolveDoc = resolve as (value: unknown) => void
       }),
     })
 
@@ -188,7 +188,7 @@ describe('PdfViewerDialog', () => {
   })
 
   it('next button is disabled on last page', async () => {
-    const user = userEvent.setup()
+    userEvent.setup()
     // Use a 1-page PDF
     mockGetDocument.mockReturnValue({
       promise: Promise.resolve({ ...mockPdfDoc, numPages: 1 }),

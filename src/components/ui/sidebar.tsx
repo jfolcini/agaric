@@ -153,6 +153,7 @@ function SidebarProvider({
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length > 1) return
       const touch = e.touches[0]
+      if (!touch) return
       if (touch.clientX < SWIPE_EDGE_ZONE) {
         startX = touch.clientX
         startY = touch.clientY
@@ -163,6 +164,7 @@ function SidebarProvider({
     const onTouchMove = (e: TouchEvent) => {
       if (!tracking) return
       const touch = e.touches[0]
+      if (!touch) return
       const dx = touch.clientX - startX
       const dy = Math.abs(touch.clientY - startY)
 

@@ -606,7 +606,7 @@ describe('parse', () => {
       const input = '| Name | Age |\n| --- | --- |\n| Alice | 30 |'
       const result = parse(input)
       expect(result.content).toHaveLength(1)
-      expect(result.content?.[0].type).toBe('table')
+      expect(result.content?.[0]!.type).toBe('table')
       const tbl = result.content?.[0] as TableNode
       expect(tbl.content).toHaveLength(2)
     })
@@ -615,7 +615,7 @@ describe('parse', () => {
       const input = '| **Bold** |\n| --- |\n| normal |'
       const result = parse(input)
       const tbl = result.content?.[0] as TableNode
-      const headerCell = tbl.content?.[0].content?.[0]
+      const headerCell = tbl.content?.[0]!.content?.[0]
       expect(headerCell?.type).toBe('tableHeader')
     })
 
@@ -623,8 +623,8 @@ describe('parse', () => {
       const input = '| A | B |\n| --- | --- |\n| 1 | 2 |\nNormal text'
       const result = parse(input)
       expect(result.content).toHaveLength(2)
-      expect(result.content?.[0].type).toBe('table')
-      expect(result.content?.[1].type).toBe('paragraph')
+      expect(result.content?.[0]!.type).toBe('table')
+      expect(result.content?.[1]!.type).toBe('paragraph')
     })
 
     it('handles table rows with fewer columns than header', () => {
@@ -633,7 +633,7 @@ describe('parse', () => {
       const tbl = result.content?.[0] as TableNode
       expect(tbl.content).toHaveLength(2) // header + 1 data row
       // Data row should have 2 cells (fewer than header's 3)
-      expect(tbl.content?.[1].content?.length).toBe(2)
+      expect(tbl.content?.[1]!.content?.length).toBe(2)
     })
 
     it('parses header-only table (no data rows)', () => {
@@ -641,7 +641,7 @@ describe('parse', () => {
       expect(result.content).toHaveLength(1)
       const tbl = result.content?.[0] as TableNode
       expect(tbl.content).toHaveLength(1) // just the header row
-      expect(tbl.content?.[0].content?.[0].type).toBe('tableHeader')
+      expect(tbl.content?.[0]!.content?.[0]!.type).toBe('tableHeader')
     })
   })
 })
@@ -1219,8 +1219,8 @@ describe('headings', () => {
     const md = '# Title\nSome text'
     const result = parse(md)
     expect(result.content).toHaveLength(2)
-    expect(result.content?.[0].type).toBe('heading')
-    expect(result.content?.[1].type).toBe('paragraph')
+    expect(result.content?.[0]!.type).toBe('heading')
+    expect(result.content?.[1]!.type).toBe('paragraph')
   })
 
   it('empty heading', () => {
@@ -1259,9 +1259,9 @@ describe('code blocks', () => {
     const md = '# Title\n```\ncode\n```\nAfter'
     const result = parse(md)
     expect(result.content).toHaveLength(3)
-    expect(result.content?.[0].type).toBe('heading')
-    expect(result.content?.[1].type).toBe('codeBlock')
-    expect(result.content?.[2].type).toBe('paragraph')
+    expect(result.content?.[0]!.type).toBe('heading')
+    expect(result.content?.[1]!.type).toBe('codeBlock')
+    expect(result.content?.[2]!.type).toBe('paragraph')
   })
 
   it('invalid code block language is sanitized to null', () => {
@@ -1304,6 +1304,6 @@ describe('hardening: link scan depth', () => {
     expect(elapsed).toBeLessThan(100)
     // The unclosed bracket is treated as literal text
     expect(result.content).toHaveLength(1)
-    expect(result.content?.[0].type).toBe('paragraph')
+    expect(result.content?.[0]!.type).toBe('paragraph')
   })
 })

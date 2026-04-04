@@ -177,7 +177,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       })
       set({ pages: newPages })
 
-      return first
+      return first!
     })()
 
     if (opRef === null) return null
@@ -241,8 +241,8 @@ export const useUndoStore = create<UndoStore>((set, get) => {
 
         // Keep undoing consecutive ops within the time window by the same device
         while (lastUndoneIndex + 1 < undoableOps.length) {
-          const lastOp = undoableOps[lastUndoneIndex]
-          const nextOp = undoableOps[lastUndoneIndex + 1]
+          const lastOp = undoableOps[lastUndoneIndex]!
+          const nextOp = undoableOps[lastUndoneIndex + 1]!
 
           if (!isWithinUndoGroup(lastOp.created_at, nextOp.created_at)) break
           if (lastOp.device_id !== nextOp.device_id) break
@@ -280,7 +280,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       // Determine group size from the most recent batch undo
       const groupSize =
         pageState.redoGroupSizes.length > 0
-          ? pageState.redoGroupSizes[pageState.redoGroupSizes.length - 1]
+          ? pageState.redoGroupSizes[pageState.redoGroupSizes.length - 1]!
           : 1
 
       let firstResult: UndoResult | null = null

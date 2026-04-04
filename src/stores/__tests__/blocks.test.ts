@@ -56,9 +56,9 @@ describe('useBlockStore', () => {
 
       const result = useBlockStore.getState().blocks
       expect(result).toHaveLength(2)
-      expect(result[0].id).toBe('A')
-      expect(result[0].depth).toBe(0)
-      expect(result[1].id).toBe('B')
+      expect(result[0]!.id).toBe('A')
+      expect(result[0]!.depth).toBe(0)
+      expect(result[1]!.id).toBe('B')
       expect(useBlockStore.getState().loading).toBe(false)
     })
 
@@ -239,10 +239,10 @@ describe('useBlockStore', () => {
       expect(newId).toBe('NEW')
       const blocks = useBlockStore.getState().blocks
       expect(blocks).toHaveLength(3)
-      expect(blocks[0].id).toBe('A')
-      expect(blocks[1].id).toBe('NEW')
-      expect(blocks[1].content).toBe('new content')
-      expect(blocks[2].id).toBe('B')
+      expect(blocks[0]!.id).toBe('A')
+      expect(blocks[1]!.id).toBe('NEW')
+      expect(blocks[1]!.content).toBe('new content')
+      expect(blocks[2]!.id).toBe('B')
     })
 
     it('returns null when afterBlockId is not found', async () => {
@@ -329,7 +329,7 @@ describe('useBlockStore', () => {
 
       await useBlockStore.getState().edit('A', 'new')
 
-      expect(useBlockStore.getState().blocks[0].content).toBe('new')
+      expect(useBlockStore.getState().blocks[0]!.content).toBe('new')
     })
 
     it('preserves optimistic content on backend error', async () => {
@@ -340,7 +340,7 @@ describe('useBlockStore', () => {
 
       await useBlockStore.getState().edit('A', 'new')
 
-      expect(useBlockStore.getState().blocks[0].content).toBe('new')
+      expect(useBlockStore.getState().blocks[0]!.content).toBe('new')
     })
 
     it('only updates the target block, leaving others unchanged', async () => {
@@ -351,8 +351,8 @@ describe('useBlockStore', () => {
 
       await useBlockStore.getState().edit('A', 'aaa-updated')
 
-      expect(useBlockStore.getState().blocks[0].content).toBe('aaa-updated')
-      expect(useBlockStore.getState().blocks[1].content).toBe('bbb')
+      expect(useBlockStore.getState().blocks[0]!.content).toBe('aaa-updated')
+      expect(useBlockStore.getState().blocks[1]!.content).toBe('bbb')
     })
 
     it('notifies undo with the original rootParentId even if it changes during await', async () => {
@@ -391,7 +391,7 @@ describe('useBlockStore', () => {
 
       const blocks = useBlockStore.getState().blocks
       expect(blocks).toHaveLength(1)
-      expect(blocks[0].id).toBe('B')
+      expect(blocks[0]!.id).toBe('B')
     })
 
     it('clears focusedBlockId when the focused block is deleted', async () => {
@@ -488,9 +488,9 @@ describe('useBlockStore', () => {
 
       const blocks = useBlockStore.getState().blocks
       expect(blocks).toHaveLength(3)
-      expect(blocks[0].content).toBe('line1')
-      expect(blocks[1].content).toBe('line2')
-      expect(blocks[2].content).toBe('line3')
+      expect(blocks[0]!.content).toBe('line1')
+      expect(blocks[1]!.content).toBe('line2')
+      expect(blocks[2]!.content).toBe('line3')
     })
 
     it('handles empty first line in split — filters empty paragraphs', async () => {
@@ -511,7 +511,7 @@ describe('useBlockStore', () => {
 
       const blocks = useBlockStore.getState().blocks
       expect(blocks).toHaveLength(1)
-      expect(blocks[0].content).toBe('text')
+      expect(blocks[0]!.content).toBe('text')
     })
 
     it('chains createBelow sequentially using previous new id', async () => {
@@ -581,8 +581,8 @@ describe('useBlockStore', () => {
 
       const blocks = useBlockStore.getState().blocks
       expect(blocks).toHaveLength(2)
-      expect(blocks[0].content).toBe('# Title')
-      expect(blocks[1].content).toBe('Paragraph')
+      expect(blocks[0]!.content).toBe('# Title')
+      expect(blocks[1]!.content).toBe('Paragraph')
     })
 
     it('does NOT split single code block (multi-line content is one block)', async () => {
@@ -595,7 +595,7 @@ describe('useBlockStore', () => {
 
       const blocks = useBlockStore.getState().blocks
       expect(blocks).toHaveLength(1)
-      expect(blocks[0].content).toBe(codeContent)
+      expect(blocks[0]!.content).toBe(codeContent)
     })
 
     it('does NOT split single heading (single block)', async () => {
@@ -636,8 +636,8 @@ describe('useBlockStore', () => {
 
       const blocks = useBlockStore.getState().blocks
       expect(blocks).toHaveLength(2)
-      expect(blocks[0].content).toBe('hello')
-      expect(blocks[1].content).toBe('world')
+      expect(blocks[0]!.content).toBe('hello')
+      expect(blocks[1]!.content).toBe('world')
     })
   })
 
@@ -725,8 +725,8 @@ describe('useBlockStore', () => {
       const blocks = useBlockStore.getState().blocks
       const bIdx = blocks.findIndex((b) => b.id === 'B')
       expect(bIdx).toBeGreaterThan(blocks.findIndex((b) => b.id === 'A2'))
-      expect(blocks[bIdx].parent_id).toBe('A')
-      expect(blocks[bIdx].depth).toBe(1)
+      expect(blocks[bIdx]!.parent_id).toBe('A')
+      expect(blocks[bIdx]!.depth).toBe(1)
     })
   })
 
@@ -772,8 +772,8 @@ describe('useBlockStore', () => {
       await useBlockStore.getState().moveToParent('B', 'A', 0)
 
       expect(useBlockStore.getState().blocks).toHaveLength(2)
-      expect(useBlockStore.getState().blocks[0].id).toBe('A')
-      expect(useBlockStore.getState().blocks[1].id).toBe('B')
+      expect(useBlockStore.getState().blocks[0]!.id).toBe('A')
+      expect(useBlockStore.getState().blocks[1]!.id).toBe('B')
       expect(mockOnNewAction).not.toHaveBeenCalled()
     })
 
@@ -905,8 +905,8 @@ describe('useBlockStore', () => {
       const pIdx = blocks.findIndex((b) => b.id === 'P')
       expect(cIdx).toBeGreaterThan(sIdx)
       expect(cIdx).toBeGreaterThan(pIdx)
-      expect(blocks[cIdx].depth).toBe(1)
-      expect(blocks[cIdx].parent_id).toBe('GP')
+      expect(blocks[cIdx]!.depth).toBe(1)
+      expect(blocks[cIdx]!.parent_id).toBe('GP')
     })
   })
 
@@ -933,9 +933,9 @@ describe('useBlockStore', () => {
         expect.objectContaining({ blockId: 'C', newParentId: null }),
       )
       const blocks = useBlockStore.getState().blocks
-      expect(blocks[0].id).toBe('C')
-      expect(blocks[1].id).toBe('A')
-      expect(blocks[2].id).toBe('B')
+      expect(blocks[0]!.id).toBe('C')
+      expect(blocks[1]!.id).toBe('A')
+      expect(blocks[2]!.id).toBe('B')
     })
 
     it('is no-op when same index', async () => {
@@ -966,8 +966,8 @@ describe('useBlockStore', () => {
       await useBlockStore.getState().reorder('B', 0)
 
       const blocks = useBlockStore.getState().blocks
-      expect(blocks[0].id).toBe('A')
-      expect(blocks[1].id).toBe('B')
+      expect(blocks[0]!.id).toBe('A')
+      expect(blocks[1]!.id).toBe('B')
     })
 
     it('moves block down in the list (arrayMove semantics)', async () => {
@@ -991,9 +991,9 @@ describe('useBlockStore', () => {
       )
       const blocks = useBlockStore.getState().blocks
       // arrayMove([A,B,C], 0, 2) → [B, C, A]
-      expect(blocks[0].id).toBe('B')
-      expect(blocks[1].id).toBe('C')
-      expect(blocks[2].id).toBe('A')
+      expect(blocks[0]!.id).toBe('B')
+      expect(blocks[1]!.id).toBe('C')
+      expect(blocks[2]!.id).toBe('A')
     })
 
     it('preserves parent_id when reordering', async () => {
@@ -1036,7 +1036,7 @@ describe('useBlockStore', () => {
       const blocks = useBlockStore.getState().blocks
       expect(blocks.map((b) => b.id)).toEqual(['A', 'C', 'B'])
       // Position is nudged to beforePos + 1
-      expect(blocks[1].position).toBe(11)
+      expect(blocks[1]!.position).toBe(11)
     })
 
     it('handles consecutive positions for forward move', async () => {
@@ -1058,7 +1058,7 @@ describe('useBlockStore', () => {
       const blocks = useBlockStore.getState().blocks
       // arrayMove([A,B,C], 0, 1) → [B, A, C]
       expect(blocks.map((b) => b.id)).toEqual(['B', 'A', 'C'])
-      expect(blocks[1].position).toBe(12)
+      expect(blocks[1]!.position).toBe(12)
     })
 
     it('assigns position after last block when moving forward to last index', async () => {
@@ -1080,7 +1080,7 @@ describe('useBlockStore', () => {
       // arrayMove([A,B,C], 0, 2) → [B, C, A]
       expect(blocks.map((b) => b.id)).toEqual(['B', 'C', 'A'])
       // Position = last block's position + 1
-      expect(blocks[2].position).toBe(11)
+      expect(blocks[2]!.position).toBe(11)
     })
 
     it('uses average position when there is room between positions', async () => {
@@ -1101,7 +1101,7 @@ describe('useBlockStore', () => {
 
       const blocks = useBlockStore.getState().blocks
       expect(blocks.map((b) => b.id)).toEqual(['A', 'C', 'B'])
-      expect(blocks[1].position).toBe(5)
+      expect(blocks[1]!.position).toBe(5)
     })
   })
 

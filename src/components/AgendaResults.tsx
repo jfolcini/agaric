@@ -287,7 +287,8 @@ export function AgendaResults({
             ? groupByPriority(blocks)
             : groupByState(blocks)
         ).map((group) => {
-          const displayLabel = GROUP_I18N[group.label] ? t(GROUP_I18N[group.label]) : group.label
+          const i18nKey = GROUP_I18N[group.label]
+          const displayLabel = i18nKey ? t(i18nKey) : group.label
           return (
             <div key={group.label} className="agenda-group mb-3">
               <h3

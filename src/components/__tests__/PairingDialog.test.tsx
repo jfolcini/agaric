@@ -181,10 +181,10 @@ describe('PairingDialog', () => {
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox')
-    await user.type(inputs[0], 'echo')
-    await user.type(inputs[1], 'foxtrot')
-    await user.type(inputs[2], 'golf')
-    await user.type(inputs[3], 'hotel')
+    await user.type(inputs[0]!, 'echo')
+    await user.type(inputs[1]!, 'foxtrot')
+    await user.type(inputs[2]!, 'golf')
+    await user.type(inputs[3]!, 'hotel')
 
     const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
     await user.click(pairBtn)
@@ -281,7 +281,7 @@ describe('PairingDialog', () => {
 
     // Click first Unpair button
     const unpairBtns = screen.getAllByRole('button', { name: /Unpair/i })
-    await user.click(unpairBtns[0])
+    await user.click(unpairBtns[0]!)
 
     // Confirmation dialog appears
     expect(screen.getByText('Unpair device?')).toBeInTheDocument()
@@ -334,10 +334,10 @@ describe('PairingDialog', () => {
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox')
-    await user.type(inputs[0], 'echo')
-    await user.type(inputs[1], 'foxtrot')
-    await user.type(inputs[2], 'golf')
-    await user.type(inputs[3], 'hotel')
+    await user.type(inputs[0]!, 'echo')
+    await user.type(inputs[1]!, 'foxtrot')
+    await user.type(inputs[2]!, 'golf')
+    await user.type(inputs[3]!, 'hotel')
 
     const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
     await user.click(pairBtn)
@@ -460,7 +460,7 @@ describe('PairingDialog', () => {
 
     // Simulate pasting "echo foxtrot golf hotel" into the first input
     // userEvent.paste triggers onChange with the full text
-    await user.click(inputs[0])
+    await user.click(inputs[0]!)
     await user.paste('echo foxtrot golf hotel')
 
     await waitFor(() => {
@@ -484,11 +484,11 @@ describe('PairingDialog', () => {
     const inputs = screen.getAllByRole('textbox')
 
     // Type a word in the first input
-    await user.click(inputs[0])
-    await user.type(inputs[0], 'echo', { skipClick: true })
+    await user.click(inputs[0]!)
+    await user.type(inputs[0]!, 'echo', { skipClick: true })
 
     // Fire Space keydown directly on the focused input
-    fireEvent.keyDown(inputs[0], { key: ' ' })
+    fireEvent.keyDown(inputs[0]!, { key: ' ' })
 
     // Focus should be on the second input
     await waitFor(() => {
@@ -508,10 +508,10 @@ describe('PairingDialog', () => {
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox')
-    await user.type(inputs[0], 'echo')
-    await user.type(inputs[1], 'foxtrot')
-    await user.type(inputs[2], 'golf')
-    await user.type(inputs[3], 'hotel')
+    await user.type(inputs[0]!, 'echo')
+    await user.type(inputs[1]!, 'foxtrot')
+    await user.type(inputs[2]!, 'golf')
+    await user.type(inputs[3]!, 'hotel')
 
     // Press Enter on the last input
     await user.keyboard('{Enter}')
@@ -663,10 +663,10 @@ describe('PairingDialog', () => {
     await screen.findByText('alpha bravo charlie delta')
 
     const inputs = screen.getAllByRole('textbox')
-    await user.type(inputs[0], 'echo')
-    await user.type(inputs[1], 'foxtrot')
-    await user.type(inputs[2], 'golf')
-    await user.type(inputs[3], 'hotel')
+    await user.type(inputs[0]!, 'echo')
+    await user.type(inputs[1]!, 'foxtrot')
+    await user.type(inputs[2]!, 'golf')
+    await user.type(inputs[3]!, 'hotel')
 
     const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
     await user.click(pairBtn)

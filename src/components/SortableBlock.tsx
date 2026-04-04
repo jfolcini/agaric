@@ -297,6 +297,7 @@ function SortableBlockInner({
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
       const touch = e.touches[0]
+      if (!touch) return
       touchStartPos.current = { x: touch.clientX, y: touch.clientY }
       longPressTimer.current = setTimeout(() => {
         if (!isDraggingRef.current) {
@@ -316,6 +317,7 @@ function SortableBlockInner({
     (e: React.TouchEvent) => {
       if (!touchStartPos.current) return
       const touch = e.touches[0]
+      if (!touch) return
       const dx = touch.clientX - touchStartPos.current.x
       const dy = touch.clientY - touchStartPos.current.y
       if (Math.sqrt(dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD) {

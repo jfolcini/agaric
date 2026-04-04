@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
 export type {
-  AttachmentRow,
   BacklinkFilter,
   BacklinkGroup,
   BacklinkQueryResponse,
@@ -26,7 +25,6 @@ export type {
 } from './bindings'
 
 import type {
-  AttachmentRow,
   BacklinkFilter,
   BacklinkQueryResponse,
   BacklinkSort,

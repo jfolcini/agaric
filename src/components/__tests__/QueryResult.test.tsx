@@ -534,8 +534,8 @@ describe('QueryResult – table mode', () => {
     const firstDataRow = rows[1]
     const secondDataRow = rows[2]
 
-    expect(within(firstDataRow).getByText(/Alpha task/)).toBeInTheDocument()
-    expect(within(secondDataRow).getByText(/Beta task/)).toBeInTheDocument()
+    expect(within(firstDataRow!).getByText(/Alpha task/)).toBeInTheDocument()
+    expect(within(secondDataRow!).getByText(/Beta task/)).toBeInTheDocument()
 
     // Verify aria-sort is set
     expect(contentHeader.closest('th')).toHaveAttribute('aria-sort', 'ascending')
@@ -546,8 +546,8 @@ describe('QueryResult – table mode', () => {
     expect(contentHeader.closest('th')).toHaveAttribute('aria-sort', 'descending')
 
     const rowsAfter = within(table).getAllByRole('row')
-    expect(within(rowsAfter[1]).getByText(/Beta task/)).toBeInTheDocument()
-    expect(within(rowsAfter[2]).getByText(/Alpha task/)).toBeInTheDocument()
+    expect(within(rowsAfter[1]!).getByText(/Beta task/)).toBeInTheDocument()
+    expect(within(rowsAfter[2]!).getByText(/Alpha task/)).toBeInTheDocument()
   })
 
   it('table content cells are clickable and navigate', async () => {
@@ -703,7 +703,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
       makeBlock({ id: 'B3', content: 'High-pri DONE', todo_state: 'DONE', priority: '1' }),
     ]
 
-    mockedInvoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+    mockedInvoke.mockImplementation((async (cmd: string, args?: Record<string, unknown>) => {
       if (cmd === 'query_by_property') {
         if ((args as { key: string }).key === 'todo_state') {
           return { items: todoBlocks, next_cursor: null, has_more: false }
@@ -714,7 +714,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
       }
       if (cmd === 'batch_resolve') return []
       return null
-    })
+    }) as never)
 
     render(<QueryResult expression="property:todo_state=TODO property:priority=1" />)
 

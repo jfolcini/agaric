@@ -61,7 +61,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
       useBlockStore.getState().blocks.find((b) => b.id === blockId)?.todo_state ?? null
     const currentIdx = TASK_CYCLE.indexOf(current)
     const nextIdx = (currentIdx + 1) % TASK_CYCLE.length
-    const nextState = TASK_CYCLE[nextIdx]
+    const nextState = TASK_CYCLE[nextIdx] ?? null
 
     // Optimistic update (before IPC) to prevent race on rapid toggles
     useBlockStore.setState((s) => ({
@@ -89,7 +89,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
     const current = useBlockStore.getState().blocks.find((b) => b.id === blockId)?.priority ?? null
     const currentIdx = PRIORITY_CYCLE.indexOf(current)
     const nextIdx = (currentIdx + 1) % PRIORITY_CYCLE.length
-    const nextState = PRIORITY_CYCLE[nextIdx]
+    const nextState = PRIORITY_CYCLE[nextIdx] ?? null
 
     // Optimistic update (before IPC) to prevent race on rapid toggles
     useBlockStore.setState((s) => ({

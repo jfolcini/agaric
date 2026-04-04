@@ -212,15 +212,15 @@ function PropertyValuePicker({
   const [propertyKeys, setPropertyKeys] = useState<string[]>([])
   const [propertyKey, setPropertyKey] = useState(() => {
     if (selected.length > 0) {
-      const colonIdx = selected[0].indexOf(':')
-      return colonIdx > 0 ? selected[0].slice(0, colonIdx) : selected[0]
+      const colonIdx = selected[0]!.indexOf(':')
+      return colonIdx > 0 ? selected[0]!.slice(0, colonIdx) : selected[0]!
     }
     return ''
   })
   const [propertyValue, setPropertyValue] = useState(() => {
     if (selected.length > 0) {
-      const colonIdx = selected[0].indexOf(':')
-      return colonIdx > 0 ? selected[0].slice(colonIdx + 1) : ''
+      const colonIdx = selected[0]!.indexOf(':')
+      return colonIdx > 0 ? selected[0]!.slice(colonIdx + 1) : ''
     }
     return ''
   })

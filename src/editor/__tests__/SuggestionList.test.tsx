@@ -88,7 +88,7 @@ describe('SuggestionList', () => {
     expect(options[0]).toHaveAttribute('aria-selected', 'true')
 
     // Hover over second item
-    await user.hover(options[1])
+    await user.hover(options[1]!)
 
     expect(options[1]).toHaveAttribute('aria-selected', 'true')
     expect(options[0]).toHaveAttribute('aria-selected', 'false')
@@ -184,7 +184,7 @@ describe('SuggestionList', () => {
     render(<SuggestionList items={items} command={command} />)
 
     // The create button (2nd option) should contain "+ Create <strong>label</strong>"
-    const createBtn = screen.getAllByRole('option')[1]
+    const createBtn = screen.getAllByRole('option')[1]!
     expect(createBtn).toHaveTextContent('+Create My New Page')
 
     // Verify the strong element for the label
@@ -268,7 +268,7 @@ describe('SuggestionList', () => {
     })
 
     // The newly selected item (Beta) should have scrollIntoView called
-    expect(options[1].scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    expect(options[1]!.scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
   })
 
   // -- ARIA label ---------------------------------------------------------------

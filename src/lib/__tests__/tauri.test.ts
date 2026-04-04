@@ -294,7 +294,7 @@ describe('listBlocks', () => {
 
     await listBlocks({ blockType: 'page' })
 
-    const args = mockedInvoke.mock.calls[0][1] as Record<string, unknown>
+    const args = mockedInvoke.mock.calls[0]![1] as Record<string, unknown>
     // Tauri 2 requires null for Option<T>, not undefined
     expect(args.parentId).toBeNull()
     expect(args.tagId).toBeNull()
@@ -1308,7 +1308,7 @@ describe('queryBacklinksFiltered', () => {
     await queryBacklinksFiltered({ blockId: 'TARGET' })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke.mock.calls[0][0]).toBe('query_backlinks_filtered')
+    expect(mockedInvoke.mock.calls[0]![0]).toBe('query_backlinks_filtered')
   })
 
   it('passes blockId parameter', async () => {

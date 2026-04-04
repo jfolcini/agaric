@@ -84,12 +84,12 @@ describe('Calendar', () => {
     )
 
     const weekBtns = screen.getAllByRole('button', { name: /go to week \d+/i })
-    await user.click(weekBtns[0])
+    await user.click(weekBtns[0]!)
 
     expect(onWeekNumberClick).toHaveBeenCalledTimes(1)
     // First arg is the week number (a number), second is array of dates
-    expect(typeof onWeekNumberClick.mock.calls[0][0]).toBe('number')
-    expect(Array.isArray(onWeekNumberClick.mock.calls[0][1])).toBe(true)
+    expect(typeof onWeekNumberClick.mock.calls[0]![0]).toBe('number')
+    expect(Array.isArray(onWeekNumberClick.mock.calls[0]![1])).toBe(true)
   })
 
   it('includes coarse pointer overrides for touch-friendly sizing', () => {
@@ -98,14 +98,14 @@ describe('Calendar', () => {
     // Day cells should have coarse pointer height/width overrides
     const dayCells = container.querySelectorAll('td')
     expect(dayCells.length).toBeGreaterThan(0)
-    const dayCellClass = dayCells[0].className
+    const dayCellClass = dayCells[0]!.className
     expect(dayCellClass).toContain('[@media(pointer:coarse)]:h-11')
     expect(dayCellClass).toContain('[@media(pointer:coarse)]:w-11')
 
     // Day buttons should have coarse pointer size override
     const dayButtons = container.querySelectorAll('td button')
     expect(dayButtons.length).toBeGreaterThan(0)
-    expect(dayButtons[0].className).toContain('[@media(pointer:coarse)]:size-11')
+    expect(dayButtons[0]!.className).toContain('[@media(pointer:coarse)]:size-11')
 
     // Nav buttons should have coarse pointer size override
     const navButtons = Array.from(container.querySelectorAll('button')).filter((btn) =>
@@ -119,7 +119,7 @@ describe('Calendar', () => {
     // Weekday headers should have coarse pointer width override
     const weekdayHeaders = container.querySelectorAll('th')
     expect(weekdayHeaders.length).toBeGreaterThan(0)
-    expect(weekdayHeaders[0].className).toContain('[@media(pointer:coarse)]:w-11')
+    expect(weekdayHeaders[0]!.className).toContain('[@media(pointer:coarse)]:w-11')
   })
 
   it('has no a11y violations', async () => {

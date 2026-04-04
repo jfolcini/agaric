@@ -52,7 +52,7 @@ function buildPageTree(pages: Array<{ id: string; content: string | null }>): Pa
     let current = root
 
     for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i]
+      const segment = segments[i]!
       const fullPath = segments.slice(0, i + 1).join('/')
       let node = current.find((n) => n.name === segment)
 

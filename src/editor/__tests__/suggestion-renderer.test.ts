@@ -44,7 +44,7 @@ describe('createSuggestionRenderer', () => {
 
     expect(mockReactRenderer).toHaveBeenCalled()
     const lastCall = mockReactRenderer.mock.calls[mockReactRenderer.mock.calls.length - 1]
-    expect(lastCall[1].props.label).toBe('Tags')
+    expect(lastCall![1].props.label).toBe('Tags')
 
     // Clean up popup
     renderer.onExit()

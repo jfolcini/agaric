@@ -922,6 +922,7 @@ export function setupMock(): void {
         const targetIndex = undoableOps.length - 1 - undoDepth
         if (targetIndex < 0) throw new Error('no undoable op found')
         const target = undoableOps[targetIndex]
+        if (!target) throw new Error('no undoable op found')
 
         const payload = JSON.parse(target.payload) as Record<string, unknown>
         let reverseOpType = 'edit_block'
@@ -1398,7 +1399,7 @@ export function setupMock(): void {
         // If first line is a heading, use it as the page title
         const headingMatch = lines[0]?.match(/^#+\s+(.+)/)
         if (headingMatch) {
-          pageTitle = headingMatch[1].trim()
+          pageTitle = headingMatch[1]!.trim()
           lines.shift() // remove heading line from block content
         }
 

@@ -155,7 +155,7 @@ export function PairingDialog({
         setWords((prev) => {
           const next = [...prev] as [string, string, string, string]
           for (let i = 0; i < parts.length && index + i < 4; i++) {
-            next[index + i] = parts[i]
+            next[index + i] = parts[i]!
           }
           return next
         })
@@ -287,8 +287,8 @@ export function PairingDialog({
           'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
         )
         if (focusable.length === 0) return
-        const first = focusable[0]
-        const last = focusable[focusable.length - 1]
+        const first = focusable[0]!
+        const last = focusable[focusable.length - 1]!
 
         if (e.shiftKey) {
           if (document.activeElement === first) {

@@ -687,7 +687,7 @@ describe('FormattingToolbar', () => {
       // The popover content is always rendered in our mock
       const popoverContents = screen.getAllByTestId('popover-content')
       // The heading popover is the second popover-content (after the link popover)
-      const headingPopover = popoverContents[1]
+      const headingPopover = popoverContents[1]!
       expect(headingPopover).toBeInTheDocument()
       for (let i = 1; i <= 6; i++) {
         expect(headingPopover.textContent).toContain(`H${i}`)

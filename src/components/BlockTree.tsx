@@ -369,8 +369,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const hasChildrenSet = useMemo(() => {
     const set = new Set<string>()
     for (let i = 0; i < blocks.length - 1; i++) {
-      if (blocks[i + 1].depth > blocks[i].depth) {
-        set.add(blocks[i].id)
+      if (blocks[i + 1]!.depth > blocks[i]!.depth) {
+        set.add(blocks[i]!.id)
       }
     }
     return set
@@ -385,7 +385,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     for (const block of blocks) {
       while (
         skipUntilDepth.length > 0 &&
-        block.depth <= skipUntilDepth[skipUntilDepth.length - 1]
+        block.depth <= skipUntilDepth[skipUntilDepth.length - 1]!
       ) {
         skipUntilDepth.pop()
       }
@@ -566,8 +566,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         ...locationResults,
       ]
       if (tableMatch) {
-        const rows = Number.parseInt(tableMatch[1], 10)
-        const cols = Number.parseInt(tableMatch[2], 10)
+        const rows = Number.parseInt(tableMatch[1]!, 10)
+        const cols = Number.parseInt(tableMatch[2]!, 10)
         // Replace the default table item with the parameterized one
         results = results.filter((r) => r.id !== 'table')
         results.unshift({
@@ -660,7 +660,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         for (const b of blocks) {
           if (!b.content) continue
           for (const m of b.content.matchAll(ULID_LINK_RE)) {
-            if (!currentCache.has(m[1])) uncached.add(m[1])
+            if (!currentCache.has(m[1]!)) uncached.add(m[1]!)
           }
         }
 
@@ -898,8 +898,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         let cols = 3
         const dimMatch = item.id.match(/^table:(\d+):(\d+)$/)
         if (dimMatch) {
-          rows = Number.parseInt(dimMatch[1], 10)
-          cols = Number.parseInt(dimMatch[2], 10)
+          rows = Number.parseInt(dimMatch[1]!, 10)
+          cols = Number.parseInt(dimMatch[2]!, 10)
         }
         rovingEditor.editor?.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run()
         return
@@ -965,7 +965,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           await setProperty({ blockId: focusedBlockId, key: item.id, valueText: '' })
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
           toast.success(
-            t('blockTree.addedPropertyMessage', { name: item.label.split(' — ')[0].toLowerCase() }),
+            t('blockTree.addedPropertyMessage', { name: item.label.split(' — ')[0]!.toLowerCase() }),
           )
         } catch {
           toast.error(t('blockTree.addPropertyFailed'))
@@ -985,7 +985,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
             toast.error(t('blockTree.addPropertyFailed'))
           }
         } else {
-          const value = item.label.split(' — ')[0].replace('ASSIGNEE ', '')
+          const value = item.label.split(' — ')[0]!.replace('ASSIGNEE ', '')
           try {
             await setProperty({ blockId: focusedBlockId, key: 'assignee', valueText: value })
             if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
@@ -1009,7 +1009,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
             toast.error(t('blockTree.addPropertyFailed'))
           }
         } else {
-          const value = item.label.split(' — ')[0].replace('LOCATION ', '')
+          const value = item.label.split(' — ')[0]!.replace('LOCATION ', '')
           try {
             await setProperty({ blockId: focusedBlockId, key: 'location', valueText: value })
             if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
@@ -1290,7 +1290,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const handleFocusPrev = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx > 0) {
-      const prevBlock = collapsedVisible[idx - 1]
+      const prevBlock = collapsedVisible[idx - 1]!
       setFocused(prevBlock.id)
       rovingEditor.mount(prevBlock.id, prevBlock.content ?? '')
       const preview = prevBlock.content?.slice(0, 50) ?? ''
@@ -1301,7 +1301,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const handleFocusNext = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx >= 0 && idx < collapsedVisible.length - 1) {
-      const nextBlock = collapsedVisible[idx + 1]
+      const nextBlock = collapsedVisible[idx + 1]!
       setFocused(nextBlock.id)
       rovingEditor.mount(nextBlock.id, nextBlock.content ?? '')
       const preview = nextBlock.content?.slice(0, 50) ?? ''
@@ -1321,11 +1321,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     announce('Block deleted')
     // Focus previous block, or next visible at same level, or nothing
     if (idx > 0) {
-      const prevBlock = collapsedVisible[idx - 1]
+      const prevBlock = collapsedVisible[idx - 1]!
       setFocused(prevBlock.id)
       rovingEditor.mount(prevBlock.id, prevBlock.content ?? '')
     } else if (idx + 1 < collapsedVisible.length) {
-      const nextBlock = collapsedVisible[idx + 1]
+      const nextBlock = collapsedVisible[idx + 1]!
       setFocused(nextBlock.id)
       rovingEditor.mount(nextBlock.id, nextBlock.content ?? '')
     } else {
@@ -1387,10 +1387,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx <= 0) return // First block — nothing to merge with
 
-    const prevBlock = collapsedVisible[idx - 1]
+    const prevBlock = collapsedVisible[idx - 1]!
 
     // Get current block content from the editor
-    const currentContent = rovingEditor.unmount() ?? collapsedVisible[idx].content ?? ''
+    const currentContent = rovingEditor.unmount() ?? collapsedVisible[idx]!.content ?? ''
     const prevContent = prevBlock.content ?? ''
 
     // Merge: concatenate previous content + current content
@@ -1433,11 +1433,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       const idx = collapsedVisible.findIndex((b) => b.id === blockId)
       if (idx <= 0) return // First block — nothing to merge with
 
-      const prevBlock = collapsedVisible[idx - 1]
+      const prevBlock = collapsedVisible[idx - 1]!
 
       // If the editor is mounted on this block, unmount to capture latest content
       const editorContent = focusedBlockId === blockId ? rovingEditor.unmount() : null
-      const currentContent = editorContent ?? collapsedVisible[idx].content ?? ''
+      const currentContent = editorContent ?? collapsedVisible[idx]!.content ?? ''
       const prevContent = prevBlock.content ?? ''
 
       const mergedContent = prevContent + currentContent
@@ -1697,7 +1697,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   }, [focusedBlockId, handleSlashCommand])
 
   // ── Active item for DragOverlay ────────────────────────────────────
-  const activeBlock = dnd.activeId ? blocks.find((b) => b.id === dnd.activeId) : null
+  const activeBlock = dnd.activeId ? blocks.find((b) => b.id === dnd.activeId) ?? null : null
 
   if (loading) {
     return (

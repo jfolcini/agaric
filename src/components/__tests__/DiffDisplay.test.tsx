@@ -79,14 +79,14 @@ describe('DiffDisplay', () => {
     const children = Array.from(p!.children)
     expect(children).toHaveLength(3)
 
-    expect(children[0].tagName).toBe('DEL')
-    expect(children[0]).toHaveTextContent('old')
+    expect(children[0]!.tagName).toBe('DEL')
+    expect(children[0]!).toHaveTextContent('old')
 
-    expect(children[1].tagName).toBe('INS')
-    expect(children[1]).toHaveTextContent('new')
+    expect(children[1]!.tagName).toBe('INS')
+    expect(children[1]!).toHaveTextContent('new')
 
-    expect(children[2].tagName).toBe('SPAN')
-    expect(children[2]).toHaveTextContent('same')
+    expect(children[2]!.tagName).toBe('SPAN')
+    expect(children[2]!).toHaveTextContent('same')
   })
 
   it('handles very long text', () => {
@@ -116,9 +116,9 @@ describe('DiffDisplay', () => {
     // biome-ignore lint/style/noNonNullAssertion: guarded by toBeNull assertion above
     const children = Array.from(p!.children)
     expect(children).toHaveLength(3)
-    expect(children[0].tagName).toBe('DEL')
-    expect(children[1].tagName).toBe('INS')
-    expect(children[2].tagName).toBe('SPAN')
+    expect(children[0]!.tagName).toBe('DEL')
+    expect(children[1]!.tagName).toBe('INS')
+    expect(children[2]!.tagName).toBe('SPAN')
   })
 
   it('handles unicode characters', () => {

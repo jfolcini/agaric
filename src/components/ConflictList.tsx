@@ -305,7 +305,7 @@ export function ConflictList(): React.ReactElement {
             try {
               const hist = await getBlockHistory({ blockId: block.id, limit: 1 })
               if (hist.items.length > 0) {
-                deviceIdsByBlock.set(block.id, hist.items[0].device_id)
+                deviceIdsByBlock.set(block.id, hist.items[0]!.device_id)
               }
             } catch {
               // Silently skip blocks where history is unavailable
