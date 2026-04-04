@@ -1,5 +1,40 @@
 # Session Log
 
+## Session 195 — 2026-04-04 — Batch 49: Core editing bugs + toolbar + mobile touch (H-3, H-11, H-12, UX-H13, MOB-H1, MOB-H2, MOB-H3, MOB-H5, MOB-L5)
+
+### Summary
+Fixed 9 items: 3 critical editing bugs (blur/save, trash button timing, Enter key), 1 UX improvement (priority button cycling), and 5 mobile touch-target fixes. Full mobile responsiveness audit preceded this batch (session 194-195 audit: 6 audit subagents + 3 review subagents scanned all ~46 components, identified 30 mobile issues, filtered 5 false positives).
+
+### Batch 49
+
+**Commit:** 3bbcc28
+
+| Area | Change |
+|------|--------|
+| EditableBlock.tsx | H-3: Replace `document.querySelector` + `getBoundingClientRect` fallback with `checkVisibility()` API (detects `visibility:hidden`, `opacity:0`). Radix popover wrappers no longer block blur. |
+| SortableBlock.tsx | H-11: Change delete button from `onClick` to `onPointerDown` (fires before focus→re-render) + `onClick` fallback for keyboard a11y. |
+| use-block-keyboard.ts | H-12: Move keydown listener to `parentElement` with `capture:true` + `stopPropagation` when handled, ensuring our handler fires before ProseMirror's. |
+| FormattingToolbar.tsx | UX-H13: Replace 3 priority buttons (P1/P2/P3) with single cycling button showing current state. MOB-L5: heading button `size="xs"` → `size="icon-xs"`. |
+| BlockTree.tsx | Add `cycle-priority` event listener + restore `set-priority-1/2/3` listeners for Ctrl+Shift+1/2/3 shortcuts. |
+| EditableBlock.tsx | Wire `currentPriority` prop to FormattingToolbar from block store. |
+| i18n.ts | Add `toolbar.cyclePriority` and `toolbar.cyclePriorityTip` keys. |
+| ui/dialog.tsx | MOB-H2: Add touch-target sizing (`p-1`, `[@media(pointer:coarse)]:p-2/min-h-[44px]/min-w-[44px]`) to dialog close button. |
+| ui/sheet.tsx | MOB-H3: Same touch-target sizing for sheet close button. |
+| HistoryView.tsx | MOB-H5: Add `[@media(pointer:coarse)]:h-6/w-6` to checkbox; remove explicit `h-7` from diff toggle button. |
+| SortableBlock.tsx | MOB-H1: Add `[@media(pointer:coarse)]:opacity-100` to all 3 gutter buttons (drag, history, delete). |
+| Test files | 3 test files updated: SortableBlock (164 tests), EditableBlock (29 tests), FormattingToolbar (54 tests). All 3095 tests pass. |
+
+**Review findings applied:**
+- Review A: Added `onClick` fallback on delete button for keyboard accessibility (Enter/Space)
+- Review B: Replaced `getBoundingClientRect()` with `checkVisibility()` for more robust Radix popover detection
+- Review C: Restored `set-priority-1/2/3` listeners for Ctrl+Shift+1/2/3 keyboard shortcuts (toolbar uses cycling, shortcuts use direct-set)
+
+**Stats:** 12 files changed, 304 insertions, 134 deletions. 3095/3095 tests pass. All prek hooks pass.
+
+**Resolved:** H-3, H-11, H-12, UX-H13, MOB-H1, MOB-H2, MOB-H3, MOB-H5, MOB-L5 (9 items). 77 open items remain.
+
+---
+
 ## Session 193 — 2026-04-04 — Batch 48: M-22 (noEvolvingTypes lint rule)
 
 ### Summary
