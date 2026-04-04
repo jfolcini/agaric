@@ -18,18 +18,24 @@ use std::sync::LazyLock;
 use crate::error::AppError;
 
 // ---------------------------------------------------------------------------
-// Regex for [[ULID]] tokens
+// Regex for [[ULID]] and ((ULID)) tokens
 // ---------------------------------------------------------------------------
 //
 // ULIDs are encoded in Crockford base-32: exactly 26 uppercase alphanumeric
 // characters (digits 0-9 and letters A-Z).  The regex captures the inner
-// ULID from wiki-style `[[ULID]]` link tokens.
+// ULID from wiki-style `[[ULID]]` link tokens and block-reference
+// `((ULID))` tokens.
+//
+// The regex intentionally allows mixed delimiters (e.g. `[[ULID))`) but
+// that is harmless — the ULID validation is what matters, not delimiter
+// matching.  In practice the serializer always produces matching pairs.
 //
 // Lowercase characters are intentionally excluded — ULIDs are always
 // uppercase in canonical form.
 
-static ULID_LINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[\[([0-9A-Z]{26})\]\]").expect("invalid ULID link regex"));
+static ULID_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:\[\[|\(\()([0-9A-Z]{26})(?:\]\]|\)\))").expect("invalid ULID link regex")
+});
 
 /// Returns a reference to the lazily-compiled ULID-link regex.
 #[inline]
@@ -256,7 +262,7 @@ pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
 ///
 /// 1. Opens a transaction for a consistent read snapshot.
 /// 2. Reads the block's current `content` and its existing outbound links.
-/// 3. Parses all `[[ULID]]` tokens via regex.
+/// 3. Parses all `[[ULID]]` and `((ULID))` tokens via regex.
 /// 4. Diffs: deletes removed links, inserts added links within the same tx.
 pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
@@ -276,7 +282,7 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
         None => String::new(),
     };
 
-    // 2. Parse [[ULID]] tokens
+    // 2. Parse [[ULID]] and ((ULID)) tokens
     let new_targets: HashSet<String> = ulid_link_re()
         .captures_iter(&content)
         .map(|cap| cap[1].to_string())
@@ -1676,5 +1682,73 @@ mod tests {
             rows.cnt, 0,
             "NULL due_date should NOT produce an agenda_cache entry from column:due_date"
         );
+    }
+
+    // ====================================================================
+    // reindex_block_links — ((ULID)) block references (F-4)
+    // ====================================================================
+
+    /// `((ULID))` block-reference tokens must be extracted and tracked in
+    /// `block_links` just like `[[ULID]]` page-link tokens.
+    #[tokio::test]
+    async fn reindex_block_links_tracks_block_refs() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "01HZ00000000000000000000AB", "content", "target block").await;
+        insert_block(
+            &pool,
+            "01HZ0000000000000000000SRC",
+            "content",
+            "refer to ((01HZ00000000000000000000AB)) here",
+        )
+        .await;
+
+        reindex_block_links(&pool, "01HZ0000000000000000000SRC")
+            .await
+            .unwrap();
+
+        let rows = sqlx::query!(
+            "SELECT target_id FROM block_links WHERE source_id = ? ORDER BY target_id",
+            "01HZ0000000000000000000SRC",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 1, "(( )) block ref must be tracked");
+        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
+    }
+
+    /// Content containing both `[[ULID]]` page links and `((ULID))` block
+    /// references must produce one `block_links` row per distinct target.
+    #[tokio::test]
+    async fn reindex_block_links_tracks_both_link_types() {
+        let (pool, _dir) = test_pool().await;
+
+        insert_block(&pool, "01HZ00000000000000000000AB", "content", "page target").await;
+        insert_block(&pool, "01HZ00000000000000000000CD", "content", "block target").await;
+        insert_block(
+            &pool,
+            "01HZ0000000000000000000SRC",
+            "content",
+            "see [[01HZ00000000000000000000AB]] and ((01HZ00000000000000000000CD))",
+        )
+        .await;
+
+        reindex_block_links(&pool, "01HZ0000000000000000000SRC")
+            .await
+            .unwrap();
+
+        let rows = sqlx::query!(
+            "SELECT target_id FROM block_links WHERE source_id = ? ORDER BY target_id",
+            "01HZ0000000000000000000SRC",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 2, "both [[ ]] and (( )) targets must be tracked");
+        assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
+        assert_eq!(rows[1].target_id, "01HZ00000000000000000000CD");
     }
 }

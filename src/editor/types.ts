@@ -53,6 +53,11 @@ export interface BlockLinkNode {
   readonly attrs: { readonly id: string }
 }
 
+export interface BlockRefNode {
+  readonly type: 'block_ref'
+  readonly attrs: { readonly id: string }
+}
+
 export interface HardBreakNode {
   readonly type: 'hardBreak'
 }
@@ -79,7 +84,7 @@ export interface BlockquoteNode {
   readonly content?: readonly BlockLevelNode[]
 }
 
-export type InlineNode = TextNode | TagRefNode | BlockLinkNode | HardBreakNode
+export type InlineNode = TextNode | TagRefNode | BlockLinkNode | BlockRefNode | HardBreakNode
 
 export interface TableCellNode {
   readonly type: 'tableCell'

@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { AttachmentRow } from '../../lib/tauri'
 import { StaticBlock } from '../StaticBlock'
+import { TooltipProvider } from '../ui/tooltip'
 
 vi.mock('../../lib/open-url', () => ({ openUrl: vi.fn() }))
 
@@ -35,9 +36,17 @@ vi.mock('../../hooks/useBlockAttachments', () => ({
   useBlockAttachments: vi.fn(),
 }))
 
+vi.mock('../../editor/markdown-serializer', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../editor/markdown-serializer')>()
+  return { ...mod, parse: vi.fn(mod.parse) }
+})
+
 // Lazy-import after mocks are hoisted so we get the mocked version.
 const { useBlockAttachments } = await import('../../hooks/useBlockAttachments')
 const mockedUseBlockAttachments = vi.mocked(useBlockAttachments)
+
+const { parse } = await import('../../editor/markdown-serializer')
+const mockedParse = vi.mocked(parse)
 
 // Valid 26-char ULID-format test IDs (parser requires [0-9A-Z]{26}).
 const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
@@ -51,6 +60,8 @@ const ACT_TAG = '01HRZ3NDEKTSV4RRFFQ69G5FAV'
 const NAV_BLOCK = '01JRZ3NDEKTSV4RRFFQ69G5FAV'
 const MIX_PAGE = '01KRZ3NDEKTSV4RRFFQ69G5FAV'
 const MIX_TAG = '01MRZ3NDEKTSV4RRFFQ69G5FAV'
+const REF_BLOCK = '01NRZ3NDEKTSV4RRFFQ69G5FAV'
+const REF_BLOCK_2 = '01PRZ3NDEKTSV4RRFFQ69G5FAV'
 
 describe('StaticBlock', () => {
   beforeEach(() => {
@@ -830,6 +841,124 @@ describe('StaticBlock', () => {
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // -- Block ref rendering (((ULID))) -----------------------------------------
+
+  describe('block_ref rendering', () => {
+    /** Helper: mock parse to return a doc containing a block_ref node. */
+    function mockBlockRefDoc(refId: string) {
+      mockedParse.mockReturnValueOnce({
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [{ type: 'block_ref', attrs: { id: refId } }],
+          },
+        ],
+      })
+    }
+
+    it('renders block_ref as chip with resolved content', () => {
+      mockBlockRefDoc(REF_BLOCK)
+      render(
+        <TooltipProvider>
+          <StaticBlock
+            blockId="B1"
+            content={`((${REF_BLOCK}))`}
+            onFocus={vi.fn()}
+            resolveBlockTitle={() => 'Referenced block content'}
+          />
+        </TooltipProvider>,
+      )
+
+      const chip = screen.getByTestId('block-ref-chip')
+      expect(chip).toBeInTheDocument()
+      expect(chip.textContent).toBe('Referenced block content')
+      expect(chip.classList.contains('block-ref-chip')).toBe(true)
+      expect(chip.classList.contains('cursor-pointer')).toBe(true)
+    })
+
+    it('renders block_ref chip with truncated first line', () => {
+      const longContent =
+        'This is a very long block of content that exceeds the sixty character limit for the chip label display\nSecond line here'
+      mockBlockRefDoc(REF_BLOCK)
+      render(
+        <TooltipProvider>
+          <StaticBlock
+            blockId="B1"
+            content={`((${REF_BLOCK}))`}
+            onFocus={vi.fn()}
+            resolveBlockTitle={() => longContent}
+          />
+        </TooltipProvider>,
+      )
+
+      const chip = screen.getByTestId('block-ref-chip')
+      // First line is >60 chars, so it should be truncated to 57 + '...'
+      const firstLine = longContent.split('\n')[0]!
+      const expected = `${firstLine.slice(0, 57)}...`
+      expect(chip.textContent).toBe(expected)
+    })
+
+    it('renders fallback when resolveBlockTitle returns undefined', () => {
+      mockBlockRefDoc(REF_BLOCK_2)
+      render(
+        <TooltipProvider>
+          <StaticBlock
+            blockId="B1"
+            content={`((${REF_BLOCK_2}))`}
+            onFocus={vi.fn()}
+          />
+        </TooltipProvider>,
+      )
+
+      const chip = screen.getByTestId('block-ref-chip')
+      // Fallback: (( XXXXXXXX... ))
+      expect(chip.textContent).toBe(`(( ${REF_BLOCK_2.slice(0, 8)}... ))`)
+    })
+
+    it('block_ref chip click navigates', async () => {
+      const onFocus = vi.fn()
+      const onNavigate = vi.fn()
+      const user = userEvent.setup()
+      mockBlockRefDoc(REF_BLOCK)
+      render(
+        <TooltipProvider>
+          <StaticBlock
+            blockId="B1"
+            content={`((${REF_BLOCK}))`}
+            onFocus={onFocus}
+            onNavigate={onNavigate}
+            resolveBlockTitle={() => 'Target content'}
+          />
+        </TooltipProvider>,
+      )
+
+      const chip = screen.getByTestId('block-ref-chip')
+      await user.click(chip)
+      expect(onNavigate).toHaveBeenCalledWith(REF_BLOCK)
+      expect(onFocus).not.toHaveBeenCalled()
+    })
+
+    it('applies block-ref-deleted class for deleted block refs', () => {
+      mockBlockRefDoc(REF_BLOCK)
+      render(
+        <TooltipProvider>
+          <StaticBlock
+            blockId="B1"
+            content={`((${REF_BLOCK}))`}
+            onFocus={vi.fn()}
+            resolveBlockTitle={() => 'Deleted content'}
+            resolveBlockStatus={() => 'deleted'}
+          />
+        </TooltipProvider>,
+      )
+
+      const chip = screen.getByTestId('block-ref-chip')
+      expect(chip.classList.contains('block-ref-deleted')).toBe(true)
+      expect(chip.classList.contains('block-ref-chip')).toBe(true)
     })
   })
 })

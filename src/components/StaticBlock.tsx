@@ -21,6 +21,7 @@ import { openUrl } from '../lib/open-url'
 import { cn } from '../lib/utils'
 import { PdfViewerDialog } from './PdfViewerDialog'
 import { QueryResult } from './QueryResult'
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
 const lowlight = createLowlight(common)
 
@@ -88,8 +89,8 @@ export function renderRichContent(
   markdown: string,
   options: {
     onNavigate?: (id: string) => void
-    resolveBlockTitle?: (id: string) => string
-    resolveTagName?: (id: string) => string
+    resolveBlockTitle?: (id: string) => string | undefined
+    resolveTagName?: (id: string) => string | undefined
     resolveBlockStatus?: (id: string) => 'active' | 'deleted'
     resolveTagStatus?: (id: string) => 'active' | 'deleted'
     interactive?: boolean
@@ -221,6 +222,50 @@ export function renderRichContent(
           break
         }
 
+        case 'block_ref': {
+          // Forward-looking: block_ref nodes rendered when parser emits ((ULID)) tokens
+          const refNode = node as unknown as { attrs: { id: string } }
+          const refId = refNode.attrs.id
+          const fullContent =
+            options.resolveBlockTitle?.(refId) ?? `(( ${refId.slice(0, 8)}... ))`
+          const status = options.resolveBlockStatus?.(refId) ?? 'active'
+          // Show first line, truncated to 60 chars, for the chip label
+          const firstLine = fullContent.split('\n')[0]!
+          const chipLabel =
+            firstLine.length > 60 ? `${firstLine.slice(0, 57)}...` : firstLine
+          elements.push(
+            <Tooltip key={`bref-${keyIdx++}`}>
+              <TooltipTrigger asChild>
+                <span
+                  className={`block-ref-chip cursor-pointer${status === 'deleted' ? ' block-ref-deleted' : ''}`}
+                  data-testid="block-ref-chip"
+                  {...(status === 'deleted'
+                    ? { 'aria-label': `${chipLabel} (deleted)` }
+                    : {})}
+                  onClick={(e) => {
+                    if (options.onNavigate) {
+                      e.stopPropagation()
+                      options.onNavigate(refId)
+                    }
+                  }}
+                  {...(options.interactive ? { tabIndex: 0, role: 'link' } : {})}
+                >
+                  {chipLabel}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent
+                side="top"
+                className="max-w-xs text-sm whitespace-pre-wrap"
+              >
+                {fullContent.length > 300
+                  ? `${fullContent.slice(0, 297)}...`
+                  : fullContent}
+              </TooltipContent>
+            </Tooltip>,
+          )
+          break
+        }
+
         case 'hardBreak':
           elements.push(<span key={`br-${keyIdx++}`}> </span>)
           break
@@ -324,9 +369,8 @@ function StaticBlockInner({
       content
         ? renderRichContent(content, {
             onNavigate: onNavigate ? (id: string) => onNavigateRef.current?.(id) : undefined,
-            resolveBlockTitle: (id) =>
-              resolveBlockTitleRef.current?.(id) ?? `[[${id.slice(0, 8)}...]]`,
-            resolveTagName: (id) => resolveTagNameRef.current?.(id) ?? `#${id.slice(0, 8)}...`,
+            resolveBlockTitle: (id) => resolveBlockTitleRef.current?.(id),
+            resolveTagName: (id) => resolveTagNameRef.current?.(id),
             resolveBlockStatus: (id) => resolveBlockStatusRef.current?.(id) ?? 'active',
             resolveTagStatus: (id) => resolveTagStatusRef.current?.(id) ?? 'active',
           })

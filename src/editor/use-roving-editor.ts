@@ -30,6 +30,8 @@ import { useCallback, useRef } from 'react'
 import { AtTagPicker } from './extensions/at-tag-picker'
 import { BlockLink } from './extensions/block-link'
 import { BlockLinkPicker } from './extensions/block-link-picker'
+import { BlockRef } from './extensions/block-ref'
+import { BlockRefPicker } from './extensions/block-ref-picker'
 import { CheckboxInputRule } from './extensions/checkbox-input-rule'
 import { ExternalLink } from './extensions/external-link'
 import { PropertyPicker } from './extensions/property-picker'
@@ -167,6 +169,8 @@ export interface RovingEditorOptions {
   resolveBlockStatus?: (id: string) => 'active' | 'deleted'
   /** Check whether a referenced tag is active or deleted. */
   resolveTagStatus?: (id: string) => 'active' | 'deleted'
+  /** Return blocks matching query (for (( picker). */
+  searchBlockRefs?: (query: string) => PickerItem[] | Promise<PickerItem[]>
 }
 
 export interface RovingEditorHandle {
@@ -251,6 +255,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   onPropertySelectRef.current = onPropertySelect
   const onCheckboxRef = useRef(onCheckbox)
   onCheckboxRef.current = onCheckbox
+  const searchBlockRefsRef = useRef(options.searchBlockRefs ?? (async () => [] as PickerItem[]))
+  searchBlockRefsRef.current = options.searchBlockRefs ?? (async () => [] as PickerItem[])
 
   const editor = useEditor({
     extensions: [
@@ -283,6 +289,11 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         onNavigate: (id: string) => onNavigateRef.current?.(id),
         resolveStatus: (id: string) => resolveBlockStatusRef.current?.(id) ?? 'active',
       }),
+      BlockRef.configure({
+        resolveContent: (id: string) => resolveBlockTitleRef.current(id),
+        onNavigate: (id: string) => onNavigateRef.current?.(id),
+        resolveStatus: (id: string) => resolveBlockStatusRef.current?.(id) ?? 'active',
+      }),
       AtTagPicker.configure({
         items: searchTags,
         onCreate: (name: string) => {
@@ -298,6 +309,9 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
           if (!fn) return Promise.reject(new Error('onCreatePage not provided'))
           return fn(label)
         },
+      }),
+      BlockRefPicker.configure({
+        items: searchBlockRefsRef.current,
       }),
       SlashCommand.configure({
         items: searchSlashCommands,

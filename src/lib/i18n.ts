@@ -178,6 +178,10 @@ const resources = {
       'block.noPagesFound': 'No pages found',
       'block.refPickerLabel': 'Select a page',
 
+      // Block references
+      'blockRef.pickerLabel': 'Block references',
+      'blockRef.fallback': '(( {{id}}... ))',
+
       // Attachments
       'attachments.loading': 'Loading attachments…',
       'attachments.empty': 'No attachments yet.',

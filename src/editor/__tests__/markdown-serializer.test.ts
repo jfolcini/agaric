@@ -1307,3 +1307,51 @@ describe('hardening: link scan depth', () => {
     expect(result.content?.[0]!.type).toBe('paragraph')
   })
 })
+
+// -- block_ref ----------------------------------------------------------------
+
+describe('block_ref round-trip', () => {
+  it('serializes block_ref node to ((ULID))', () => {
+    const doc = {
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'see ' },
+          { type: 'block_ref', attrs: { id: '01HZ00000000000000000BLOCK' } },
+          { type: 'text', text: ' for details' },
+        ],
+      }],
+    }
+    expect(serialize(doc as any)).toBe('see ((01HZ00000000000000000BLOCK)) for details')
+  })
+
+  it('parses ((ULID)) to block_ref node', () => {
+    const result = parse('check ((01HZ00000000000000000BLOCK)) here')
+    const para = result.content?.[0]
+    expect(para?.type).toBe('paragraph')
+    expect(para?.content).toHaveLength(3)
+    expect(para?.content?.[0]).toEqual({ type: 'text', text: 'check ' })
+    expect(para?.content?.[1]).toEqual({ type: 'block_ref', attrs: { id: '01HZ00000000000000000BLOCK' } })
+    expect(para?.content?.[2]).toEqual({ type: 'text', text: ' here' })
+  })
+
+  it('round-trips block_ref through serialize → parse', () => {
+    const md = 'reference ((01HZ00000000000000000BLOCK)) inline'
+    const parsed = parse(md)
+    expect(serialize(parsed)).toBe(md)
+  })
+
+  it('does not parse ((lowercase)) as block_ref', () => {
+    const result = parse('not ((01hz00000000000000000block)) a ref')
+    const para = result.content?.[0]
+    // Should be plain text, not a block_ref node
+    expect(para?.content?.some((c: any) => c.type === 'block_ref')).toBeFalsy()
+  })
+
+  it('does not parse (( with non-ULID content', () => {
+    const result = parse('just ((some text)) here')
+    const para = result.content?.[0]
+    expect(para?.content?.some((c: any) => c.type === 'block_ref')).toBeFalsy()
+  })
+})

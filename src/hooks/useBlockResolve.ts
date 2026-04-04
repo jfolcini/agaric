@@ -28,6 +28,7 @@ export interface UseBlockResolveReturn {
   resolveTagStatus: (id: string) => 'active' | 'deleted'
   searchTags: (query: string) => Promise<PickerItem[]>
   searchPages: (query: string) => Promise<PickerItem[]>
+  searchBlockRefs: (query: string) => Promise<PickerItem[]>
   onCreatePage: (label: string) => Promise<string>
   onCreateTag: (name: string) => Promise<string>
   /** Ref to the pages list cache for search. Updated by the preload effect. */
@@ -180,6 +181,32 @@ export function useBlockResolve(): UseBlockResolveReturn {
     return matches
   }, [])
 
+  const searchBlockRefs = useCallback(async (query: string): Promise<PickerItem[]> => {
+    const q = query.replace(/\)+$/, '').trim()
+    if (q.length < 2) return []
+
+    const resp = await searchBlocks({ query: q, limit: 20 })
+    const results: PickerItem[] = resp.items
+      .filter((b) => b.deleted_at === null)
+      .map((b) => {
+        const content = b.content ?? 'Untitled'
+        const firstLine = content.split('\n')[0]!
+        const label = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine
+        return { id: b.id, label }
+      })
+
+    // Populate resolve cache
+    if (results.length > 0) {
+      useResolveStore.getState().batchSet(
+        results.map((r) => {
+          const block = resp.items.find((b) => b.id === r.id)
+          return { id: r.id, title: block?.content ?? 'Untitled', deleted: false }
+        })
+      )
+    }
+    return results
+  }, [])
+
   const onCreatePage = useCallback(async (label: string): Promise<string> => {
     const block = await createBlock({ blockType: 'page', content: label })
     // Populate resolve cache so the link chip shows the title immediately
@@ -202,6 +229,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
     resolveTagStatus,
     searchTags,
     searchPages,
+    searchBlockRefs,
     onCreatePage,
     onCreateTag,
     pagesListRef,

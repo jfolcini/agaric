@@ -4,7 +4,7 @@
  * Converts between ProseMirror JSON documents and a locked Markdown subset:
  *   blocks: # heading  ```code```
  *   marks:  **bold**  *italic*  `code`  [text](url)
- *   tokens: #[ULID]  [[ULID]]
+ *   tokens: #[ULID]  [[ULID]]  ((ULID))
  *
  * Zero external dependencies. O(n) in both directions.
  */
@@ -220,6 +220,10 @@ function serializeInlineNodes(nodes: readonly InlineNode[]): string {
       result += emitCloseAll(activeMarks)
       activeMarks.clear()
       result += `[[${child.attrs.id}]]`
+    } else if ((child as unknown as { type: string }).type === 'block_ref') {
+      result += emitCloseAll(activeMarks)
+      activeMarks.clear()
+      result += `((${(child as unknown as { attrs: { id: string } }).attrs.id}))`
     } else if (child.type === 'hardBreak') {
       result += emitCloseAll(activeMarks)
       activeMarks.clear()
@@ -374,6 +378,19 @@ function tryConsumeToken(s: Scanner): TagRefNode | BlockLinkNode | null {
     ) {
       s.pos += 30
       return { type: 'block_link', attrs: { id: candidate } }
+    }
+  }
+  // Block ref: ((ULID))
+  if (peek(s) === '(' && peek(s, 1) === '(' && remaining(s) >= 30) {
+    const candidate = s.src.slice(s.pos + 2, s.pos + 28)
+    if (
+      candidate.length === 26 &&
+      ULID_RE.test(candidate) &&
+      s.src[s.pos + 28] === ')' &&
+      s.src[s.pos + 29] === ')'
+    ) {
+      s.pos += 30
+      return { type: 'block_ref' as any, attrs: { id: candidate } }
     }
   }
   return null
@@ -845,6 +862,8 @@ function nodeToPlainText(node: InlineNode): string {
       return `#[${node.attrs.id}]`
     case 'block_link':
       return `[[${node.attrs.id}]]`
+    case 'block_ref' as any:
+      return `((${(node as unknown as { attrs: { id: string } }).attrs.id}))`
     /* v8 ignore start -- hardBreak never appears during line parsing; default is type guard */
     case 'hardBreak':
       return '\n'

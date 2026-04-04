@@ -629,6 +629,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     resolveTagStatus: resolve.resolveTagStatus,
     searchTags: resolve.searchTags,
     searchPages: resolve.searchPages,
+    searchBlockRefs: resolve.searchBlockRefs,
     onCreatePage: resolve.onCreatePage,
     onCreateTag: resolve.onCreateTag,
     searchSlashCommands,
