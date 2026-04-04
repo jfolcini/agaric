@@ -1,5 +1,21 @@
 # Session Log
 
+## Session 171 — 2026-04-04 — Phase 1 batch 24: /attach file picker (F-9)
+
+### Phase 1 (batch 24): Attachment file picker slash command (F-9)
+
+1 focused frontend subagent (slash command + file input + MIME guesser).
+
+| File | Change |
+|------|--------|
+| `BlockTree.tsx` | F-9: `/attach` slash command. Hidden `<input type="file">`, reads Tauri `File.path`, calls `addAttachment` IPC. `guessMimeType` utility for empty MIME types. Error toast fallback when path unavailable. |
+| `BlockTree.test.tsx` | F-9: 11 new tests (5 /attach integration + 6 guessMimeType unit). |
+
+### Stats
+- Frontend: 11 new tests (186 in BlockTree.test.tsx)
+- Commit: `8bb1038`
+- REVIEW-LATER: F-9 resolved. 28 → **27 open items**.
+
 ## Session 170 — 2026-04-04 — Phase 1 batch 23: property :: autocomplete
 
 ### Phase 1 (batch 23): Property :: autocomplete (F-1)
