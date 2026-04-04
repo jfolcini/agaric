@@ -63,6 +63,7 @@ export const TagRef = Node.create<TagRefOptions>({
       mergeAttributes(HTMLAttributes, {
         'data-type': 'tag-ref',
         class: 'tag-ref-chip',
+        'data-testid': 'tag-ref-chip',
         contenteditable: 'false',
       }),
       name,
@@ -86,6 +87,7 @@ export const TagRef = Node.create<TagRefOptions>({
           .join(' ')
         dom.setAttribute('data-type', 'tag-ref')
         dom.setAttribute('data-id', currentId)
+        dom.setAttribute('data-testid', 'tag-ref-chip')
         dom.setAttribute('contenteditable', 'false')
       }
 

@@ -66,6 +66,7 @@ export const BlockLink = Node.create<BlockLinkOptions>({
       mergeAttributes(HTMLAttributes, {
         'data-type': 'block-link',
         class: 'block-link-chip',
+        'data-testid': 'block-link-chip',
         contenteditable: 'false',
       }),
       title,
@@ -93,6 +94,7 @@ export const BlockLink = Node.create<BlockLinkOptions>({
           .join(' ')
         dom.setAttribute('data-type', 'block-link')
         dom.setAttribute('data-id', blockId)
+        dom.setAttribute('data-testid', 'block-link-chip')
         dom.setAttribute('contenteditable', 'false')
       }
 

@@ -96,6 +96,7 @@ function renderConflictContent(
   block: BlockRow,
   original: BlockRow | undefined,
   isExpanded: boolean,
+  t: (key: string) => string,
 ): React.ReactNode {
   if (conflictType === 'Property' && original) {
     const diffs: React.ReactNode[] = []
@@ -186,10 +187,10 @@ function renderConflictContent(
           original.content ? (
             <span>{renderRichContent(original.content, { interactive: false })}</span>
           ) : (
-            '(empty)'
+            t('conflict.emptyContent')
           )
         ) : (
-          '(original not available)'
+          t('conflict.originalNotAvailable')
         )}
       </div>
       <div
@@ -197,7 +198,9 @@ function renderConflictContent(
       >
         <span className="font-medium">Incoming:</span>{' '}
         <span className="conflict-item-text">
-          {block.content ? renderRichContent(block.content, { interactive: false }) : '(empty)'}
+          {block.content
+            ? renderRichContent(block.content, { interactive: false })
+            : t('conflict.emptyContent')}
         </span>
       </div>
     </>
@@ -370,18 +373,18 @@ export function ConflictList(): React.ReactElement {
           deleteResp = await deleteBlock(block.id)
         } catch (_deleteErr: unknown) {
           // editBlock succeeded but deleteBlock failed — partial success
-          toast.success('Updated original but failed to remove conflict copy.', {
+          toast.success(t('conflict.updateSuccessDeleteFailed'), {
             duration: 5000,
             action: {
-              label: 'Retry delete',
+              label: t('conflict.retryDeleteButton'),
               onClick: () => {
                 deleteBlock(block.id)
                   .then(() => {
                     setBlocks((prev) => prev.filter((b) => b.id !== block.id))
-                    toast.success('Conflict copy removed')
+                    toast.success(t('conflict.conflictCopyRemoved'))
                   })
                   .catch(() => {
-                    toast.error('Retry failed — please delete the conflict manually.')
+                    toast.error(t('conflict.retryFailed'))
                   })
               },
             },
@@ -391,10 +394,10 @@ export function ConflictList(): React.ReactElement {
         }
         setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         setConfirmKeepBlock(null)
-        toast.success('Kept selected version', {
+        toast.success(t('conflict.keptSelectedVersion'), {
           duration: 6000,
           action: {
-            label: 'Undo',
+            label: t('conflict.undoButton'),
             onClick: () => {
               // Restore deleted conflict block, then revert edit on original
               restoreBlock(deleteResp.block_id, deleteResp.deleted_at)
@@ -407,10 +410,10 @@ export function ConflictList(): React.ReactElement {
                 .then(() => {
                   // Re-add conflict to list
                   setBlocks((prev) => [block, ...prev])
-                  toast.success('Resolution undone')
+                  toast.success(t('conflict.resolutionUndone'))
                 })
                 .catch(() => {
-                  toast.error('Failed to undo — check the original page.')
+                  toast.error(t('conflict.undoFailed'))
                 })
             },
           },
@@ -421,7 +424,7 @@ export function ConflictList(): React.ReactElement {
         )
       }
     },
-    [setBlocks, originals],
+    [setBlocks, originals, t],
   )
 
   const handleDiscard = useCallback(
@@ -430,18 +433,18 @@ export function ConflictList(): React.ReactElement {
         const deleteResp = await deleteBlock(block.id)
         setBlocks((prev) => prev.filter((b) => b.id !== block.id))
         setConfirmDiscardId(null)
-        toast.success('Conflict discarded', {
+        toast.success(t('conflict.conflictDiscarded'), {
           duration: 6000,
           action: {
-            label: 'Undo',
+            label: t('conflict.undoButton'),
             onClick: () => {
               restoreBlock(deleteResp.block_id, deleteResp.deleted_at)
                 .then(() => {
                   setBlocks((prev) => [block, ...prev])
-                  toast.success('Discard undone')
+                  toast.success(t('conflict.discardUndone'))
                 })
                 .catch(() => {
-                  toast.error('Failed to undo discard.')
+                  toast.error(t('conflict.undoDiscardFailed'))
                 })
             },
           },
@@ -452,7 +455,7 @@ export function ConflictList(): React.ReactElement {
         )
       }
     },
-    [setBlocks],
+    [setBlocks, t],
   )
 
   /** Resolve the display timestamp for a conflict block from its ULID. */
@@ -472,10 +475,7 @@ export function ConflictList(): React.ReactElement {
       )}
 
       {!loading && blocks.length === 0 && (
-        <EmptyState
-          icon={GitMerge}
-          message="No conflicts. Conflicts appear when the same block is edited on multiple devices."
-        />
+        <EmptyState icon={GitMerge} message={t('conflict.noConflicts')} />
       )}
 
       {blocks.length > 0 && (
@@ -490,7 +490,7 @@ export function ConflictList(): React.ReactElement {
             className="conflict-refresh-btn shrink-0 ml-2"
             onClick={reload}
             disabled={loading}
-            aria-label="Refresh conflict list"
+            aria-label={t('conflict.refreshLabel')}
           >
             <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
           </Button>
@@ -511,16 +511,18 @@ export function ConflictList(): React.ReactElement {
               }
             }}
           >
-            {selectedIds.size === blocks.length ? 'Deselect all' : 'Select all'}
+            {selectedIds.size === blocks.length
+              ? t('conflict.deselectAllButton')
+              : t('conflict.selectAllButton')}
           </Button>
           <div className="flex-1" />
           <Button variant="outline" size="sm" onClick={() => setBatchAction('keep')}>
             <Check className="h-3.5 w-3.5 mr-1" />
-            Keep all
+            {t('conflict.keepAllButton')}
           </Button>
           <Button variant="destructive" size="sm" onClick={() => setBatchAction('discard')}>
             <X className="h-3.5 w-3.5 mr-1" />
-            Discard all
+            {t('conflict.discardAllButton')}
           </Button>
         </div>
       )}
@@ -534,6 +536,7 @@ export function ConflictList(): React.ReactElement {
             <div
               key={block.id}
               className="conflict-item flex items-start justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
+              data-testid="conflict-item"
             >
               <label
                 className="flex items-center shrink-0 mr-2"
@@ -553,7 +556,7 @@ export function ConflictList(): React.ReactElement {
                       return next
                     })
                   }}
-                  aria-label={`Select conflict ${truncateId(block.id)}`}
+                  aria-label={t('conflict.selectConflictLabel', { id: truncateId(block.id) })}
                   className="h-4 w-4 rounded border-muted-foreground/50"
                 />
               </label>
@@ -593,7 +596,7 @@ export function ConflictList(): React.ReactElement {
                     </span>
                   )}
                 </div>
-                {renderConflictContent(conflictType, block, original, isExpanded)}
+                {renderConflictContent(conflictType, block, original, isExpanded, t)}
               </button>
               <div className="conflict-item-actions flex items-center gap-2 ml-2 shrink-0">
                 {block.parent_id && (
@@ -601,7 +604,7 @@ export function ConflictList(): React.ReactElement {
                     variant="ghost"
                     size="sm"
                     className="conflict-view-original-btn"
-                    aria-label={`View original block for ${truncateId(block.id)}`}
+                    aria-label={t('conflict.viewOriginalLabel', { id: truncateId(block.id) })}
                     onClick={() =>
                       navigateToPage(block.parent_id as string, block.content ?? 'Untitled')
                     }
@@ -614,21 +617,23 @@ export function ConflictList(): React.ReactElement {
                   variant="outline"
                   size="sm"
                   className="conflict-keep-btn [@media(pointer:coarse)]:min-h-[44px]"
+                  data-testid="conflict-keep-btn"
                   onClick={() => setConfirmKeepBlock(block)}
-                  aria-label={`Keep incoming version for block ${truncateId(block.id)}`}
+                  aria-label={t('conflict.keepIncomingLabel', { id: truncateId(block.id) })}
                 >
                   <Check className="h-3.5 w-3.5" />
-                  Keep
+                  {t('conflict.keepLabel')}
                 </Button>
                 <Button
                   variant="destructive"
                   size="sm"
                   className="conflict-discard-btn [@media(pointer:coarse)]:min-h-[44px]"
+                  data-testid="conflict-discard-btn"
                   onClick={() => setConfirmDiscardId(block.id)}
-                  aria-label={`Discard conflict for block ${truncateId(block.id)}`}
+                  aria-label={t('conflict.discardConflictLabel', { id: truncateId(block.id) })}
                 >
                   <X className="h-3.5 w-3.5" />
-                  Discard
+                  {t('conflict.discardLabel')}
                 </Button>
               </div>
             </div>
@@ -668,7 +673,7 @@ export function ConflictList(): React.ReactElement {
                       {truncatePreview(
                         confirmKeepBlock.parent_id
                           ? (originals.get(confirmKeepBlock.parent_id)?.content ??
-                              '(original not available)')
+                              t('conflict.originalNotAvailable'))
                           : '(no original)',
                       )}
                     </span>
@@ -676,7 +681,7 @@ export function ConflictList(): React.ReactElement {
                   <span className="block">
                     <span className="font-medium">Incoming:</span>{' '}
                     <span className="text-muted-foreground">
-                      {truncatePreview(confirmKeepBlock.content ?? '(empty)')}
+                      {truncatePreview(confirmKeepBlock.content ?? t('conflict.emptyContent'))}
                     </span>
                   </span>
                 </span>
@@ -704,7 +709,10 @@ export function ConflictList(): React.ReactElement {
           if (!open) setConfirmDiscardId(null)
         }}
       >
-        <AlertDialogContent className="conflict-discard-confirm">
+        <AlertDialogContent
+          className="conflict-discard-confirm"
+          data-testid="conflict-discard-confirm"
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>Discard conflict?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -716,7 +724,7 @@ export function ConflictList(): React.ReactElement {
                     <span className="mt-2 block text-xs">
                       <span className="font-medium">Content:</span>{' '}
                       <span className="text-muted-foreground">
-                        {truncatePreview(discardBlock.content ?? '(empty)')}
+                        {truncatePreview(discardBlock.content ?? t('conflict.emptyContent'))}
                       </span>
                     </span>
                   ) : null
@@ -724,9 +732,12 @@ export function ConflictList(): React.ReactElement {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="conflict-discard-no">No</AlertDialogCancel>
+            <AlertDialogCancel className="conflict-discard-no" data-testid="conflict-discard-no">
+              No
+            </AlertDialogCancel>
             <AlertDialogAction
               className="conflict-discard-yes"
+              data-testid="conflict-discard-yes"
               onClick={() => {
                 if (confirmDiscardId) {
                   const discardBlock = blocks.find((b) => b.id === confirmDiscardId)

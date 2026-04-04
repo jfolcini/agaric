@@ -95,14 +95,16 @@ test.describe('Block navigation', () => {
     await focusBlock(page, 0)
 
     // Get text of first block for comparison later
-    const firstBlockText = await page.locator('.block-editor [contenteditable="true"]').innerText()
+    const firstBlockText = await page
+      .locator('[data-testid="block-editor"] [contenteditable="true"]')
+      .innerText()
 
     // Move to end and press ArrowDown to navigate to next block
     await page.keyboard.press('End')
     await page.keyboard.press('ArrowDown')
 
     // Wait for the editor to appear on the second block
-    const editor = page.locator('.block-editor [contenteditable="true"]')
+    const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
     await expect(editor).toBeVisible()
 
     // The editor content should be different from the first block
@@ -115,10 +117,12 @@ test.describe('Block navigation', () => {
     await openPage(page, 'Quick Notes')
 
     // Click the second block directly (skip the editor.focus() from focusBlock helper)
-    await page.locator('.block-static').nth(1).click()
-    const editor = page.locator('.block-editor [contenteditable="true"]')
+    await page.locator('[data-testid="block-static"]').nth(1).click()
+    const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
     await expect(editor).toBeVisible()
-    const secondBlockId = await page.locator('.block-editor').getAttribute('data-block-id')
+    const secondBlockId = await page
+      .locator('[data-testid="block-editor"]')
+      .getAttribute('data-block-id')
 
     // Ensure editor is focused and interactive (React keydown listener attached)
     await editor.focus()
@@ -130,7 +134,7 @@ test.describe('Block navigation', () => {
       await page.keyboard.press('Home')
       await page.keyboard.press('ArrowUp')
       await expect(
-        page.locator(`.block-editor:not([data-block-id="${secondBlockId}"])`),
+        page.locator(`[data-testid="block-editor"]:not([data-block-id="${secondBlockId}"])`),
       ).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 5000 })
   })
@@ -149,7 +153,7 @@ test.describe('Block organization', () => {
     await openPage(page, 'Getting Started')
 
     // Use the third block (index 2, GS_3 — plain text, avoids link chips in GS_2)
-    const targetBlock = page.locator('.sortable-block').nth(2)
+    const targetBlock = page.locator('[data-testid="sortable-block"]').nth(2)
     const initialPadding = await targetBlock.evaluate(
       (el) => window.getComputedStyle(el).paddingLeft,
     )
@@ -162,13 +166,10 @@ test.describe('Block organization', () => {
 
     // Wait for indent to apply and verify the block now has increased paddingLeft
     await expect
-      .poll(
-        async () => {
-          const p = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
-          return Number.parseInt(p, 10)
-        },
-        ,
-      )
+      .poll(async () => {
+        const p = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
+        return Number.parseInt(p, 10)
+      })
       .toBeGreaterThan(Number.parseInt(initialPadding, 10))
   })
 
@@ -176,7 +177,7 @@ test.describe('Block organization', () => {
     await openPage(page, 'Getting Started')
 
     // Capture pre-indent padding for the third block
-    const targetBlock = page.locator('.sortable-block').nth(2)
+    const targetBlock = page.locator('[data-testid="sortable-block"]').nth(2)
     const basePadding = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
 
     // Focus the third block (index 2, GS_3) and indent it first
@@ -185,13 +186,10 @@ test.describe('Block organization', () => {
 
     // Wait for indent to apply (padding increases from base)
     await expect
-      .poll(
-        async () => {
-          const p = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
-          return Number.parseInt(p, 10)
-        },
-        ,
-      )
+      .poll(async () => {
+        const p = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
+        return Number.parseInt(p, 10)
+      })
       .toBeGreaterThan(Number.parseInt(basePadding, 10))
 
     // Get the indented paddingLeft
@@ -204,13 +202,10 @@ test.describe('Block organization', () => {
 
     // Wait for dedent to apply and verify paddingLeft decreased
     await expect
-      .poll(
-        async () => {
-          const p = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
-          return Number.parseInt(p, 10)
-        },
-        ,
-      )
+      .poll(async () => {
+        const p = await targetBlock.evaluate((el) => window.getComputedStyle(el).paddingLeft)
+        return Number.parseInt(p, 10)
+      })
       .toBeLessThan(Number.parseInt(indentedPadding, 10))
   })
 
@@ -219,7 +214,7 @@ test.describe('Block organization', () => {
     await openPage(page, 'Quick Notes')
 
     // Capture original block order via data-block-id
-    const blocks = page.locator('.sortable-block')
+    const blocks = page.locator('[data-testid="sortable-block"]')
     const _originalFirstId = await blocks.nth(0).getAttribute('data-block-id')
     const originalSecondId = (await blocks.nth(1).getAttribute('data-block-id')) ?? ''
 
@@ -247,8 +242,8 @@ test.describe('Block organization', () => {
     await openPage(page, 'Getting Started')
 
     // Get text of the first two blocks in static view
-    const _firstBlockText = await page.locator('.block-static').nth(0).innerText()
-    const secondBlockText = await page.locator('.block-static').nth(1).innerText()
+    const _firstBlockText = await page.locator('[data-testid="block-static"]').nth(0).innerText()
+    const secondBlockText = await page.locator('[data-testid="block-static"]').nth(1).innerText()
 
     // Focus the first block
     await focusBlock(page, 0)
@@ -264,7 +259,7 @@ test.describe('Block organization', () => {
     await page.keyboard.press('Escape')
 
     // Wait for reorder to settle and verify blocks swapped: old second block is now first
-    await expect(page.locator('.block-static').nth(0)).toHaveText(secondBlockText, {
+    await expect(page.locator('[data-testid="block-static"]').nth(0)).toHaveText(secondBlockText, {
       timeout: 5000,
     })
   })
@@ -286,8 +281,8 @@ test.describe('Task and priority shortcuts', () => {
     await focusBlock(page)
 
     // The first sortable block before Ctrl+Enter should have the empty checkbox
-    const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('.task-checkbox-empty')).toBeVisible()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-empty"]')).toBeVisible()
 
     // Press Ctrl+Enter to cycle task state: none -> TODO
     await page.keyboard.down('Control')
@@ -295,7 +290,9 @@ test.describe('Task and priority shortcuts', () => {
     await page.keyboard.up('Control')
 
     // The empty checkbox should disappear (task state changed)
-    await expect(firstBlock.locator('.task-checkbox-empty')).not.toBeVisible({ timeout: 5000 })
+    await expect(firstBlock.locator('[data-testid="task-checkbox-empty"]')).not.toBeVisible({
+      timeout: 5000,
+    })
   })
 
   test('Ctrl+. toggles collapse on block with children', async ({ page }) => {
@@ -311,11 +308,11 @@ test.describe('Task and priority shortcuts', () => {
     await page.keyboard.press('Escape')
 
     // Wait for editor to close after Escape
-    await expect(page.locator('.block-editor')).not.toBeVisible()
+    await expect(page.locator('[data-testid="block-editor"]')).not.toBeVisible()
 
     // The third block (GS_3) should now have a collapse chevron (hasChildren)
-    const parentBlock = page.locator('.sortable-block').nth(2)
-    const chevron = parentBlock.locator('.collapse-toggle')
+    const parentBlock = page.locator('[data-testid="sortable-block"]').nth(2)
+    const chevron = parentBlock.locator('[data-testid="collapse-toggle"]')
     await expect(chevron).toBeVisible()
     await expect(chevron).toHaveAttribute('aria-expanded', 'true')
 

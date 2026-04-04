@@ -89,6 +89,7 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
       <div
         ref={listRef}
         className="suggestion-list flex flex-col gap-0.5 overflow-y-auto rounded-lg border bg-popover p-1 shadow-md"
+        data-testid="suggestion-list"
         role="listbox"
         aria-label={label ?? 'Suggestions'}
         aria-activedescendant={
@@ -105,6 +106,7 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
               index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
               item.isCreate && 'border-t border-border',
             )}
+            data-testid="suggestion-item"
             onClick={() => selectItem(index)}
             onPointerEnter={() => setSelectedIndex(index)}
             type="button"

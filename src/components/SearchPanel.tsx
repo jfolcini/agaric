@@ -11,14 +11,15 @@
 import { Loader2, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, getBlock, searchBlocks } from '../lib/tauri'
-import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
 
@@ -30,6 +31,7 @@ function hasCJK(text: string): boolean {
 }
 
 export function SearchPanel(): React.ReactElement {
+  const { t } = useTranslation()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<BlockRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -48,40 +50,45 @@ export function SearchPanel(): React.ReactElement {
     setRecentPages(getRecentPages())
   }, [])
 
-  const executeSearch = useCallback(async (q: string, cursor?: string) => {
-    setLoading(true)
-    try {
-      const resp = await searchBlocks({ query: q, cursor, limit: 50 })
-      if (cursor) {
-        setResults((prev) => [...prev, ...resp.items])
-      } else {
-        setResults(resp.items)
-      }
-      setNextCursor(resp.next_cursor)
-      setHasMore(resp.has_more)
-      setSearched(true)
-      const parentIds = resp.items.map((b) => b.parent_id).filter((id): id is string => id != null)
-      if (parentIds.length > 0) {
-        try {
-          const resolved = await batchResolve(parentIds)
-          if (Array.isArray(resolved)) {
-            setPageTitles((prev) => {
-              const next = new Map(prev)
-              for (const r of resolved) {
-                next.set(r.id, r.title ?? 'Untitled')
-              }
-              return next
-            })
-          }
-        } catch {
-          // breadcrumbs are non-critical
+  const executeSearch = useCallback(
+    async (q: string, cursor?: string) => {
+      setLoading(true)
+      try {
+        const resp = await searchBlocks({ query: q, cursor, limit: 50 })
+        if (cursor) {
+          setResults((prev) => [...prev, ...resp.items])
+        } else {
+          setResults(resp.items)
         }
+        setNextCursor(resp.next_cursor)
+        setHasMore(resp.has_more)
+        setSearched(true)
+        const parentIds = resp.items
+          .map((b) => b.parent_id)
+          .filter((id): id is string => id != null)
+        if (parentIds.length > 0) {
+          try {
+            const resolved = await batchResolve(parentIds)
+            if (Array.isArray(resolved)) {
+              setPageTitles((prev) => {
+                const next = new Map(prev)
+                for (const r of resolved) {
+                  next.set(r.id, r.title ?? 'Untitled')
+                }
+                return next
+              })
+            }
+          } catch {
+            // breadcrumbs are non-critical
+          }
+        }
+      } catch {
+        toast.error(t('search.failed'))
       }
-    } catch {
-      toast.error('Failed to search')
-    }
-    setLoading(false)
-  }, [])
+      setLoading(false)
+    },
+    [t],
+  )
 
   const loadMore = useCallback(() => {
     if (nextCursor) executeSearch(query, nextCursor)
@@ -156,16 +163,16 @@ export function SearchPanel(): React.ReactElement {
             setRecentPages(getRecentPages())
             navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
           } catch {
-            toast.error('Failed to load search results')
+            toast.error(t('search.loadResultsFailed'))
           }
         } else {
-          toast.error('This block has no parent page')
+          toast.error(t('search.noParentPage'))
         }
       } finally {
         setLoadingResultId(null)
       }
     },
-    [navigateToPage],
+    [navigateToPage, t],
   )
 
   const handleRecentClick = useCallback(
@@ -184,8 +191,8 @@ export function SearchPanel(): React.ReactElement {
         <Input
           value={query}
           onChange={handleInputChange}
-          placeholder="Search blocks..."
-          aria-label="Search blocks"
+          placeholder={t('search.searchPlaceholder')}
+          aria-label={t('search.searchLabel')}
           className="flex-1"
           autoFocus
         />
@@ -197,20 +204,22 @@ export function SearchPanel(): React.ReactElement {
 
       {hasCJK(query) && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
-          <span className="font-medium">Note:</span> CJK search is limited in v1. Some results may
-          be incomplete.
+          <span className="font-medium">{t('search.cjkNoteLabel')}</span>{' '}
+          {t('search.cjkLimitationNote')}
         </div>
       )}
 
       {query.trim().length > 0 && query.trim().length < 3 && (
         <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
-          Search requires at least 3 characters
+          {t('search.minCharsHint')}
         </div>
       )}
 
       {query === '' && recentPages.length > 0 && (
         <div className="recent-pages">
-          <h3 className="text-xs font-medium text-muted-foreground px-3 py-2">Recent</h3>
+          <h3 className="text-xs font-medium text-muted-foreground px-3 py-2">
+            {t('search.recentTitle')}
+          </h3>
           <ul className="space-y-1 list-none m-0 p-0">
             {recentPages.map((page) => (
               <li key={page.id}>
@@ -236,14 +245,11 @@ export function SearchPanel(): React.ReactElement {
 
       <div aria-live="polite">
         {searched && !loading && results.length === 0 && (
-          <EmptyState
-            icon={Search}
-            message="No results found. Try different keywords or check your spelling."
-          />
+          <EmptyState icon={Search} message={t('search.noResultsFound')} />
         )}
 
         {results.length > 0 && (
-          <ul className="search-results space-y-3 list-none m-0 p-0">
+          <ul className="search-results space-y-3 list-none m-0 p-0" data-testid="search-results">
             {results.map((block) => (
               <li key={block.id}>
                 <button
@@ -284,7 +290,7 @@ export function SearchPanel(): React.ReactElement {
           onClick={loadMore}
           disabled={loading}
         >
-          {loading ? 'Loading...' : 'Load more'}
+          {loading ? t('search.loadingMessage') : t('search.loadMoreButton')}
         </Button>
       )}
     </div>

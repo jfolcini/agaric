@@ -182,7 +182,7 @@ export function TagFilterPanel(): React.ReactElement {
 
   return (
     <div className="tag-filter-panel space-y-4">
-      <h3 className="text-sm font-semibold">Tag Filter</h3>
+      <h3 className="text-sm font-semibold">{t('tagFilter.title')}</h3>
 
       {/* Prefix search */}
       <div className="flex items-center gap-2">
@@ -196,8 +196,8 @@ export function TagFilterPanel(): React.ReactElement {
               setMatchingTags([])
             }
           }}
-          placeholder="Search tags by prefix..."
-          aria-label="Search tags by prefix"
+          placeholder={t('tagFilter.searchPlaceholder')}
+          aria-label={t('tagFilter.searchLabel')}
           className="flex-1"
         />
         <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -206,7 +206,7 @@ export function TagFilterPanel(): React.ReactElement {
       {/* Selected tags */}
       {selectedTags.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-muted-foreground">Selected:</span>
+          <span className="text-sm text-muted-foreground">{t('tagFilter.selectedLabel')}</span>
           {selectedTags.map((tag) => (
             <Badge
               key={tag.id}
@@ -219,7 +219,7 @@ export function TagFilterPanel(): React.ReactElement {
                 type="button"
                 className="ml-1 rounded-full hover:bg-muted"
                 onClick={() => handleRemoveTag(tag.id)}
-                aria-label={`Remove tag ${tag.name}`}
+                aria-label={t('tagFilter.removeTagLabel', { name: tag.name })}
               >
                 <X className="h-3 w-3" />
               </button>
@@ -230,7 +230,7 @@ export function TagFilterPanel(): React.ReactElement {
 
       {/* AND/OR mode toggle */}
       <div className="flex items-center gap-2">
-        <span className="text-sm text-muted-foreground">Mode:</span>
+        <span className="text-sm text-muted-foreground">{t('tagFilter.modeLabel')}</span>
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -240,11 +240,11 @@ export function TagFilterPanel(): React.ReactElement {
                 onClick={() => setMode('and')}
                 aria-pressed={mode === 'and'}
               >
-                AND
+                {t('tagFilter.andMode')}
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              <p>Show blocks with ALL selected tags</p>
+              <p>{t('tagFilter.andModeTooltip')}</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -257,11 +257,11 @@ export function TagFilterPanel(): React.ReactElement {
                 onClick={() => setMode('or')}
                 aria-pressed={mode === 'or'}
               >
-                OR
+                {t('tagFilter.orMode')}
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              <p>Show blocks with ANY selected tag</p>
+              <p>{t('tagFilter.orModeTooltip')}</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -270,20 +270,26 @@ export function TagFilterPanel(): React.ReactElement {
       {/* Filter feedback summary */}
       {selectedTags.length === 0 && (
         <p className="text-sm text-muted-foreground" data-testid="tag-filter-feedback">
-          Select tags above to filter blocks
+          {t('tagFilter.selectTagsMessage')}
         </p>
       )}
       {selectedTags.length > 0 && !loading && results.length > 0 && (
         <p className="text-sm text-muted-foreground" data-testid="tag-filter-feedback">
-          {results.length} {results.length === 1 ? 'block matches' : 'blocks match'}{' '}
-          {selectedTags.length} {selectedTags.length === 1 ? 'tag' : 'tags'} ({mode.toUpperCase()})
+          {results.length === 1
+            ? t('tagFilter.blockMatchOne', { count: results.length })
+            : t('tagFilter.blockMatchMany', { count: results.length })}{' '}
+          {selectedTags.length}{' '}
+          {selectedTags.length === 1 ? t('tagFilter.tagSingular') : t('tagFilter.tagPlural')} (
+          {mode.toUpperCase()})
         </p>
       )}
 
       {/* Matching tags from prefix search */}
       {filteredMatching.length > 0 && (
         <section className="rounded-lg border bg-card p-3">
-          <h4 className="mb-2 text-sm font-medium text-muted-foreground">Matching tags</h4>
+          <h4 className="mb-2 text-sm font-medium text-muted-foreground">
+            {t('tagFilter.matchingTagsTitle')}
+          </h4>
           <div className="space-y-1">
             {filteredMatching.map((tag) => (
               <div
@@ -300,7 +306,7 @@ export function TagFilterPanel(): React.ReactElement {
                   onClick={() => handleAddTag(tag)}
                 >
                   <Plus className="h-3 w-3" />
-                  Add
+                  {t('tagFilter.addButton')}
                 </Button>
               </div>
             ))}
@@ -320,14 +326,16 @@ export function TagFilterPanel(): React.ReactElement {
       {/* Empty results */}
       {selectedTags.length > 0 && !loading && results.length === 0 && (
         <div className="tag-filter-empty rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          No matching blocks found.
+          {t('tagFilter.noMatchesFound')}
         </div>
       )}
 
       {/* Results */}
       {results.length > 0 && (
         <section className="tag-filter-results space-y-3">
-          <h4 className="text-sm font-medium text-muted-foreground">Results ({results.length})</h4>
+          <h4 className="text-sm font-medium text-muted-foreground">
+            {t('tagFilter.resultsTitle')} ({results.length})
+          </h4>
           {results.map((block) => (
             <button
               key={block.id}
@@ -337,7 +345,7 @@ export function TagFilterPanel(): React.ReactElement {
             >
               <div className="flex items-center gap-2">
                 <span className="flex-1 text-sm whitespace-pre-wrap">
-                  {block.content || '(empty)'}
+                  {block.content || t('tagFilter.emptyContent')}
                 </span>
                 {(block.block_type === 'tag' || block.block_type === 'page') && (
                   <Badge variant="secondary">{block.block_type}</Badge>
@@ -357,7 +365,7 @@ export function TagFilterPanel(): React.ReactElement {
           onClick={loadMore}
           disabled={loading}
         >
-          {loading ? 'Loading...' : 'Load more'}
+          {loading ? t('tagFilter.loadingMessage') : t('tagFilter.loadMoreButton')}
         </Button>
       )}
     </div>

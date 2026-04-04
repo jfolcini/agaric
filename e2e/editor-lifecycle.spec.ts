@@ -37,28 +37,28 @@ test.describe('Editor lifecycle', () => {
   test('Getting Started page loads with seed blocks', async ({ page }) => {
     await openGettingStarted(page)
     // Seed page has blocks — verify at least one is visible
-    await expect(page.locator('.sortable-block').first()).toBeVisible()
+    await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
   })
 
   test('creates a block via the Add block button', async ({ page }) => {
     await openGettingStarted(page)
-    const initialCount = await page.locator('.sortable-block').count()
+    const initialCount = await page.locator('[data-testid="sortable-block"]').count()
 
     await addBlock(page, 'Hello from E2E')
 
     // Verify block count increased
-    await expect(page.locator('.sortable-block')).toHaveCount(initialCount + 1)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(initialCount + 1)
     await expect(page.getByText('Hello from E2E')).toBeVisible()
   })
 
   test('creates multiple blocks', async ({ page }) => {
     await openGettingStarted(page)
-    const initialCount = await page.locator('.sortable-block').count()
+    const initialCount = await page.locator('[data-testid="sortable-block"]').count()
 
     await addBlock(page, 'Block A')
     await addBlock(page, 'Block B')
 
-    await expect(page.locator('.sortable-block')).toHaveCount(initialCount + 2)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(initialCount + 2)
     await expect(page.getByText('Block A')).toBeVisible()
     await expect(page.getByText('Block B')).toBeVisible()
   })
@@ -77,7 +77,7 @@ test.describe('Editor lifecycle', () => {
 
     // Press Escape to discard and unfocus without changing
     await editor.press('Escape')
-    await expect(page.getByText(originalText!.trim())).toBeVisible()
+    await expect(page.getByText(originalText?.trim())).toBeVisible()
   })
 
   test('deletes a block via the delete button', async ({ page }) => {
@@ -87,7 +87,7 @@ test.describe('Editor lifecycle', () => {
     await addBlock(page, 'Delete me')
 
     // Hover over the block to reveal delete button
-    const block = page.locator('.sortable-block').filter({ hasText: 'Delete me' })
+    const block = page.locator('[data-testid="sortable-block"]').filter({ hasText: 'Delete me' })
     await block.hover()
 
     // Click the delete button
@@ -170,6 +170,6 @@ test.describe('Editor lifecycle', () => {
     // The session block should be gone (mock reset)
     await expect(page.getByText('Session block')).not.toBeVisible()
     // But seed blocks should be back
-    await expect(page.locator('.sortable-block').first()).toBeVisible()
+    await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
   })
 })

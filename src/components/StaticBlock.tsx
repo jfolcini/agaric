@@ -10,8 +10,8 @@
 
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { toHtml } from 'hast-util-to-html'
-import { File, FileText, Image as ImageIcon } from 'lucide-react'
 import { common, createLowlight } from 'lowlight'
+import { File, FileText, Image as ImageIcon } from 'lucide-react'
 import type React from 'react'
 import { memo, useMemo, useRef, useState } from 'react'
 import { parse } from '../editor/markdown-serializer'
@@ -30,7 +30,10 @@ const lowlight = createLowlight(common)
  */
 export function getAssetUrl(fsPath: string): string | null {
   try {
-    if (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__) {
+    if (
+      typeof window !== 'undefined' &&
+      (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
+    ) {
       return convertFileSrc(fsPath)
     }
   } catch {
@@ -116,6 +119,7 @@ export function renderRichContent(
               // biome-ignore lint/a11y/noStaticElementInteractions: inline link within a button — parent handles focus/keyboard
               <span
                 className="external-link cursor-pointer"
+                data-testid="external-link"
                 data-href={linkMark.attrs.href}
                 onClick={(e) => {
                   e.stopPropagation()
@@ -167,6 +171,7 @@ export function renderRichContent(
             <span
               key={`tag-${keyIdx++}`}
               className={`tag-ref-chip${status === 'deleted' ? ' tag-ref-deleted' : ''}`}
+              data-testid="tag-ref-chip"
               {...(status === 'deleted' ? { 'aria-label': `${name} (deleted)` } : {})}
               {...(options.interactive ? { tabIndex: 0 } : {})}
             >
@@ -186,6 +191,7 @@ export function renderRichContent(
             <span
               key={`link-${keyIdx++}`}
               className={`block-link-chip cursor-pointer${status === 'deleted' ? ' block-link-deleted' : ''}`}
+              data-testid="block-link-chip"
               {...(status === 'deleted' ? { 'aria-label': `${title} (deleted)` } : {})}
               onClick={(e) => {
                 if (options.onNavigate) {
@@ -342,6 +348,7 @@ function StaticBlockInner({
       <button
         type="button"
         className="block-static w-full min-h-[1.75rem] rounded-md text-left text-sm"
+        data-testid="block-static"
         data-block-id={blockId}
         onClick={() => onFocus(blockId)}
       >
@@ -364,6 +371,7 @@ function StaticBlockInner({
           'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left text-sm transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 [@media(pointer:coarse)]:min-h-[2.75rem]',
           isSelected && 'ring-2 ring-primary/50 bg-primary/5',
         )}
+        data-testid="block-static"
         data-block-id={blockId}
         aria-label="Edit block"
         onClick={(e) => {

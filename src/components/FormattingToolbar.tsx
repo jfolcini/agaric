@@ -124,6 +124,7 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
         aria-label={t('toolbar.formatting')}
         aria-controls={blockId ? `editor-${blockId}` : undefined}
         className="formatting-toolbar flex items-center gap-0.5 border-b border-border/40 bg-muted/30 px-2 py-px overflow-x-auto"
+        data-testid="formatting-toolbar"
       >
         <Tip label={t('toolbar.boldTip')}>
           <Button

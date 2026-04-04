@@ -55,7 +55,7 @@ test.describe('Journal view modes', () => {
     await page.getByRole('tab', { name: 'Agenda view' }).click()
 
     // Verify the agenda view container and all three task sections are visible
-    await expect(page.locator('.agenda-view')).toBeVisible()
+    await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
     await expect(page.getByRole('button', { name: 'To Do tasks' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'In Progress tasks' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Completed tasks' })).toBeVisible()
@@ -80,8 +80,8 @@ test.describe('Search', () => {
     await input.press('Enter')
 
     // Verify search results appear
-    await expect(page.locator('.search-results')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('.search-results button').first()).toBeVisible()
+    await expect(page.locator('[data-testid="search-results"]')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('[data-testid="search-results"] button').first()).toBeVisible()
   })
 })
 
@@ -115,14 +115,14 @@ test.describe('Page editor', () => {
   test('Add block button creates a new block in page', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    const countBefore = await page.locator('.sortable-block').count()
+    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
     expect(countBefore).toBeGreaterThan(0)
 
     // Click the "Add block" button
     await page.getByRole('button', { name: 'Add block' }).click()
 
     // Verify a new block appears
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore + 1)
   })
 })
 
@@ -139,7 +139,7 @@ test.describe('Trash', () => {
     await openPage(page, 'Getting Started')
 
     // Delete the first block via hover button
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
     await expect(deleteBtn).toBeVisible()
@@ -149,14 +149,14 @@ test.describe('Trash', () => {
     await page.getByRole('button', { name: 'Trash' }).click()
 
     // Verify at least one trash item is visible
-    await expect(page.locator('.trash-item').first()).toBeVisible()
+    await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
   })
 
   test('restore button in trash restores block', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
     // Delete a block
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
     await expect(deleteBtn).toBeVisible()
@@ -166,20 +166,20 @@ test.describe('Trash', () => {
     await page.getByRole('button', { name: 'Trash' }).click()
 
     // Verify trash has items
-    await expect(page.locator('.trash-item').first()).toBeVisible()
+    await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
 
     // Click Restore on the first trash item
-    await page.locator('.trash-restore-btn').first().click()
+    await page.locator('[data-testid="trash-restore-btn"]').first().click()
 
     // Verify the item was removed from trash
-    await expect(page.locator('.trash-item')).toHaveCount(0)
+    await expect(page.locator('[data-testid="trash-item"]')).toHaveCount(0)
   })
 
   test('purge button shows confirmation before deleting', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
     // Delete a block
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
     await expect(deleteBtn).toBeVisible()
@@ -187,24 +187,24 @@ test.describe('Trash', () => {
 
     // Navigate to Trash
     await page.getByRole('button', { name: 'Trash' }).click()
-    await expect(page.locator('.trash-item').first()).toBeVisible()
+    await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
 
     // Click Purge on the first trash item
-    await page.locator('.trash-purge-btn').first().click()
+    await page.locator('[data-testid="trash-purge-btn"]').first().click()
 
     // Verify confirmation UI appears
-    await expect(page.locator('.trash-purge-confirm')).toBeVisible()
+    await expect(page.locator('[data-testid="trash-purge-confirm"]')).toBeVisible()
 
     // Verify Yes and No buttons are visible
-    await expect(page.locator('.trash-purge-yes')).toBeVisible()
-    await expect(page.locator('.trash-purge-no')).toBeVisible()
+    await expect(page.locator('[data-testid="trash-purge-yes"]')).toBeVisible()
+    await expect(page.locator('[data-testid="trash-purge-no"]')).toBeVisible()
   })
 
   test('purge confirmation No dismisses without deleting', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
     // Delete a block
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
     await expect(deleteBtn).toBeVisible()
@@ -212,27 +212,27 @@ test.describe('Trash', () => {
 
     // Navigate to Trash
     await page.getByRole('button', { name: 'Trash' }).click()
-    await expect(page.locator('.trash-item').first()).toBeVisible()
+    await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
 
     // Click Purge → confirmation appears
-    await page.locator('.trash-purge-btn').first().click()
-    await expect(page.locator('.trash-purge-confirm')).toBeVisible()
+    await page.locator('[data-testid="trash-purge-btn"]').first().click()
+    await expect(page.locator('[data-testid="trash-purge-confirm"]')).toBeVisible()
 
     // Click No to dismiss
-    await page.locator('.trash-purge-no').click()
+    await page.locator('[data-testid="trash-purge-no"]').click()
 
     // Verify confirmation disappears
-    await expect(page.locator('.trash-purge-confirm')).not.toBeVisible()
+    await expect(page.locator('[data-testid="trash-purge-confirm"]')).not.toBeVisible()
 
     // Verify the trash item is still present
-    await expect(page.locator('.trash-item').first()).toBeVisible()
+    await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
   })
 
   test('purge confirmation Yes permanently removes block', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
     // Delete a block
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
     await expect(deleteBtn).toBeVisible()
@@ -240,24 +240,24 @@ test.describe('Trash', () => {
 
     // Navigate to Trash
     await page.getByRole('button', { name: 'Trash' }).click()
-    await expect(page.locator('.trash-item').first()).toBeVisible()
+    await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
 
     // Count trash items before purge
-    const countBefore = await page.locator('.trash-item').count()
+    const countBefore = await page.locator('[data-testid="trash-item"]').count()
 
     // Click Purge → then confirm with Yes
-    await page.locator('.trash-purge-btn').first().click()
-    await expect(page.locator('.trash-purge-confirm')).toBeVisible()
-    await page.locator('.trash-purge-yes').click()
+    await page.locator('[data-testid="trash-purge-btn"]').first().click()
+    await expect(page.locator('[data-testid="trash-purge-confirm"]')).toBeVisible()
+    await page.locator('[data-testid="trash-purge-yes"]').click()
 
     // Verify the item is removed from trash (count decreased)
-    await expect(page.locator('.trash-item')).toHaveCount(countBefore - 1)
+    await expect(page.locator('[data-testid="trash-item"]')).toHaveCount(countBefore - 1)
 
     // Navigate back to Getting Started page
     await openPage(page, 'Getting Started')
 
     // Verify the purged block does NOT reappear (permanently gone)
-    const blocks = page.locator('.sortable-block')
+    const blocks = page.locator('[data-testid="sortable-block"]')
     const blockTexts = await blocks.allTextContents()
     // The block was permanently deleted, so the page should have fewer blocks
     // than the original 5 seed blocks
@@ -268,7 +268,7 @@ test.describe('Trash', () => {
     await openPage(page, 'Getting Started')
 
     // Delete a block
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
     await expect(deleteBtn).toBeVisible()
@@ -276,19 +276,19 @@ test.describe('Trash', () => {
 
     // Navigate to Trash
     await page.getByRole('button', { name: 'Trash' }).click()
-    await expect(page.locator('.trash-item').first()).toBeVisible()
-    const countBefore = await page.locator('.trash-item').count()
+    await expect(page.locator('[data-testid="trash-item"]').first()).toBeVisible()
+    const countBefore = await page.locator('[data-testid="trash-item"]').count()
 
     // Click Purge → confirmation appears
-    await page.locator('.trash-purge-btn').first().click()
-    await expect(page.locator('.trash-purge-confirm')).toBeVisible()
+    await page.locator('[data-testid="trash-purge-btn"]').first().click()
+    await expect(page.locator('[data-testid="trash-purge-confirm"]')).toBeVisible()
 
     // Press Escape to dismiss
     await page.keyboard.press('Escape')
 
     // Verify confirmation disappears and item remains
-    await expect(page.locator('.trash-purge-confirm')).not.toBeVisible()
-    await expect(page.locator('.trash-item')).toHaveCount(countBefore)
+    await expect(page.locator('[data-testid="trash-purge-confirm"]')).not.toBeVisible()
+    await expect(page.locator('[data-testid="trash-item"]')).toHaveCount(countBefore)
   })
 })
 
@@ -324,11 +324,11 @@ test.describe('Context menu actions', () => {
   test('context menu Delete removes the block', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    const countBefore = await page.locator('.sortable-block').count()
+    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
     expect(countBefore).toBeGreaterThan(0)
 
     // Right-click the first block
-    await page.locator('.sortable-block').first().click({ button: 'right' })
+    await page.locator('[data-testid="sortable-block"]').first().click({ button: 'right' })
 
     // Click Delete in the context menu
     const menu = page.locator('[role="menu"]')
@@ -336,13 +336,13 @@ test.describe('Context menu actions', () => {
     await menu.locator('[role="menuitem"]', { hasText: 'Delete' }).click()
 
     // Verify block count decreased
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore - 1)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore - 1)
   })
 
   test('context menu Set TODO sets task state', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
 
     // Right-click block
     await firstBlock.click({ button: 'right' })
@@ -353,13 +353,13 @@ test.describe('Context menu actions', () => {
     await menu.locator('[role="menuitem"]', { hasText: 'Set as TODO' }).click()
 
     // Verify TODO checkbox appears on the block
-    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
   })
 
   test('context menu Set Priority cycles priority', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
 
     // Right-click block
     await firstBlock.click({ button: 'right' })
@@ -370,7 +370,7 @@ test.describe('Context menu actions', () => {
     await menu.locator('[role="menuitem"]', { hasText: 'Set priority 1' }).click()
 
     // Verify priority badge with "1" appears
-    const badge = firstBlock.locator('.priority-badge')
+    const badge = firstBlock.locator('[data-testid="priority-badge"]')
     await expect(badge).toBeVisible()
     await expect(badge).toHaveText('1')
   })
@@ -400,7 +400,7 @@ test.describe('External link editing and removal', () => {
     await urlInput.press('Enter')
 
     // Verify link exists in editor
-    const link = page.locator('.block-editor .external-link')
+    const link = page.locator('[data-testid="block-editor"] [data-testid="external-link"]')
     await expect(link).toBeVisible()
 
     // Wait for popover to close
@@ -433,7 +433,7 @@ test.describe('External link editing and removal', () => {
     await urlInput.press('Enter')
 
     // Verify link exists
-    const link = page.locator('.block-editor .external-link')
+    const link = page.locator('[data-testid="block-editor"] [data-testid="external-link"]')
     await expect(link).toBeVisible()
 
     // Wait for popover to close
@@ -453,7 +453,9 @@ test.describe('External link editing and removal', () => {
     await removeBtn.dispatchEvent('click')
 
     // Verify the link is gone from the editor
-    await expect(page.locator('.block-editor .external-link')).not.toBeVisible()
+    await expect(
+      page.locator('[data-testid="block-editor"] [data-testid="external-link"]'),
+    ).not.toBeVisible()
   })
 })
 
@@ -475,11 +477,7 @@ test.describe('Undo/Redo', () => {
 
     // Apply Bold
     await page.keyboard.press('Control+b')
-    await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-      ,
-    )
+    await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute('aria-pressed', 'true')
 
     // Undo
     await page.keyboard.press('Control+z')
@@ -488,7 +486,6 @@ test.describe('Undo/Redo', () => {
     await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute(
       'aria-pressed',
       'false',
-      ,
     )
   })
 
@@ -501,28 +498,19 @@ test.describe('Undo/Redo', () => {
 
     // Apply Bold
     await page.keyboard.press('Control+b')
-    await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-      ,
-    )
+    await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute('aria-pressed', 'true')
 
     // Undo
     await page.keyboard.press('Control+z')
     await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute(
       'aria-pressed',
       'false',
-      ,
     )
 
     // Redo
     await page.keyboard.press('Control+y')
 
     // Verify Bold is pressed again
-    await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-      ,
-    )
+    await expect(page.getByRole('button', { name: 'Bold' })).toHaveAttribute('aria-pressed', 'true')
   })
 })

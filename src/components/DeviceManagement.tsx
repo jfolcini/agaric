@@ -14,6 +14,7 @@
 import { Copy, Globe, Loader2, Pencil, RefreshCw, Smartphone, Unplug, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -35,6 +36,7 @@ import { RenameDialog } from './RenameDialog'
 import { UnpairConfirmDialog } from './UnpairConfirmDialog'
 
 export function DeviceManagement(): React.ReactElement {
+  const { t } = useTranslation()
   const [deviceId, setDeviceId] = useState<string | null>(null)
   const [peers, setPeers] = useState<PeerRefRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -187,7 +189,7 @@ export function DeviceManagement(): React.ReactElement {
         <CardHeader className="pb-3">
           <CardTitle className="device-management-title flex items-center gap-2 text-base">
             <Smartphone className="h-4 w-4" />
-            Device Management
+            {t('device.title')}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -205,13 +207,13 @@ export function DeviceManagement(): React.ReactElement {
             >
               <p className="text-sm text-destructive flex-1">{error}</p>
               <Button variant="outline" size="sm" onClick={() => loadData()}>
-                Retry
+                {t('device.retryButton')}
               </Button>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setError(null)}
-                aria-label="Dismiss error"
+                aria-label={t('device.dismissErrorLabel')}
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -222,7 +224,7 @@ export function DeviceManagement(): React.ReactElement {
             <>
               {/* Local device ID */}
               <dl className="device-id-section rounded-lg border bg-muted/30 p-4 mb-4">
-                <dt className="text-sm text-muted-foreground">Local Device ID</dt>
+                <dt className="text-sm text-muted-foreground">{t('device.localDeviceIdLabel')}</dt>
                 <dd className="device-id-value flex items-center gap-2 text-sm font-mono mt-1">
                   <span className="break-all">{deviceId}</span>
                   <Button
@@ -232,12 +234,12 @@ export function DeviceManagement(): React.ReactElement {
                     onClick={async () => {
                       try {
                         await navigator.clipboard.writeText(deviceId)
-                        toast.success('Device ID copied')
+                        toast.success(t('device.deviceIdCopied'))
                       } catch {
-                        toast.error('Failed to copy to clipboard')
+                        toast.error(t('device.copyFailed'))
                       }
                     }}
-                    aria-label="Copy device ID to clipboard"
+                    aria-label={t('device.copyDeviceIdLabel')}
                   >
                     <Copy className="h-3.5 w-3.5" />
                   </Button>
@@ -247,8 +249,7 @@ export function DeviceManagement(): React.ReactElement {
               {/* Manual IP hint */}
               <p className="manual-ip-hint text-xs text-muted-foreground mb-4">
                 <Globe className="inline h-3 w-3 mr-1 align-text-bottom" />
-                If mDNS discovery is unavailable, share this device&apos;s IP and sync port with the
-                remote peer, then set it via the address edit button below.
+                {t('status.manualIpHint')}
               </p>
 
               {/* Pair New Device button */}
@@ -256,12 +257,14 @@ export function DeviceManagement(): React.ReactElement {
                 onClick={() => setPairingOpen(true)}
                 className="device-pair-btn w-full mb-4 [@media(pointer:coarse)]:min-h-[44px]"
               >
-                Pair New Device
+                {t('device.pairNewDeviceButton')}
               </Button>
 
               {/* Paired peers list */}
               <div className="device-peers">
-                <h3 className="text-sm font-medium mb-2">Paired Devices ({peers.length})</h3>
+                <h3 className="text-sm font-medium mb-2">
+                  {t('device.pairedDevicesTitle')} ({peers.length})
+                </h3>
 
                 {peers.length >= 2 && (
                   <Button
@@ -270,20 +273,20 @@ export function DeviceManagement(): React.ReactElement {
                     className="device-sync-all-btn w-full mb-2 [@media(pointer:coarse)]:min-h-[44px]"
                     onClick={handleSyncAll}
                     disabled={syncingAll || syncingPeerId !== null}
-                    aria-label="Sync with all paired devices"
+                    aria-label={t('device.syncAllLabel')}
                   >
                     {syncingAll ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
                       <RefreshCw className="h-3.5 w-3.5" />
                     )}
-                    Sync All
+                    {t('device.syncAllButton')}
                   </Button>
                 )}
 
                 {peers.length === 0 ? (
                   <p className="device-no-peers text-sm text-muted-foreground">
-                    No paired devices. Click "Pair New Device" to get started.
+                    {t('device.noPairedDevices')}
                   </p>
                 ) : (
                   <div className="space-y-2">
@@ -314,7 +317,7 @@ export function DeviceManagement(): React.ReactElement {
                             <div className="peer-address flex items-center gap-1 mt-0.5">
                               <Globe className="h-3 w-3 shrink-0 text-muted-foreground" />
                               <span className="text-xs text-muted-foreground truncate">
-                                {peer.last_address ?? 'No address'}
+                                {peer.last_address ?? t('device.noAddress')}
                               </span>
                               <Button
                                 variant="ghost"
@@ -336,7 +339,9 @@ export function DeviceManagement(): React.ReactElement {
                                       )
                                   }
                                 }}
-                                aria-label={`Edit address for ${peer.device_name || truncateId(peer.peer_id)}`}
+                                aria-label={t('device.editAddressLabel', {
+                                  name: peer.device_name || truncateId(peer.peer_id),
+                                })}
                               >
                                 <Pencil className="h-3 w-3" />
                               </Button>
@@ -350,7 +355,9 @@ export function DeviceManagement(): React.ReactElement {
                             className="device-rename-btn"
                             onClick={() => setRenamePeerId(peer.peer_id)}
                             disabled={renamingPeerId === peer.peer_id}
-                            aria-label={`Rename device ${peer.device_name || truncateId(peer.peer_id)}`}
+                            aria-label={t('device.renameDeviceLabel', {
+                              name: peer.device_name || truncateId(peer.peer_id),
+                            })}
                           >
                             {renamingPeerId === peer.peer_id ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -364,24 +371,26 @@ export function DeviceManagement(): React.ReactElement {
                             className="device-sync-btn [@media(pointer:coarse)]:min-h-[44px]"
                             onClick={() => handleSyncNow(peer.peer_id)}
                             disabled={syncingPeerId === peer.peer_id || syncingAll}
-                            aria-label={`Sync now with device ${truncateId(peer.peer_id)}`}
+                            aria-label={t('device.syncNowLabel', { id: truncateId(peer.peer_id) })}
                           >
                             {syncingPeerId === peer.peer_id ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
                               <RefreshCw className="h-3.5 w-3.5" />
                             )}
-                            Sync Now
+                            {t('device.syncNowButton')}
                           </Button>
                           <Button
                             variant="destructive"
                             size="sm"
                             className="device-unpair-btn [@media(pointer:coarse)]:min-h-[44px]"
                             onClick={() => setUnpairPeerId(peer.peer_id)}
-                            aria-label={`Unpair device ${truncateId(peer.peer_id)}`}
+                            aria-label={t('device.unpairDeviceLabel', {
+                              id: truncateId(peer.peer_id),
+                            })}
                           >
                             <Unplug className="h-3.5 w-3.5" />
-                            Unpair
+                            {t('device.unpairButton')}
                           </Button>
                         </div>
                       </div>
@@ -394,10 +403,10 @@ export function DeviceManagement(): React.ReactElement {
 
           {/* Screen reader status announcements */}
           <div aria-live="polite" className="sr-only">
-            {loading && !deviceId && 'Loading device information...'}
-            {syncingPeerId && `Syncing with device ${syncingPeerId}...`}
-            {syncingAll && 'Syncing with all paired devices...'}
-            {error && `Sync error: ${error}`}
+            {loading && !deviceId && t('device.loadingMessage')}
+            {syncingPeerId && t('device.syncingMessage', { id: syncingPeerId })}
+            {syncingAll && t('device.syncingAllMessage')}
+            {error && t('device.syncErrorMessage', { error })}
           </div>
         </CardContent>
       </Card>

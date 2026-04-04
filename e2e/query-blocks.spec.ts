@@ -29,7 +29,7 @@ import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
 async function typeSlashCommand(page: import('@playwright/test').Page, command: string) {
   await page.keyboard.press('End')
   await page.keyboard.type(` /${command}`, { delay: 30 })
-  const list = page.locator('.suggestion-list')
+  const list = page.locator('[data-testid="suggestion-list"]')
   await expect(list).toBeVisible()
   return list
 }
@@ -49,13 +49,15 @@ test.describe('Query block creation', () => {
     const list = await typeSlashCommand(page, 'query')
 
     // The QUERY command should be visible in the suggestion list
-    await expect(list.locator('.suggestion-item', { hasText: 'QUERY' })).toBeVisible()
+    await expect(
+      list.locator('[data-testid="suggestion-item"]', { hasText: 'QUERY' }),
+    ).toBeVisible()
 
     // Select the query command
     await page.keyboard.press('Enter')
 
     // The editor should now contain the query template
-    const editor = page.locator('.block-editor [contenteditable="true"]')
+    const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
     await expect(editor).toBeVisible()
     await expect(editor).toContainText('{{query')
   })
@@ -71,8 +73,8 @@ test.describe('Query block creation', () => {
     await saveBlock(page)
 
     // The first block should now render as a QueryResult component
-    const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('.query-result')).toBeVisible({ timeout: 5000 })
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    await expect(firstBlock.locator('[data-testid="query-result"]')).toBeVisible({ timeout: 5000 })
   })
 })
 
@@ -95,8 +97,8 @@ test.describe('Tag-based query blocks', () => {
     await saveBlock(page)
 
     // The QueryResult should be visible and show results
-    const firstBlock = page.locator('.sortable-block').first()
-    const queryResult = firstBlock.locator('.query-result')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for results to load (should show count, not "...")
@@ -110,9 +112,15 @@ test.describe('Tag-based query blocks', () => {
     await expect(queryResult).toContainText('3 result', { timeout: 5000 })
 
     // Verify specific result items are rendered
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Ship v2.0 release' })).toBeVisible()
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Fix login bug' })).toBeVisible()
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Weekly standup notes' })).toBeVisible()
+    await expect(
+      queryResult.locator('[data-testid="query-result-item"]', { hasText: 'Ship v2.0 release' }),
+    ).toBeVisible()
+    await expect(
+      queryResult.locator('[data-testid="query-result-item"]', { hasText: 'Fix login bug' }),
+    ).toBeVisible()
+    await expect(
+      queryResult.locator('[data-testid="query-result-item"]', { hasText: 'Weekly standup notes' }),
+    ).toBeVisible()
   })
 
   test('tag:personal query shows matching blocks', async ({ page }) => {
@@ -122,8 +130,8 @@ test.describe('Tag-based query blocks', () => {
     await page.keyboard.type('{{query tag:personal}}', { delay: 20 })
     await saveBlock(page)
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const queryResult = firstBlock.locator('.query-result')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
@@ -131,7 +139,9 @@ test.describe('Tag-based query blocks', () => {
 
     // Seed data has 1 block tagged with TAG_PERSONAL: BLOCK_DAILY_3 ("Buy groceries")
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Buy groceries' })).toBeVisible()
+    await expect(
+      queryResult.locator('[data-testid="query-result-item"]', { hasText: 'Buy groceries' }),
+    ).toBeVisible()
   })
 
   test('tag query with no matches shows empty state', async ({ page }) => {
@@ -141,8 +151,8 @@ test.describe('Tag-based query blocks', () => {
     await page.keyboard.type('{{query tag:nonexistenttag}}', { delay: 20 })
     await saveBlock(page)
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const queryResult = firstBlock.locator('.query-result')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
@@ -171,8 +181,8 @@ test.describe('Property-based query blocks', () => {
     await page.keyboard.type('{{query property:context=@office}}', { delay: 20 })
     await saveBlock(page)
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const queryResult = firstBlock.locator('.query-result')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
@@ -180,7 +190,9 @@ test.describe('Property-based query blocks', () => {
 
     // Seed data: BLOCK_MTG_1 has context=@office
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Weekly standup notes' })).toBeVisible()
+    await expect(
+      queryResult.locator('[data-testid="query-result-item"]', { hasText: 'Weekly standup notes' }),
+    ).toBeVisible()
   })
 
   test('property:project=beta query shows matching blocks', async ({ page }) => {
@@ -190,8 +202,8 @@ test.describe('Property-based query blocks', () => {
     await page.keyboard.type('{{query property:project=beta}}', { delay: 20 })
     await saveBlock(page)
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const queryResult = firstBlock.locator('.query-result')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
@@ -199,7 +211,11 @@ test.describe('Property-based query blocks', () => {
 
     // Seed data: BLOCK_MTG_2 has project=beta
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Design review feedback' })).toBeVisible()
+    await expect(
+      queryResult.locator('[data-testid="query-result-item"]', {
+        hasText: 'Design review feedback',
+      }),
+    ).toBeVisible()
   })
 })
 
@@ -221,8 +237,8 @@ test.describe('Legacy query syntax', () => {
     await page.keyboard.type('{{query type:tag expr:work}}', { delay: 20 })
     await saveBlock(page)
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const queryResult = firstBlock.locator('.query-result')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
@@ -232,15 +248,17 @@ test.describe('Legacy query syntax', () => {
     await expect(queryResult).toContainText('3 result', { timeout: 5000 })
   })
 
-  test('type:property key:context value:@remote query renders matching blocks', async ({ page }) => {
+  test('type:property key:context value:@remote query renders matching blocks', async ({
+    page,
+  }) => {
     await focusBlock(page)
 
     await page.keyboard.press('Meta+a')
     await page.keyboard.type('{{query type:property key:context value:@remote}}', { delay: 20 })
     await saveBlock(page)
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const queryResult = firstBlock.locator('.query-result')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
@@ -268,8 +286,8 @@ test.describe('Query result interactions', () => {
     await page.keyboard.type('{{query tag:work}}', { delay: 20 })
     await saveBlock(page)
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const queryResult = firstBlock.locator('.query-result')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for results to load
@@ -279,13 +297,13 @@ test.describe('Query result interactions', () => {
     await expect(queryResult.locator('code')).toContainText('tag:work')
 
     // Results should be visible initially
-    await expect(queryResult.locator('.query-result-item').first()).toBeVisible()
+    await expect(queryResult.locator('[data-testid="query-result-item"]').first()).toBeVisible()
 
     // Click the header to collapse
     await queryResult.locator('button').first().click()
 
     // Results should be hidden after collapse
-    await expect(queryResult.locator('.query-result-item')).not.toBeVisible()
+    await expect(queryResult.locator('[data-testid="query-result-item"]')).not.toBeVisible()
   })
 
   test('query result shows todo state badges for task blocks', async ({ page }) => {
@@ -296,8 +314,8 @@ test.describe('Query result interactions', () => {
     await page.keyboard.type('{{query tag:work}}', { delay: 20 })
     await saveBlock(page)
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const queryResult = firstBlock.locator('.query-result')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
     // Wait for loading to complete
@@ -327,8 +345,8 @@ test.describe('Query result reactivity', () => {
     await page.keyboard.type('{{query tag:work}}', { delay: 20 })
     await saveBlock(page)
 
-    const firstBlock = page.locator('.sortable-block').first()
-    let queryResult = firstBlock.locator('.query-result')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    let queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
     await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
 
@@ -336,8 +354,8 @@ test.describe('Query result reactivity', () => {
     await expect(queryResult).toContainText('3 result', { timeout: 5000 })
 
     // Now click to re-enter edit mode and change to tag:personal
-    await firstBlock.locator('.block-static').click()
-    const editor = page.locator('.block-editor [contenteditable="true"]')
+    await firstBlock.locator('[data-testid="block-static"]').click()
+    const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
     await expect(editor).toBeVisible()
 
     await page.keyboard.press('Meta+a')
@@ -345,10 +363,12 @@ test.describe('Query result reactivity', () => {
     await saveBlock(page)
 
     // The query should now show 1 result for tag:personal
-    queryResult = firstBlock.locator('.query-result')
+    queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
     await expect(queryResult.locator('text=...')).not.toBeVisible({ timeout: 5000 })
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
-    await expect(queryResult.locator('.query-result-item', { hasText: 'Buy groceries' })).toBeVisible()
+    await expect(
+      queryResult.locator('[data-testid="query-result-item"]', { hasText: 'Buy groceries' }),
+    ).toBeVisible()
   })
 })

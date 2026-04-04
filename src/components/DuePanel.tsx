@@ -11,6 +11,7 @@ import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
@@ -39,8 +40,8 @@ function priorityColor(p: string): string {
 }
 
 /** Truncate content to plain text. */
-function truncateContent(content: string | null, max = 120): string {
-  if (!content) return '(empty)'
+function truncateContent(content: string | null, max = 120, emptyFallback = '(empty)'): string {
+  if (!content) return emptyFallback
   const plain = content.replace(/\[\[([^\]]*)\]\]/g, '$1').replace(/[#*_~`]/g, '')
   return plain.length > max ? `${plain.slice(0, max)}...` : plain
 }
@@ -328,7 +329,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     return () => {
       stale = true
     }
-  }, [date])
+  }, [date, t])
 
   const loadMore = useCallback(() => {
     if (nextCursor) {
@@ -394,10 +395,8 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     upcomingBlocks.length === 0
   ) {
     return (
-      <section className="due-panel" aria-label="Due items">
-        <p className="text-sm text-muted-foreground px-4 py-8 text-center">
-          {t('duePanel.empty')}
-        </p>
+      <section className="due-panel" aria-label={t('duePanel.duePanelLabel')}>
+        <p className="text-sm text-muted-foreground px-4 py-8 text-center">{t('duePanel.empty')}</p>
       </section>
     )
   }
@@ -407,7 +406,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     visibleCount === 1 ? t('duePanel.headerOne') : t('duePanel.header', { count: visibleCount })
 
   return (
-    <section className="due-panel" aria-label="Due items">
+    <section className="due-panel" aria-label={t('duePanel.duePanelLabel')}>
       {/* Main header -- collapsible */}
       <button
         type="button"
@@ -458,12 +457,14 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
             onClick={toggleHideBeforeScheduled}
             title={
               hideBeforeScheduled
-                ? 'Showing only tasks scheduled for today or earlier'
-                : 'Showing all tasks regardless of scheduled date'
+                ? t('duePanel.showingScheduledTodayTooltip')
+                : t('duePanel.showingAllTasksTooltip')
             }
             aria-pressed={hideBeforeScheduled}
           >
-            {hideBeforeScheduled ? 'Scheduled: hide future' : 'Scheduled: show all'}
+            {hideBeforeScheduled
+              ? t('duePanel.scheduledHideFutureButton')
+              : t('duePanel.scheduledShowAllButton')}
           </button>
         </div>
       )}
@@ -486,7 +487,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
           {isToday && overdueBlocks.length > 0 && (
             <div className="overdue-section mb-3">
               <h4 className="text-xs font-semibold text-destructive mb-1.5 flex items-center gap-1">
-                <span>Overdue</span>
+                <span>{t('duePanel.overdueTitle')}</span>
                 <span className="text-muted-foreground font-normal">({overdueBlocks.length})</span>
               </h4>
               <ul className="space-y-1">
@@ -526,7 +527,9 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             P{block.priority}
                           </span>
                         )}
-                        <span className="flex-1 truncate">{truncateContent(block.content)}</span>
+                        <span className="flex-1 truncate">
+                          {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
+                        </span>
                         <span className="shrink-0 text-[10px] text-destructive/60">
                           {block.due_date}
                         </span>
@@ -541,7 +544,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
           {isToday && upcomingBlocks.length > 0 && (
             <div className="upcoming-section mb-3">
               <h4 className="text-xs font-semibold text-amber-600 dark:text-amber-400 mb-1.5 flex items-center gap-1">
-                <span>Upcoming</span>
+                <span>{t('duePanel.upcomingTitle')}</span>
                 <span className="text-muted-foreground font-normal">({upcomingBlocks.length})</span>
               </h4>
               <ul className="space-y-1">
@@ -569,7 +572,9 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                             {block.todo_state}
                           </span>
                         )}
-                        <span className="flex-1 truncate">{truncateContent(block.content)}</span>
+                        <span className="flex-1 truncate">
+                          {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
+                        </span>
                         <span className="shrink-0 text-[10px] text-amber-600/60 dark:text-amber-400/60">
                           {block.due_date}
                         </span>
@@ -593,6 +598,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                   <li
                     key={block.id}
                     className="due-panel-item flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer hover:bg-muted/50 transition-colors"
+                    data-testid="due-panel-item"
                     // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
                     tabIndex={0}
                     onClick={() => handleBlockClick(block)}
@@ -609,7 +615,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
 
                     {/* Block content */}
                     <span className="due-panel-item-text text-sm flex-1 truncate">
-                      {truncateContent(block.content)}
+                      {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
                     </span>
 
                     {/* Source page breadcrumb */}
@@ -657,7 +663,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                         {entry.source === 'due_date' ? '\u23F0' : '\uD83D\uDCC5'}
                       </span>
                       <span className="flex-1 truncate">
-                        {truncateContent(entry.block.content, 80)}
+                        {truncateContent(entry.block.content, 80, t('duePanel.emptyContent'))}
                       </span>
                       {entry.block.priority && (
                         <span

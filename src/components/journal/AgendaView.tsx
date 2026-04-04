@@ -517,7 +517,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   }, [agendaCursor])
 
   return (
-    <div className="agenda-view space-y-4">
+    <div className="agenda-view space-y-4" data-testid="agenda-view">
       <AgendaFilterBuilder filters={agendaFilters} onFiltersChange={setAgendaFilters} />
       <AgendaSortGroupControls
         groupBy={agendaGroupBy}

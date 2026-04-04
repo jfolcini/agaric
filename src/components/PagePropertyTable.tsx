@@ -61,10 +61,10 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
         setDefinitions(Array.isArray(defs) ? defs : [])
       })
       .catch(() => {
-        toast.error('Failed to load properties')
+        toast.error(t('pageProperty.loadFailed'))
       })
       .finally(() => setLoading(false))
-  }, [pageId])
+  }, [pageId, t])
 
   const findDef = useCallback(
     (key: string): PropertyDefinition | undefined => {
@@ -95,7 +95,7 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
         const updated = await getProperties(pageId)
         setProperties(updated)
       } catch {
-        toast.error('Failed to save property')
+        toast.error(t('pageProperty.saveFailed'))
       }
     },
     [pageId, t],
@@ -107,10 +107,10 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
         await deleteProperty(pageId, key)
         setProperties((prev) => prev.filter((p) => p.key !== key))
       } catch {
-        toast.error('Failed to delete property')
+        toast.error(t('pageProperty.deleteFailed'))
       }
     },
-    [pageId],
+    [pageId, t],
   )
 
   const handleConfirmDelete = useCallback(() => {
@@ -129,10 +129,10 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
         setShowAddPopover(false)
         setDefSearch('')
       } catch {
-        toast.error('Failed to add property')
+        toast.error(t('pageProperty.addFailed'))
       }
     },
-    [pageId],
+    [pageId, t],
   )
 
   const handleCreateDef = useCallback(async () => {
@@ -172,14 +172,15 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
         size="sm"
         className="gap-1 text-muted-foreground"
         onClick={() => setExpanded((prev) => !prev)}
-        aria-label="Toggle properties"
+        aria-label={t('pageProperty.toggleLabel')}
       >
         {expanded ? (
           <ChevronDown className="h-3.5 w-3.5" />
         ) : (
           <ChevronRight className="h-3.5 w-3.5" />
         )}
-        Properties{propertyCount > 0 ? ` (${propertyCount})` : ''}
+        {t('pageProperty.propertiesButton')}
+        {propertyCount > 0 ? ` (${propertyCount})` : ''}
       </Button>
 
       {expanded && (
@@ -217,21 +218,24 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
                   variant="ghost"
                   size="xs"
                   className="gap-1 text-muted-foreground"
-                  aria-label="Add property"
+                  aria-label={t('pageProperty.addPropertyLabel')}
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  Add property
+                  {t('pageProperty.addPropertyButton')}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-64 space-y-2 p-3" aria-label="Property picker">
+              <PopoverContent
+                className="w-64 space-y-2 p-3"
+                aria-label={t('pageProperty.pickerLabel')}
+              >
                 <Input
-                  placeholder="Search definitions..."
+                  placeholder={t('pageProperty.searchPlaceholder')}
                   value={defSearch}
                   onChange={(e) => {
                     setDefSearch(e.target.value)
                     setCreatingDef(false)
                   }}
-                  aria-label="Search definitions"
+                  aria-label={t('pageProperty.searchLabel')}
                 />
                 <div className="max-h-40 overflow-y-auto">
                   {filteredDefs.map((def) => (
@@ -255,28 +259,28 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
                     className="w-full text-muted-foreground"
                     onClick={() => setCreatingDef(true)}
                   >
-                    Create &quot;{defSearch.trim()}&quot;
+                    {t('pageProperty.createButton', { name: defSearch.trim() })}
                   </Button>
                 )}
                 {creatingDef && (
                   <div className="space-y-2">
                     <label htmlFor="new-def-type" className="text-xs text-muted-foreground">
-                      Value type
+                      {t('pageProperty.valueTypeLabel')}
                     </label>
                     <select
                       id="new-def-type"
                       className="w-full rounded border px-2 py-1 text-sm"
                       value={newDefType}
                       onChange={(e) => setNewDefType(e.target.value)}
-                      aria-label="Value type"
+                      aria-label={t('pageProperty.valueTypeLabel')}
                     >
-                      <option value="text">text</option>
-                      <option value="number">number</option>
-                      <option value="date">date</option>
-                      <option value="select">select</option>
+                      <option value="text">{t('pageProperty.textType')}</option>
+                      <option value="number">{t('pageProperty.numberType')}</option>
+                      <option value="date">{t('pageProperty.dateType')}</option>
+                      <option value="select">{t('pageProperty.selectType')}</option>
                     </select>
                     <Button size="sm" className="w-full" onClick={handleCreateDef}>
-                      Create definition
+                      {t('pageProperty.createDefinitionButton')}
                     </Button>
                   </div>
                 )}
@@ -323,6 +327,7 @@ interface PropertyRowEditorProps {
 }
 
 function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: PropertyRowEditorProps) {
+  const { t } = useTranslation()
   const valueType = def?.value_type ?? 'text'
 
   const currentValue = (() => {
@@ -393,9 +398,9 @@ function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: Proper
       onDefUpdated?.(updatedDef)
       setEditOptionsOpen(false)
     } catch {
-      toast.error('Failed to update options')
+      toast.error(t('pageProperty.updateOptionsFailed'))
     }
-  }, [def, editingOptions, onDefUpdated])
+  }, [def, editingOptions, onDefUpdated, t])
 
   return (
     <div className="property-row flex items-center gap-2 text-sm">
@@ -408,9 +413,9 @@ function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: Proper
             className="w-full rounded border px-2 py-1 text-sm"
             value={localValue}
             onChange={handleSelectChange}
-            aria-label={`${prop.key} value`}
+            aria-label={t('pageProperty.valueLabel', { key: prop.key })}
           >
-            <option value="">—</option>
+            <option value="">{t('pageProperty.emptyOption')}</option>
             {selectOptions.map((opt) => (
               <option key={opt} value={opt}>
                 {opt}
@@ -424,7 +429,7 @@ function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: Proper
             value={localValue}
             onChange={(e) => setLocalValue(e.target.value)}
             onBlur={handleBlur}
-            aria-label={`${prop.key} value`}
+            aria-label={t('pageProperty.valueLabel', { key: prop.key })}
           />
         )}
       </div>
@@ -436,21 +441,27 @@ function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: Proper
               size="icon-xs"
               className="shrink-0 text-muted-foreground"
               onClick={handleOpenEditOptions}
-              aria-label={`Edit options for ${prop.key}`}
+              aria-label={t('pageProperty.editOptionsLabel', { key: prop.key })}
             >
               <Pencil className="h-3 w-3" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-56 space-y-2 p-3" aria-label={`Edit options for ${prop.key}`}>
+          <PopoverContent
+            className="w-56 space-y-2 p-3"
+            aria-label={t('pageProperty.editOptionsLabel', { key: prop.key })}
+          >
             <div className="max-h-32 space-y-1 overflow-y-auto">
               {editingOptions.map((opt) => (
-                <div key={opt} className="flex items-center justify-between gap-1 rounded px-1 py-0.5 text-sm hover:bg-accent">
+                <div
+                  key={opt}
+                  className="flex items-center justify-between gap-1 rounded px-1 py-0.5 text-sm hover:bg-accent"
+                >
                   <span className="truncate">{opt}</span>
                   <button
                     type="button"
                     className="shrink-0 text-muted-foreground hover:text-destructive"
                     onClick={() => handleRemoveOption(opt)}
-                    aria-label={`Remove option ${opt}`}
+                    aria-label={t('pageProperty.removeOptionLabel', { option: opt })}
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -460,7 +471,7 @@ function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: Proper
             <div className="flex gap-1">
               <Input
                 className="h-7 flex-1 text-xs"
-                placeholder="New option..."
+                placeholder={t('pageProperty.newOptionPlaceholder')}
                 value={newOptionInput}
                 onChange={(e) => setNewOptionInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -469,14 +480,19 @@ function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: Proper
                     handleAddOption()
                   }
                 }}
-                aria-label="New option value"
+                aria-label={t('pageProperty.newOptionLabel')}
               />
-              <Button variant="ghost" size="xs" onClick={handleAddOption} aria-label="Add option">
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={handleAddOption}
+                aria-label={t('pageProperty.addOptionLabel')}
+              >
                 <Plus className="h-3 w-3" />
               </Button>
             </div>
             <Button size="sm" className="w-full" onClick={handleSaveOptions}>
-              Save options
+              {t('pageProperty.saveOptionsButton')}
             </Button>
           </PopoverContent>
         </Popover>
@@ -486,7 +502,7 @@ function PropertyRowEditor({ prop, def, onSave, onDelete, onDefUpdated }: Proper
         size="icon-xs"
         className="shrink-0 text-muted-foreground hover:text-destructive"
         onClick={onDelete}
-        aria-label={`Delete property ${prop.key}`}
+        aria-label={t('pageProperty.deletePropertyLabel', { key: prop.key })}
       >
         <X className="h-3 w-3" />
       </Button>

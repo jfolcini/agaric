@@ -102,7 +102,9 @@ test.describe('Error scenarios', () => {
     })
 
     // Try to delete the block
-    const block = page.locator('.sortable-block').filter({ hasText: 'Block to fail-delete' })
+    const block = page
+      .locator('[data-testid="sortable-block"]')
+      .filter({ hasText: 'Block to fail-delete' })
     await block.hover()
     const deleteBtn = block.getByRole('button', { name: /delete block/i })
     await deleteBtn.click()

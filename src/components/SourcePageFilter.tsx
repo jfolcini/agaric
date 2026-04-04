@@ -9,6 +9,7 @@
 import { Filter } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -30,6 +31,7 @@ export function SourcePageFilter({
   excluded,
   onChange,
 }: SourcePageFilterProps): React.ReactElement {
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
 
   const hasIncludes = included.length > 0
@@ -115,7 +117,7 @@ export function SourcePageFilter({
           variant="ghost"
           size="sm"
           className={`source-page-filter-trigger h-7 w-7 p-0 ${buttonColor}`}
-          aria-label="Filter by source page"
+          aria-label={t('sourceFilter.filterLabel')}
         >
           <Filter className="h-4 w-4" />
         </Button>
@@ -123,11 +125,11 @@ export function SourcePageFilter({
       <PopoverContent className="w-64 p-2" align="start">
         <div className="source-page-filter-content space-y-2">
           <Input
-            placeholder="Search pages..."
+            placeholder={t('sourceFilter.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="h-7 text-xs"
-            aria-label="Search source pages"
+            aria-label={t('sourceFilter.searchLabel')}
           />
           <div className="source-page-filter-list max-h-48 overflow-y-auto space-y-0.5">
             {filteredPages.map((page) => (
@@ -147,7 +149,9 @@ export function SourcePageFilter({
               </button>
             ))}
             {filteredPages.length === 0 && (
-              <div className="px-2 py-1 text-xs text-muted-foreground">No pages found</div>
+              <div className="px-2 py-1 text-xs text-muted-foreground">
+                {t('sourceFilter.noPagesFound')}
+              </div>
             )}
           </div>
           {hasFilters && (
@@ -157,7 +161,7 @@ export function SourcePageFilter({
               className="source-page-filter-clear w-full text-xs"
               onClick={handleClearAll}
             >
-              Clear all
+              {t('sourceFilter.clearAllButton')}
             </Button>
           )}
         </div>

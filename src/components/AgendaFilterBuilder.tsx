@@ -14,7 +14,6 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { announce } from '../lib/announcer'
 import { cn } from '@/lib/utils'
 import type { AgendaGroupBy, AgendaSortBy } from '../lib/agenda-sort'
 import i18n from '../lib/i18n'
@@ -481,6 +480,7 @@ export function AgendaFilterBuilder({
   return (
     <fieldset
       className="agenda-filter-builder border-0 p-0 m-0"
+      data-testid="agenda-filter-builder"
       aria-label={t('agendaFilter.agendaFilters')}
     >
       <legend className="sr-only">{t('agendaFilter.agendaFilters')}</legend>
@@ -583,6 +583,7 @@ export function AgendaSortGroupControls({
   return (
     <div
       className="agenda-sort-group-controls flex items-center gap-1.5"
+      data-testid="agenda-sort-group-controls"
       role="toolbar"
       aria-label={`${t('agenda.sortBy')} / ${t('agenda.groupBy')}`}
     >

@@ -163,8 +163,10 @@ export function QueryResult({
   const sortedResults = useMemo(() => {
     if (!sortKey) return results
     return [...results].sort((a, b) => {
-      const aVal = sortKey === 'content' ? a.content : (a[sortKey as keyof BlockRow] as string | null)
-      const bVal = sortKey === 'content' ? b.content : (b[sortKey as keyof BlockRow] as string | null)
+      const aVal =
+        sortKey === 'content' ? a.content : (a[sortKey as keyof BlockRow] as string | null)
+      const bVal =
+        sortKey === 'content' ? b.content : (b[sortKey as keyof BlockRow] as string | null)
       return compareValues(aVal ?? null, bVal ?? null, sortDir)
     })
   }, [results, sortKey, sortDir])
@@ -264,7 +266,10 @@ export function QueryResult({
             return result
           })
 
-          items = [...intersectedIds].map((id) => blockMap.get(id)).filter((b): b is BlockRow => b != null).slice(0, 50)
+          items = [...intersectedIds]
+            .map((id) => blockMap.get(id))
+            .filter((b): b is BlockRow => b != null)
+            .slice(0, 50)
         }
       } else if (type === 'backlinks') {
         if (!params.target) {
@@ -304,7 +309,10 @@ export function QueryResult({
   }, [fetchResults])
 
   return (
-    <div className="query-result my-1 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 text-sm">
+    <div
+      className="query-result my-1 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 text-sm"
+      data-testid="query-result"
+    >
       {/* Header */}
       <button
         type="button"
@@ -338,7 +346,7 @@ export function QueryResult({
               {results.map((block) => {
                 const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
                 return (
-                  <li key={block.id} className="query-result-item">
+                  <li key={block.id} className="query-result-item" data-testid="query-result-item">
                     <button
                       type="button"
                       className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted/40 transition-colors"
@@ -381,7 +389,7 @@ export function QueryResult({
           )}
           {!loading && !error && results.length > 0 && tableMode && (
             <div className="overflow-x-auto">
-              <table className="w-full text-xs" role="grid">
+              <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-muted-foreground/20">
                     {columns.map((col) => (
@@ -415,14 +423,9 @@ export function QueryResult({
                 </thead>
                 <tbody className="divide-y divide-muted-foreground/10">
                   {sortedResults.map((block) => {
-                    const pageTitle = block.parent_id
-                      ? pageTitles.get(block.parent_id)
-                      : undefined
+                    const pageTitle = block.parent_id ? pageTitles.get(block.parent_id) : undefined
                     return (
-                      <tr
-                        key={block.id}
-                        className="hover:bg-muted/40 transition-colors"
-                      >
+                      <tr key={block.id} className="hover:bg-muted/40 transition-colors">
                         {columns.map((col) => (
                           <td key={col.key} className="px-3 py-1.5">
                             {col.key === 'content' ? (
@@ -437,14 +440,11 @@ export function QueryResult({
                                 }}
                               >
                                 {resolveBlockTitle
-                                  ? resolveBlockTitle(block.id) ||
-                                    truncate(block.content)
+                                  ? resolveBlockTitle(block.id) || truncate(block.content)
                                   : truncate(block.content)}
                               </button>
                             ) : (
-                              <span>
-                                {(block[col.key as keyof BlockRow] as string) ?? ''}
-                              </span>
+                              <span>{(block[col.key as keyof BlockRow] as string) ?? ''}</span>
                             )}
                           </td>
                         ))}

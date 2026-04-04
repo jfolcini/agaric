@@ -35,6 +35,7 @@ export function BlockDndOverlay({
         {activeBlock ? (
           <div
             className="sortable-block-overlay rounded border bg-background/90 px-3 py-1.5 shadow-lg text-sm opacity-80"
+            data-testid="sortable-block-overlay"
             style={{ maxWidth: 320 }}
           >
             {(activeBlock.content ?? '').slice(0, 80) || 'Empty block'}

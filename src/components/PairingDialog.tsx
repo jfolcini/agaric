@@ -11,7 +11,8 @@
 
 import { Camera, Loader2, Smartphone, X } from 'lucide-react'
 import type React from 'react'
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -31,9 +32,7 @@ import { useSyncStore } from '../stores/sync'
 import { UnpairConfirmDialog } from './UnpairConfirmDialog'
 
 // Lazy-load QrScanner to avoid bundling html5-qrcode on desktop
-const LazyQrScanner = lazy(() =>
-  import('./QrScanner').then((m) => ({ default: m.QrScanner })),
-)
+const LazyQrScanner = lazy(() => import('./QrScanner').then((m) => ({ default: m.QrScanner })))
 
 interface PairingDialogProps {
   open: boolean
@@ -62,6 +61,7 @@ export function PairingDialog({
   const [countdown, setCountdown] = useState<number | null>(null)
   const [entryMode, setEntryMode] = useState<'manual' | 'scan'>('manual')
 
+  const { t } = useTranslation()
   const dialogRef = useRef<HTMLDivElement>(null)
   const retryBtnRef = useRef<HTMLButtonElement>(null)
 
@@ -114,9 +114,9 @@ export function PairingDialog({
     return () => {
       cancelled = true
       // Cancel any in-progress pairing when the dialog closes or unmounts
-      cancelPairing().catch(() => toast.error('Failed to cancel pairing'))
+      cancelPairing().catch(() => toast.error(t('pairing.cancelFailed')))
     }
-  }, [open, init])
+  }, [open, init, t])
 
   // Countdown timer (#294) — only re-run effect when active/inactive changes
   const countdownActive = countdown !== null && countdown > 0
@@ -190,14 +190,14 @@ export function PairingDialog({
       const peerList = await listPeerRefs()
       setPeers(peerList)
       setWords(['', '', '', ''])
-      toast.success('Device paired successfully')
+      toast.success(t('pairing.successMessage'))
       onOpenChange(false)
     } catch (err) {
       console.error('Pairing failed:', err)
       setError(`Pairing failed: ${String(err instanceof Error ? err.message : err)}`)
     }
     setPairLoading(false)
-  }, [words, syncSetState, onOpenChange])
+  }, [words, syncSetState, onOpenChange, t])
 
   // #279: Space auto-advance and Enter-to-submit (uses DOM queries for focus)
   const handleWordKeyDown = useCallback(
@@ -217,29 +217,32 @@ export function PairingDialog({
   )
 
   // Handle QR scan result: parse passphrase and auto-fill word inputs
-  const handleQrScan = useCallback((data: string) => {
-    // QR data may be JSON with a passphrase field or a plain passphrase string
-    let passphrase = data
-    try {
-      const obj = JSON.parse(data)
-      if (obj && typeof obj.passphrase === 'string') {
-        passphrase = obj.passphrase
+  const handleQrScan = useCallback(
+    (data: string) => {
+      // QR data may be JSON with a passphrase field or a plain passphrase string
+      let passphrase = data
+      try {
+        const obj = JSON.parse(data)
+        if (obj && typeof obj.passphrase === 'string') {
+          passphrase = obj.passphrase
+        }
+      } catch {
+        // Not JSON — use raw text as passphrase
       }
-    } catch {
-      // Not JSON — use raw text as passphrase
-    }
 
-    const parts = passphrase.trim().toLowerCase().split(/\s+/)
-    const newWords: [string, string, string, string] = [
-      parts[0] ?? '',
-      parts[1] ?? '',
-      parts[2] ?? '',
-      parts[3] ?? '',
-    ]
-    setWords(newWords)
-    setEntryMode('manual') // Switch back so user can verify before confirming
-    toast.success('QR code scanned — verify and tap Pair')
-  }, [])
+      const parts = passphrase.trim().toLowerCase().split(/\s+/)
+      const newWords: [string, string, string, string] = [
+        parts[0] ?? '',
+        parts[1] ?? '',
+        parts[2] ?? '',
+        parts[3] ?? '',
+      ]
+      setWords(newWords)
+      setEntryMode('manual') // Switch back so user can verify before confirming
+      toast.success(t('pairing.qrScannedMessage'))
+    },
+    [t],
+  )
 
   const handleCancel = useCallback(async () => {
     try {
@@ -328,7 +331,7 @@ export function PairingDialog({
         className="pairing-dialog-overlay fixed inset-0 z-50 bg-black/50 dark:bg-black/60 border-none cursor-default"
         onClick={handleCancel}
         tabIndex={-1}
-        aria-label="Close pairing dialog"
+        aria-label={t('pairing.closeDialogLabel')}
       />
       <div
         ref={dialogRef}
@@ -340,13 +343,13 @@ export function PairingDialog({
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <h2 id="pairing-dialog-title" className="text-lg font-semibold">
-            Pair Device
+            {t('pairing.dialogTitle')}
           </h2>
           <Button
             variant="ghost"
             size="sm"
             onClick={handleCancel}
-            aria-label="Close pairing dialog"
+            aria-label={t('pairing.closeDialogLabel')}
             className="[@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]"
           >
             <X className="h-4 w-4" />
@@ -373,7 +376,9 @@ export function PairingDialog({
         {loading && (
           <div className="pairing-loading flex items-center justify-center py-8">
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-            <span className="ml-2 text-sm text-muted-foreground">Starting pairing...</span>
+            <span className="ml-2 text-sm text-muted-foreground">
+              {t('pairing.startingMessage')}
+            </span>
           </div>
         )}
 
@@ -385,18 +390,20 @@ export function PairingDialog({
               <div
                 className="pairing-qr shrink-0 max-w-full rounded-lg border bg-white p-3"
                 role="img"
-                aria-label="QR code for device pairing"
+                aria-label={t('pairing.qrCodeLabel')}
                 data-testid="pairing-qr-code"
                 // biome-ignore lint/security/noDangerouslySetInnerHtml: SVG from our own Rust backend, not user input
                 dangerouslySetInnerHTML={{ __html: pairingInfo.qr_svg }}
               />
               <div className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-muted-foreground">Passphrase:</span>
+                <span className="text-sm font-medium text-muted-foreground">
+                  {t('pairing.passphraseLabel')}
+                </span>
                 <p className="pairing-passphrase text-lg font-mono font-semibold">
                   {pairingInfo.passphrase}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Scan the QR code or enter the passphrase on the other device.
+                  {t('pairing.scanOrEnterInstruction')}
                 </p>
                 {/* #294: Countdown timer */}
                 {countdownDisplay && (
@@ -404,7 +411,7 @@ export function PairingDialog({
                     className="pairing-countdown text-xs text-muted-foreground mt-1"
                     aria-hidden="true"
                   >
-                    Session expires in {countdownDisplay}
+                    {t('pairing.sessionExpiresIn')} {countdownDisplay}
                   </p>
                 )}
                 {/* #424: SR-only countdown — announces at key intervals only */}
@@ -421,7 +428,9 @@ export function PairingDialog({
                 </p>
                 {isExpired && !error && (
                   <div className="pairing-expired flex items-center gap-2 mt-1">
-                    <p className="text-xs text-destructive font-medium flex-1">Session expired</p>
+                    <p className="text-xs text-destructive font-medium flex-1">
+                      {t('pairing.sessionExpired')}
+                    </p>
                     <Button
                       variant="outline"
                       size="sm"
@@ -429,7 +438,7 @@ export function PairingDialog({
                       onClick={() => init()}
                       className="pairing-retry-expired-btn shrink-0"
                     >
-                      Retry
+                      {t('pairing.retryButton')}
                     </Button>
                   </div>
                 )}
@@ -439,7 +448,7 @@ export function PairingDialog({
             <div className="relative my-4">
               <Separator />
               <span className="pairing-separator absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-background px-2 text-xs text-muted-foreground">
-                OR
+                {t('pairing.orSeparator')}
               </span>
             </div>
 
@@ -451,7 +460,7 @@ export function PairingDialog({
                 onClick={() => setEntryMode('manual')}
                 className="[@media(pointer:coarse)]:min-h-[44px]"
               >
-                Type Passphrase
+                {t('pairing.typePassphraseButton')}
               </Button>
               <Button
                 variant={entryMode === 'scan' ? 'default' : 'outline'}
@@ -460,7 +469,7 @@ export function PairingDialog({
                 className="[@media(pointer:coarse)]:min-h-[44px]"
               >
                 <Camera className="h-4 w-4 mr-1" />
-                Scan QR Code
+                {t('pairing.scanQrCodeButton')}
               </Button>
             </div>
 
@@ -473,8 +482,10 @@ export function PairingDialog({
                     value={words[i]}
                     onChange={(e) => handleWordChange(i, e.target.value)}
                     onKeyDown={(e) => handleWordKeyDown(i, e)}
-                    placeholder={`${['1st', '2nd', '3rd', '4th'][i]} word`}
-                    aria-label={`Passphrase word ${i + 1}`}
+                    placeholder={t('pairing.wordPlaceholder', {
+                      ordinal: ['1st', '2nd', '3rd', '4th'][i],
+                    })}
+                    aria-label={t('pairing.wordLabel', { num: i + 1 })}
                     className="text-center [@media(pointer:coarse)]:min-h-[44px]"
                     disabled={pairLoading || isExpired}
                   />
@@ -487,7 +498,7 @@ export function PairingDialog({
                     <div className="flex items-center justify-center py-8">
                       <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                       <span className="ml-2 text-sm text-muted-foreground">
-                        Loading scanner...
+                        {t('pairing.loadingScannerMessage')}
                       </span>
                     </div>
                   }
@@ -508,7 +519,7 @@ export function PairingDialog({
                 disabled={pairLoading}
                 className="[@media(pointer:coarse)]:min-h-[44px]"
               >
-                Cancel
+                {t('pairing.cancelButton')}
               </Button>
               <Button
                 onClick={handlePair}
@@ -516,7 +527,7 @@ export function PairingDialog({
                 className="pairing-pair-btn [@media(pointer:coarse)]:min-h-[44px]"
               >
                 {pairLoading && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
-                Pair
+                {t('pairing.pairButton')}
               </Button>
             </div>
           </>
@@ -527,9 +538,9 @@ export function PairingDialog({
           <>
             <Separator className="my-4" />
             <div className="pairing-peers">
-              <h3 className="text-sm font-medium mb-2">Paired Devices</h3>
+              <h3 className="text-sm font-medium mb-2">{t('pairing.pairedDevicesTitle')}</h3>
               {peers.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No paired devices yet.</p>
+                <p className="text-sm text-muted-foreground">{t('pairing.noPairedDevices')}</p>
               ) : (
                 <div className="space-y-2">
                   {peers.map((peer) => (
@@ -568,7 +579,7 @@ export function PairingDialog({
 
         {/* Status message for screen readers */}
         <div aria-live="polite" className="sr-only">
-          {loading && 'Starting pairing...'}
+          {loading && t('pairing.startingMessage')}
           {pairLoading && 'Pairing in progress...'}
           {error}
         </div>

@@ -40,6 +40,7 @@ export function PropertyChip({
         onClick && 'cursor-pointer hover:bg-accent/50 transition-colors',
         className,
       )}
+      data-testid="property-chip"
       onClick={onClick}
     >
       {keyLabel}

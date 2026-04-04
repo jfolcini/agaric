@@ -125,15 +125,23 @@ export function LinkedReferences({
 
   // Load property keys on mount
   useEffect(() => {
-    listPropertyKeys().then(setPropertyKeys).catch((e) => { console.error(e); toast.error(t('references.loadPropertiesFailed')) })
-  }, [])
+    listPropertyKeys()
+      .then(setPropertyKeys)
+      .catch((e) => {
+        console.error(e)
+        toast.error(t('references.loadPropertiesFailed'))
+      })
+  }, [t])
 
   // Load tags on mount
   useEffect(() => {
     listTagsByPrefix({ prefix: '' })
       .then((result) => setTags((result ?? []).map((t) => ({ id: t.tag_id, name: t.name }))))
-      .catch((e) => { console.error(e); toast.error(t('references.loadTagsFailed')) })
-  }, [])
+      .catch((e) => {
+        console.error(e)
+        toast.error(t('references.loadTagsFailed'))
+      })
+  }, [t])
 
   // Fetch on mount and when pageId/filters change
   useEffect(() => {

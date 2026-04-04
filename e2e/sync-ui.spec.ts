@@ -11,7 +11,7 @@ test.describe('Sync UI', () => {
   })
 
   test('Status panel shows sync status section', async ({ page }) => {
-    await expect(page.locator('.sync-panel-title')).toBeVisible()
+    await expect(page.locator('[data-testid="sync-panel-title"]')).toBeVisible()
     await expect(page.getByText('Sync Status')).toBeVisible()
   })
 
@@ -78,6 +78,6 @@ test.describe('Sync UI', () => {
 
   test('Sync status shows not configured when no peers', async ({ page }) => {
     // With empty sync store, should show "not configured" or similar
-    await expect(page.locator('.sync-panel-not-configured')).toBeVisible()
+    await expect(page.locator('[data-testid="sync-panel-not-configured"]')).toBeVisible()
   })
 })

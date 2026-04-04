@@ -63,11 +63,11 @@ test.describe('Block-level undo/redo', () => {
   test('undo reverses block creation', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    const countBefore = await page.locator('.sortable-block').count()
+    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
 
     // Create a new block
     await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore + 1)
 
     // Escape out of the editor so Ctrl+Z hits useUndoShortcuts
     await blurEditors(page)
@@ -82,24 +82,24 @@ test.describe('Block-level undo/redo', () => {
     await reopenPage(page, 'Getting Started')
 
     // Block count should be back to original
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore)
   })
 
   test('undo reverses block deletion', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    const countBefore = await page.locator('.sortable-block').count()
+    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
     expect(countBefore).toBeGreaterThan(0)
 
     // Delete the first block via hover button
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
     await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
 
     // Verify block was deleted
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore - 1)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore - 1)
 
     // Escape and blur out of any contentEditable
     await blurEditors(page)
@@ -112,17 +112,17 @@ test.describe('Block-level undo/redo', () => {
     await reopenPage(page, 'Getting Started')
 
     // Block count should be restored
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore)
   })
 
   test('redo re-applies after undo', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    const countBefore = await page.locator('.sortable-block').count()
+    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
 
     // Create a new block
     await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore + 1)
 
     // Escape and blur out of any contentEditable
     await blurEditors(page)
@@ -139,6 +139,6 @@ test.describe('Block-level undo/redo', () => {
     await reopenPage(page, 'Getting Started')
 
     // Block should be back (countBefore + 1)
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore + 1)
   })
 })

@@ -42,7 +42,10 @@ test.describe('Heading syntax (typed # prefix)', () => {
 
     await saveBlock(page)
 
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('h1')).toBeVisible()
     await expect(staticBlock.locator('h1')).toContainText('My Heading')
   })
@@ -54,7 +57,10 @@ test.describe('Heading syntax (typed # prefix)', () => {
 
     await saveBlock(page)
 
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('h2')).toBeVisible()
     await expect(staticBlock.locator('h2')).toContainText('Second Level')
   })
@@ -66,7 +72,10 @@ test.describe('Heading syntax (typed # prefix)', () => {
 
     await saveBlock(page)
 
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('h3')).toBeVisible()
     await expect(staticBlock.locator('h3')).toContainText('Third Level')
   })
@@ -78,7 +87,10 @@ test.describe('Heading syntax (typed # prefix)', () => {
 
     await saveBlock(page)
 
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('h4')).toBeVisible()
     await expect(staticBlock.locator('h4')).toContainText('Fourth Level')
   })
@@ -90,7 +102,10 @@ test.describe('Heading syntax (typed # prefix)', () => {
 
     await saveBlock(page)
 
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('h5')).toBeVisible()
     await expect(staticBlock.locator('h5')).toContainText('Fifth Level')
   })
@@ -102,7 +117,10 @@ test.describe('Heading syntax (typed # prefix)', () => {
 
     await saveBlock(page)
 
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('h6')).toBeVisible()
     await expect(staticBlock.locator('h6')).toContainText('Sixth Level')
   })
@@ -139,7 +157,10 @@ test.describe('Keyboard shortcut formatting', () => {
 
     // Save and verify static render
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('strong')).toHaveText('world')
   })
 
@@ -161,7 +182,10 @@ test.describe('Keyboard shortcut formatting', () => {
     await expect(italicEl).toHaveText('world')
 
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('em')).toHaveText('world')
   })
 
@@ -184,7 +208,10 @@ test.describe('Keyboard shortcut formatting', () => {
     await expect(codeEl).toHaveText('npm install')
 
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     const staticCode = staticBlock.locator('code')
     await expect(staticCode).toHaveText('npm install')
     // Verify the code pill has border-radius (bg-muted rounded styling)
@@ -221,7 +248,10 @@ test.describe('Combined marks', () => {
     await expect(editor.locator('em')).toBeVisible()
 
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('strong')).toBeVisible()
     await expect(staticBlock.locator('em')).toBeVisible()
   })
@@ -246,7 +276,10 @@ test.describe('Combined marks', () => {
     await expect(editor.locator('code')).toBeVisible()
 
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('strong')).toBeVisible()
     await expect(staticBlock.locator('code')).toBeVisible()
   })
@@ -281,12 +314,15 @@ test.describe('Round-trip persistence', () => {
     await saveBlock(page)
 
     // Verify bold in static view
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('strong')).toHaveText('bold')
 
     // Re-open the block by clicking it
     await staticBlock.click()
-    const reopenedEditor = page.locator('.block-editor [contenteditable="true"]')
+    const reopenedEditor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
     await expect(reopenedEditor).toBeVisible()
 
     // Verify bold is still applied after re-opening
@@ -308,12 +344,15 @@ test.describe('Round-trip persistence', () => {
 
     await saveBlock(page)
 
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('em')).toHaveText('italic')
 
     // Re-open
     await staticBlock.click()
-    const reopenedEditor = page.locator('.block-editor [contenteditable="true"]')
+    const reopenedEditor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
     await expect(reopenedEditor).toBeVisible()
     await expect(reopenedEditor.locator('em')).toHaveText('italic')
   })
@@ -333,12 +372,15 @@ test.describe('Round-trip persistence', () => {
 
     await saveBlock(page)
 
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('code')).toHaveText('code')
 
     // Re-open
     await staticBlock.click()
-    const reopenedEditor = page.locator('.block-editor [contenteditable="true"]')
+    const reopenedEditor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
     await expect(reopenedEditor).toBeVisible()
     await expect(reopenedEditor.locator('code')).toHaveText('code')
   })
@@ -351,13 +393,16 @@ test.describe('Round-trip persistence', () => {
 
     await saveBlock(page)
 
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('h1')).toBeVisible()
     await expect(staticBlock.locator('h1')).toContainText('Persistent Heading')
 
     // Re-open the block
     await staticBlock.click()
-    const reopenedEditor = page.locator('.block-editor [contenteditable="true"]')
+    const reopenedEditor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
     await expect(reopenedEditor).toBeVisible()
 
     // TipTap renders headings as <h1> in the editor too

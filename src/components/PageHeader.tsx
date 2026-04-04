@@ -198,7 +198,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     getPageAliases(pageId)
       .then(setAliases)
       .catch(() => toast.error(t('pageHeader.loadAliasesFailed')))
-  }, [pageId])
+  }, [pageId, t])
 
   // Sync editableTitle when prop changes (e.g., navigating to a different page)
   useEffect(() => {
@@ -554,9 +554,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t('pageHeader.deletePageTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('pageHeader.deletePageDescription')}
-            </AlertDialogDescription>
+            <AlertDialogDescription>{t('pageHeader.deletePageDescription')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('pageHeader.cancel')}</AlertDialogCancel>

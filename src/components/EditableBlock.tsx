@@ -182,6 +182,7 @@ function EditableBlockInner({
       ref={wrapperRef}
       id={`editor-${blockId}`}
       className="block-editor rounded-md ring-1 ring-ring/30 bg-accent/[0.06] shadow-sm"
+      data-testid="block-editor"
       data-block-id={blockId}
       onBlur={handleBlur}
     >

@@ -347,7 +347,7 @@ describe('no duplicate keys', () => {
   it('every key follows the namespace.name convention', () => {
     const translations = getTranslations()
     for (const key of Object.keys(translations)) {
-      expect(key).toMatch(/^[a-zA-Z]+\.[a-zA-Z0-9]+$/)
+      expect(key).toMatch(/^[a-zA-Z]+\.[a-zA-Z0-9]+(_one|_other)?$/)
     }
   })
 })

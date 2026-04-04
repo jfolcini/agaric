@@ -9,6 +9,7 @@
 import { ChevronDown, ChevronRight, Clock, Loader2, Lock, RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -116,6 +117,7 @@ function getPayloadPreview(entry: HistoryEntry): string | null {
 // ---------------------------------------------------------------------------
 
 export function HistoryView(): React.ReactElement {
+  const { t } = useTranslation()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [focusedIndex, setFocusedIndex] = useState(-1)
   const [lastClickedIndex, setLastClickedIndex] = useState(-1)
@@ -386,7 +388,7 @@ export function HistoryView(): React.ReactElement {
       {/* Filter bar */}
       <div className="history-filter-bar flex items-center gap-3">
         <label htmlFor="op-type-filter" className="text-sm font-medium text-muted-foreground">
-          Filter:
+          {t('history.filterLabel')}
         </label>
         <select
           id="op-type-filter"
@@ -395,7 +397,7 @@ export function HistoryView(): React.ReactElement {
           className="h-8 rounded-md border border-input bg-background px-2 text-sm"
           aria-label="Filter by operation type"
         >
-          <option value="">All types</option>
+          <option value="">{t('history.allTypesOption')}</option>
           {OP_TYPES.map((t) => (
             <option key={t} value={t}>
               {t}
@@ -407,7 +409,9 @@ export function HistoryView(): React.ReactElement {
       {/* Selection toolbar */}
       {selected.size > 0 && (
         <div className="history-selection-toolbar flex items-center gap-3 rounded-lg border bg-muted/50 p-3">
-          <Badge variant="secondary">{selected.size} selected</Badge>
+          <Badge variant="secondary">
+            {selected.size} {t('history.selectedBadge')}
+          </Badge>
           <Button
             variant="default"
             size="sm"
@@ -415,13 +419,13 @@ export function HistoryView(): React.ReactElement {
             disabled={reverting}
           >
             <RotateCcw className="h-3.5 w-3.5" />
-            {reverting ? 'Reverting...' : 'Revert selected'}
+            {reverting ? t('history.revertingButton') : t('history.revertSelectedButton')}
           </Button>
           <Button variant="ghost" size="sm" onClick={clearSelection} disabled={reverting}>
-            Clear selection
+            {t('history.clearSelectionButton')}
           </Button>
           <span className="text-xs text-muted-foreground ml-auto hidden sm:inline">
-            Space to toggle, Enter to revert
+            {t('history.keyboardHint')}
           </span>
         </div>
       )}
@@ -443,14 +447,14 @@ export function HistoryView(): React.ReactElement {
         >
           <p className="text-sm text-destructive">{error}</p>
           <Button variant="outline" size="sm" onClick={() => reload()}>
-            Retry
+            {t('history.retryButton')}
           </Button>
         </div>
       )}
 
       {/* Empty state */}
       {!loading && entries.length === 0 && (
-        <EmptyState icon={Clock} message="No history entries found" />
+        <EmptyState icon={Clock} message={t('history.noEntriesFound')} />
       )}
 
       {/* History list */}
@@ -498,13 +502,17 @@ export function HistoryView(): React.ReactElement {
                     onChange={() => toggleSelection(index)}
                     onClick={(e) => e.stopPropagation()}
                     className="h-4 w-4 shrink-0 rounded border-border"
-                    aria-label={`Select operation ${entry.op_type} #${entry.seq}`}
+                    aria-label={t('history.selectOperationLabel', {
+                      opType: entry.op_type,
+                      seq: entry.seq,
+                    })}
                   />
 
                   {/* Op type badge */}
                   <Badge
                     variant="outline"
                     className={`history-item-type shrink-0 border-transparent ${opBadgeClasses(entry.op_type)}`}
+                    data-testid="history-type-badge"
                   >
                     {entry.op_type}
                   </Badge>
@@ -550,7 +558,7 @@ export function HistoryView(): React.ReactElement {
                       ) : (
                         <ChevronRight className="h-3.5 w-3.5" />
                       )}
-                      Diff
+                      {t('history.diffButton')}
                     </Button>
                   )}
 
@@ -565,7 +573,7 @@ export function HistoryView(): React.ReactElement {
                           />
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>This operation cannot be reversed</p>
+                          <p>{t('history.nonReversibleTooltip')}</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
@@ -617,7 +625,7 @@ export function HistoryView(): React.ReactElement {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={reverting}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleRevert} disabled={reverting}>
-              {reverting ? 'Reverting...' : 'Revert'}
+              {reverting ? t('history.revertingButton') : 'Revert'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

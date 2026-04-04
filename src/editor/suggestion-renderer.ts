@@ -85,6 +85,7 @@ export function createSuggestionRenderer(label?: string) {
 
       popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
+      popup.dataset.testid = 'suggestion-popup'
       document.body.appendChild(popup)
       popup.appendChild(renderer.element)
       updatePosition(popup, props)

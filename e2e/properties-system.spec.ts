@@ -32,32 +32,44 @@ test.describe('Property chips on blocks', () => {
     await openPage(page, 'Meetings')
 
     // Both meeting blocks should be visible
-    const blocks = page.locator('.sortable-block')
+    const blocks = page.locator('[data-testid="sortable-block"]')
     await expect(blocks).toHaveCount(2, { timeout: 5000 })
 
     // First block (Weekly standup notes) should have property chips
     const firstBlock = blocks.first()
     await expect(firstBlock).toContainText('Weekly standup notes')
-    const firstChips = firstBlock.locator('.property-chip')
+    const firstChips = firstBlock.locator('[data-testid="property-chip"]')
     await expect(firstChips.first()).toBeVisible()
 
     // Verify context and project property chips are shown
     // PropertyChip renders "key:" label + value span
-    await expect(firstBlock.locator('.property-chip', { hasText: 'context' })).toBeVisible()
-    await expect(firstBlock.locator('.property-chip', { hasText: '@office' })).toBeVisible()
-    await expect(firstBlock.locator('.property-chip', { hasText: 'project' })).toBeVisible()
-    await expect(firstBlock.locator('.property-chip', { hasText: 'alpha' })).toBeVisible()
+    await expect(
+      firstBlock.locator('[data-testid="property-chip"]', { hasText: 'context' }),
+    ).toBeVisible()
+    await expect(
+      firstBlock.locator('[data-testid="property-chip"]', { hasText: '@office' }),
+    ).toBeVisible()
+    await expect(
+      firstBlock.locator('[data-testid="property-chip"]', { hasText: 'project' }),
+    ).toBeVisible()
+    await expect(
+      firstBlock.locator('[data-testid="property-chip"]', { hasText: 'alpha' }),
+    ).toBeVisible()
   })
 
   test('second meeting block shows its own property values', async ({ page }) => {
     await openPage(page, 'Meetings')
 
-    const secondBlock = page.locator('.sortable-block').nth(1)
+    const secondBlock = page.locator('[data-testid="sortable-block"]').nth(1)
     await expect(secondBlock).toContainText('Design review feedback')
 
     // Should show context: @remote and project: beta
-    await expect(secondBlock.locator('.property-chip', { hasText: '@remote' })).toBeVisible()
-    await expect(secondBlock.locator('.property-chip', { hasText: 'beta' })).toBeVisible()
+    await expect(
+      secondBlock.locator('[data-testid="property-chip"]', { hasText: '@remote' }),
+    ).toBeVisible()
+    await expect(
+      secondBlock.locator('[data-testid="property-chip"]', { hasText: 'beta' }),
+    ).toBeVisible()
   })
 })
 
@@ -74,7 +86,7 @@ test.describe('Property drawer', () => {
     await openPage(page, 'Meetings')
 
     // Right-click the first block to open context menu
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await expect(firstBlock).toBeVisible()
     await firstBlock.click({ button: 'right' })
 
@@ -95,7 +107,7 @@ test.describe('Property drawer', () => {
     await openPage(page, 'Meetings')
 
     // Open the property drawer for the first meeting block
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.click({ button: 'right' })
     const menu = page.locator('[role="menu"]')
     await expect(menu).toBeVisible()
@@ -127,7 +139,7 @@ test.describe('Set property via drawer', () => {
     await openPage(page, 'Getting Started')
 
     // Right-click the first block and open properties
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.click({ button: 'right' })
     const menu = page.locator('[role="menu"]')
     await expect(menu).toBeVisible()
@@ -177,7 +189,7 @@ test.describe('Delete property via drawer', () => {
     await openPage(page, 'Meetings')
 
     // Open the property drawer for the first meeting block (has context + project)
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.click({ button: 'right' })
     const menu = page.locator('[role="menu"]')
     await expect(menu).toBeVisible()
@@ -215,10 +227,7 @@ test.describe('Property definitions view', () => {
 
   test('Properties sidebar shows seed property definitions', async ({ page }) => {
     // Navigate to Properties view via sidebar
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Properties' })
-      .click()
+    await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Properties' }).click()
 
     // Should show the "Property Definitions" heading
     await expect(page.getByText('Property Definitions')).toBeVisible()
@@ -233,10 +242,7 @@ test.describe('Property definitions view', () => {
   })
 
   test('search filters property definitions by key', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Properties' })
-      .click()
+    await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Properties' }).click()
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // Type into the search input
@@ -252,10 +258,7 @@ test.describe('Property definitions view', () => {
   })
 
   test('creating a new property definition adds it to the list', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Properties' })
-      .click()
+    await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Properties' }).click()
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // Fill in the create form
@@ -270,10 +273,7 @@ test.describe('Property definitions view', () => {
   })
 
   test('deleting a property definition with confirmation removes it', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Properties' })
-      .click()
+    await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Properties' }).click()
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // Hover over the "context" row and click the delete button
@@ -299,10 +299,7 @@ test.describe('Property definitions view', () => {
   })
 
   test('select-type property shows Edit options button', async ({ page }) => {
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Properties' })
-      .click()
+    await page.locator('[data-slot="sidebar"]').getByRole('button', { name: 'Properties' }).click()
     await expect(page.getByText('Property Definitions')).toBeVisible()
 
     // The "project" definition (type: select) should have an "Edit options" button

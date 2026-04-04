@@ -23,18 +23,6 @@ import { getStatus, importMarkdown } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
 import { DeviceManagement } from './DeviceManagement'
 
-const TOOLTIP_TEXT: Record<string, string> = {
-  'Foreground Queue': 'Operations waiting to be applied to the database. Should stay near zero.',
-  'Background Queue': 'Cache rebuild and FTS indexing tasks. Non-critical, best-effort processing.',
-  'Ops Dispatched': 'Total operations processed since app start.',
-  'Background Dispatched': 'Total background cache tasks completed since app start.',
-  Peer: 'Number of paired devices',
-  Peers: 'Number of paired devices',
-  'Last Synced': 'Time since last successful sync',
-  'Ops Received': 'Total operations received from peers (resets on app restart)',
-  'Ops Sent': 'Total operations sent to peers (resets on app restart)',
-}
-
 function queueHealthClasses(depth: number): string {
   if (depth === 0)
     return 'border-emerald-200 text-emerald-600 dark:border-emerald-800 dark:text-emerald-400'
@@ -42,7 +30,7 @@ function queueHealthClasses(depth: number): string {
   return ''
 }
 
-function MetricLabel({ label }: { label: string }): React.ReactElement {
+function MetricLabel({ label, tooltip }: { label: string; tooltip: string }): React.ReactElement {
   return (
     <dt className="status-metric-label text-sm text-muted-foreground">
       <Tooltip>
@@ -55,7 +43,7 @@ function MetricLabel({ label }: { label: string }): React.ReactElement {
             {label}
           </button>
         </TooltipTrigger>
-        <TooltipContent>{TOOLTIP_TEXT[label]}</TooltipContent>
+        <TooltipContent>{tooltip}</TooltipContent>
       </Tooltip>
     </dt>
   )
@@ -126,46 +114,49 @@ export function StatusPanel(): React.ReactElement {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
 
-  const handleFileImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files || files.length === 0) return
+  const handleFileImport = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files
+      if (!files || files.length === 0) return
 
-    setImporting(true)
-    setImportResult(null)
+      setImporting(true)
+      setImportResult(null)
 
-    let totalBlocks = 0
-    let totalProps = 0
-    const allWarnings: string[] = []
-    let lastTitle = ''
+      let totalBlocks = 0
+      let totalProps = 0
+      const allWarnings: string[] = []
+      let lastTitle = ''
 
-    for (const file of Array.from(files)) {
-      try {
-        const content = await file.text()
-        const result = await importMarkdown(content, file.name)
-        totalBlocks += result.blocks_created
-        totalProps += result.properties_set
-        allWarnings.push(...result.warnings)
-        lastTitle = result.page_title
-      } catch {
-        allWarnings.push(`Failed to import ${file.name}`)
+      for (const file of Array.from(files)) {
+        try {
+          const content = await file.text()
+          const result = await importMarkdown(content, file.name)
+          totalBlocks += result.blocks_created
+          totalProps += result.properties_set
+          allWarnings.push(...result.warnings)
+          lastTitle = result.page_title
+        } catch {
+          allWarnings.push(`Failed to import ${file.name}`)
+        }
       }
-    }
 
-    setImportResult({
-      page_title: files.length === 1 ? lastTitle : `${files.length} files`,
-      blocks_created: totalBlocks,
-      properties_set: totalProps,
-      warnings: allWarnings,
-    })
-    setImporting(false)
+      setImportResult({
+        page_title: files.length === 1 ? lastTitle : `${files.length} files`,
+        blocks_created: totalBlocks,
+        properties_set: totalProps,
+        warnings: allWarnings,
+      })
+      setImporting(false)
 
-    if (totalBlocks > 0) {
-      toast.success(`Imported ${totalBlocks} blocks from ${files.length} file(s)`)
-    }
+      if (totalBlocks > 0) {
+        toast.success(t('status.importedMessage', { totalBlocks, fileCount: files.length }))
+      }
 
-    // Reset file input
-    e.target.value = ''
-  }, [])
+      // Reset file input
+      e.target.value = ''
+    },
+    [t],
+  )
 
   return (
     <TooltipProvider>
@@ -174,7 +165,7 @@ export function StatusPanel(): React.ReactElement {
           <CardHeader className="pb-3">
             <CardTitle className="status-panel-title flex items-center gap-2 text-base">
               <Activity className="h-4 w-4" />
-              Materializer Status
+              {t('status.materializerStatusTitle')}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -198,9 +189,12 @@ export function StatusPanel(): React.ReactElement {
                     <dd className="status-metric-value text-2xl font-bold">
                       {status.foreground_queue_depth}
                     </dd>
-                    <MetricLabel label="Foreground Queue" />
+                    <MetricLabel
+                      label={t('status.foregroundQueueLabel')}
+                      tooltip={t('status.foregroundQueueTooltip')}
+                    />
                     <dd className="text-xs text-muted-foreground mt-1">
-                      Peak: {status.fg_high_water ?? 0}
+                      {t('status.peakLabel')} {status.fg_high_water ?? 0}
                     </dd>
                   </div>
 
@@ -210,9 +204,12 @@ export function StatusPanel(): React.ReactElement {
                     <dd className="status-metric-value text-2xl font-bold">
                       {status.background_queue_depth}
                     </dd>
-                    <MetricLabel label="Background Queue" />
+                    <MetricLabel
+                      label={t('status.backgroundQueueLabel')}
+                      tooltip={t('status.backgroundQueueTooltip')}
+                    />
                     <dd className="text-xs text-muted-foreground mt-1">
-                      Peak: {status.bg_high_water ?? 0}
+                      {t('status.peakLabel')} {status.bg_high_water ?? 0}
                     </dd>
                   </div>
 
@@ -220,14 +217,20 @@ export function StatusPanel(): React.ReactElement {
                     <dd className="status-metric-value text-2xl font-bold">
                       {status.total_ops_dispatched}
                     </dd>
-                    <MetricLabel label="Ops Dispatched" />
+                    <MetricLabel
+                      label={t('status.opsDispatchedLabel')}
+                      tooltip={t('status.opsDispatchedTooltip')}
+                    />
                   </div>
 
                   <div className="status-metric rounded-lg border bg-muted/30 p-4 text-center">
                     <dd className="status-metric-value text-2xl font-bold">
                       {status.total_background_dispatched}
                     </dd>
-                    <MetricLabel label="Background Dispatched" />
+                    <MetricLabel
+                      label={t('status.backgroundDispatchedLabel')}
+                      tooltip={t('status.backgroundDispatchedTooltip')}
+                    />
                   </div>
                 </dl>
 
@@ -237,14 +240,10 @@ export function StatusPanel(): React.ReactElement {
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                       <p>
                         {[
-                          fgErrors > 0 &&
-                            `${fgErrors} foreground error${fgErrors !== 1 ? 's' : ''}`,
-                          bgErrors > 0 &&
-                            `${bgErrors} background error${bgErrors !== 1 ? 's' : ''}`,
-                          fgPanics > 0 &&
-                            `${fgPanics} foreground panic${fgPanics !== 1 ? 's' : ''}`,
-                          bgPanics > 0 &&
-                            `${bgPanics} background panic${bgPanics !== 1 ? 's' : ''}`,
+                          fgErrors > 0 && t('status.foregroundErrorsMessage', { count: fgErrors }),
+                          bgErrors > 0 && t('status.backgroundErrorsMessage', { count: bgErrors }),
+                          fgPanics > 0 && t('status.foregroundPanicsMessage', { count: fgPanics }),
+                          bgPanics > 0 && t('status.backgroundPanicsMessage', { count: bgPanics }),
                         ]
                           .filter(Boolean)
                           .join(', ')}
@@ -252,7 +251,7 @@ export function StatusPanel(): React.ReactElement {
                     </div>
                     {bgErrors > 0 && (
                       <p className="ml-6 text-xs text-muted-foreground">
-                        Cache data may be stale. Restart the app to retry.
+                        {t('status.cacheStaleHint')}
                       </p>
                     )}
                   </div>
@@ -264,15 +263,21 @@ export function StatusPanel(): React.ReactElement {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="sync-panel-title flex items-center gap-2 text-base">
+            <CardTitle
+              className="sync-panel-title flex items-center gap-2 text-base"
+              data-testid="sync-panel-title"
+            >
               <RefreshCw className="h-4 w-4" />
-              Sync Status
+              {t('status.syncStatusTitle')}
             </CardTitle>
           </CardHeader>
           <CardContent>
             {syncPeers.length === 0 ? (
-              <p className="sync-panel-not-configured text-sm text-muted-foreground">
-                Not configured
+              <p
+                className="sync-panel-not-configured text-sm text-muted-foreground"
+                data-testid="sync-panel-not-configured"
+              >
+                {t('status.notConfigured')}
               </p>
             ) : (
               <div className="sync-panel-details space-y-3">
@@ -280,7 +285,7 @@ export function StatusPanel(): React.ReactElement {
                   <span
                     className={`sync-state-dot h-2 w-2 rounded-full ${syncStateDotClasses(syncState)}`}
                     role="status"
-                    aria-label={`Sync state: ${syncStateLabel(syncState)}`}
+                    aria-label={t('status.syncStateLabel', { state: syncStateLabel(syncState) })}
                   />
                   <span className="sync-state-label text-sm font-medium">
                     {syncStateLabel(syncState)}
@@ -294,24 +299,36 @@ export function StatusPanel(): React.ReactElement {
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="rounded-lg border bg-muted/30 p-4 text-center">
                     <dd className="sync-peer-count text-2xl font-bold">{syncPeers.length}</dd>
-                    <MetricLabel label={`Peer${syncPeers.length !== 1 ? 's' : ''}`} />
+                    <MetricLabel
+                      label={t('status.peerLabel', { count: syncPeers.length })}
+                      tooltip={t('status.peerCountTooltip')}
+                    />
                   </div>
 
                   <div className="rounded-lg border bg-muted/30 p-4 text-center">
                     <dd className="sync-last-synced text-2xl font-bold">
                       {syncLastSynced ? formatTimestamp(syncLastSynced, 'relative') : '--'}
                     </dd>
-                    <MetricLabel label="Last Synced" />
+                    <MetricLabel
+                      label={t('status.lastSyncedLabel')}
+                      tooltip={t('status.lastSyncedTooltip')}
+                    />
                   </div>
 
                   <div className="rounded-lg border bg-muted/30 p-4 text-center">
                     <dd className="sync-ops-received text-2xl font-bold">{syncOpsReceived}</dd>
-                    <MetricLabel label="Ops Received" />
+                    <MetricLabel
+                      label={t('status.opsReceivedLabel')}
+                      tooltip={t('status.opsReceivedTooltip')}
+                    />
                   </div>
 
                   <div className="rounded-lg border bg-muted/30 p-4 text-center">
                     <dd className="sync-ops-sent text-2xl font-bold">{syncOpsSent}</dd>
-                    <MetricLabel label="Ops Sent" />
+                    <MetricLabel
+                      label={t('status.opsSentLabel')}
+                      tooltip={t('status.opsSentTooltip')}
+                    />
                   </div>
                 </dl>
               </div>
@@ -325,7 +342,10 @@ export function StatusPanel(): React.ReactElement {
         <Separator className="my-4" />
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="import-panel-title flex items-center gap-2 text-base">
+            <CardTitle
+              className="import-panel-title flex items-center gap-2 text-base"
+              data-testid="import-panel-title"
+            >
               <Upload className="h-4 w-4" />
               {t('status.importTitle')}
             </CardTitle>
@@ -349,11 +369,11 @@ export function StatusPanel(): React.ReactElement {
                 onClick={() => fileInputRef.current?.click()}
                 disabled={importing}
               >
-                {importing ? 'Importing...' : t('status.importButton')}
+                {importing ? t('status.importingMessage') : t('status.importButton')}
               </Button>
             </div>
             {importResult && (
-              <div className="import-result mt-3 text-xs space-y-1">
+              <div className="import-result mt-3 text-xs space-y-1" data-testid="import-result">
                 <p className="text-emerald-600">
                   Imported &ldquo;{importResult.page_title}&rdquo;: {importResult.blocks_created}{' '}
                   blocks

@@ -40,28 +40,28 @@ test.describe('Due date filtering', () => {
     // Journal defaults to daily view for today.
     // DuePanel appears below the BlockTree and fetches via
     // listBlocks({ agendaDate: today }) — matching due_date OR scheduled_date.
-    const duePanel = page.locator('.due-panel')
+    const duePanel = page.locator('[data-testid="due-panel"]')
     await expect(duePanel).toBeVisible({ timeout: 5000 })
 
     // The collapsible header should be visible and expanded
-    const header = duePanel.locator('.due-panel-header')
+    const header = duePanel.locator('[data-testid="due-panel-header"]')
     await expect(header).toBeVisible()
     await expect(header).toHaveAttribute('aria-expanded', 'true')
 
     // Verify at least one due-panel item is rendered.
     // Seed data has 4 blocks due today + 1 scheduled today = 5 total.
-    const items = duePanel.locator('.due-panel-item')
+    const items = duePanel.locator('[data-testid="due-panel-item"]')
     await expect(items.first()).toBeVisible({ timeout: 5000 })
     const count = await items.count()
     expect(count).toBeGreaterThanOrEqual(3)
   })
 
   test('DuePanel "Due" filter shows only due-dated blocks', async ({ page }) => {
-    const duePanel = page.locator('.due-panel')
+    const duePanel = page.locator('[data-testid="due-panel"]')
     await expect(duePanel).toBeVisible({ timeout: 5000 })
 
     // Click "Due" filter pill inside the filter bar
-    const filterBar = duePanel.locator('.due-panel-filters')
+    const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
     await expect(filterBar).toBeVisible()
     const dueFilter = filterBar.getByText('Due', { exact: true })
     await dueFilter.click()
@@ -70,7 +70,7 @@ test.describe('Due date filtering', () => {
     await expect(dueFilter).toHaveAttribute('aria-pressed', 'true')
 
     // Due-only blocks for today: BLOCK_DAILY_3, BLOCK_DAILY_4, BLOCK_DAILY_5, BLOCK_PROJ_2
-    const items = duePanel.locator('.due-panel-item')
+    const items = duePanel.locator('[data-testid="due-panel-item"]')
     await expect(items.first()).toBeVisible({ timeout: 5000 })
     const count = await items.count()
     expect(count).toBeGreaterThanOrEqual(3)
@@ -87,11 +87,11 @@ test.describe('Scheduled date filtering', () => {
   })
 
   test('DuePanel "Scheduled" filter shows only scheduled blocks', async ({ page }) => {
-    const duePanel = page.locator('.due-panel')
+    const duePanel = page.locator('[data-testid="due-panel"]')
     await expect(duePanel).toBeVisible({ timeout: 5000 })
 
     // Click "Scheduled" filter pill
-    const filterBar = duePanel.locator('.due-panel-filters')
+    const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
     await expect(filterBar).toBeVisible()
     const scheduledFilter = filterBar.getByText('Scheduled', { exact: true })
     await scheduledFilter.click()
@@ -102,21 +102,21 @@ test.describe('Scheduled date filtering', () => {
     // Scheduled-only block for today: BLOCK_PROJ_1 ("Ship v2.0 release")
     // Wait for content to reload after filter change
     await page.waitForTimeout(500)
-    const items = duePanel.locator('.due-panel-item')
+    const items = duePanel.locator('[data-testid="due-panel-item"]')
     await expect(items.first()).toBeVisible({ timeout: 5000 })
   })
 
   test('switching back to "All" restores full list', async ({ page }) => {
-    const duePanel = page.locator('.due-panel')
+    const duePanel = page.locator('[data-testid="due-panel"]')
     await expect(duePanel).toBeVisible({ timeout: 5000 })
 
     // Get initial count
-    const items = duePanel.locator('.due-panel-item')
+    const items = duePanel.locator('[data-testid="due-panel-item"]')
     await expect(items.first()).toBeVisible({ timeout: 5000 })
     const initialCount = await items.count()
 
     // Switch to "Scheduled" filter (fewer items)
-    const filterBar = duePanel.locator('.due-panel-filters')
+    const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
     await filterBar.getByText('Scheduled', { exact: true }).click()
     await page.waitForTimeout(500)
 
@@ -125,7 +125,6 @@ test.describe('Scheduled date filtering', () => {
     await expect(filterBar.getByText('All', { exact: true })).toHaveAttribute(
       'aria-pressed',
       'true',
-      ,
     )
 
     // Count should be restored to the initial value
@@ -147,7 +146,7 @@ test.describe('Task state changes in agenda', () => {
   test('clicking task checkbox cycles TODO to DOING', async ({ page }) => {
     // In daily view, the BlockTree renders blocks with task checkboxes.
     // BLOCK_DAILY_3 has todo_state = 'TODO', so it shows a task-checkbox-todo.
-    const todoCheckbox = page.locator('.task-checkbox-todo').first()
+    const todoCheckbox = page.locator('[data-testid="task-checkbox-todo"]').first()
     await expect(todoCheckbox).toBeVisible({ timeout: 5000 })
 
     // The parent button has aria-label "Task: TODO. Click to cycle."
@@ -158,7 +157,7 @@ test.describe('Task state changes in agenda', () => {
     await todoButton.click()
 
     // After cycling, the checkbox should change to task-checkbox-doing
-    await expect(page.locator('.task-checkbox-doing').first()).toBeVisible()
+    await expect(page.locator('[data-testid="task-checkbox-doing"]').first()).toBeVisible()
   })
 
   test('clicking task checkbox cycles DOING to DONE', async ({ page }) => {
@@ -171,7 +170,7 @@ test.describe('Task state changes in agenda', () => {
 
     // Verify a new DONE checkbox appeared
     // (there's already one DONE block — BLOCK_DAILY_5 — so we check for at least 2)
-    const doneCheckboxes = page.locator('.task-checkbox-done')
+    const doneCheckboxes = page.locator('[data-testid="task-checkbox-done"]')
     await expect(doneCheckboxes.first()).toBeVisible()
     const doneCount = await doneCheckboxes.count()
     expect(doneCount).toBeGreaterThanOrEqual(2)
@@ -180,7 +179,7 @@ test.describe('Task state changes in agenda', () => {
   test('context menu Set as TODO sets task state on a plain block', async ({ page }) => {
     // BLOCK_DAILY_1 has no todo_state — its checkbox is task-checkbox-empty.
     // Right-click to open context menu and set it as TODO.
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.click({ button: 'right' })
 
     const menu = page.locator('[role="menu"]')
@@ -188,7 +187,7 @@ test.describe('Task state changes in agenda', () => {
     await menu.locator('[role="menuitem"]', { hasText: 'Set as TODO' }).click()
 
     // Verify the block now has a TODO checkbox
-    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
   })
 })
 
@@ -207,11 +206,11 @@ test.describe('Overdue tasks', () => {
 
     // The DuePanel for yesterday should show BLOCK_OVERDUE_1 ("Submit report")
     // which has due_date = yesterday
-    const duePanel = page.locator('.due-panel')
+    const duePanel = page.locator('[data-testid="due-panel"]')
     await expect(duePanel).toBeVisible({ timeout: 5000 })
 
     // Verify the overdue block content appears in the panel
-    const items = duePanel.locator('.due-panel-item')
+    const items = duePanel.locator('[data-testid="due-panel-item"]')
     await expect(items.first()).toBeVisible({ timeout: 5000 })
 
     // Check that "Submit report" text is present
@@ -222,12 +221,14 @@ test.describe('Overdue tasks', () => {
     // Navigate to yesterday
     await page.getByRole('button', { name: 'Previous day' }).click()
 
-    const duePanel = page.locator('.due-panel')
+    const duePanel = page.locator('[data-testid="due-panel"]')
     await expect(duePanel).toBeVisible({ timeout: 5000 })
-    await expect(duePanel.locator('.due-panel-item').first()).toBeVisible({ timeout: 5000 })
+    await expect(duePanel.locator('[data-testid="due-panel-item"]').first()).toBeVisible({
+      timeout: 5000,
+    })
 
     // BLOCK_OVERDUE_1 has priority '1', so "P1" badge should appear
-    const priorityBadge = duePanel.locator('.due-panel-priority')
+    const priorityBadge = duePanel.locator('[data-testid="due-panel-priority"]')
     await expect(priorityBadge.first()).toBeVisible()
     await expect(priorityBadge.first()).toContainText('P1')
   })
@@ -301,10 +302,12 @@ test.describe('Date navigation', () => {
 
   test('DuePanel content updates after navigating to a different day', async ({ page }) => {
     // Verify DuePanel on today has items
-    const duePanel = page.locator('.due-panel')
+    const duePanel = page.locator('[data-testid="due-panel"]')
     await expect(duePanel).toBeVisible({ timeout: 5000 })
-    await expect(duePanel.locator('.due-panel-item').first()).toBeVisible({ timeout: 5000 })
-    const todayCount = await duePanel.locator('.due-panel-item').count()
+    await expect(duePanel.locator('[data-testid="due-panel-item"]').first()).toBeVisible({
+      timeout: 5000,
+    })
+    const _todayCount = await duePanel.locator('[data-testid="due-panel-item"]').count()
 
     // Navigate to previous day — the DuePanel should reload with different content
     await page.getByRole('button', { name: 'Previous day' }).click()
@@ -317,7 +320,7 @@ test.describe('Date navigation', () => {
 
     // The count may differ from today's count (yesterday has BLOCK_OVERDUE_1)
     // We just verify the panel refreshed and is still functional
-    const header = duePanel.locator('.due-panel-header')
+    const header = duePanel.locator('[data-testid="due-panel-header"]')
     await expect(header).toBeVisible()
   })
 })
@@ -365,16 +368,16 @@ test.describe('View mode interactions', () => {
     await page.getByRole('tab', { name: 'Agenda view' }).click()
 
     // Verify the agenda view container is visible
-    await expect(page.locator('.agenda-view')).toBeVisible()
+    await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
 
     // Verify the filter builder is present
-    await expect(page.locator('.agenda-filter-builder')).toBeVisible()
+    await expect(page.locator('[data-testid="agenda-filter-builder"]')).toBeVisible()
 
     // Verify the "Add filter" button is available
     await expect(page.getByRole('button', { name: 'Add filter' })).toBeVisible()
 
     // Verify sort/group toolbar is present
-    await expect(page.locator('.agenda-sort-group-controls')).toBeVisible()
+    await expect(page.locator('[data-testid="agenda-sort-group-controls"]')).toBeVisible()
 
     // Verify Group by and Sort by controls are visible
     await expect(page.getByRole('button', { name: 'Group by' })).toBeVisible()
@@ -384,7 +387,7 @@ test.describe('View mode interactions', () => {
   test('agenda view date navigation is hidden', async ({ page }) => {
     // Switch to agenda view
     await page.getByRole('tab', { name: 'Agenda view' }).click()
-    await expect(page.locator('.agenda-view')).toBeVisible()
+    await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
 
     // In agenda mode, the prev/next day buttons should not be visible
     await expect(page.getByRole('button', { name: 'Previous day' })).not.toBeVisible()
@@ -398,7 +401,7 @@ test.describe('View mode interactions', () => {
   test('switching back to daily from agenda restores date navigation', async ({ page }) => {
     // Go to agenda
     await page.getByRole('tab', { name: 'Agenda view' }).click()
-    await expect(page.locator('.agenda-view')).toBeVisible()
+    await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
 
     // Switch back to daily
     await page.getByRole('tab', { name: 'Daily view' }).click()
@@ -408,14 +411,14 @@ test.describe('View mode interactions', () => {
     await expect(page.getByRole('button', { name: 'Next day' })).toBeVisible()
 
     // DuePanel should reappear with today's items
-    const duePanel = page.locator('.due-panel')
+    const duePanel = page.locator('[data-testid="due-panel"]')
     await expect(duePanel).toBeVisible({ timeout: 5000 })
   })
 
   test('agenda view group by control changes grouping', async ({ page }) => {
     // Switch to agenda view
     await page.getByRole('tab', { name: 'Agenda view' }).click()
-    await expect(page.locator('.agenda-view')).toBeVisible()
+    await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
 
     // Click "Group by" to open the popover
     await page.getByRole('button', { name: 'Group by' }).click()
@@ -434,7 +437,7 @@ test.describe('View mode interactions', () => {
   test('agenda view sort by control changes sorting', async ({ page }) => {
     // Switch to agenda view
     await page.getByRole('tab', { name: 'Agenda view' }).click()
-    await expect(page.locator('.agenda-view')).toBeVisible()
+    await expect(page.locator('[data-testid="agenda-view"]')).toBeVisible()
 
     // Click "Sort by" to open the popover
     await page.getByRole('button', { name: 'Sort by' }).click()

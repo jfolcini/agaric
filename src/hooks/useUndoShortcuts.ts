@@ -7,6 +7,7 @@
  */
 
 import { useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
@@ -29,6 +30,7 @@ async function refreshAfterUndoRedo(pageId: string): Promise<void> {
 }
 
 export function useUndoShortcuts(): void {
+  const { t } = useTranslation()
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       // Skip if inside contentEditable, input, or textarea
@@ -51,11 +53,11 @@ export function useUndoShortcuts(): void {
           .undo(pageId)
           .then(async (result) => {
             if (result) {
-              toast('Undone', { duration: 1500 })
+              toast(t('undo.undoneMessage'), { duration: 1500 })
               await refreshAfterUndoRedo(pageId)
             }
           })
-          .catch(() => toast.error('Undo failed'))
+          .catch(() => toast.error(t('undo.undoFailedMessage')))
         return
       }
 
@@ -70,16 +72,16 @@ export function useUndoShortcuts(): void {
           .redo(pageId)
           .then(async (result) => {
             if (result) {
-              toast('Redone', { duration: 1500 })
+              toast(t('undo.redoneMessage'), { duration: 1500 })
               await refreshAfterUndoRedo(pageId)
             }
           })
-          .catch(() => toast.error('Redo failed'))
+          .catch(() => toast.error(t('undo.redoFailedMessage')))
         return
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [t])
 }

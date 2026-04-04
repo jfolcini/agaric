@@ -8,6 +8,7 @@
 import { RotateCcw, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -31,6 +32,7 @@ import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
 
 export function TrashView(): React.ReactElement {
+  const { t } = useTranslation()
   const queryFn = useCallback(
     (cursor?: string) => listBlocks({ showDeleted: true, cursor, limit: 50 }),
     [],
@@ -86,7 +88,7 @@ export function TrashView(): React.ReactElement {
       )}
 
       {!loading && blocks.length === 0 && (
-        <EmptyState icon={Trash2} message="Nothing in trash. Deleted items will appear here." />
+        <EmptyState icon={Trash2} message={t('trash.emptyMessage')} />
       )}
 
       {/* biome-ignore lint/a11y/useSemanticElements: div+role used for styling flexibility with shadcn */}
@@ -97,12 +99,15 @@ export function TrashView(): React.ReactElement {
             key={block.id}
             role="listitem"
             className="trash-item flex items-center justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
+            data-testid="trash-item"
           >
             <div className="trash-item-content flex min-w-0 items-center gap-3">
               <Badge variant="secondary" className="trash-item-type shrink-0">
                 {block.block_type}
               </Badge>
-              <span className="trash-item-text text-sm truncate">{block.content ?? '(empty)'}</span>
+              <span className="trash-item-text text-sm truncate">
+                {block.content ?? t('trash.emptyContent')}
+              </span>
               <span className="trash-item-date text-xs text-muted-foreground">
                 Deleted: {block.deleted_at ? formatTimestamp(block.deleted_at, 'relative') : ''}
               </span>
@@ -115,14 +120,15 @@ export function TrashView(): React.ReactElement {
                       variant="outline"
                       size="sm"
                       className="trash-restore-btn [@media(pointer:coarse)]:h-10"
+                      data-testid="trash-restore-btn"
                       onClick={() => handleRestore(block)}
                     >
                       <RotateCcw className="h-3.5 w-3.5" />
-                      Restore
+                      {t('trash.restoreButton')}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>Restore this block from trash</p>
+                    <p>{t('trash.restoreTooltip')}</p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -130,9 +136,10 @@ export function TrashView(): React.ReactElement {
                 variant="destructive"
                 size="sm"
                 className="trash-purge-btn [@media(pointer:coarse)]:h-10"
+                data-testid="trash-purge-btn"
                 onClick={() => setConfirmPurgeId(block.id)}
               >
-                Purge
+                {t('trash.purgeButton')}
               </Button>
             </div>
           </div>
@@ -147,7 +154,7 @@ export function TrashView(): React.ReactElement {
           onClick={loadMore}
           disabled={loading}
         >
-          {loading ? 'Loading...' : 'Load more'}
+          {loading ? t('trash.loadingMessage') : t('trash.loadMoreButton')}
         </Button>
       )}
 
@@ -158,22 +165,25 @@ export function TrashView(): React.ReactElement {
           if (!open) setConfirmPurgeId(null)
         }}
       >
-        <AlertDialogContent className="trash-purge-confirm">
+        <AlertDialogContent className="trash-purge-confirm" data-testid="trash-purge-confirm">
           <AlertDialogHeader>
-            <AlertDialogTitle>Permanently delete?</AlertDialogTitle>
+            <AlertDialogTitle>{t('trash.permanentlyDeleteTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This block will be permanently deleted.
+              {t('trash.permanentlyDeleteDescription')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="trash-purge-no">No</AlertDialogCancel>
+            <AlertDialogCancel className="trash-purge-no" data-testid="trash-purge-no">
+              {t('trash.noButton')}
+            </AlertDialogCancel>
             <AlertDialogAction
               className="trash-purge-yes"
+              data-testid="trash-purge-yes"
               onClick={() => {
                 if (confirmPurgeId) handlePurge(confirmPurgeId)
               }}
             >
-              Yes, delete
+              {t('trash.yesDeleteButton')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

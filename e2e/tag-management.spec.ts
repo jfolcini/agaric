@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
+import { focusBlock, openPage, waitForBoot } from './helpers'
 
 /**
  * E2E tests for tag management flows.
@@ -217,7 +217,7 @@ test.describe('Tag insertion via @ picker', () => {
     await editor.type('test @')
 
     // The suggestion list should appear
-    await expect(page.locator('.suggestion-list')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('[data-testid="suggestion-list"]')).toBeVisible({ timeout: 5000 })
   })
 
   test('selecting a tag from @ picker inserts tag-ref chip', async ({ page }) => {
@@ -230,12 +230,12 @@ test.describe('Tag insertion via @ picker', () => {
     await page.getByRole('button', { name: 'Insert tag' }).click()
 
     // Wait for suggestion list and select the first tag
-    const suggestionList = page.locator('.suggestion-list')
+    const suggestionList = page.locator('[data-testid="suggestion-list"]')
     await expect(suggestionList).toBeVisible({ timeout: 5000 })
-    await suggestionList.locator('.suggestion-item').first().click()
+    await suggestionList.locator('[data-testid="suggestion-item"]').first().click()
 
     // Verify tag-ref chip appears in the editor
-    await expect(editor.locator('.tag-ref-chip')).toBeVisible()
+    await expect(editor.locator('[data-testid="tag-ref-chip"]')).toBeVisible()
   })
 
   test('tag chip persists after saving the block', async ({ page }) => {
@@ -247,19 +247,24 @@ test.describe('Tag insertion via @ picker', () => {
     await editor.type('saved tag: ')
     await page.getByRole('button', { name: 'Insert tag' }).click()
 
-    const suggestionList = page.locator('.suggestion-list')
+    const suggestionList = page.locator('[data-testid="suggestion-list"]')
     await expect(suggestionList).toBeVisible({ timeout: 5000 })
-    await suggestionList.locator('.suggestion-item').first().click()
-    await expect(editor.locator('.tag-ref-chip')).toBeVisible()
+    await suggestionList.locator('[data-testid="suggestion-item"]').first().click()
+    await expect(editor.locator('[data-testid="tag-ref-chip"]')).toBeVisible()
 
     // Re-focus the editor so keyboard events reach TipTap, then save via Enter
     await editor.click()
     await page.keyboard.press('Enter')
-    await expect(page.locator('.block-editor [contenteditable="true"]')).not.toBeVisible()
+    await expect(
+      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
+    ).not.toBeVisible()
 
     // Verify tag chip appears in the static render
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
-    await expect(staticBlock.locator('.tag-ref-chip')).toBeVisible()
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
+    await expect(staticBlock.locator('[data-testid="tag-ref-chip"]')).toBeVisible()
   })
 
   test('seed block GS_4 renders existing tag-ref chips', async ({ page }) => {
@@ -267,11 +272,11 @@ test.describe('Tag insertion via @ picker', () => {
 
     // GS_4 contains "Try tagging blocks with #[TAG_WORK] or #[TAG_PERSONAL]"
     // Find the block containing "Try tagging" text that has tag-ref-chips
-    const gs4Block = page.locator('.block-static', { hasText: 'Try tagging' })
+    const gs4Block = page.locator('[data-testid="block-static"]', { hasText: 'Try tagging' })
     await expect(gs4Block).toBeVisible({ timeout: 5000 })
 
     // Should have 2 tag-ref chips rendered (work and personal)
-    const tagChips = gs4Block.locator('.tag-ref-chip')
+    const tagChips = gs4Block.locator('[data-testid="tag-ref-chip"]')
     await expect(tagChips).toHaveCount(2, { timeout: 5000 })
   })
 })

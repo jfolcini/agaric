@@ -94,13 +94,14 @@ test.describe('Import markdown', () => {
     await navigateToStatus(page)
 
     // The import section should be visible in the Status panel
-    await expect(page.locator('.import-panel-title')).toBeVisible()
+    await expect(page.locator('[data-testid="import-panel-title"]')).toBeVisible()
 
     // Create a synthetic file and set it on the hidden file input
     const fileInput = page.locator('[data-testid="import-file-input"]')
 
     // Use setInputFiles to upload a markdown file
-    const mdContent = '# Test Import Page\n\n- First block content\n- Second block content\n- Third block content\n'
+    const mdContent =
+      '# Test Import Page\n\n- First block content\n- Second block content\n- Third block content\n'
     await fileInput.setInputFiles({
       name: 'test-import.md',
       mimeType: 'text/markdown',
@@ -111,7 +112,7 @@ test.describe('Import markdown', () => {
     await expect(page.getByText(/Imported \d+ blocks/)).toBeVisible({ timeout: 5000 })
 
     // The import result card should show the page title and block count
-    const importResult = page.locator('.import-result')
+    const importResult = page.locator('[data-testid="import-result"]')
     await expect(importResult).toBeVisible()
     await expect(importResult).toContainText('Test Import Page')
     await expect(importResult).toContainText('3 blocks')
@@ -150,7 +151,7 @@ test.describe('Import markdown', () => {
     })
 
     // Import result should show filename-derived title
-    const importResult = page.locator('.import-result')
+    const importResult = page.locator('[data-testid="import-result"]')
     await expect(importResult).toBeVisible()
     await expect(importResult).toContainText('no-heading-page')
   })
@@ -169,10 +170,10 @@ test.describe('Export preserves block structure', () => {
     await openPage(page, 'Getting Started')
 
     // Use evaluate to get the raw markdown
-    const markdown = await page.evaluate(async () => {
+    const markdown = (await page.evaluate(async () => {
       const { invoke } = await import('@tauri-apps/api/core')
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE01' })
-    }) as string
+    })) as string
 
     // The page has 5 child blocks — each should be a list item
     const listItems = markdown.split('\n').filter((line: string) => line.startsWith('- '))
@@ -188,10 +189,10 @@ test.describe('Export preserves block structure', () => {
 
   test('exported Daily page preserves task blocks in order', async ({ page }) => {
     // The daily page has 5 children with various todo states
-    const markdown = await page.evaluate(async () => {
+    const markdown = (await page.evaluate(async () => {
       const { invoke } = await import('@tauri-apps/api/core')
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE03' })
-    }) as string
+    })) as string
 
     const listItems = markdown.split('\n').filter((line: string) => line.startsWith('- '))
     expect(listItems.length).toBe(5)
@@ -215,10 +216,10 @@ test.describe('Export includes tags and links', () => {
   })
 
   test('exported Getting Started page contains [[link]] tokens', async ({ page }) => {
-    const markdown = await page.evaluate(async () => {
+    const markdown = (await page.evaluate(async () => {
       const { invoke } = await import('@tauri-apps/api/core')
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE01' })
-    }) as string
+    })) as string
 
     // Block GS_2 content: "Use the sidebar ... See [[PAGE_QUICK_NOTES]] for tips."
     // The export should contain the [[ULID]] link token
@@ -226,10 +227,10 @@ test.describe('Export includes tags and links', () => {
   })
 
   test('exported Getting Started page contains #[tag] tokens', async ({ page }) => {
-    const markdown = await page.evaluate(async () => {
+    const markdown = (await page.evaluate(async () => {
       const { invoke } = await import('@tauri-apps/api/core')
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE01' })
-    }) as string
+    })) as string
 
     // Block GS_4 content: "Try tagging blocks with #[TAG_WORK] or #[TAG_PERSONAL]..."
     expect(markdown).toContain('#[000000000000000000000TAG01]')
@@ -237,10 +238,10 @@ test.describe('Export includes tags and links', () => {
   })
 
   test('Quick Notes export contains backlink to Getting Started', async ({ page }) => {
-    const markdown = await page.evaluate(async () => {
+    const markdown = (await page.evaluate(async () => {
       const { invoke } = await import('@tauri-apps/api/core')
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE02' })
-    }) as string
+    })) as string
 
     // Block QN_1 references [[PAGE_GETTING_STARTED]]
     expect(markdown).toContain('[[00000000000000000000PAGE01]]')
@@ -260,13 +261,15 @@ test.describe('Round-trip fidelity', () => {
     await openPage(page, 'Quick Notes')
 
     // Get the visible block text from the editor
-    const blockTexts = await page.locator('.sortable-block .block-static').allTextContents()
+    const blockTexts = await page
+      .locator('[data-testid="sortable-block"] [data-testid="block-static"]')
+      .allTextContents()
 
     // Get the exported markdown
-    const markdown = await page.evaluate(async () => {
+    const markdown = (await page.evaluate(async () => {
       const { invoke } = await import('@tauri-apps/api/core')
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE02' })
-    }) as string
+    })) as string
 
     // Verify heading
     expect(markdown).toMatch(/^# Quick Notes/)
@@ -282,29 +285,38 @@ test.describe('Round-trip fidelity', () => {
     // Import some markdown content
     const originalContent = '# Round Trip Test\n\n- Alpha block\n- Beta block\n- Gamma block\n'
 
-    const importResult = await page.evaluate(async (content) => {
+    const importResult = (await page.evaluate(async (content) => {
       const { invoke } = await import('@tauri-apps/api/core')
       return invoke('import_markdown', { content, filename: 'round-trip.md' })
-    }, originalContent) as { page_title: string; blocks_created: number }
+    }, originalContent)) as { page_title: string; blocks_created: number }
 
     expect(importResult.page_title).toBe('Round Trip Test')
     expect(importResult.blocks_created).toBe(3)
 
     // Now find the imported page and export it
     // We need to find the page ID by listing all pages
-    const pages = await page.evaluate(async () => {
+    const pages = (await page.evaluate(async () => {
       const { invoke } = await import('@tauri-apps/api/core')
-      return invoke('list_blocks', { blockType: 'page', parentId: null, showDeleted: null, tagId: null, agendaDate: null, agendaSource: null, cursor: null, limit: null })
-    }) as { items: Array<{ id: string; content: string }> }
+      return invoke('list_blocks', {
+        blockType: 'page',
+        parentId: null,
+        showDeleted: null,
+        tagId: null,
+        agendaDate: null,
+        agendaSource: null,
+        cursor: null,
+        limit: null,
+      })
+    })) as { items: Array<{ id: string; content: string }> }
 
     const importedPage = pages.items.find((p) => p.content === 'Round Trip Test')
     expect(importedPage).toBeTruthy()
 
     // Export the imported page
-    const exportedMd = await page.evaluate(async (pageId) => {
+    const exportedMd = (await page.evaluate(async (pageId) => {
       const { invoke } = await import('@tauri-apps/api/core')
       return invoke('export_page_markdown', { pageId })
-    }, importedPage!.id) as string
+    }, importedPage?.id)) as string
 
     // Verify the exported markdown contains the original content
     expect(exportedMd).toMatch(/^# Round Trip Test/)
@@ -314,10 +326,10 @@ test.describe('Round-trip fidelity', () => {
   })
 
   test('export of Projects page has correct block count', async ({ page }) => {
-    const markdown = await page.evaluate(async () => {
+    const markdown = (await page.evaluate(async () => {
       const { invoke } = await import('@tauri-apps/api/core')
       return invoke('export_page_markdown', { pageId: '00000000000000000000PAGE04' })
-    }) as string
+    })) as string
 
     expect(markdown).toMatch(/^# Projects/)
 

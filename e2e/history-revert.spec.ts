@@ -23,7 +23,7 @@ test.describe('HistoryView batch revert', () => {
     // Perform some mutations first
     await openPage(page, 'Getting Started')
     await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('.sortable-block').last()).toBeVisible()
+    await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
     // Navigate to History view
     await page.getByRole('button', { name: 'History' }).click()
@@ -39,7 +39,7 @@ test.describe('HistoryView batch revert', () => {
     // Create a block to generate an op
     await openPage(page, 'Getting Started')
     await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('.sortable-block').last()).toBeVisible()
+    await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
     // Navigate to History
     await page.getByRole('button', { name: 'History' }).click()
@@ -66,11 +66,11 @@ test.describe('HistoryView batch revert', () => {
   test('batch revert reverses a create_block operation', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    const countBefore = await page.locator('.sortable-block').count()
+    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
 
     // Create a new block
     await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore + 1)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore + 1)
 
     // Navigate to History
     await page.getByRole('button', { name: 'History' }).click()
@@ -80,7 +80,7 @@ test.describe('HistoryView batch revert', () => {
     const createEntry = page
       .locator('[data-history-item]')
       .filter({
-        has: page.locator('.history-item-type', { hasText: 'create_block' }),
+        has: page.locator('[data-testid="history-item-type"]', { hasText: 'create_block' }),
       })
       .first()
     await expect(createEntry).toBeVisible()
@@ -99,22 +99,22 @@ test.describe('HistoryView batch revert', () => {
 
     // Navigate back to the page and verify block is gone
     await openPage(page, 'Getting Started')
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore)
   })
 
   test('batch revert restores a deleted block', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    const countBefore = await page.locator('.sortable-block').count()
+    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
     expect(countBefore).toBeGreaterThan(0)
 
     // Delete the first block
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.hover()
     const deleteBtn = firstBlock.getByRole('button', { name: 'Delete block' })
     await expect(deleteBtn).toBeVisible()
     await deleteBtn.click()
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore - 1)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore - 1)
 
     // Navigate to History
     await page.getByRole('button', { name: 'History' }).click()
@@ -124,7 +124,7 @@ test.describe('HistoryView batch revert', () => {
     const deleteEntry = page
       .locator('[data-history-item]')
       .filter({
-        has: page.locator('.history-item-type', { hasText: 'delete_block' }),
+        has: page.locator('[data-testid="history-type-badge"]', { hasText: 'delete_block' }),
       })
       .first()
     await expect(deleteEntry).toBeVisible()
@@ -138,14 +138,14 @@ test.describe('HistoryView batch revert', () => {
 
     // Navigate back and verify block is restored
     await openPage(page, 'Getting Started')
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore)
   })
 
   test('cancel in confirmation dialog does not revert', async ({ page }) => {
     await openPage(page, 'Getting Started')
-    const blocksBefore = await page.locator('.sortable-block').count()
+    const blocksBefore = await page.locator('[data-testid="sortable-block"]').count()
     await page.getByRole('button', { name: 'Add block' }).click()
-    await expect(page.locator('.sortable-block')).toHaveCount(blocksBefore + 1)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(blocksBefore + 1)
 
     // Navigate to History and select
     await page.getByRole('button', { name: 'History' }).click()

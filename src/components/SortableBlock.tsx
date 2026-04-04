@@ -351,6 +351,7 @@ function SortableBlockInner({
         }}
         style={style}
         data-block-id={blockId}
+        data-testid="sortable-block"
         className={cn(
           'sortable-block group relative flex items-start gap-1',
           isFocused && 'block-active',
@@ -376,6 +377,7 @@ function SortableBlockInner({
               <button
                 type="button"
                 className="drag-handle flex-shrink-0 cursor-grab p-0.5 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [.block-active_&]:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                data-testid="drag-handle"
                 aria-label={t('block.reorder')}
                 {...attributes}
                 {...listeners}
@@ -429,6 +431,7 @@ function SortableBlockInner({
                 <button
                   type="button"
                   className="collapse-toggle flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                  data-testid="collapse-toggle"
                   onClick={() => onToggleCollapse?.(blockId)}
                   aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
                   aria-expanded={!isCollapsed}
@@ -454,6 +457,7 @@ function SortableBlockInner({
               <button
                 type="button"
                 className="task-marker flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                data-testid="task-marker"
                 onClick={(e) => {
                   e.stopPropagation()
                   onToggleTodo?.(blockId)
@@ -463,21 +467,33 @@ function SortableBlockInner({
                 }
               >
                 {todoState === 'DONE' ? (
-                  <div className="task-checkbox task-checkbox-done h-4 w-4 rounded border-2 border-green-600 bg-green-600 flex items-center justify-center">
+                  <div
+                    className="task-checkbox task-checkbox-done h-4 w-4 rounded border-2 border-green-600 bg-green-600 flex items-center justify-center"
+                    data-testid="task-checkbox-done"
+                  >
                     <Check size={12} className="text-white" />
                   </div>
                 ) : todoState === 'DOING' ? (
-                  <div className="task-checkbox task-checkbox-doing h-4 w-4 rounded border-2 border-blue-500 bg-blue-500/20 flex items-center justify-center">
+                  <div
+                    className="task-checkbox task-checkbox-doing h-4 w-4 rounded border-2 border-blue-500 bg-blue-500/20 flex items-center justify-center"
+                    data-testid="task-checkbox-doing"
+                  >
                     <div className="h-1.5 w-1.5 rounded-sm bg-blue-500" />
                   </div>
                 ) : todoState === 'TODO' ? (
-                  <div className="task-checkbox task-checkbox-todo h-4 w-4 rounded border-2 border-muted-foreground" />
+                  <div
+                    className="task-checkbox task-checkbox-todo h-4 w-4 rounded border-2 border-muted-foreground"
+                    data-testid="task-checkbox-todo"
+                  />
                 ) : todoState ? (
                   <div className="task-checkbox task-checkbox-custom h-4 w-4 rounded border-2 border-orange-500 bg-orange-500/20 flex items-center justify-center">
                     <div className="h-1.5 w-1.5 rounded-full bg-orange-500" />
                   </div>
                 ) : (
-                  <div className="task-checkbox task-checkbox-empty h-4 w-4 rounded border-2 border-muted-foreground/40 transition-colors" />
+                  <div
+                    className="task-checkbox task-checkbox-empty h-4 w-4 rounded border-2 border-muted-foreground/40 transition-colors"
+                    data-testid="task-checkbox-empty"
+                  />
                 )}
               </button>
             </TooltipTrigger>
@@ -493,6 +509,7 @@ function SortableBlockInner({
                 <button
                   type="button"
                   className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+                  data-testid="priority-badge"
                   aria-label={t('block.priorityCycle', { level: PRIORITY_DISPLAY[priority] })}
                   onClick={(e) => {
                     e.stopPropagation()

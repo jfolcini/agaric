@@ -37,7 +37,7 @@ async function openKebabMenu(page: import('@playwright/test').Page) {
 async function typeSlashCommand(page: import('@playwright/test').Page, command: string) {
   await page.keyboard.press('End')
   await page.keyboard.type(` /${command}`, { delay: 30 })
-  const list = page.locator('.suggestion-list')
+  const list = page.locator('[data-testid="suggestion-list"]')
   await expect(list).toBeVisible()
   return list
 }
@@ -137,7 +137,7 @@ test.describe('Template picker via slash command', () => {
     const list = await typeSlashCommand(page, 'template')
 
     // Select the TEMPLATE item from the slash menu
-    const templateItem = list.locator('.suggestion-item', { hasText: 'TEMPLATE' })
+    const templateItem = list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' })
     await expect(templateItem).toBeVisible()
     await templateItem.click()
 
@@ -154,7 +154,7 @@ test.describe('Template picker via slash command', () => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, 'template')
 
-    await list.locator('.suggestion-item', { hasText: 'TEMPLATE' }).click()
+    await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
 
     const dialog = page.locator('[role="dialog"]')
     await expect(dialog).toBeVisible()
@@ -171,7 +171,7 @@ test.describe('Template picker via slash command', () => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, 'template')
 
-    await list.locator('.suggestion-item', { hasText: 'TEMPLATE' }).click()
+    await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
 
     const dialog = page.locator('[role="dialog"]')
     await expect(dialog).toBeVisible()
@@ -197,7 +197,7 @@ test.describe('Apply template', () => {
     const list = await typeSlashCommand(page, 'template')
 
     // Select TEMPLATE from slash menu
-    await list.locator('.suggestion-item', { hasText: 'TEMPLATE' }).click()
+    await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
 
     // Pick the Meeting Notes Template from the picker
     const dialog = page.locator('[role="dialog"]')
@@ -213,7 +213,7 @@ test.describe('Apply template', () => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, 'template')
 
-    await list.locator('.suggestion-item', { hasText: 'TEMPLATE' }).click()
+    await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
     const dialog = page.locator('[role="dialog"]')
     await expect(dialog).toBeVisible()
     await dialog.getByText('Meeting Notes Template').click()
@@ -222,7 +222,9 @@ test.describe('Apply template', () => {
 
     // Template blocks should be rendered on the page
     // "## Attendees" should appear (first template child)
-    await expect(page.locator('.sortable-block', { hasText: 'Attendees' })).toBeVisible({
+    await expect(
+      page.locator('[data-testid="sortable-block"]', { hasText: 'Attendees' }),
+    ).toBeVisible({
       timeout: 5000,
     })
   })
@@ -242,7 +244,7 @@ test.describe('Template variable expansion', () => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, 'template')
 
-    await list.locator('.suggestion-item', { hasText: 'TEMPLATE' }).click()
+    await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
     const dialog = page.locator('[role="dialog"]')
     await expect(dialog).toBeVisible()
     await dialog.getByText('Meeting Notes Template').click()
@@ -256,7 +258,7 @@ test.describe('Template variable expansion', () => {
     const todayStr = `${yyyy}-${mm}-${dd}`
 
     await expect(
-      page.locator('.sortable-block', { hasText: `Notes — ${todayStr}` }),
+      page.locator('[data-testid="sortable-block"]', { hasText: `Notes — ${todayStr}` }),
     ).toBeVisible({ timeout: 5000 })
   })
 
@@ -265,7 +267,7 @@ test.describe('Template variable expansion', () => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, 'template')
 
-    await list.locator('.suggestion-item', { hasText: 'TEMPLATE' }).click()
+    await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
     const dialog = page.locator('[role="dialog"]')
     await expect(dialog).toBeVisible()
     await dialog.getByText('Meeting Notes Template').click()
@@ -274,7 +276,9 @@ test.describe('Template variable expansion', () => {
     // The template child "## Action items for <% page title %>" should become
     // "## Action items for Getting Started"
     await expect(
-      page.locator('.sortable-block', { hasText: 'Action items for Getting Started' }),
+      page.locator('[data-testid="sortable-block"]', {
+        hasText: 'Action items for Getting Started',
+      }),
     ).toBeVisible({ timeout: 5000 })
   })
 })

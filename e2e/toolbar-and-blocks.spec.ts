@@ -29,19 +29,19 @@ test.describe('Toolbar visibility', () => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
-    await expect(page.locator('.formatting-toolbar')).toBeVisible()
+    await expect(page.locator('[data-testid="formatting-toolbar"]')).toBeVisible()
   })
 
   test('formatting toolbar disappears when block loses focus', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
-    await expect(page.locator('.formatting-toolbar')).toBeVisible()
+    await expect(page.locator('[data-testid="formatting-toolbar"]')).toBeVisible()
 
     // Press Escape to unfocus the block
     await page.keyboard.press('Escape')
 
-    await expect(page.locator('.formatting-toolbar')).not.toBeVisible()
+    await expect(page.locator('[data-testid="formatting-toolbar"]')).not.toBeVisible()
   })
 })
 
@@ -76,7 +76,10 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
 
     // Save and verify static render
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('strong')).toHaveText('bold')
   })
 
@@ -98,7 +101,10 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     await expect(italicEl).toHaveText('italic')
 
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('em')).toHaveText('italic')
   })
 
@@ -128,7 +134,10 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
 
     // Save and verify static render has styled <code> pill
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     const staticCode = staticBlock.locator('code')
     await expect(staticCode).toHaveText('code')
     // StaticBlock <code> also has bg-muted rounded
@@ -146,7 +155,6 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
     await expect(page.getByRole('button', { name: 'Code block' })).toHaveAttribute(
       'aria-pressed',
       'true',
-      ,
     )
 
     // Type code content
@@ -155,7 +163,10 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
 
     // Save and verify static render has <pre>
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('pre')).toBeVisible()
     await expect(staticBlock.locator('pre')).toContainText('const x = 42')
   })
@@ -181,7 +192,10 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
 
     // Save and verify static render has both <strong> and <em>
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('strong')).toBeVisible()
     await expect(staticBlock.locator('em')).toBeVisible()
   })
@@ -228,12 +242,17 @@ test.describe('Link buttons', () => {
     await urlInput.press('Enter')
 
     // Verify link appears in editor
-    await expect(page.locator('.block-editor .external-link')).toBeVisible()
+    await expect(
+      page.locator('[data-testid="block-editor"] [data-testid="external-link"]'),
+    ).toBeVisible()
 
     // Save and verify static render has the external link
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
-    await expect(staticBlock.locator('.external-link')).toBeVisible()
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
+    await expect(staticBlock.locator('[data-testid="external-link"]')).toBeVisible()
   })
 
   test('Internal link button triggers [[ picker', async ({ page }) => {
@@ -244,7 +263,7 @@ test.describe('Link buttons', () => {
     await page.getByRole('button', { name: 'Internal link' }).click()
 
     // The suggestion popup should appear
-    await expect(page.locator('.suggestion-list')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('[data-testid="suggestion-list"]')).toBeVisible({ timeout: 5000 })
   })
 
   test('Tag button triggers @ tag picker', async ({ page }) => {
@@ -255,7 +274,7 @@ test.describe('Link buttons', () => {
     await page.getByRole('button', { name: 'Insert tag' }).click()
 
     // The suggestion popup should appear
-    await expect(page.locator('.suggestion-list')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('[data-testid="suggestion-list"]')).toBeVisible({ timeout: 5000 })
   })
 
   test('Internal link: select page from picker, save, verify chip in static render', async ({
@@ -270,18 +289,21 @@ test.describe('Link buttons', () => {
     await page.getByRole('button', { name: 'Internal link' }).click()
 
     // Wait for suggestion list and click the first suggestion
-    const suggestionList = page.locator('.suggestion-list')
+    const suggestionList = page.locator('[data-testid="suggestion-list"]')
     await expect(suggestionList).toBeVisible({ timeout: 5000 })
-    const firstItem = suggestionList.locator('.suggestion-item').first()
+    const firstItem = suggestionList.locator('[data-testid="suggestion-item"]').first()
     await firstItem.click()
 
     // Verify block-link chip appears in editor
-    await expect(editor.locator('.block-link-chip')).toBeVisible()
+    await expect(editor.locator('[data-testid="block-link-chip"]')).toBeVisible()
 
     // Save and verify static render has the block-link chip
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
-    await expect(staticBlock.locator('.block-link-chip')).toBeVisible()
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
+    await expect(staticBlock.locator('[data-testid="block-link-chip"]')).toBeVisible()
   })
 
   test('Tag: select tag from picker, save, verify chip in static render', async ({ page }) => {
@@ -294,18 +316,21 @@ test.describe('Link buttons', () => {
     await page.getByRole('button', { name: 'Insert tag' }).click()
 
     // Wait for suggestion list and click the first tag
-    const suggestionList = page.locator('.suggestion-list')
+    const suggestionList = page.locator('[data-testid="suggestion-list"]')
     await expect(suggestionList).toBeVisible({ timeout: 5000 })
-    const firstItem = suggestionList.locator('.suggestion-item').first()
+    const firstItem = suggestionList.locator('[data-testid="suggestion-item"]').first()
     await firstItem.click()
 
     // Verify tag-ref chip appears in editor
-    await expect(editor.locator('.tag-ref-chip')).toBeVisible()
+    await expect(editor.locator('[data-testid="tag-ref-chip"]')).toBeVisible()
 
     // Save and verify static render has the tag-ref chip
     await saveBlock(page)
-    const staticBlock = page.locator('.sortable-block').first().locator('.block-static')
-    await expect(staticBlock.locator('.tag-ref-chip')).toBeVisible()
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
+    await expect(staticBlock.locator('[data-testid="tag-ref-chip"]')).toBeVisible()
   })
 })
 
@@ -324,15 +349,15 @@ test.describe('Priority buttons', () => {
 
     await page.getByRole('button', { name: 'Priority 1 (high)' }).click()
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const badge = firstBlock.locator('.priority-badge')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const badge = firstBlock.locator('[data-testid="priority-badge"]')
     await expect(badge).toBeVisible()
     await expect(badge).toHaveText('1')
 
     // Save and verify persists
     await saveBlock(page)
-    await expect(firstBlock.locator('.priority-badge')).toBeVisible()
-    await expect(firstBlock.locator('.priority-badge')).toHaveText('1')
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toHaveText('1')
   })
 
   test('Priority 2 button sets medium priority, saves, and persists', async ({ page }) => {
@@ -341,15 +366,15 @@ test.describe('Priority buttons', () => {
 
     await page.getByRole('button', { name: 'Priority 2 (medium)' }).click()
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const badge = firstBlock.locator('.priority-badge')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const badge = firstBlock.locator('[data-testid="priority-badge"]')
     await expect(badge).toBeVisible()
     await expect(badge).toHaveText('2')
 
     // Save and verify persists
     await saveBlock(page)
-    await expect(firstBlock.locator('.priority-badge')).toBeVisible()
-    await expect(firstBlock.locator('.priority-badge')).toHaveText('2')
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toHaveText('2')
   })
 
   test('Priority 3 button sets low priority, saves, and persists', async ({ page }) => {
@@ -358,15 +383,15 @@ test.describe('Priority buttons', () => {
 
     await page.getByRole('button', { name: 'Priority 3 (low)' }).click()
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const badge = firstBlock.locator('.priority-badge')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const badge = firstBlock.locator('[data-testid="priority-badge"]')
     await expect(badge).toBeVisible()
     await expect(badge).toHaveText('3')
 
     // Save and verify persists
     await saveBlock(page)
-    await expect(firstBlock.locator('.priority-badge')).toBeVisible()
-    await expect(firstBlock.locator('.priority-badge')).toHaveText('3')
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toHaveText('3')
   })
 })
 
@@ -387,7 +412,7 @@ test.describe('Date button', () => {
     await page.getByRole('button', { name: 'Insert date' }).click()
 
     // The floating date picker popup should appear
-    await expect(page.locator('.date-picker-popup')).toBeVisible()
+    await expect(page.locator('[data-testid="date-picker-popup"]')).toBeVisible()
   })
 })
 
@@ -404,31 +429,31 @@ test.describe('Block interactions', () => {
     await openPage(page, 'Getting Started')
 
     // Initially the block has no task state -- empty checkbox
-    const firstBlock = page.locator('.sortable-block').first()
-    const taskMarker = firstBlock.locator('.task-marker')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const taskMarker = firstBlock.locator('[data-testid="task-marker"]')
 
     // First click: none -> TODO
     await taskMarker.click()
-    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
 
     // Second click: TODO -> DOING
     await taskMarker.click()
-    await expect(firstBlock.locator('.task-checkbox-doing')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-doing"]')).toBeVisible()
 
     // Third click: DOING -> DONE
     await taskMarker.click()
-    await expect(firstBlock.locator('.task-checkbox-done')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-done"]')).toBeVisible()
   })
 
   test('delete button removes block on hover', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
     // Count blocks before deletion
-    const countBefore = await page.locator('.sortable-block').count()
+    const countBefore = await page.locator('[data-testid="sortable-block"]').count()
     expect(countBefore).toBeGreaterThan(0)
 
     // Hover over the first block to reveal the delete button
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.hover()
 
     // Click the Delete block button
@@ -437,14 +462,14 @@ test.describe('Block interactions', () => {
     await deleteBtn.click()
 
     // Block count should decrease by one
-    await expect(page.locator('.sortable-block')).toHaveCount(countBefore - 1)
+    await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore - 1)
   })
 
   test('drag handle is visible on hover/focus', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const dragHandle = firstBlock.locator('.drag-handle')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const dragHandle = firstBlock.locator('[data-testid="drag-handle"]')
 
     // Before hover, the drag handle has opacity-0 (not visually visible)
     // After hover on the block group, it becomes visible
@@ -457,15 +482,15 @@ test.describe('Block interactions', () => {
     // Use Quick Notes (2 blocks — simpler)
     await openPage(page, 'Quick Notes')
 
-    const blocks = page.locator('.sortable-block')
+    const blocks = page.locator('[data-testid="sortable-block"]')
     await expect(blocks).toHaveCount(2)
 
     // Capture original order
-    const firstText = await blocks.nth(0).locator('.block-static').innerText()
-    const secondText = await blocks.nth(1).locator('.block-static').innerText()
+    const firstText = await blocks.nth(0).locator('[data-testid="block-static"]').innerText()
+    const secondText = await blocks.nth(1).locator('[data-testid="block-static"]').innerText()
 
     // Drag second block to first position
-    const source = blocks.nth(1).locator('.drag-handle')
+    const source = blocks.nth(1).locator('[data-testid="drag-handle"]')
     const target = blocks.nth(0)
 
     // Hover to reveal drag handle
@@ -476,15 +501,19 @@ test.describe('Block interactions', () => {
     await dragBlock(page, source, target)
 
     // Verify order swapped
-    await expect(blocks.nth(0).locator('.block-static')).toHaveText(secondText, { timeout: 5000 })
-    await expect(blocks.nth(1).locator('.block-static')).toHaveText(firstText, { timeout: 5000 })
+    await expect(blocks.nth(0).locator('[data-testid="block-static"]')).toHaveText(secondText, {
+      timeout: 5000,
+    })
+    await expect(blocks.nth(1).locator('[data-testid="block-static"]')).toHaveText(firstText, {
+      timeout: 5000,
+    })
   })
 
   test('context menu appears on right-click', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
     // Right-click the first block
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await firstBlock.click({ button: 'right' })
 
     // Context menu with role="menu" should appear
@@ -506,8 +535,8 @@ test.describe('Block interactions', () => {
     await focusBlock(page)
 
     // The first sortable block before Ctrl+Enter should have the empty checkbox
-    const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('.task-checkbox-empty')).toBeVisible()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-empty"]')).toBeVisible()
 
     // Press Ctrl+Enter to cycle task state: none -> TODO
     await page.keyboard.down('Control')
@@ -517,7 +546,9 @@ test.describe('Block interactions', () => {
     // The empty checkbox should disappear — the task state has changed
     // (could be TODO or DOING depending on whether both editor-level and
     // document-level handlers fire)
-    await expect(firstBlock.locator('.task-checkbox-empty')).not.toBeVisible({ timeout: 5000 })
+    await expect(firstBlock.locator('[data-testid="task-checkbox-empty"]')).not.toBeVisible({
+      timeout: 5000,
+    })
   })
 })
 
@@ -607,7 +638,7 @@ test.describe('Collapse / Expand', () => {
   test('blocks without children do not show collapse chevron', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('.collapse-toggle')).not.toBeVisible()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    await expect(firstBlock.locator('[data-testid="collapse-toggle"]')).not.toBeVisible()
   })
 })

@@ -32,7 +32,7 @@ import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
 async function typeSlashCommand(page: import('@playwright/test').Page, command: string) {
   await page.keyboard.press('End')
   await page.keyboard.type(` /${command}`, { delay: 30 })
-  const list = page.locator('.suggestion-list')
+  const list = page.locator('[data-testid="suggestion-list"]')
   await expect(list).toBeVisible()
   return list
 }
@@ -57,10 +57,12 @@ test.describe('Slash menu basics', () => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, '')
 
-    await expect(list.locator('.suggestion-item', { hasText: 'TODO' })).toBeVisible()
-    await expect(list.locator('.suggestion-item', { hasText: 'DOING' })).toBeVisible()
-    await expect(list.locator('.suggestion-item', { hasText: 'DONE' })).toBeVisible()
-    await expect(list.locator('.suggestion-item', { hasText: 'DATE' })).toBeVisible()
+    await expect(list.locator('[data-testid="suggestion-item"]', { hasText: 'TODO' })).toBeVisible()
+    await expect(
+      list.locator('[data-testid="suggestion-item"]', { hasText: 'DOING' }),
+    ).toBeVisible()
+    await expect(list.locator('[data-testid="suggestion-item"]', { hasText: 'DONE' })).toBeVisible()
+    await expect(list.locator('[data-testid="suggestion-item"]', { hasText: 'DATE' })).toBeVisible()
   })
 
   test('Escape closes slash menu', async ({ page }) => {
@@ -89,17 +91,19 @@ test.describe('Task commands', () => {
     await typeSlashCommand(page, 'todo')
     await page.keyboard.press('Enter')
 
-    const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
 
     // Save the block and verify TODO persists in static view
     await saveBlock(page)
-    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
 
     // Re-open the block and verify TODO is still there
-    await firstBlock.locator('.block-static').click()
-    await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible()
-    await expect(firstBlock.locator('.task-checkbox-todo')).toBeVisible()
+    await firstBlock.locator('[data-testid="block-static"]').click()
+    await expect(
+      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
+    ).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-todo"]')).toBeVisible()
   })
 
   test('/doing sets block as DOING and persists after save', async ({ page }) => {
@@ -107,11 +111,11 @@ test.describe('Task commands', () => {
     await typeSlashCommand(page, 'doing')
     await page.keyboard.press('Enter')
 
-    const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('.task-checkbox-doing')).toBeVisible()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-doing"]')).toBeVisible()
 
     await saveBlock(page)
-    await expect(firstBlock.locator('.task-checkbox-doing')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-doing"]')).toBeVisible()
   })
 
   test('/done sets block as DONE and persists after save', async ({ page }) => {
@@ -119,11 +123,11 @@ test.describe('Task commands', () => {
     await typeSlashCommand(page, 'done')
     await page.keyboard.press('Enter')
 
-    const firstBlock = page.locator('.sortable-block').first()
-    await expect(firstBlock.locator('.task-checkbox-done')).toBeVisible()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-done"]')).toBeVisible()
 
     await saveBlock(page)
-    await expect(firstBlock.locator('.task-checkbox-done')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="task-checkbox-done"]')).toBeVisible()
   })
 })
 
@@ -141,61 +145,67 @@ test.describe('Priority commands', () => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, 'priority')
 
-    await expect(list.locator('.suggestion-item', { hasText: 'PRIORITY 1' })).toBeVisible()
-    await expect(list.locator('.suggestion-item', { hasText: 'PRIORITY 2' })).toBeVisible()
-    await expect(list.locator('.suggestion-item', { hasText: 'PRIORITY 3' })).toBeVisible()
+    await expect(
+      list.locator('[data-testid="suggestion-item"]', { hasText: 'PRIORITY 1' }),
+    ).toBeVisible()
+    await expect(
+      list.locator('[data-testid="suggestion-item"]', { hasText: 'PRIORITY 2' }),
+    ).toBeVisible()
+    await expect(
+      list.locator('[data-testid="suggestion-item"]', { hasText: 'PRIORITY 3' }),
+    ).toBeVisible()
   })
 
   test('/priority 1 sets high priority and persists after save', async ({ page }) => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, 'priority')
-    const item = list.locator('.suggestion-item', { hasText: 'PRIORITY 1' })
+    const item = list.locator('[data-testid="suggestion-item"]', { hasText: 'PRIORITY 1' })
     await expect(item).toBeVisible()
     await item.click()
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const badge = firstBlock.locator('.priority-badge')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const badge = firstBlock.locator('[data-testid="priority-badge"]')
     await expect(badge).toBeVisible()
     await expect(badge).toContainText('1')
 
     // Save and verify persists
     await saveBlock(page)
-    await expect(firstBlock.locator('.priority-badge')).toBeVisible()
-    await expect(firstBlock.locator('.priority-badge')).toContainText('1')
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toContainText('1')
   })
 
   test('/priority 2 sets medium priority and persists after save', async ({ page }) => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, 'priority')
-    const item = list.locator('.suggestion-item', { hasText: 'PRIORITY 2' })
+    const item = list.locator('[data-testid="suggestion-item"]', { hasText: 'PRIORITY 2' })
     await expect(item).toBeVisible()
     await item.click()
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const badge = firstBlock.locator('.priority-badge')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const badge = firstBlock.locator('[data-testid="priority-badge"]')
     await expect(badge).toBeVisible()
     await expect(badge).toContainText('2')
 
     await saveBlock(page)
-    await expect(firstBlock.locator('.priority-badge')).toBeVisible()
-    await expect(firstBlock.locator('.priority-badge')).toContainText('2')
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toContainText('2')
   })
 
   test('/priority 3 sets low priority and persists after save', async ({ page }) => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, 'priority')
-    const item = list.locator('.suggestion-item', { hasText: 'PRIORITY 3' })
+    const item = list.locator('[data-testid="suggestion-item"]', { hasText: 'PRIORITY 3' })
     await expect(item).toBeVisible()
     await item.click()
 
-    const firstBlock = page.locator('.sortable-block').first()
-    const badge = firstBlock.locator('.priority-badge')
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const badge = firstBlock.locator('[data-testid="priority-badge"]')
     await expect(badge).toBeVisible()
     await expect(badge).toContainText('3')
 
     await saveBlock(page)
-    await expect(firstBlock.locator('.priority-badge')).toBeVisible()
-    await expect(firstBlock.locator('.priority-badge')).toContainText('3')
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toBeVisible()
+    await expect(firstBlock.locator('[data-testid="priority-badge"]')).toContainText('3')
   })
 })
 
@@ -214,17 +224,21 @@ test.describe('Heading commands', () => {
 
     // "heading" matches all heading commands; first is "Heading 1"
     const list = await typeSlashCommand(page, 'heading')
-    await expect(list.locator('.suggestion-item', { hasText: 'Heading 1' })).toBeVisible()
+    await expect(
+      list.locator('[data-testid="suggestion-item"]', { hasText: 'Heading 1' }),
+    ).toBeVisible()
     await page.keyboard.press('Enter')
 
     // Editor re-mounts with # prefix -- wait for it to settle
-    await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible()
+    await expect(
+      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
+    ).toBeVisible()
 
     // Save the block (Enter) instead of Escape (which cancels)
     await saveBlock(page)
 
     // The first block should render an <h1> heading in static view
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await expect(firstBlock.locator('h1')).toBeVisible()
   })
 
@@ -233,18 +247,20 @@ test.describe('Heading commands', () => {
 
     // "heading" matches all heading commands; click "Heading 2" directly
     const list = await typeSlashCommand(page, 'heading')
-    const h2Item = list.locator('.suggestion-item', { hasText: 'Heading 2' })
+    const h2Item = list.locator('[data-testid="suggestion-item"]', { hasText: 'Heading 2' })
     await expect(h2Item).toBeVisible()
     await h2Item.click()
 
     // Editor re-mounts with ## prefix
-    await expect(page.locator('.block-editor [contenteditable="true"]')).toBeVisible()
+    await expect(
+      page.locator('[data-testid="block-editor"] [contenteditable="true"]'),
+    ).toBeVisible()
 
     // Save the block (Enter) instead of Escape (which cancels)
     await saveBlock(page)
 
     // The first block should render an <h2> heading in static view
-    const firstBlock = page.locator('.sortable-block').first()
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await expect(firstBlock.locator('h2')).toBeVisible()
   })
 })
@@ -264,6 +280,6 @@ test.describe('Date command', () => {
     await typeSlashCommand(page, 'date')
     await page.keyboard.press('Enter')
 
-    await expect(page.locator('.date-picker-popup')).toBeVisible()
+    await expect(page.locator('[data-testid="date-picker-popup"]')).toBeVisible()
   })
 })

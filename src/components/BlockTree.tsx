@@ -55,10 +55,10 @@ import { cn } from '../lib/utils'
 import { useBlockStore } from '../stores/blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
+import { BlockPropertyDrawer } from './BlockPropertyDrawer'
 import { BlockContextMenu } from './block-tree/BlockContextMenu'
 import { BlockDatePicker } from './block-tree/BlockDatePicker'
 import { BlockDndOverlay } from './block-tree/BlockDndOverlay'
-import { BlockPropertyDrawer } from './BlockPropertyDrawer'
 import { EmptyState } from './EmptyState'
 import { HistorySheet } from './HistorySheet'
 import { SortableBlock } from './SortableBlock'
@@ -300,15 +300,15 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         }
         clearSelected()
         if (failCount > 0) {
-          toast.error(`${failCount} of ${ids.length} failed to update`)
+          toast.error(t('blockTree.updateFailedMessage', { failCount, totalCount: ids.length }))
         } else {
-          toast.success(`Set ${successCount} block(s) to ${state ?? 'none'}`)
+          toast.success(t('blockTree.setStateMessage', { successCount, state: state ?? 'none' }))
         }
       } finally {
         setBatchInProgress(false)
       }
     },
-    [selectedBlockIds, clearSelected, batchInProgress, rootParentId],
+    [selectedBlockIds, clearSelected, batchInProgress, rootParentId, t],
   )
 
   const handleBatchDelete = useCallback(async () => {
@@ -339,14 +339,14 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       clearSelected()
       setBatchDeleteConfirm(false)
       if (failCount > 0) {
-        toast.error(`${failCount} of ${toDelete.length} failed to delete`)
+        toast.error(t('blockTree.deleteFailedMessage', { failCount, totalCount: toDelete.length }))
       } else {
-        toast.success(`Deleted ${successCount} block(s)`)
+        toast.success(t('blockTree.deletedMessage', { count: successCount }))
       }
     } finally {
       setBatchInProgress(false)
     }
-  }, [selectedBlockIds, clearSelected, batchInProgress])
+  }, [selectedBlockIds, clearSelected, batchInProgress, t])
 
   const handleShowHistory = useCallback((blockId: string) => {
     setHistoryBlockId(blockId)
@@ -589,19 +589,16 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     ],
   )
 
-  const searchPropertyKeys = useCallback(
-    async (query: string): Promise<PickerItem[]> => {
-      try {
-        const keys = await listPropertyKeys()
-        const q = query.toLowerCase()
-        const filtered = q ? keys.filter((k) => k.toLowerCase().includes(q)) : keys
-        return filtered.map((k) => ({ id: k, label: k }))
-      } catch {
-        return []
-      }
-    },
-    [],
-  )
+  const searchPropertyKeys = useCallback(async (query: string): Promise<PickerItem[]> => {
+    try {
+      const keys = await listPropertyKeys()
+      const q = query.toLowerCase()
+      const filtered = q ? keys.filter((k) => k.toLowerCase().includes(q)) : keys
+      return filtered.map((k) => ({ id: k, label: k }))
+    } catch {
+      return []
+    }
+  }, [])
 
   // ── Roving editor ──────────────────────────────────────────────────
   // handleNavigate and handleSlashCommand are defined below but referenced
@@ -739,7 +736,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
             .then(() => {
               if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
             })
-            .catch(() => toast.error('Failed to set task state'))
+            .catch(() => toast.error(t('blockTree.setTaskStateFailed')))
           useBlockStore.setState((s) => ({
             blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: todoState } : b)),
           }))
@@ -750,7 +747,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       }
     }
     return changed
-  }, [rovingEditor, edit, splitBlock, rootParentId])
+  }, [rovingEditor, edit, splitBlock, rootParentId, t])
 
   // ── DnD hook (needs handleFlush + collapsedVisible) ────────────────
   const dnd = useBlockDnD({
@@ -825,10 +822,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         setFocused(targetId)
         rovingEditor.mount(targetId, targetBlock.content ?? '')
       } catch {
-        toast.error('Link target not found')
+        toast.error(t('blockTree.linkTargetNotFound'))
       }
     },
-    [handleFlush, load, setFocused, rovingEditor, rootParentId, onNavigateToPage],
+    [handleFlush, load, setFocused, rovingEditor, rootParentId, onNavigateToPage, t],
   )
 
   // Keep the ref in sync with the latest handleNavigate
@@ -851,7 +848,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
             ),
           }))
         } catch {
-          toast.error('Failed to set task state')
+          toast.error(t('blockTree.setTaskStateFailed'))
         }
       }
 
@@ -904,11 +901,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           rows = Number.parseInt(dimMatch[1], 10)
           cols = Number.parseInt(dimMatch[2], 10)
         }
-        rovingEditor.editor
-          ?.chain()
-          .focus()
-          .insertTable({ rows, cols, withHeaderRow: true })
-          .run()
+        rovingEditor.editor?.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run()
         return
       }
 
@@ -931,7 +924,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
             blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, priority } : b)),
           }))
         } catch {
-          toast.error('Failed to set priority')
+          toast.error(t('blockTree.setPriorityFailed'))
         }
       }
 
@@ -962,7 +955,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           // Re-mount editor so the heading renders immediately
           rovingEditor.mount(focusedBlockId, newContent)
         } catch {
-          toast.error('Failed to set heading')
+          toast.error(t('blockTree.setHeadingFailed'))
         }
       }
 
@@ -971,9 +964,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         try {
           await setProperty({ blockId: focusedBlockId, key: item.id, valueText: '' })
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          toast.success(`Added ${item.label.split(' — ')[0].toLowerCase()} property`)
+          toast.success(
+            t('blockTree.addedPropertyMessage', { name: item.label.split(' — ')[0].toLowerCase() }),
+          )
         } catch {
-          toast.error('Failed to add property')
+          toast.error(t('blockTree.addPropertyFailed'))
         }
         return
       }
@@ -985,18 +980,18 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           try {
             await setProperty({ blockId: focusedBlockId, key: 'assignee', valueText: '' })
             if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            toast.success('Added assignee property')
+            toast.success(t('blockTree.addedAssigneeProperty'))
           } catch {
-            toast.error('Failed to add property')
+            toast.error(t('blockTree.addPropertyFailed'))
           }
         } else {
           const value = item.label.split(' — ')[0].replace('ASSIGNEE ', '')
           try {
             await setProperty({ blockId: focusedBlockId, key: 'assignee', valueText: value })
             if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            toast.success(`Set assignee to ${value}`)
+            toast.success(t('blockTree.setAssigneeMessage', { value }))
           } catch {
-            toast.error('Failed to set assignee')
+            toast.error(t('blockTree.setAssigneeFailed'))
           }
         }
         return
@@ -1009,18 +1004,18 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           try {
             await setProperty({ blockId: focusedBlockId, key: 'location', valueText: '' })
             if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            toast.success('Added location property')
+            toast.success(t('blockTree.addedLocationProperty'))
           } catch {
-            toast.error('Failed to add property')
+            toast.error(t('blockTree.addPropertyFailed'))
           }
         } else {
           const value = item.label.split(' — ')[0].replace('LOCATION ', '')
           try {
             await setProperty({ blockId: focusedBlockId, key: 'location', valueText: value })
             if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            toast.success(`Set location to ${value}`)
+            toast.success(t('blockTree.setLocationMessage', { value }))
           } catch {
-            toast.error('Failed to set location')
+            toast.error(t('blockTree.setLocationFailed'))
           }
         }
         return
@@ -1056,9 +1051,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           try {
             await deleteProperty(focusedBlockId, 'repeat-count')
             await deleteProperty(focusedBlockId, 'repeat-until')
-            toast.success('Repeat end condition removed')
+            toast.success(t('blockTree.repeatEndConditionRemoved'))
           } catch {
-            toast.error('Failed to remove end condition')
+            toast.error(t('blockTree.removeEndConditionFailed'))
           }
           return
         }
@@ -1067,9 +1062,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           try {
             await setProperty({ blockId: focusedBlockId, key: 'repeat-count', valueNum: count })
             if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            toast.success(`Repeat limited to ${count} occurrences`)
+            toast.success(t('blockTree.repeatLimitedMessage', { count }))
           } catch {
-            toast.error('Failed to set repeat limit')
+            toast.error(t('blockTree.setRepeatLimitFailed'))
           }
         }
         return
@@ -1124,7 +1119,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           // In Tauri webview, File objects expose a .path property with the real FS path
           const fsPath = (file as File & { path?: string }).path
           if (!fsPath) {
-            toast.error('Could not read file path — use drag & drop instead')
+            toast.error(t('blockTree.filePathReadFailed'))
             return
           }
           try {
@@ -1135,9 +1130,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
               sizeBytes,
               fsPath,
             })
-            toast.success(`Attached "${filename}"`)
+            toast.success(t('blockTree.attachedFileMessage', { filename }))
           } catch {
-            toast.error('Failed to attach file')
+            toast.error(t('blockTree.attachFileFailed'))
           }
         }
         input.click()
@@ -1270,12 +1265,12 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         .then(() => {
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         })
-        .catch(() => toast.error('Failed to set task state'))
+        .catch(() => toast.error(t('blockTree.setTaskStateFailed')))
       useBlockStore.setState((s) => ({
         blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, todo_state: state } : b)),
       }))
     },
-    [focusedBlockId, rootParentId],
+    [focusedBlockId, rootParentId, t],
   )
 
   handleCheckboxRef.current = handleCheckboxSyntax
@@ -1317,7 +1312,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const handleDeleteBlock = useCallback(() => {
     if (!focusedBlockId) return
     if (collapsedVisible.length <= 1) {
-      toast.error('Cannot delete the last block on a page')
+      toast.error(t('blockTree.cannotDeleteLastBlock'))
       return
     }
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
@@ -1336,7 +1331,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     } else {
       setFocused(null)
     }
-  }, [focusedBlockId, collapsedVisible, rovingEditor, remove, setFocused])
+  }, [focusedBlockId, collapsedVisible, rovingEditor, remove, setFocused, t])
 
   const handleIndent = useCallback(() => {
     if (!focusedBlockId) return
@@ -1411,7 +1406,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     } catch {
       // Re-mount the editor on the current block so the user can retry
       rovingEditor.mount(focusedBlockId, currentContent)
-      toast.error('Failed to merge blocks')
+      toast.error(t('blockTree.mergeBlocksFailed'))
       return
     }
 
@@ -1430,7 +1425,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         rovingEditor.editor.commands.setTextSelection(pmPos)
       }
     }, 0)
-  }, [focusedBlockId, collapsedVisible, rovingEditor, edit, remove, setFocused])
+  }, [focusedBlockId, collapsedVisible, rovingEditor, edit, remove, setFocused, t])
 
   // ── Merge by block ID (context menu) ─────────────────────────────
   const handleMergeById = useCallback(
@@ -1455,13 +1450,13 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         if (editorContent !== null) {
           rovingEditor.mount(blockId, currentContent)
         }
-        toast.error('Failed to merge blocks')
+        toast.error(t('blockTree.mergeBlocksFailed'))
         return
       }
 
       setFocused(prevBlock.id)
     },
-    [collapsedVisible, focusedBlockId, rovingEditor, edit, remove, setFocused],
+    [collapsedVisible, focusedBlockId, rovingEditor, edit, remove, setFocused, t],
   )
 
   // ── Enter: save content + create new sibling below ───────────────────
@@ -1605,7 +1600,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, priority } : b)),
         }))
       } catch {
-        toast.error('Failed to set priority')
+        toast.error(t('blockTree.setPriorityFailed'))
       }
     }
     document.addEventListener('set-priority-1', handlePriorityEvent)
@@ -1616,7 +1611,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       document.removeEventListener('set-priority-2', handlePriorityEvent)
       document.removeEventListener('set-priority-3', handlePriorityEvent)
     }
-  }, [focusedBlockId, rootParentId])
+  }, [focusedBlockId, rootParentId, t])
 
   // ── Listen for toolbar date picker event ────────────────────────────
   useEffect(() => {

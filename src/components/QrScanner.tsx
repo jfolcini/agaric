@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 
 // QR scanner component — production-ready implementation.
@@ -11,6 +12,7 @@ interface QrScannerProps {
 }
 
 export function QrScanner({ onScan, onError }: QrScannerProps) {
+  const { t } = useTranslation()
   const [scanning, setScanning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scannerRef = useRef<HTMLDivElement>(null)
@@ -75,9 +77,11 @@ export function QrScanner({ onScan, onError }: QrScannerProps) {
         id="qr-scanner-region"
         ref={scannerRef}
         className="w-64 h-64 bg-muted rounded-md flex items-center justify-center"
-        aria-label="QR code scanner viewport"
+        aria-label={t('qrScanner.viewportLabel')}
       >
-        {!scanning && !error && <p className="text-sm text-muted-foreground">Camera preview</p>}
+        {!scanning && !error && (
+          <p className="text-sm text-muted-foreground">{t('qrScanner.cameraPreview')}</p>
+        )}
         {error && (
           <p
             className="qr-scanner-error text-sm text-destructive px-4 text-center"
@@ -94,12 +98,12 @@ export function QrScanner({ onScan, onError }: QrScannerProps) {
           onClick={startScanning}
           className="[@media(pointer:coarse)]:min-h-[44px]"
         >
-          {error ? 'Retry Camera' : 'Scan QR Code'}
+          {error ? t('qrScanner.retryCameraButton') : t('qrScanner.scanQrCodeButton')}
         </Button>
       )}
       {scanning && (
         <p className="text-sm text-muted-foreground" aria-live="polite">
-          Scanning...
+          {t('qrScanner.scanningMessage')}
         </p>
       )}
     </div>
