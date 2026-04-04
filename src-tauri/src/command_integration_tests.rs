@@ -7283,3 +7283,152 @@ async fn undo_property_change_restores_prior_value() {
         "undo must restore property value to 'low'"
     );
 }
+
+// ======================================================================
+// page aliases — CRUD & resolution
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_and_get_page_aliases() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "My Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Set aliases
+    let inserted = set_page_aliases_inner(
+        &pool,
+        &page.id,
+        vec!["my-alias".into(), "another".into()],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(inserted.len(), 2, "both aliases must be inserted");
+    assert!(inserted.contains(&"my-alias".to_string()), "must contain my-alias");
+    assert!(inserted.contains(&"another".to_string()), "must contain another");
+
+    // Get aliases (returned sorted alphabetically)
+    let fetched = get_page_aliases_inner(&pool, &page.id).await.unwrap();
+    assert_eq!(fetched, vec!["another", "my-alias"], "aliases must be sorted alphabetically");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resolve_page_by_alias() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Resolvable Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    set_page_aliases_inner(&pool, &page.id, vec!["my-alias".into()])
+        .await
+        .unwrap();
+
+    // Resolve by alias
+    let resolved = resolve_page_by_alias_inner(&pool, "my-alias")
+        .await
+        .unwrap();
+    assert!(resolved.is_some(), "alias must resolve to a page");
+
+    let (resolved_id, resolved_title) = resolved.unwrap();
+    assert_eq!(resolved_id, page.id, "resolved page ID must match");
+    assert_eq!(
+        resolved_title.as_deref(),
+        Some("Resolvable Page"),
+        "resolved title must match page content"
+    );
+
+    // Non-existent alias returns None
+    let missing = resolve_page_by_alias_inner(&pool, "no-such-alias")
+        .await
+        .unwrap();
+    assert!(missing.is_none(), "unknown alias must return None");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn alias_collision_returns_error() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let page_a = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page A".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let page_b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page B".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Page A claims the alias first
+    let inserted_a = set_page_aliases_inner(
+        &pool,
+        &page_a.id,
+        vec!["shared-alias".into()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(inserted_a, vec!["shared-alias"], "page A must own the alias");
+
+    // Page B tries to claim the same alias — INSERT OR IGNORE silently skips it
+    let inserted_b = set_page_aliases_inner(
+        &pool,
+        &page_b.id,
+        vec!["shared-alias".into()],
+    )
+    .await
+    .unwrap();
+    assert!(
+        inserted_b.is_empty(),
+        "duplicate alias must be silently ignored (INSERT OR IGNORE)"
+    );
+
+    // The alias still resolves to page A
+    let resolved = resolve_page_by_alias_inner(&pool, "shared-alias")
+        .await
+        .unwrap();
+    assert!(resolved.is_some(), "alias must still resolve");
+    assert_eq!(
+        resolved.unwrap().0,
+        page_a.id,
+        "alias must still point to page A after collision"
+    );
+}

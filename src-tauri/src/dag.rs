@@ -180,46 +180,92 @@ pub async fn find_lca(
             .fetch_one(pool)
             .await?;
 
-    // Build visited set from chain A (including op_a itself)
-    let mut visited: HashSet<(String, i64)> = HashSet::new();
-    let mut current: Option<(String, i64)> = Some(op_a.clone());
-    while let Some(key) = current.take() {
-        if !visited.insert(key.clone()) {
-            break; // cycle detected — stop walking
-        }
-        match get_op_by_seq(pool, &key.0, key.1).await {
-            Ok(record) => current = extract_prev_edit(&record)?,
-            Err(AppError::NotFound(_)) if has_snapshots > 0 => {
-                return Err(AppError::InvalidOperation(format!(
-                    "edit chain broken at ({}, {}) — likely due to op log compaction; \
-                     LCA requires intact chains",
-                    key.0, key.1
-                )));
+    // Collect chain A into a Vec (owns the Strings), then build a
+    // borrowed HashSet for O(1) lookups during the chain-B walk.
+    let mut chain_a: Vec<(String, i64)> = Vec::new();
+    {
+        // Process op_a by borrowing from the parameter — no clone needed.
+        let mut next: Option<(String, i64)> =
+            match get_op_by_seq(pool, &op_a.0, op_a.1).await {
+                Ok(record) => extract_prev_edit(&record)?,
+                Err(AppError::NotFound(_)) if has_snapshots > 0 => {
+                    return Err(AppError::InvalidOperation(format!(
+                        "edit chain broken at ({}, {}) — likely due to op log compaction; \
+                         LCA requires intact chains",
+                        op_a.0, op_a.1
+                    )));
+                }
+                Err(e) => return Err(e),
+            };
+        while let Some(key) = next.take() {
+            if (key.0 == op_a.0 && key.1 == op_a.1)
+                || chain_a.iter().any(|(s, n)| *s == key.0 && *n == key.1)
+            {
+                break; // cycle detected — stop walking
             }
-            Err(e) => return Err(e),
+            chain_a.push(key);
+            let last = chain_a.last().unwrap();
+            match get_op_by_seq(pool, &last.0, last.1).await {
+                Ok(record) => next = extract_prev_edit(&record)?,
+                Err(AppError::NotFound(_)) if has_snapshots > 0 => {
+                    return Err(AppError::InvalidOperation(format!(
+                        "edit chain broken at ({}, {}) — likely due to op log compaction; \
+                         LCA requires intact chains",
+                        last.0, last.1
+                    )));
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
+    // References into op_a (parameter) and chain_a (Vec) are stable now.
+    let mut visited: HashSet<(&str, i64)> = HashSet::with_capacity(chain_a.len() + 1);
+    visited.insert((&op_a.0, op_a.1));
+    for (s, n) in &chain_a {
+        visited.insert((s.as_str(), *n));
+    }
 
-    // Walk chain B, checking each step against the visited set
-    let mut visited_b: HashSet<(String, i64)> = HashSet::new();
-    let mut current: Option<(String, i64)> = Some(op_b.clone());
-    while let Some(key) = current.take() {
-        if visited.contains(&key) {
-            return Ok(Some(key));
-        }
-        if !visited_b.insert(key.clone()) {
-            break; // cycle detected — stop walking
-        }
-        match get_op_by_seq(pool, &key.0, key.1).await {
-            Ok(record) => current = extract_prev_edit(&record)?,
-            Err(AppError::NotFound(_)) if has_snapshots > 0 => {
-                return Err(AppError::InvalidOperation(format!(
-                    "edit chain broken at ({}, {}) — likely due to op log compaction; \
-                     LCA requires intact chains",
-                    key.0, key.1
-                )));
+    // Walk chain B, checking each step against the visited set.
+    // op_b is checked by borrowing from the parameter — no clone needed.
+    if visited.contains(&(op_b.0.as_str(), op_b.1)) {
+        return Ok(Some(op_b.clone()));
+    }
+    let mut chain_b: Vec<(String, i64)> = Vec::new();
+    {
+        let mut next: Option<(String, i64)> =
+            match get_op_by_seq(pool, &op_b.0, op_b.1).await {
+                Ok(record) => extract_prev_edit(&record)?,
+                Err(AppError::NotFound(_)) if has_snapshots > 0 => {
+                    return Err(AppError::InvalidOperation(format!(
+                        "edit chain broken at ({}, {}) — likely due to op log compaction; \
+                         LCA requires intact chains",
+                        op_b.0, op_b.1
+                    )));
+                }
+                Err(e) => return Err(e),
+            };
+        while let Some(key) = next.take() {
+            if visited.contains(&(key.0.as_str(), key.1)) {
+                return Ok(Some(key));
             }
-            Err(e) => return Err(e),
+            if (key.0 == op_b.0 && key.1 == op_b.1)
+                || chain_b.iter().any(|(s, n)| *s == key.0 && *n == key.1)
+            {
+                break; // cycle detected — stop walking
+            }
+            chain_b.push(key);
+            let last = chain_b.last().unwrap();
+            match get_op_by_seq(pool, &last.0, last.1).await {
+                Ok(record) => next = extract_prev_edit(&record)?,
+                Err(AppError::NotFound(_)) if has_snapshots > 0 => {
+                    return Err(AppError::InvalidOperation(format!(
+                        "edit chain broken at ({}, {}) — likely due to op log compaction; \
+                         LCA requires intact chains",
+                        last.0, last.1
+                    )));
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
 

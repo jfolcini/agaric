@@ -1100,6 +1100,67 @@ mod tests {
         }
     }
 
+    // ── Immutability gap documentation ──────────────────────────────────
+
+    /// The op_log immutability invariant is enforced by code convention,
+    /// not by database triggers.  This test documents the gap: UPDATE and
+    /// DELETE succeed at the SQL level even though the op_log is supposed
+    /// to be strictly append-only.
+    ///
+    /// If a trigger is added later to enforce immutability, this test
+    /// should be updated to assert that UPDATE and DELETE fail.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn op_log_update_not_blocked_by_schema() {
+        let (pool, _dir) = test_pool().await;
+
+        // Append an op so there is a row to mutate.
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            make_create_payload("BLK-IMMUT"),
+            FIXED_TS.into(),
+        )
+        .await
+        .unwrap();
+
+        // Attempt UPDATE — currently succeeds (no trigger guards op_log).
+        let update_result = sqlx::query(
+            "UPDATE op_log SET payload = '{}' WHERE device_id = ? AND seq = 1",
+        )
+        .bind(TEST_DEVICE)
+        .execute(&pool)
+        .await;
+
+        assert!(
+            update_result.is_ok(),
+            "UPDATE should succeed (no immutability trigger): {:?}",
+            update_result.unwrap_err(),
+        );
+        assert_eq!(
+            update_result.unwrap().rows_affected(),
+            1,
+            "expected exactly one row updated",
+        );
+
+        // Attempt DELETE — currently succeeds (no trigger guards op_log).
+        let delete_result =
+            sqlx::query("DELETE FROM op_log WHERE device_id = ? AND seq = 1")
+                .bind(TEST_DEVICE)
+                .execute(&pool)
+                .await;
+
+        assert!(
+            delete_result.is_ok(),
+            "DELETE should succeed (no immutability trigger): {:?}",
+            delete_result.unwrap_err(),
+        );
+        assert_eq!(
+            delete_result.unwrap().rows_affected(),
+            1,
+            "expected exactly one row deleted",
+        );
+    }
+
     #[tokio::test]
     async fn expression_index_on_block_id_exists() {
         let (pool, _dir) = test_pool().await;

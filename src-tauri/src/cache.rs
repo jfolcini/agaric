@@ -173,9 +173,11 @@ pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
     .await?;
 
     // Deduplicate by PK (date, block_id), keeping first occurrence.
-    let mut desired: HashMap<(String, String), String> = HashMap::with_capacity(desired_rows.len());
-    for (date, block_id, source) in desired_rows {
-        desired.entry((date, block_id)).or_insert(source);
+    let mut desired: HashMap<(&str, &str), &str> = HashMap::with_capacity(desired_rows.len());
+    for (date, block_id, source) in &desired_rows {
+        desired
+            .entry((date.as_str(), block_id.as_str()))
+            .or_insert(source.as_str());
     }
 
     // Step 2: Read current cache state.
@@ -184,25 +186,28 @@ pub async fn rebuild_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
             .fetch_all(&mut *tx)
             .await?;
 
-    let current: HashMap<(String, String), String> = current_rows
-        .into_iter()
-        .map(|(d, b, s)| ((d, b), s))
+    let current: HashMap<(&str, &str), &str> = current_rows
+        .iter()
+        .map(|(d, b, s)| ((d.as_str(), b.as_str()), s.as_str()))
         .collect();
 
     // Step 3: Compute diff.
-    let to_delete: Vec<&(String, String)> = current
+    let to_delete: Vec<(&str, &str)> = current
         .keys()
         .filter(|k| !desired.contains_key(k))
+        .copied()
         .collect();
 
-    let to_insert: Vec<(&(String, String), &String)> = desired
+    let to_insert: Vec<((&str, &str), &str)> = desired
         .iter()
         .filter(|(k, _)| !current.contains_key(k))
+        .map(|(&k, &v)| (k, v))
         .collect();
 
-    let to_update: Vec<(&(String, String), &String)> = desired
+    let to_update: Vec<((&str, &str), &str)> = desired
         .iter()
         .filter(|(k, v)| current.get(k).is_some_and(|cv| cv != *v))
+        .map(|(&k, &v)| (k, v))
         .collect();
 
     if to_delete.is_empty() && to_insert.is_empty() && to_update.is_empty() {
