@@ -21,6 +21,7 @@ import {
   ChevronRight,
   Clock,
   GripVertical,
+  Paperclip,
   Repeat,
   Trash2,
 } from 'lucide-react'
@@ -30,8 +31,9 @@ import { toast } from 'sonner'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { formatRepeatLabel } from '../lib/repeat-utils'
 import type { BlockRow } from '../lib/tauri'
-import { listBlocks, listPropertyDefs, setProperty } from '../lib/tauri'
+import { listAttachments, listBlocks, listPropertyDefs, setProperty } from '../lib/tauri'
 import { cn } from '../lib/utils'
+import { AttachmentList } from './AttachmentList'
 import { BlockContextMenu } from './BlockContextMenu'
 import { EditableBlock } from './EditableBlock'
 import { PropertyChip } from './PropertyChip'
@@ -195,6 +197,24 @@ function SortableBlockInner({
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const touchStartPos = useRef<{ x: number; y: number } | null>(null)
   const blockRef = useRef<HTMLDivElement>(null)
+
+  // ── Attachment state ─────────────────────────────────────────────
+  const [attachmentCount, setAttachmentCount] = useState(0)
+  const [showAttachments, setShowAttachments] = useState(false)
+
+  useEffect(() => {
+    let stale = false
+    listAttachments(blockId)
+      .then((rows) => {
+        if (!stale) setAttachmentCount(rows.length)
+      })
+      .catch(() => {
+        /* ignore — non-critical */
+      })
+    return () => {
+      stale = true
+    }
+  }, [blockId])
 
   const filteredProperties = useMemo(
     () => (properties ?? []).filter((p) => p.key !== 'repeat'),
@@ -571,6 +591,27 @@ function SortableBlockInner({
               )}
             </>
           )}
+
+          {/* Attachment count badge */}
+          {attachmentCount > 0 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1 [@media(pointer:coarse)]:min-h-[44px]"
+                  aria-label={t('block.attachments', { count: attachmentCount })}
+                  aria-expanded={showAttachments}
+                  onClick={() => setShowAttachments((prev) => !prev)}
+                >
+                  <Paperclip size={12} className="flex-shrink-0" />
+                  {attachmentCount}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}>
+                {t('block.attachmentsTip', { count: attachmentCount })}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
 
         {/* ── Property edit popover ─────────────────────────────────── */}
@@ -742,6 +783,13 @@ function SortableBlockInner({
             onSelect={onSelect}
           />
         </div>
+
+        {/* ── Collapsible attachment list ────────────────────────────── */}
+        {showAttachments && attachmentCount > 0 && (
+          <div className="mt-1 ml-5 border-l-2 border-border/30 pl-3">
+            <AttachmentList blockId={blockId} />
+          </div>
+        )}
 
         {/* ── Context menu (long-press / right-click) ───────────────── */}
         {contextMenu && (

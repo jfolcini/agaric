@@ -127,3 +127,7 @@ harness = false
 [[bench]]
 name = "merge_bench"
 harness = false
+
+[[bench]]
+name = "snapshot_bench"
+harness = false

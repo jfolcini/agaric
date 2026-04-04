@@ -102,6 +102,14 @@ vi.mock('lucide-react', () => ({
   GripVertical: (props: { size: number }) => (
     <svg data-testid="grip-vertical-icon" width={props.size} height={props.size} />
   ),
+  Paperclip: (props: { size: number; className?: string }) => (
+    <svg
+      data-testid="paperclip-icon"
+      width={props.size}
+      height={props.size}
+      className={props.className}
+    />
+  ),
   Repeat: (props: { size: number; className?: string }) => (
     <svg
       data-testid="repeat-icon"
@@ -112,6 +120,13 @@ vi.mock('lucide-react', () => ({
   ),
   Trash2: (props: { size: number }) => (
     <svg data-testid="trash-icon" width={props.size} height={props.size} />
+  ),
+}))
+
+// Mock AttachmentList to avoid its own hook/tauri dependencies
+vi.mock('../AttachmentList', () => ({
+  AttachmentList: ({ blockId }: { blockId: string }) => (
+    <div data-testid={`attachment-list-${blockId}`}>AttachmentList</div>
   ),
 }))
 
@@ -134,14 +149,16 @@ vi.mock('../BlockContextMenu', () => ({
   ),
 }))
 
-// Mock tauri setProperty, listPropertyDefs, and listBlocks
+// Mock tauri setProperty, listPropertyDefs, listBlocks, and listAttachments
 const mockSetProperty = vi.fn().mockResolvedValue({})
 const mockListPropertyDefs = vi.fn().mockResolvedValue([])
 const mockListBlocks = vi.fn().mockResolvedValue({ items: [], next_cursor: null, has_more: false })
+const mockListAttachments = vi.fn().mockResolvedValue([])
 vi.mock('../../lib/tauri', () => ({
   setProperty: (...args: unknown[]) => mockSetProperty(...args),
   listPropertyDefs: (...args: unknown[]) => mockListPropertyDefs(...args),
   listBlocks: (...args: unknown[]) => mockListBlocks(...args),
+  listAttachments: (...args: unknown[]) => mockListAttachments(...args),
 }))
 
 // Mock sonner toast

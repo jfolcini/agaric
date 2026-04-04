@@ -178,6 +178,17 @@ const resources = {
       'block.noPagesFound': 'No pages found',
       'block.refPickerLabel': 'Select a page',
 
+      // Attachments
+      'attachments.loading': 'Loading attachments…',
+      'attachments.empty': 'No attachments yet.',
+      'attachments.list': 'Attachments',
+      'attachments.delete': 'Delete attachment {{name}}',
+      'attachments.deleted': 'Deleted {{name}}',
+      'attachments.confirmDelete': 'Delete "{{name}}"?',
+      'attachments.clickAgain': 'Click the delete button again to confirm.',
+      'block.attachments': '{{count}} attachment(s)',
+      'block.attachmentsTip': '{{count}} attachment(s) — click to toggle',
+
       // Errors
       'error.generic': 'Something went wrong',
       'error.loadFailed': 'Failed to load data',
