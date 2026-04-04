@@ -21,6 +21,11 @@ import { StaticBlock } from '../StaticBlock'
 
 vi.mock('../../lib/open-url', () => ({ openUrl: vi.fn() }))
 
+vi.mock('pdfjs-dist', () => ({
+  GlobalWorkerOptions: { workerSrc: '' },
+  getDocument: vi.fn(),
+}))
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`),

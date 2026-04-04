@@ -13,12 +13,13 @@ import { toHtml } from 'hast-util-to-html'
 import { File, FileText, Image as ImageIcon } from 'lucide-react'
 import { common, createLowlight } from 'lowlight'
 import type React from 'react'
-import { memo, useMemo, useRef } from 'react'
+import { memo, useMemo, useRef, useState } from 'react'
 import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
 import { openUrl } from '../lib/open-url'
 import { cn } from '../lib/utils'
+import { PdfViewerDialog } from './PdfViewerDialog'
 import { QueryResult } from './QueryResult'
 
 const lowlight = createLowlight(common)
@@ -329,6 +330,11 @@ function StaticBlockInner({
 
   const { attachments, loading: attachmentsLoading } = useBlockAttachments(blockId)
 
+  // PDF viewer dialog state
+  const [pdfViewerOpen, setPdfViewerOpen] = useState(false)
+  const [pdfViewerUrl, setPdfViewerUrl] = useState('')
+  const [pdfViewerFilename, setPdfViewerFilename] = useState('')
+
   // Detect {{query ...}} blocks and render QueryResult instead of the text
   if (content?.startsWith('{{query ') && content.endsWith('}}')) {
     const expression = content.slice(8, -2).trim()
@@ -406,7 +412,18 @@ function StaticBlockInner({
                 aria-label={`Open file ${att.filename}`}
                 onClick={(e) => {
                   e.stopPropagation()
-                  openUrl(att.fs_path)
+                  if (att.mime_type === 'application/pdf') {
+                    const url = getAssetUrl(att.fs_path)
+                    if (url) {
+                      setPdfViewerUrl(url)
+                      setPdfViewerFilename(att.filename)
+                      setPdfViewerOpen(true)
+                    } else {
+                      openUrl(att.fs_path)
+                    }
+                  } else {
+                    openUrl(att.fs_path)
+                  }
                 }}
               >
                 <AttachmentMimeIcon mimeType={att.mime_type} />
@@ -417,6 +434,12 @@ function StaticBlockInner({
           })}
         </div>
       )}
+      <PdfViewerDialog
+        open={pdfViewerOpen}
+        onOpenChange={setPdfViewerOpen}
+        fileUrl={pdfViewerUrl}
+        filename={pdfViewerFilename}
+      />
     </>
   )
 }
