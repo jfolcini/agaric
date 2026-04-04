@@ -16,6 +16,7 @@ pub mod op_log;
 pub mod pagination;
 pub mod pairing;
 pub mod peer_refs;
+pub mod recurrence;
 pub mod recovery;
 pub mod reverse;
 pub mod snapshot;
