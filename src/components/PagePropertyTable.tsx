@@ -187,8 +187,8 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
         <div className="mt-1 space-y-1.5 pl-2">
           {loading && (
             <div className="space-y-2" data-testid="property-loading">
-              <Skeleton className="h-6 w-full rounded" />
-              <Skeleton className="h-6 w-full rounded" />
+              <Skeleton className="h-6 w-full rounded-lg" />
+              <Skeleton className="h-6 w-full rounded-lg" />
             </div>
           )}
 

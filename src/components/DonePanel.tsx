@@ -251,7 +251,8 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
                     {/* Source page breadcrumb */}
                     {block.parent_id && (
                       <span className="done-panel-breadcrumb text-xs text-muted-foreground shrink-0">
-                        → {pageTitles.get(block.parent_id) ?? t('donePanel.untitled')}
+                        {t('donePanel.breadcrumbArrow')}{' '}
+                        {pageTitles.get(block.parent_id) ?? t('donePanel.untitled')}
                       </span>
                     )}
                   </li>

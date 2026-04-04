@@ -247,7 +247,7 @@ export function AgendaResults({
         {/* Source page breadcrumb */}
         {block.parent_id && (
           <span className="agenda-results-breadcrumb text-xs text-muted-foreground shrink-0">
-            &rarr; {pageTitles.get(block.parent_id) ?? t('agenda.untitled')}
+            {t('agenda.breadcrumbArrow')} {pageTitles.get(block.parent_id) ?? t('agenda.untitled')}
           </span>
         )}
       </li>

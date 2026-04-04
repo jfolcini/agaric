@@ -121,7 +121,7 @@ function PageTreeItem({
         onClick={() => {
           if (node.pageId) onNavigate(node.pageId, node.fullPath)
         }}
-        className="w-full text-left px-2 py-1 text-sm hover:bg-accent rounded truncate"
+        className="w-full text-left px-2 py-1 text-sm hover:bg-accent/50 rounded truncate"
         title={node.fullPath}
       >
         <HighlightMatch text={node.name} filterText={filterText} />

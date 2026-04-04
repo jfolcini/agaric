@@ -249,6 +249,7 @@ const resources = {
       'donePanel.header': '{{count}} Completed',
       'donePanel.loading': 'Loading...',
       'donePanel.loadMore': 'Load more',
+      'donePanel.breadcrumbArrow': '\u2192',
       'donePanel.untitled': 'Untitled',
       'donePanel.completedItems': 'Completed items',
       'donePanel.loadingMore': 'Loading more completed items',

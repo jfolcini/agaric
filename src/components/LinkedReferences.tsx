@@ -344,7 +344,7 @@ export function LinkedReferences({
           {/* Loading skeletons */}
           {loading && groups.length === 0 && (
             <div className="linked-references-loading space-y-2" aria-busy="true" role="status">
-              <Skeleton className="h-8 w-48 rounded-md" />
+              <Skeleton className="h-8 w-48 rounded-lg" />
               <Skeleton className="h-12 w-full rounded-lg" />
               <Skeleton className="h-12 w-full rounded-lg" />
             </div>
