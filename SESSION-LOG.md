@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 146 — 2026-04-03 — Sync resilience fixes (#667)
+
+### Fixes: offline state + timeout tuning
+
+1 build subagent. Added 'offline' to SyncState, useSyncTrigger sets it when navigator.onLine is false. Online event listener triggers immediate sync. WebSocket RECV_TIMEOUT 30→60s. handle_message timeout 60→120s.
+
+| File | Change |
+|------|--------|
+| `sync.ts` | Added `'offline'` to SyncState type. |
+| `useSyncTrigger.ts` | `setState('offline')` instead of silent return. `window.addEventListener('online')` triggers immediate sync. |
+| `useSyncTrigger.test.ts` | 2 new tests (offline state, online event). 17/17 pass. |
+| `sync_net.rs` | RECV_TIMEOUT: 30→60s. |
+| `sync_daemon.rs` | handle_message timeout: 60→120s (both initiator + responder). |
+| `REVIEW-LATER.md` | Removed #667. 5 → 4 open items. |
+
+### Stats
+- Frontend: 2 new tests (17/17 useSyncTrigger pass)
+- Backend: timeout config changes (compiles clean)
+- Commit: `3f9b8b5`
+- REVIEW-LATER: #667 fully resolved. 4 open items.
+
 ## Session 145 — 2026-04-03 — Phase 2 review (sync + editor) + fix blockquote table data loss (#666)
 
 ### Phase 2: Review sync system + editor system
