@@ -1,8 +1,8 @@
 # Session Log
 
-## Session 167 — 2026-04-04 — Phase 1 batch 15: FTS batch reindex + journal commands
+## Session 167 — 2026-04-04 — Phase 1 batch 15-16: FTS reindex + journal + sync N+1 + proptest
 
-### Phase 1: Fix H-2, TH-6
+### Phase 1 (batch 15): FTS batch reindex + journal commands (H-2, TH-6)
 
 2 parallel Rust subagents (fts.rs, commands.rs + integration tests).
 
@@ -16,6 +16,23 @@
 - Backend: 6 new tests (84/84 FTS pass, 6/6 journal pass)
 - Commit: `13d6a0b`
 - REVIEW-LATER: H-2, TH-6 resolved. 45 → **43 open items**. Only 1 HIGH item remains (H-1).
+
+### Phase 1 (batch 16): Sync conflict N+1 + proptest (H-1, TH-7)
+
+2 parallel Rust subagents (sync_protocol.rs, proptest across 3 modules).
+
+| File | Change |
+|------|--------|
+| `sync_protocol.rs` | H-1: Replaced N+1 conflict resolution with batch CTE queries using `ROW_NUMBER() OVER (PARTITION BY ...)`. 2+4N queries → exactly 2. 1 new test. |
+| `Cargo.toml` | TH-7: Added proptest v1.11.0 to dev-dependencies. |
+| `op.rs` | TH-7: 3 proptests (ULID normalization idempotency, OpType round-trip, uniqueness). |
+| `hash.rs` | TH-7: 3 proptests (blake3 determinism, collision resistance, format validation). |
+| `pagination.rs` | TH-7: 2 proptests (Cursor encode/decode round-trip, encode determinism). |
+
+### Stats
+- Backend: 9 new tests (202/202 sync pass, 8/8 proptest pass)
+- Commit: `649cb91`
+- REVIEW-LATER: H-1, TH-7 resolved. 43 → **41 open items**. **HIGH tier fully cleared (0 remaining).**
 
 ## Session 166 — 2026-04-04 — Phase 1 undo/redo batch (H-8, L-15, TL-5)
 
