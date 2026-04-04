@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 145 — 2026-04-03 — Phase 2 review (sync + editor) + fix blockquote table data loss (#666)
+
+### Phase 2: Review sync system + editor system
+
+2 parallel review subagents (sync error handling, editor edge cases). Cross-validated findings: P1 blockquote serializer drops tables (fixed immediately), P2-P3 sync resilience issues (deferred as #667).
+
+### Phase 1: Fix #666
+
+| File | Change |
+|------|--------|
+| `markdown-serializer.ts` | Added `if (child.type === 'table') return serializeTable(child)` to `serializeBlockquote`. |
+| `markdown-serializer.test.ts` | 5 new tests: blockquote+table, pipe-in-cell, unbalanced columns, header-only table, header-only round-trip. 245/245 pass. |
+| `REVIEW-LATER.md` | Created #667 (sync resilience). 4 → 5 open items. |
+
+### Stats
+- Frontend: 5 new tests (245/245 serializer pass)
+- Commit: `3be88a9`
+- REVIEW-LATER: #666 fixed immediately. #667 created (sync resilience, S-cost, deferred). 5 open items.
+
 ## Session 144 — 2026-04-03 — Table support in editor (#654)
 
 ### Build: types + serializer + TipTap extensions + slash command
