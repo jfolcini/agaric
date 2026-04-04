@@ -228,18 +228,38 @@
 - Commit: `a9c0843`
 - REVIEW-LATER: M-18, L-3 resolved. 50 → **48 open items**.
 
-### Session 166 Summary
+### Phase 1 (batch 14): Attachment foundation (F-7, F-11, F-12, F-13)
 
-**13 batches, 64 items resolved. REVIEW-LATER: 112 → 48 (57% cleared).**
+3 parallel subagents (commands+validation, materializer cleanup task, frontend hook).
+
+| File | Change |
+|------|--------|
+| `commands.rs` | F-7: Added `add_attachment_inner`, `delete_attachment_inner`, `list_attachments_inner` + `AttachmentRow` struct + 3 Tauri command wrappers. 5 tests. |
+| `commands.rs` | F-11: Size validation (50MB max) + MIME allow-list in `add_attachment_inner`. |
+| `lib.rs` | Registered 3 attachment commands in both `collect_commands!` calls. |
+| `bindings.ts` | Regenerated with `AttachmentRow` type + 3 command signatures. |
+| `tauri.ts` | Added `AttachmentRow` interface + 3 TS wrappers. |
+| `materializer.rs` | F-12: Added `CleanupOrphanedAttachments` task variant (no-op placeholder). 1 test. |
+| `useBlockAttachments.ts` + test | F-13: New hook with `onNewAction()` calls after add/delete. 12 tests. |
+
+### Stats
+- Backend: 5 new tests (27/27 attachment pass, 90/90 materializer pass)
+- Frontend: 12 new tests (12/12 useBlockAttachments pass)
+- Commit: `133a142`
+- REVIEW-LATER: F-7, F-11, F-12, F-13 resolved. 48 → **44 open items**.
+
+### Session 166 Summary (Updated)
+
+**14 batches, 68 items resolved. REVIEW-LATER: 112 → 44 (61% cleared).**
 
 | Metric | Count |
 |--------|-------|
-| Items resolved | 64 |
-| New tests | ~175+ |
-| Commits | 26 |
+| Items resolved | 68 |
+| New tests | ~195+ |
+| Commits | 28 |
 | Cleared tiers | All HIGH (8→2), all MEDIUM (18→3), all UX-HIGH (14→1), all UX-MED (7→0), most TEST-LOW (8→2) |
 
-**Remaining 48 items:** 19 FEAT (M/L cost features), 2 HIGH, 3 MEDIUM, 5 LOW, 1 UX-HIGH (i18n L-cost), 6 TEST-HIGH (M cost), 8 TEST-MED, 2 TEST-LOW. Nearly all remaining items require M/L cost effort — the S-cost actionable items are exhausted.
+**Remaining 44 items:** 15 FEAT (M/L cost), 2 HIGH, 3 MEDIUM, 5 LOW, 1 UX-HIGH (i18n L-cost), 6 TEST-HIGH (M cost), 8 TEST-MED, 2 TEST-LOW.
 
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
