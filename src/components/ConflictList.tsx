@@ -359,7 +359,7 @@ export function ConflictList(): React.ReactElement {
   const handleKeep = useCallback(
     async (block: BlockRow) => {
       try {
-        const originalContent = originals.get(block.parent_id!)?.content ?? null
+        const originalContent = originals.get(block.parent_id ?? '')?.content ?? null
         // Apply conflict content to the original block (parent_id is the original)
         if (block.parent_id && block.content != null) {
           await editBlock(block.parent_id, block.content)

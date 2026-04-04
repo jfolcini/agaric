@@ -4016,9 +4016,11 @@ describe('BlockTree /attach slash command', () => {
     // Simulate a file selection with a Tauri-style File that has a .path property
     const mockFile = new File(['content'], 'test.pdf', { type: 'application/pdf' })
     Object.defineProperty(mockFile, 'path', { value: '/tmp/test.pdf' })
+    // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
     Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
 
     await act(async () => {
+      // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
       capturedInput!.onchange?.(new Event('change'))
     })
 
@@ -4062,9 +4064,11 @@ describe('BlockTree /attach slash command', () => {
 
     // Simulate a file selection WITHOUT .path (regular browser environment)
     const mockFile = new File(['content'], 'test.pdf', { type: 'application/pdf' })
+    // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
     Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
 
     await act(async () => {
+      // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
       capturedInput!.onchange?.(new Event('change'))
     })
 
@@ -4104,9 +4108,11 @@ describe('BlockTree /attach slash command', () => {
     // File with no type — guessMimeType should be used
     const mockFile = new File(['data'], 'photo.png', { type: '' })
     Object.defineProperty(mockFile, 'path', { value: '/tmp/photo.png' })
+    // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
     Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
 
     await act(async () => {
+      // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
       capturedInput!.onchange?.(new Event('change'))
     })
 

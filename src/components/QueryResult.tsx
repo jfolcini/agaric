@@ -264,7 +264,7 @@ export function QueryResult({
             return result
           })
 
-          items = [...intersectedIds].map((id) => blockMap.get(id)!).slice(0, 50)
+          items = [...intersectedIds].map((id) => blockMap.get(id)).filter((b): b is BlockRow => b != null).slice(0, 50)
         }
       } else if (type === 'backlinks') {
         if (!params.target) {

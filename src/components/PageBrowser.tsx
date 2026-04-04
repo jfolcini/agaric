@@ -117,7 +117,7 @@ function PageTreeItem({
       <button
         type="button"
         style={{ paddingLeft: `${depth * 16}px` }}
-        onClick={() => onNavigate(node.pageId!, node.fullPath)}
+        onClick={() => { if (node.pageId) onNavigate(node.pageId, node.fullPath) }}
         className="w-full text-left px-2 py-1 text-sm hover:bg-accent rounded truncate"
         title={node.fullPath}
       >
