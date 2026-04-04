@@ -7,7 +7,7 @@
  * "Load more" button.
  */
 
-import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { priorityColor } from '../lib/priority-color'
 import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
+import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -402,19 +403,13 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   return (
     <section className="due-panel" aria-label={t('duePanel.duePanelLabel')}>
       {/* Main header -- collapsible */}
-      <button
-        type="button"
-        onClick={toggleCollapsed}
-        className="due-panel-header flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent/50 transition-colors"
-        aria-expanded={!collapsed}
+      <CollapsiblePanelHeader
+        collapsed={collapsed}
+        onToggle={toggleCollapsed}
+        className="due-panel-header"
       >
-        {!collapsed ? (
-          <ChevronDown className="h-4 w-4 shrink-0" />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0" />
-        )}
         {headerLabel}
-      </button>
+      </CollapsiblePanelHeader>
 
       {!collapsed && (
         <div className="due-panel-filters flex items-center gap-1 px-2 py-1">

@@ -68,49 +68,35 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     return pageState != null && pageState.redoStack.length > 0
   })
 
-  const handlePageUndo = useCallback(() => {
-    useUndoStore
-      .getState()
-      .undo(pageId)
-      .then(async (result) => {
-        if (result) {
-          toast(t('pageHeader.undone'), { duration: 1500 })
-          await useBlockStore.getState().load(pageId)
-          try {
-            const pageBlock = await getBlock(pageId)
-            if (pageBlock?.content) {
-              useNavigationStore.getState().replacePage(pageId, pageBlock.content)
-              useResolveStore.getState().set(pageId, pageBlock.content, false)
+  const createUndoRedoHandler = useCallback(
+    (action: 'undo' | 'redo') => () => {
+      const successKey = action === 'undo' ? 'pageHeader.undone' : 'pageHeader.redone'
+      const errorKey = action === 'undo' ? 'pageHeader.undoFailed' : 'pageHeader.redoFailed'
+      useUndoStore
+        .getState()
+        [action](pageId)
+        .then(async (result) => {
+          if (result) {
+            toast(t(successKey), { duration: 1500 })
+            await useBlockStore.getState().load(pageId)
+            try {
+              const pageBlock = await getBlock(pageId)
+              if (pageBlock?.content) {
+                useNavigationStore.getState().replacePage(pageId, pageBlock.content)
+                useResolveStore.getState().set(pageId, pageBlock.content, false)
+              }
+            } catch {
+              // Page title refresh is best-effort
             }
-          } catch {
-            // Page title refresh is best-effort
           }
-        }
-      })
-      .catch(() => toast.error(t('pageHeader.undoFailed')))
-  }, [pageId, t])
+        })
+        .catch(() => toast.error(t(errorKey)))
+    },
+    [pageId, t],
+  )
 
-  const handlePageRedo = useCallback(() => {
-    useUndoStore
-      .getState()
-      .redo(pageId)
-      .then(async (result) => {
-        if (result) {
-          toast(t('pageHeader.redone'), { duration: 1500 })
-          await useBlockStore.getState().load(pageId)
-          try {
-            const pageBlock = await getBlock(pageId)
-            if (pageBlock?.content) {
-              useNavigationStore.getState().replacePage(pageId, pageBlock.content)
-              useResolveStore.getState().set(pageId, pageBlock.content, false)
-            }
-          } catch {
-            // Page title refresh is best-effort
-          }
-        }
-      })
-      .catch(() => toast.error(t('pageHeader.redoFailed')))
-  }, [pageId, t])
+  const handlePageUndo = createUndoRedoHandler('undo')
+  const handlePageRedo = createUndoRedoHandler('redo')
 
   // --- Template state ---
   const [isTemplate, setIsTemplate] = useState(false)
@@ -130,39 +116,48 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       .catch(() => {})
   }, [pageId])
 
-  const handleToggleTemplate = useCallback(async () => {
-    try {
-      if (isTemplate) {
-        await deleteProperty(pageId, 'template')
-        setIsTemplate(false)
-        toast.success(t('pageHeader.templateRemoved'))
-      } else {
-        await setProperty({ blockId: pageId, key: 'template', valueText: 'true' })
-        setIsTemplate(true)
-        toast.success(t('pageHeader.templateSaved'))
+  const createTemplateToggle =
+    (
+      key: string,
+      currentState: boolean,
+      setState: (v: boolean) => void,
+      removedKey: string,
+      savedKey: string,
+      failedKey: string,
+    ) =>
+    async () => {
+      try {
+        if (currentState) {
+          await deleteProperty(pageId, key)
+          setState(false)
+          toast.success(t(removedKey))
+        } else {
+          await setProperty({ blockId: pageId, key, valueText: 'true' })
+          setState(true)
+          toast.success(t(savedKey))
+        }
+      } catch {
+        toast.error(t(failedKey))
       }
-    } catch {
-      toast.error(t('pageHeader.templateFailed'))
+      setKebabOpen(false)
     }
-    setKebabOpen(false)
-  }, [pageId, isTemplate, t])
 
-  const handleToggleJournalTemplate = useCallback(async () => {
-    try {
-      if (isJournalTemplate) {
-        await deleteProperty(pageId, 'journal-template')
-        setIsJournalTemplate(false)
-        toast.success(t('pageHeader.journalTemplateRemoved'))
-      } else {
-        await setProperty({ blockId: pageId, key: 'journal-template', valueText: 'true' })
-        setIsJournalTemplate(true)
-        toast.success(t('pageHeader.journalTemplateSaved'))
-      }
-    } catch {
-      toast.error(t('pageHeader.journalTemplateFailed'))
-    }
-    setKebabOpen(false)
-  }, [pageId, isJournalTemplate, t])
+  const handleToggleTemplate = createTemplateToggle(
+    'template',
+    isTemplate,
+    setIsTemplate,
+    'pageHeader.templateRemoved',
+    'pageHeader.templateSaved',
+    'pageHeader.templateFailed',
+  )
+  const handleToggleJournalTemplate = createTemplateToggle(
+    'journal-template',
+    isJournalTemplate,
+    setIsJournalTemplate,
+    'pageHeader.journalTemplateRemoved',
+    'pageHeader.journalTemplateSaved',
+    'pageHeader.journalTemplateFailed',
+  )
 
   const handleExport = useCallback(async () => {
     try {

@@ -14,6 +14,7 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import type { LucideIcon } from 'lucide-react'
 import {
   Calendar,
   CalendarDays,
@@ -92,6 +93,36 @@ function dueDateColor(dateStr: string): string {
   if (dateStr === todayStr)
     return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
   return 'bg-muted text-muted-foreground'
+}
+
+interface DateChipProps {
+  date: string
+  icon: LucideIcon
+  colorClass: string
+  eventName: string
+  i18nKey: string
+  chipClass: string
+}
+
+function DateChip({ date, icon: Icon, colorClass, eventName, i18nKey, chipClass }: DateChipProps) {
+  const { t } = useTranslation()
+  return (
+    <button
+      type="button"
+      className={cn(
+        `${chipClass} flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none cursor-pointer`,
+        colorClass,
+      )}
+      title={t(i18nKey, { date: formatCompactDate(date) })}
+      aria-label={t(i18nKey, { date: formatCompactDate(date) })}
+      onClick={() => {
+        document.dispatchEvent(new CustomEvent(eventName))
+      }}
+    >
+      <Icon size={14} className="flex-shrink-0" />
+      {formatCompactDate(date)}
+    </button>
+  )
 }
 
 interface SortableBlockProps {
@@ -559,40 +590,26 @@ function SortableBlockInner({
 
           {/* Due date chip — clickable to open date picker */}
           {dueDate && (
-            <button
-              type="button"
-              className={cn(
-                'due-date-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none cursor-pointer',
-                dueDateColor(dueDate),
-              )}
-              title={t('block.dueDate', { date: formatCompactDate(dueDate) })}
-              aria-label={t('block.dueDate', { date: formatCompactDate(dueDate) })}
-              onClick={() => {
-                document.dispatchEvent(new CustomEvent('open-due-date-picker'))
-              }}
-            >
-              <CalendarDays size={14} className="flex-shrink-0" />
-              {formatCompactDate(dueDate)}
-            </button>
+            <DateChip
+              date={dueDate}
+              icon={CalendarDays}
+              colorClass={dueDateColor(dueDate)}
+              eventName="open-due-date-picker"
+              i18nKey="block.dueDate"
+              chipClass="due-date-chip"
+            />
           )}
 
           {/* Scheduled date chip — clickable to open date picker */}
           {scheduledDate && (
-            <button
-              type="button"
-              className={cn(
-                'scheduled-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none cursor-pointer',
-                'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
-              )}
-              title={t('block.scheduledDate', { date: formatCompactDate(scheduledDate) })}
-              aria-label={t('block.scheduledDate', { date: formatCompactDate(scheduledDate) })}
-              onClick={() => {
-                document.dispatchEvent(new CustomEvent('open-scheduled-date-picker'))
-              }}
-            >
-              <Calendar size={14} className="flex-shrink-0" />
-              {formatCompactDate(scheduledDate)}
-            </button>
+            <DateChip
+              date={scheduledDate}
+              icon={Calendar}
+              colorClass="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
+              eventName="open-scheduled-date-picker"
+              i18nKey="block.scheduledDate"
+              chipClass="scheduled-chip"
+            />
           )}
 
           {/* Repeat indicator — special-case for repeat property */}

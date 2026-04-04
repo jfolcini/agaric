@@ -8,7 +8,7 @@
 
 import { Plus, Search, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import type { BlockRow } from '../lib/tauri'
 import { getBlock, listTagsByPrefix, queryByTags } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
@@ -54,7 +55,6 @@ export function TagFilterPanel(): React.ReactElement {
   const [loading, setLoading] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
 
   // Debounced prefix search
@@ -76,33 +76,23 @@ export function TagFilterPanel(): React.ReactElement {
     [t],
   )
 
+  const debounced = useDebouncedCallback((value) => {
+    searchTags(value)
+  }, 300)
+
   function handlePrefixChange(e: React.ChangeEvent<HTMLInputElement>) {
     const value = e.target.value
     setPrefix(value)
 
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current)
-      debounceRef.current = null
-    }
+    debounced.cancel()
 
     if (!value.trim()) {
       setMatchingTags([])
       return
     }
 
-    debounceRef.current = setTimeout(() => {
-      searchTags(value)
-    }, 300)
+    debounced.schedule(value)
   }
-
-  // Cleanup debounce timer on unmount
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current)
-      }
-    }
-  }, [])
 
   // Execute block query when selectedTags or mode changes
   const executeQuery = useCallback(

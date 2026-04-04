@@ -7,13 +7,14 @@
  * "Load more" button.
  */
 
-import { CheckCircle2, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
+import { CheckCircle2, Loader2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, queryByProperty } from '../lib/tauri'
+import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 
 export interface DonePanelProps {
   date: string // YYYY-MM-DD
@@ -191,19 +192,13 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
   return (
     <section className="done-panel" aria-label={t('donePanel.completedItems')}>
       {/* Main header -- collapsible */}
-      <button
-        type="button"
-        onClick={toggleCollapsed}
-        className="done-panel-header flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent/50 transition-colors"
-        aria-expanded={!collapsed}
+      <CollapsiblePanelHeader
+        collapsed={collapsed}
+        onToggle={toggleCollapsed}
+        className="done-panel-header"
       >
-        {!collapsed ? (
-          <ChevronDown className="h-4 w-4 shrink-0" />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0" />
-        )}
         {headerLabel}
-      </button>
+      </CollapsiblePanelHeader>
 
       {!collapsed && (
         <div className="done-panel-content mt-1 space-y-2">

@@ -10,13 +10,14 @@
 
 import { Loader2, Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, getBlock, searchBlocks } from '../lib/tauri'
@@ -40,7 +41,6 @@ export function SearchPanel(): React.ReactElement {
   const [searched, setSearched] = useState(false)
   const [typing, setTyping] = useState(false)
   const [loadingResultId, setLoadingResultId] = useState<string | null>(null)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
   const [recentPages, setRecentPages] = useState<RecentPage[]>([])
   const navigateToPage = useNavigationStore((s) => s.navigateToPage)
@@ -94,14 +94,16 @@ export function SearchPanel(): React.ReactElement {
     if (nextCursor) executeSearch(query, nextCursor)
   }, [nextCursor, query, executeSearch])
 
+  const debounced = useDebouncedCallback((value) => {
+    setTyping(false)
+    executeSearch(value)
+  }, 300)
+
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const value = e.target.value
     setQuery(value)
 
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current)
-      debounceRef.current = null
-    }
+    debounced.cancel()
 
     if (!value.trim()) {
       setResults([])
@@ -113,20 +115,8 @@ export function SearchPanel(): React.ReactElement {
     }
 
     setTyping(true)
-    debounceRef.current = setTimeout(() => {
-      setTyping(false)
-      executeSearch(value)
-    }, 300)
+    debounced.schedule(value)
   }
-
-  // Cleanup debounce timer on unmount
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current)
-      }
-    }
-  }, [])
 
   // Auto-focus search input on mount
   useEffect(() => {
@@ -136,10 +126,7 @@ export function SearchPanel(): React.ReactElement {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current)
-      debounceRef.current = null
-    }
+    debounced.cancel()
     setTyping(false)
     if (query.trim()) {
       executeSearch(query)
