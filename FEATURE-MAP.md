@@ -30,17 +30,17 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 
 ## 2. Database Schema
 
-**17 migration files**. **14 tables + 1 FTS5 virtual table**. **21+ indexes**.
+**17 migration files**. **14 tables + 1 FTS5 virtual table**. **19 indexes**. **2 triggers**.
 
 ### Core Tables
 
 | Table | PK | Purpose |
 |-------|----|---------|
-| `blocks` | `id` (ULID) | Unified entity: content, page, or tag. Columns: block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source, todo_state, priority, due_date, scheduled_date |
+| `blocks` | `id` (ULID) | Unified entity: content, page, or tag. Columns: block_type, content, parent_id, position, deleted_at, archived_at, is_conflict, conflict_source, conflict_type, todo_state, priority, due_date, scheduled_date |
 | `block_tags` | `(block_id, tag_id)` | Tag-to-block associations |
 | `block_properties` | `(block_id, key)` | Typed key-value properties (value_text, value_num, value_date, value_ref) |
 | `block_links` | `(source_id, target_id)` | Derived backlink index from `[[ULID]]` tokens |
-| `attachments` | `id` (ULID) | File attachments: block_id, mime_type, filename, size_bytes, fs_path |
+| `attachments` | `id` (ULID) | File attachments: block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at |
 | `op_log` | `(device_id, seq)` | Append-only operation log with blake3 hash chain |
 | `block_drafts` | `block_id` | Mutable autosave scratch (only mutable table besides caches) |
 | `log_snapshots` | `id` (ULID) | Op log compaction snapshots (zstd+CBOR) |
@@ -61,6 +61,13 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 | Table | Tokenizer | Content |
 |-------|-----------|---------|
 | `fts_blocks` | trigram (case_sensitive=0) | Markdown-stripped text with resolved tag names and page titles |
+
+### Triggers
+
+| Trigger | Event | Purpose |
+|---------|-------|---------|
+| `check_block_type_insert` | BEFORE INSERT on blocks | Enforce valid block_type values (content/tag/page) |
+| `check_block_type_update` | BEFORE UPDATE OF block_type on blocks | Prevent block_type mutation after creation |
 
 ---
 
@@ -101,7 +108,7 @@ React + TipTap frontend, Rust + SQLite backend via Tauri 2. Append-only op log w
 
 ## 5. Tauri Commands (55 core + 5 sync = 60 total)
 
-### Block Operations (10)
+### Block Operations (9)
 
 | Command | Purpose |
 |---------|---------|
@@ -262,21 +269,23 @@ HeadExchange, OpBatch (1000 ops/chunk), ResetRequired, SnapshotOffer/Accept/Reje
 | `useUndoStore` | Per-page undoDepth + redoStack | Page-level undo/redo |
 | `useSyncStore` | state ('idle'/'syncing'/'error'/'offline'), peers[], opsReceived/Sent | Sync UI state |
 
-### Views (9)
+### Views (10)
 
-journal, search, pages, tags, trash, status, conflicts, history, page-editor — see **section 8** for dedicated per-view breakdown.
+journal, search, pages, tags, properties, trash, status, conflicts, history, page-editor — see **section 8** for dedicated per-view breakdown.
 
-### Components (39 domain + 15 shadcn/ui + 1 editor = 55 total)
+### Components (43 domain + 14 shadcn/ui + 1 editor = 58 total)
 
-**Page-level**: PageEditor, PageHeader, PageBrowser, JournalPage (with JournalControls), SearchPanel, TagList, TagFilterPanel, TrashView, ConflictList, HistoryView, StatusPanel
+**Page-level**: PageEditor, PageHeader, PageBrowser, JournalPage (with JournalControls), SearchPanel, TagList, TagFilterPanel, TrashView, ConflictList, HistoryView, StatusPanel, PropertiesView
 
 **Block rendering**: BlockTree, SortableBlock, EditableBlock, StaticBlock, FormattingToolbar, BlockContextMenu
 
-**References**: LinkedReferences, UnlinkedReferences, BacklinkFilterBuilder, SourcePageFilter, LinkEditPopover
+**References**: LinkedReferences, UnlinkedReferences, BacklinkFilterBuilder, SourcePageFilter, LinkEditPopover, QueryResult
 
-**Properties**: PagePropertyTable, DiffDisplay
+**Properties**: PagePropertyTable, DiffDisplay, PropertyChip, BlockPropertyDrawer
 
-**Agenda**: AgendaResults, AgendaFilterBuilder, DonePanel, DuePanel
+**Agenda**: AgendaResults, AgendaFilterBuilder (with AgendaSortGroupControls), DonePanel, DuePanel
+
+**History**: HistoryPanel, HistorySheet
 
 **Sync**: DeviceManagement, PairingDialog, QrScanner, UnpairConfirmDialog
 
@@ -286,7 +295,7 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 
 **shadcn/ui**: alert-dialog, badge, button, calendar, card, input, popover, scroll-area, separator, sheet, sidebar, skeleton, sonner, tooltip
 
-### Custom Hooks (13)
+### Custom Hooks (14)
 
 | Hook | Purpose |
 |------|---------|
@@ -303,6 +312,7 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 | `useViewportObserver` | IntersectionObserver for block virtualization |
 | `useIsMobile` | Mobile viewport detection (\<768px) |
 | `useRovingEditor` | TipTap instance management (mount/unmount/serialize) |
+| `useBlockKeyboard` | Block-level keyboard handling (Enter, Backspace, Tab, arrow keys, shortcuts) |
 
 ### Utility Modules (src/lib/)
 
@@ -316,12 +326,16 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 - `open-url.ts` — URL opening utilities
 - `i18n.ts` — i18next setup (scaffolded, not fully implemented)
 - `utils.ts` — cn() classname utility (clsx + tailwind-merge)
+- `agenda-sort.ts` — Agenda sorting/grouping (sortAgendaBlocks, groupByDate/priority/state)
+- `export-graph.ts` — Export all pages as ZIP of markdown files
+- `repeat-utils.ts` — Repeat/recurrence formatting (formatRepeatLabel)
+- `template-utils.ts` — Journal template loading (loadJournalTemplate, insertTemplateBlocks)
 
 ---
 
 ## 8. Views (Sidebar Navigation)
 
-8 sidebar buttons + 1 programmatic view. Each maps to a top-level component rendered by App.tsx based on `useNavigationStore.currentView`.
+9 sidebar buttons + 1 programmatic view. Each maps to a top-level component rendered by App.tsx based on `useNavigationStore.currentView`.
 
 ### 8.1 Journal (`journal`)
 
@@ -384,7 +398,20 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 - **TagFilterPanel**: Boolean tag queries (AND/OR/NOT) via TagExpr
 - See also: **section 16** (Tag System — hierarchy, prefix search, TagExpr)
 
-### 8.5 Trash (`trash`)
+### 8.5 Properties (`properties`)
+
+**Component**: `PropertiesView.tsx` (~381 lines)
+**Sidebar icon**: Settings2
+
+- Browse, create, and manage property definitions
+- Search/filter property keys
+- Create new property definition form (key, value_type: text/number/date/select)
+- Delete property definition with confirmation dialog
+- Edit select-type options inline
+- Displays value type and usage information
+- See also: **section 14** (Property System — types, schema registry, built-in seeds)
+
+### 8.6 Trash (`trash`)
 
 **Component**: `TrashView.tsx` (~183 lines)
 **Sidebar icon**: Trash2
@@ -395,7 +422,7 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 - **Purge**: permanent physical delete (non-reversible, confirmation dialog)
 - Displays deletion timestamp
 
-### 8.6 Status (`status`)
+### 8.7 Status (`status`)
 
 **Component**: `StatusPanel.tsx` (~274 lines) + `DeviceManagement`
 **Sidebar icon**: Activity (with colored dot: green=idle, amber=syncing, red=error, gray=no peers)
@@ -408,7 +435,7 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 - Color-coded queue health (green/amber/red)
 - **DeviceManagement** sub-panel: paired peers list, sync stats (ops received/sent, last synced), pair/unpair actions
 
-### 8.7 Conflicts (`conflicts`)
+### 8.8 Conflicts (`conflicts`)
 
 **Component**: `ConflictList.tsx` (~510 lines)
 **Sidebar icon**: GitMerge (with red dot when unresolved conflicts exist, polled every 30s)
@@ -424,7 +451,7 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 - **Batch resolution**: Checkbox per conflict, batch toolbar with Select all/Deselect all, Keep all/Discard all. Batch confirmation dialog calls APIs directly (no per-item toasts). Partial failure toast with retry action.
 - Navigation link to original block
 
-### 8.8 History (`history`)
+### 8.9 History (`history`)
 
 **Component**: `HistoryView.tsx` (~627 lines)
 **Sidebar icon**: History
@@ -442,7 +469,7 @@ journal, search, pages, tags, trash, status, conflicts, history, page-editor —
 - Batch revert with confirmation dialog
 - See also: **section 11** (Undo/Redo System — reverse.rs, undoStore)
 
-### 8.9 Page Editor (`page-editor`)
+### 8.10 Page Editor (`page-editor`)
 
 **Component**: `PageEditor.tsx` (~129 lines) + PageHeader, BlockTree, LinkedReferences, UnlinkedReferences, PagePropertyTable
 **Not in sidebar** — navigated to programmatically via `navigateToPage()` which pushes onto `pageStack`.
@@ -485,7 +512,7 @@ Minimal extension set (no starter-kit). Single roving instance.
 
 **Progressive disclosure**: PRIORITY 1/2/3, REPEAT (daily/weekly/monthly/yearly), Heading 1-6, ASSIGNEE (Me/Custom), LOCATION (Office/Home/Remote/Custom)
 
-### Markdown Serializer (`markdown-serializer.ts`, 684 lines)
+### Markdown Serializer (`markdown-serializer.ts`, 852 lines)
 
 Zero external dependencies. O(n) bidirectional conversion.
 
@@ -525,6 +552,7 @@ Zero external dependencies. O(n) bidirectional conversion.
 | | Ctrl+Shift+Up/Down | Move block up/down |
 | **Task** | Ctrl+Enter | Cycle TODO/DOING/DONE/none |
 | | Ctrl+Shift+1/2/3 | Priority 1/2/3 |
+| | Ctrl+Shift+P | Show block properties drawer |
 | **Collapse** | Ctrl+. | Toggle collapse/expand |
 | **Pickers** | @ | Tag picker |
 | | [[ | Block link picker |
@@ -635,9 +663,9 @@ All serialize as `{ kind, message }` for Tauri 2 frontend.
 
 ---
 
-## 19. Rust Backend Modules (30)
+## 19. Rust Backend Modules (31)
 
-backlink_query, cache, commands, dag, db, device, draft, error, fts, hash, materializer, merge, op, op_log, pagination, pairing, peer_refs, recovery, reverse, snapshot, soft_delete, sync_cert, sync_daemon, sync_events, sync_net, sync_protocol, sync_scheduler, tag_query, ulid, word_diff
+backlink_query, cache, commands, dag, db, device, draft, error, fts, hash, import, materializer, merge, op, op_log, pagination, pairing, peer_refs, recovery, reverse, snapshot, soft_delete, sync_cert, sync_daemon, sync_events, sync_net, sync_protocol, sync_scheduler, tag_query, ulid, word_diff
 
 ---
 
@@ -649,9 +677,9 @@ backlink_query, cache, commands, dag, db, device, draft, error, fts, hash, mater
 | Frontend property-based | fast-check | 1 file, 500 iterations/property |
 | Frontend E2E | Playwright | 14 spec files |
 | Backend unit | tokio + insta | 15+ modules |
-| Backend integration | tokio + insta | 2 files (8755 lines) |
+| Backend integration | tokio + insta | 3 files |
 | Backend benchmarks | Criterion | 12 bench files (manual only) |
-| Snapshots | insta | 22 .snap files |
+| Snapshots | insta | 25 .snap files |
 
 **Coverage thresholds**: lines 80%, functions 80%, branches 75%, statements 80%
 
@@ -677,9 +705,9 @@ backlink_query, cache, commands, dag, db, device, draft, error, fts, hash, mater
 2. **build** (matrix: Linux + Windows + macOS): cargo tauri build
 3. **android-build** (Ubuntu): JDK 17 + Android SDK 36 + NDK 27
 
-### Pre-commit (prek, 15 hooks)
+### Pre-commit (prek, 20 hooks)
 
-trailing-whitespace, end-of-file-fixer, check-yaml/toml/json, check-merge-conflict, check-added-large-files, no-commit-to-branch, biome-check, tsc, no-hsl-rgb-var-wrap, vitest, npm-audit, license-checker, depcheck, cargo-fmt, cargo-clippy, cargo-test, cargo-deny, cargo-machete
+trailing-whitespace, end-of-file-fixer, check-yaml, check-toml, check-json, check-merge-conflict, check-added-large-files, no-commit-to-branch, biome-check, tsc, no-hsl-rgb-var-wrap, vitest, npm-audit, license-checker, depcheck, cargo-fmt, cargo-clippy, cargo-test, cargo-deny, cargo-machete
 
 ---
 
