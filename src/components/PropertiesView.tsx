@@ -267,6 +267,11 @@ export function PropertiesView(): React.ReactElement {
           placeholder={t('propertiesView.createKey')}
           className="flex-1"
           aria-label={t('propertiesView.createKey')}
+          aria-describedby={
+            newKey.trim() && definitions.some((d) => d.key === newKey.trim())
+              ? 'duplicate-key-warning'
+              : undefined
+          }
         />
         <select
           value={newType}
@@ -280,10 +285,21 @@ export function PropertiesView(): React.ReactElement {
             </option>
           ))}
         </select>
-        <Button type="submit" variant="outline" disabled={!newKey.trim() || isCreating}>
+        <Button
+          type="submit"
+          variant="outline"
+          disabled={
+            !newKey.trim() || isCreating || definitions.some((d) => d.key === newKey.trim())
+          }
+        >
           <Plus className="h-4 w-4" /> {t('propertiesView.create')}
         </Button>
       </form>
+      {newKey.trim() && definitions.some((d) => d.key === newKey.trim()) && (
+        <p id="duplicate-key-warning" className="text-xs text-destructive">
+          {t('propertiesView.duplicateKey')}
+        </p>
+      )}
 
       {/* Loading skeleton */}
       {loading && (

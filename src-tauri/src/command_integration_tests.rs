@@ -3062,7 +3062,7 @@ async fn delete_property_writes_op_log_entry() {
         DEV,
         &mat,
         block.id.clone(),
-        "priority".into(),
+        "status".into(),
         Some("high".into()),
         None,
         None,
@@ -3072,7 +3072,7 @@ async fn delete_property_writes_op_log_entry() {
     .unwrap();
     settle(&mat).await;
 
-    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "priority".into())
+    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "status".into())
         .await
         .unwrap();
 
@@ -3088,7 +3088,7 @@ async fn delete_property_writes_op_log_entry() {
         "payload must contain block_id"
     );
     assert!(
-        ops[2].payload.contains("priority"),
+        ops[2].payload.contains("status"),
         "payload must contain property key"
     );
 }
@@ -6991,17 +6991,19 @@ async fn delete_property_clears_reserved_key_column() {
         "priority should be set before delete"
     );
 
-    // Delete the reserved key property
-    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "priority".into())
-        .await
-        .unwrap();
-    settle(&mat).await;
-
-    // Verify column is cleared
-    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    // Delete the reserved key property — should be rejected (built-in)
+    let result = delete_property_inner(&pool, DEV, &mat, block.id.clone(), "priority".into()).await;
     assert!(
-        fetched.priority.is_none(),
-        "delete_property on reserved key must clear the blocks column"
+        matches!(result, Err(AppError::Validation(_))),
+        "deleting a built-in property should return Validation error, got: {result:?}"
+    );
+
+    // Verify column is NOT cleared
+    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert_eq!(
+        fetched.priority.as_deref(),
+        Some("2"),
+        "built-in property must remain after rejected delete"
     );
 
     mat.shutdown();
@@ -7135,17 +7137,20 @@ async fn thin_commands_survive_delete_property_cycle() {
         "todo_state should be TODO before delete"
     );
 
-    // Delete the todo_state property
-    delete_property_inner(&pool, DEV, &mat, block.id.clone(), "todo_state".into())
-        .await
-        .unwrap();
-    settle(&mat).await;
-
-    // Verify todo_state is NULL
-    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    // Delete the todo_state property — should be rejected (built-in)
+    let result =
+        delete_property_inner(&pool, DEV, &mat, block.id.clone(), "todo_state".into()).await;
     assert!(
-        fetched.todo_state.is_none(),
-        "todo_state should be NULL after delete_property"
+        matches!(result, Err(AppError::Validation(_))),
+        "deleting a built-in property should return Validation error, got: {result:?}"
+    );
+
+    // Verify todo_state is still set
+    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    assert_eq!(
+        fetched.todo_state.as_deref(),
+        Some("TODO"),
+        "built-in property must remain after rejected delete"
     );
 
     mat.shutdown();

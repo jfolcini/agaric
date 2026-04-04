@@ -36,6 +36,10 @@ import {
   updatePropertyDefOptions,
 } from '../lib/tauri'
 
+// Properties designed for task blocks (content blocks with todo_state).
+// Filtered out of the "add property" popover for pages.
+const TASK_ONLY_PROPERTIES = new Set(['effort', 'assignee', 'location'])
+
 interface PagePropertyTableProps {
   pageId: string
 }
@@ -156,6 +160,7 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
   const filteredDefs = definitions.filter(
     (d) =>
       !properties.some((p) => p.key === d.key) &&
+      !TASK_ONLY_PROPERTIES.has(d.key) &&
       (!defSearch || d.key.toLowerCase().includes(defSearch.toLowerCase())),
   )
 

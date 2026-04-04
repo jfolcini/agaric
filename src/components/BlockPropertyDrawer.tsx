@@ -31,6 +31,23 @@ import {
 } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 
+const BUILTIN_PROPERTY_KEYS = new Set([
+  'todo_state',
+  'priority',
+  'due_date',
+  'scheduled_date',
+  'created_at',
+  'completed_at',
+  'effort',
+  'assignee',
+  'location',
+  'repeat',
+  'repeat-until',
+  'repeat-count',
+  'repeat-seq',
+  'repeat-origin',
+])
+
 export interface BlockPropertyDrawerProps {
   blockId: string | null
   open: boolean
@@ -262,15 +279,17 @@ export function BlockPropertyDrawer({
                     if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                   }}
                 />
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="shrink-0 text-muted-foreground hover:text-destructive"
-                  aria-label={t('property.delete')}
-                  onClick={() => handleDelete(prop.key)}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
+                {!BUILTIN_PROPERTY_KEYS.has(prop.key) && (
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                    aria-label={t('property.delete')}
+                    onClick={() => handleDelete(prop.key)}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                )}
               </div>
             ))
           )}

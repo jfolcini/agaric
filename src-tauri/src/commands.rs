@@ -29,10 +29,10 @@ use crate::import::{self, ImportResult};
 use crate::materializer::{Materializer, StatusInfo};
 use crate::now_rfc3339;
 use crate::op::{
-    is_reserved_property_key, validate_set_property, AddTagPayload, CreateBlockPayload,
-    DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
-    OpRef, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload,
-    UndoResult,
+    is_builtin_property_key, is_reserved_property_key, validate_set_property, AddTagPayload,
+    CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
+    MoveBlockPayload, OpPayload, OpRef, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
+    SetPropertyPayload, UndoResult,
 };
 use crate::op_log;
 use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse, ProjectedAgendaEntry};
@@ -1865,7 +1865,7 @@ pub async fn set_todo_state_inner(
                 None,
             )
             .await?;
-            delete_property_inner(
+            delete_property_core(
                 pool,
                 device_id,
                 materializer,
@@ -1891,7 +1891,7 @@ pub async fn set_todo_state_inner(
         }
         // Any → null (un-tasking): clear both
         (Some(_), None) => {
-            delete_property_inner(
+            delete_property_core(
                 pool,
                 device_id,
                 materializer,
@@ -1899,7 +1899,7 @@ pub async fn set_todo_state_inner(
                 "created_at".to_string(),
             )
             .await?;
-            delete_property_inner(
+            delete_property_core(
                 pool,
                 device_id,
                 materializer,
@@ -2043,6 +2043,27 @@ pub(crate) fn is_valid_iso_date(s: &str) -> bool {
 ///
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
 pub async fn delete_property_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: String,
+    key: String,
+) -> Result<(), AppError> {
+    if is_builtin_property_key(&key) {
+        return Err(AppError::Validation(format!(
+            "built-in property '{key}' cannot be deleted"
+        )));
+    }
+
+    delete_property_core(pool, device_id, materializer, block_id, key).await
+}
+
+/// Core deletion logic without the built-in key guard.
+///
+/// Used internally by state-transition helpers (e.g. `set_todo_state_inner`)
+/// that need to clear system-managed properties like `created_at` /
+/// `completed_at`.
+async fn delete_property_core(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
@@ -7859,6 +7880,69 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn delete_property_rejects_builtin_key() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "test block".into(),
+            None,
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Set a built-in property
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "effort".into(),
+            Some("2h".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // Attempt to delete the built-in property — should fail
+        let result =
+            delete_property_inner(&pool, DEV, &mat, block.id.clone(), "effort".into()).await;
+        assert!(
+            matches!(result, Err(AppError::Validation(_))),
+            "deleting a built-in property should return Validation error, got: {result:?}"
+        );
+
+        // Deleting a custom property should still work
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "my_custom".into(),
+            Some("val".into()),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        delete_property_inner(&pool, DEV, &mat, block.id.clone(), "my_custom".into())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn get_properties_returns_empty_for_new_block() {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -8420,6 +8504,104 @@ mod tests {
                 .unwrap();
         assert_eq!(page2.items.len(), 2, "second page should have 2 items");
         assert!(!page2.has_more, "should be the last page");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_history_all_returns_ops_from_all_pages() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create two separate pages with children
+        let (page_a, _children_a) = create_page_with_children(&pool, &mat).await;
+        let page_b = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "Second Page".into(),
+            None,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let child_b = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "child of page b".into(),
+            Some(page_b.id.clone()),
+            Some(1),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        // __all__ should return ops from both pages
+        let result = list_page_history_inner(&pool, "__all__".to_string(), None, None, None)
+            .await
+            .unwrap();
+
+        // page_a (1 create) + 2 children + page_b (1 create) + child_b (1 create) = 5
+        assert_eq!(
+            result.items.len(),
+            5,
+            "should have ops from all pages, got: {}",
+            result.items.len()
+        );
+
+        // Verify ops reference both pages' blocks
+        let block_ids: Vec<String> = result
+            .items
+            .iter()
+            .map(|e| {
+                let payload: serde_json::Value = serde_json::from_str(&e.payload).unwrap();
+                payload["block_id"].as_str().unwrap().to_string()
+            })
+            .collect();
+        assert!(block_ids.contains(&page_a), "should contain ops for page_a");
+        assert!(
+            block_ids.contains(&page_b.id),
+            "should contain ops for page_b"
+        );
+        assert!(
+            block_ids.contains(&child_b.id),
+            "should contain ops for child_b"
+        );
+
+        // Pagination: limit=2
+        let page1 = list_page_history_inner(&pool, "__all__".to_string(), None, None, Some(2))
+            .await
+            .unwrap();
+        assert_eq!(page1.items.len(), 2, "first page should have 2 items");
+        assert!(page1.has_more, "should have more items");
+        assert!(page1.next_cursor.is_some(), "should have a cursor");
+
+        let page2 = list_page_history_inner(
+            &pool,
+            "__all__".to_string(),
+            None,
+            page1.next_cursor,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        assert_eq!(page2.items.len(), 2, "second page should have 2 items");
+        assert!(page2.has_more, "should still have more items");
+
+        let page3 = list_page_history_inner(
+            &pool,
+            "__all__".to_string(),
+            None,
+            page2.next_cursor,
+            Some(2),
+        )
+        .await
+        .unwrap();
+        assert_eq!(page3.items.len(), 1, "third page should have 1 item");
+        assert!(!page3.has_more, "should be the last page");
     }
 
     // -- revert_ops tests --

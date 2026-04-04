@@ -252,4 +252,54 @@ describe('PropertiesView', () => {
     expect(screen.getByText('DONE')).toBeInTheDocument()
     expect(screen.getByText('none')).toBeInTheDocument()
   })
+
+  it('disables create button when key matches existing definition', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce([makePropDef('status', 'text')])
+
+    render(<PropertiesView />)
+
+    await waitFor(() => {
+      expect(screen.getByText('status')).toBeInTheDocument()
+    })
+
+    const keyInput = screen.getByPlaceholderText('Property key')
+    await user.type(keyInput, 'status')
+
+    const createBtn = screen.getByRole('button', { name: /Create/i })
+    expect(createBtn).toBeDisabled()
+  })
+
+  it('shows duplicate key warning message', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce([makePropDef('status', 'text')])
+
+    render(<PropertiesView />)
+
+    await waitFor(() => {
+      expect(screen.getByText('status')).toBeInTheDocument()
+    })
+
+    const keyInput = screen.getByPlaceholderText('Property key')
+    await user.type(keyInput, 'status')
+
+    expect(screen.getByText('A property with this key already exists')).toBeInTheDocument()
+  })
+
+  it('enables create button when key is unique', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce([makePropDef('status', 'text')])
+
+    render(<PropertiesView />)
+
+    await waitFor(() => {
+      expect(screen.getByText('status')).toBeInTheDocument()
+    })
+
+    const keyInput = screen.getByPlaceholderText('Property key')
+    await user.type(keyInput, 'new_key')
+
+    const createBtn = screen.getByRole('button', { name: /Create/i })
+    expect(createBtn).toBeEnabled()
+  })
 })

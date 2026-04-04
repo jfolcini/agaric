@@ -349,4 +349,43 @@ describe('BlockPropertyDrawer', () => {
     const input = await screen.findByLabelText('status value')
     expect(input).toBeInTheDocument()
   })
+
+  it('does not show delete button for built-in properties', async () => {
+    const props = [makeProp('created_at', { value_text: '2026-01-01' })]
+    setupMock(props, [makeDef('created_at')])
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('created_at')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByRole('button', { name: 'Delete property' })).not.toBeInTheDocument()
+  })
+
+  it('shows delete button for custom properties', async () => {
+    const props = [makeProp('my_custom', { value_text: 'hello' })]
+    setupMock(props, [makeDef('my_custom')])
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('my_custom')).toBeInTheDocument()
+    })
+
+    expect(screen.getByRole('button', { name: 'Delete property' })).toBeInTheDocument()
+  })
+
+  it('does not show delete button for repeat properties', async () => {
+    const props = [makeProp('repeat', { value_text: '+1w' })]
+    setupMock(props, [makeDef('repeat')])
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('repeat')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByRole('button', { name: 'Delete property' })).not.toBeInTheDocument()
+  })
 })

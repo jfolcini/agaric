@@ -322,6 +322,28 @@ pub fn is_reserved_property_key(key: &str) -> bool {
     )
 }
 
+/// Property keys seeded by migrations 0014 and 0016 that are system-managed
+/// and must not be deleted by users.
+pub fn is_builtin_property_key(key: &str) -> bool {
+    matches!(
+        key,
+        "todo_state"
+            | "priority"
+            | "due_date"
+            | "scheduled_date"
+            | "created_at"
+            | "completed_at"
+            | "effort"
+            | "assignee"
+            | "location"
+            | "repeat"
+            | "repeat-until"
+            | "repeat-count"
+            | "repeat-seq"
+            | "repeat-origin"
+    )
+}
+
 /// The schema allows multiple value columns (text, num, date, ref) but the
 /// domain invariant is that exactly one must be set per operation. This
 /// function enforces that invariant at the command layer, before the payload
@@ -1273,6 +1295,48 @@ mod tests {
         assert!(
             !is_reserved_property_key(""),
             "empty string must not be recognized as reserved"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // is_builtin_property_key
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_builtin_property_key_recognizes_all() {
+        let builtin_keys = [
+            "todo_state",
+            "priority",
+            "due_date",
+            "scheduled_date",
+            "created_at",
+            "completed_at",
+            "effort",
+            "assignee",
+            "location",
+            "repeat",
+            "repeat-until",
+            "repeat-count",
+            "repeat-seq",
+            "repeat-origin",
+        ];
+        for key in builtin_keys {
+            assert!(
+                is_builtin_property_key(key),
+                "'{key}' must be recognized as built-in"
+            );
+        }
+    }
+
+    #[test]
+    fn is_builtin_property_key_rejects_custom() {
+        assert!(
+            !is_builtin_property_key("custom_key"),
+            "custom_key must not be recognized as built-in"
+        );
+        assert!(
+            !is_builtin_property_key(""),
+            "empty string must not be recognized as built-in"
         );
     }
 }

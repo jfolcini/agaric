@@ -738,6 +738,37 @@ pub async fn list_page_history(
         None => (None, "", 0, ""),
     };
 
+    if page_id == "__all__" {
+        // Global history: query all ops without page-scoping CTE
+        let rows = sqlx::query_as::<_, HistoryEntry>(
+            "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \
+             FROM op_log ol \
+             WHERE (?1 IS NULL OR ol.op_type = ?1) \
+               AND (?2 IS NULL OR ( \
+                    ol.created_at < ?3 \
+                    OR (ol.created_at = ?3 AND ol.seq < ?4) \
+                    OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) \
+             ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
+             LIMIT ?5",
+        )
+        .bind(op_type_filter) // ?1
+        .bind(cursor_flag) // ?2
+        .bind(cursor_created_at) // ?3
+        .bind(cursor_seq) // ?4
+        .bind(fetch_limit) // ?5
+        .bind(cursor_device_id) // ?6
+        .fetch_all(pool)
+        .await?;
+
+        return build_page_response(rows, page.limit, |last| Cursor {
+            id: last.device_id.clone(),
+            position: None,
+            deleted_at: Some(last.created_at.clone()),
+            seq: Some(last.seq),
+            rank: None,
+        });
+    }
+
     let rows = sqlx::query_as!(
         HistoryEntry,
         "WITH RECURSIVE page_blocks(id) AS ( \

@@ -1240,8 +1240,6 @@ pub async fn eval_unlinked_references(
     .into_iter()
     .collect();
 
-    let total_count = matching_ids.len();
-
     if matching_ids.is_empty() {
         return Ok(GroupedBacklinkResponse {
             groups: vec![],
@@ -1273,6 +1271,7 @@ pub async fn eval_unlinked_references(
     }
 
     let filtered_count = page_groups.values().map(|(_, blocks)| blocks.len()).sum();
+    let total_count = filtered_count;
 
     // 6. Sort groups alphabetically by page_title (None sorts last)
     let mut group_list: Vec<(String, Option<String>, Vec<String>)> = page_groups
@@ -4685,6 +4684,10 @@ mod tests {
         assert!(
             resp.groups.is_empty(),
             "blocks from the target page itself should be excluded"
+        );
+        assert_eq!(
+            resp.total_count, 0,
+            "total_count should exclude self-references"
         );
     }
 

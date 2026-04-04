@@ -774,3 +774,38 @@ describe('PagePropertyTable edit select options', () => {
     })
   })
 })
+
+describe('PagePropertyTable task-only property filtering', () => {
+  it('filters out task-only properties from add-property options', async () => {
+    const user = userEvent.setup()
+    setupMock(
+      [],
+      [
+        makeDef('effort', 'number'),
+        makeDef('assignee', 'text'),
+        makeDef('location', 'text'),
+        makeDef('due_date', 'date'),
+        makeDef('custom_prop', 'text'),
+      ],
+    )
+
+    render(<PagePropertyTable pageId="PAGE_1" />)
+    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /add property/i })).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /add property/i }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText('effort')).not.toBeInTheDocument()
+    expect(screen.queryByText('assignee')).not.toBeInTheDocument()
+    expect(screen.queryByText('location')).not.toBeInTheDocument()
+    expect(screen.getByText('due_date')).toBeInTheDocument()
+    expect(screen.getByText('custom_prop')).toBeInTheDocument()
+  })
+})

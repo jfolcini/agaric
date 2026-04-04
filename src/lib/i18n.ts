@@ -470,6 +470,7 @@ const resources = {
       'propertiesView.addTaskState': 'New state (e.g., CANCELLED)',
       'propertiesView.add': 'Add',
       'propertiesView.taskStatesReload': 'Reload the page to apply changes.',
+      'propertiesView.duplicateKey': 'A property with this key already exists',
       'propertiesView.deadlineWarning': 'Deadline Warning',
       'propertiesView.deadlineWarningDesc':
         'Show tasks approaching their deadline in the DuePanel. Set to 0 to disable.',
