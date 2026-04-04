@@ -1,5 +1,37 @@
 # Session Log
 
+## Session 192 — 2026-04-04 — Batch 44: UX-M27..M31 PairingDialog → shadcn Dialog, EmptyState consistency, AgendaResults spacing
+
+### Summary
+Refactored PairingDialog from custom overlay/dialog to shadcn Dialog (removing ~50 lines of manual focus trap + Escape handling). Consolidated 5 components onto shared EmptyState. Standardized AgendaResults spacing to match DuePanel/DonePanel.
+
+**Commit:** 6ecfe59
+
+### Changes
+
+| Area | Change |
+|------|--------|
+| src/components/PairingDialog.tsx | UX-M27: Replaced custom overlay + `<div role="dialog">` + manual focus trap + Escape handler with shadcn `<Dialog>` / `<DialogContent>` / `<DialogHeader>` / `<DialogTitle>`. Added `onCloseAutoFocus` for trigger focus return, `aria-describedby={undefined}` for Radix warning suppression. |
+| src/components/__tests__/PairingDialog.test.tsx | UX-M27: Updated `container.querySelector` → `document.querySelector` (5 tests, Portal-rendered content). Updated aria-labelledby test for Radix auto-linking. Removed unused `container` destructurings. |
+| src/components/AttachmentList.tsx | UX-M28: Custom empty div → `<EmptyState compact icon={Paperclip}>` |
+| src/components/PropertiesView.tsx | UX-M28: Custom empty div → `<EmptyState icon={Settings2}>` |
+| src/components/UnlinkedReferences.tsx | UX-M28: `<p>` element → `<EmptyState compact>` |
+| src/components/PageBrowser.tsx | UX-M28: Two custom empties → `<EmptyState>` (first with action button prop) |
+| src/components/TagList.tsx | UX-M28: Custom empty div → `<EmptyState icon={Tag}>` |
+| src/lib/i18n.ts | UX-M28: Added `tagList.empty` i18n key |
+| src/components/AgendaResults.tsx | UX-M29: Group header `px-2` → `px-3`. UX-M31: `space-y-1` → `space-y-2` (3 places) |
+
+### Stats
+- 9 files changed, 301 insertions, 352 deletions
+- 3088 frontend tests pass (29 PairingDialog tests pass)
+- All prek hooks pass
+
+### REVIEW-LATER removals
+- Removed: UX-M27, UX-M28, UX-M29, UX-M31 (4 items)
+- Open items: 20 (was 24)
+
+---
+
 ## Session 191 — 2026-04-04 — Batch 43: UX-M22..M26 + M-30 + M-38 hardcoded colors → semantic badge tokens
 
 ### Summary
