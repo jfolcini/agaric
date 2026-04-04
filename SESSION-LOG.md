@@ -1,5 +1,37 @@
 # Session Log
 
+## Session 196 — 2026-04-04 — Batch 50: Backend bugs + property guards (H-7, H-8, M-51, M-52, M-53)
+
+### Summary
+Fixed 5 items: 2 high-priority backend bugs (unlinked refs count, history view) and 3 medium-priority property UX guards (built-in delete protection, duplicate key prevention, task-only filtering).
+
+### Batch 50
+
+**Commit:** 5020e1a
+
+| Area | Change |
+|------|--------|
+| backlink_query.rs | H-7: Move `total_count` assignment after self-reference filtering — was `matching_ids.len()` (pre-filter), now `filtered_count` (post-filter). |
+| pagination.rs | H-8: Add `if page_id == "__all__"` branch with runtime `query_as` (no CTE). Same cursor pagination semantics. Fixes global HistoryView. |
+| op.rs | M-51: Add `is_builtin_property_key()` — 14 keys from migrations 0014+0016. |
+| commands.rs | M-51: Guard in `delete_property_inner` returns `Validation` error for built-in keys. Extract `delete_property_core` for internal callers (`set_todo_state_inner`). |
+| command_integration_tests.rs | M-51: Update 3 integration tests for new guard behavior (assert rejection instead of success). |
+| BlockPropertyDrawer.tsx | M-51: `BUILTIN_PROPERTY_KEYS` Set — hide delete button for built-in properties. |
+| PropertiesView.tsx | M-52: Disable create button when key matches existing definition. Add `aria-describedby` + warning text. |
+| PagePropertyTable.tsx | M-53: `TASK_ONLY_PROPERTIES` Set — filter effort/assignee/location from add-property popover. |
+| i18n.ts | M-52: Add `propertiesView.duplicateKey` key. |
+| Test files | 4 test files: backlink_query (1 assertion), commands (2 new tests), BlockPropertyDrawer (3 new), PropertiesView (3 new), PagePropertyTable (1 new). |
+
+**Review findings applied:**
+- Review A (Rust): All pass, no issues. Approved.
+- Review B (Frontend): Added `aria-describedby` linking warning to input (M-52), added comment explaining task-only properties (M-53).
+
+**Stats:** 12 files changed, 490 insertions, 40 deletions. 1589/1589 Rust tests pass, 3102/3102 frontend tests pass. All prek hooks pass.
+
+**Resolved:** H-7, H-8, M-51, M-52, M-53 (5 items). 72 open items remain.
+
+---
+
 ## Session 195 — 2026-04-04 — Batch 49: Core editing bugs + toolbar + mobile touch (H-3, H-11, H-12, UX-H13, MOB-H1, MOB-H2, MOB-H3, MOB-H5, MOB-L5)
 
 ### Summary
