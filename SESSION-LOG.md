@@ -196,6 +196,24 @@
 - Commit: `dc1a7ad`
 - REVIEW-LATER: F-3, F-6, TH-5, TL-1, TL-2, TL-3 resolved. 62 → **56 open items**.
 
+### Phase 1 (batch 12): Features + CI + tests (F-16, F-18, F-24, M-15, TM-6, TL-9)
+
+4 subagents (QrScanner, property options, table picker, i18n tests) + 2 orchestrator (CI parity, TL-9 false positive).
+
+| File | Change |
+|------|--------|
+| `PairingDialog.tsx` + `QrScanner.tsx` | F-16: Added "Scan QR Code" toggle alongside manual passphrase entry. Lazy-loads QrScanner. |
+| `PagePropertyTable.tsx` + test | F-18: Added "Edit options" popover for select-type properties. Removed PR-16 TODO. 5 new tests. |
+| `BlockTree.tsx` + test | F-24: Table size picker — parse `/table NxM` syntax. 7 new tests. |
+| `.github/workflows/ci.yml` | M-15: Added 5 missing pre-commit checks (audit, license, depcheck, deny, machete). |
+| `i18n.test.ts` | TM-6: New test file with 101 tests covering all 26 namespaces. |
+| — | TL-9: Verified false positive — 4 import tests exist in StatusPanel.test.tsx. |
+
+### Stats
+- Frontend: 113 new tests (101 i18n + 5 PagePropertyTable + 7 BlockTree). 28/28 PairingDialog pass.
+- Commit: `b897891`
+- REVIEW-LATER: F-16, F-18, F-24, M-15, TM-6, TL-9 resolved. 56 → **50 open items**.
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system
