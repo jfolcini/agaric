@@ -16,7 +16,11 @@ use tokio::runtime::Runtime;
 /// Every 10th block includes the word "benchmark" so search queries on that
 /// term match ~10 % of the corpus.
 fn make_content(i: usize) -> String {
-    let extra = if i % 10 == 0 { " benchmark" } else { "" };
+    let extra = if i.is_multiple_of(10) {
+        " benchmark"
+    } else {
+        ""
+    };
     format!(
         "The quick brown fox {i} jumped over the lazy dog {}{extra}",
         i % 100

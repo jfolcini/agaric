@@ -38,7 +38,9 @@ async fn seed_blocks(pool: &SqlitePool, materializer: &Materializer, n: usize) {
             DEV_BENCH,
             materializer,
             "content".into(),
-            format!("Seeded block number {i} with some placeholder content for snapshot benchmarks."),
+            format!(
+                "Seeded block number {i} with some placeholder content for snapshot benchmarks."
+            ),
             None,
             Some(i as i64 + 1),
         )
@@ -107,7 +109,8 @@ fn bench_apply_snapshot(c: &mut Criterion) {
         let source_pool = rt.block_on(fresh_pool(&dir, &format!("snap_src_{n}")));
         let materializer = Materializer::new(source_pool.clone());
         rt.block_on(seed_blocks(&source_pool, &materializer, n as usize));
-        rt.block_on(create_snapshot(&source_pool, DEV_BENCH)).unwrap();
+        rt.block_on(create_snapshot(&source_pool, DEV_BENCH))
+            .unwrap();
 
         // Retrieve the compressed snapshot data
         let (_snap_id, compressed) = rt

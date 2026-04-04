@@ -533,7 +533,7 @@ export function JournalControls(): React.ReactElement {
                 }}
                 onSelectWeek={(dates) => {
                   if (dates.length > 0) {
-                    navigateToDate(dates[0]!, 'weekly')
+                    navigateToDate(dates[0] as Date, 'weekly')
                     setCalendarOpen(false)
                   }
                 }}

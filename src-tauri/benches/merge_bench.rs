@@ -114,9 +114,14 @@ async fn setup_merge_scenario(
     let pool = fresh_pool(dir, db_name).await;
 
     // Device A: create_block
-    append_local_op_at(&pool, DEV_A, make_create(block_id, base_text), FIXED_TS.into())
-        .await
-        .unwrap();
+    append_local_op_at(
+        &pool,
+        DEV_A,
+        make_create(block_id, base_text),
+        FIXED_TS.into(),
+    )
+    .await
+    .unwrap();
 
     // Device A: edit_block (our edit)
     append_local_op_at(
@@ -351,9 +356,6 @@ criterion_group!(
     bench_merge_text_conflict,
 );
 
-criterion_group!(
-    conflict_resolution_benches,
-    bench_resolve_property_conflict,
-);
+criterion_group!(conflict_resolution_benches, bench_resolve_property_conflict,);
 
 criterion_main!(merge_text_benches, conflict_resolution_benches);

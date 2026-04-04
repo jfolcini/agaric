@@ -584,8 +584,8 @@ mod tests {
         let plaintext = b"hello world";
         let mut encrypted = encrypt_message(&key, plaintext).unwrap();
         // Corrupt the nonce (first 12 bytes)
-        for i in 0..12 {
-            encrypted[i] ^= 0xFF;
+        for byte in encrypted.iter_mut().take(12) {
+            *byte ^= 0xFF;
         }
         let result = decrypt_message(&key, &encrypted);
         assert!(result.is_err(), "corrupted nonce should fail decryption");

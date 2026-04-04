@@ -309,7 +309,7 @@ function serializeTable(node: TableNode): string {
       for (const cell of row.content) {
         const text =
           cell.content && cell.content.length > 0
-            ? serializeParagraph(cell.content[0]!).replace(/\|/g, '\\|')
+            ? serializeParagraph(cell.content[0] as ParagraphNode).replace(/\|/g, '\\|')
             : ''
         cells.push(text)
       }
@@ -319,8 +319,8 @@ function serializeTable(node: TableNode): string {
 
   if (serializedRows.length === 0) return ''
 
-  const header = `| ${serializedRows[0]!.join(' | ')} |`
-  const separator = `| ${serializedRows[0]!.map(() => '---').join(' | ')} |`
+  const header = `| ${serializedRows[0]?.join(' | ')} |`
+  const separator = `| ${serializedRows[0]?.map(() => '---').join(' | ')} |`
   const dataRows = serializedRows.slice(1).map((row) => `| ${row.join(' | ')} |`)
 
   return [header, separator, ...dataRows].join('\n')
@@ -527,7 +527,7 @@ export function parse(markdown: string): DocNode {
   let i = 0
 
   while (i < lines.length) {
-    const line = lines[i]!
+    const line = lines[i] as string
 
     // Fenced code block: ```
     if (line.startsWith('```')) {
@@ -535,8 +535,8 @@ export function parse(markdown: string): DocNode {
       const language = rawLang && /^[a-zA-Z0-9_+\-#.]+$/.test(rawLang) ? rawLang : null
       const codeLines: string[] = []
       i++ // skip opening fence
-      while (i < lines.length && !lines[i]!.startsWith('```')) {
-        codeLines.push(lines[i]!)
+      while (i < lines.length && !lines[i]?.startsWith('```')) {
+        codeLines.push(lines[i] as string)
         i++
       }
       if (i < lines.length) i++ // skip closing fence
@@ -557,9 +557,9 @@ export function parse(markdown: string): DocNode {
     // Blockquote: > prefix (collect consecutive > lines)
     if (line.startsWith('> ') || line === '>') {
       const quoteLines: string[] = []
-      while (i < lines.length && (lines[i]!.startsWith('> ') || lines[i] === '>')) {
+      while (i < lines.length && (lines[i]?.startsWith('> ') || lines[i] === '>')) {
         // Strip the "> " prefix (or lone ">")
-        quoteLines.push(lines[i] === '>' ? '' : lines[i]!.slice(2))
+        quoteLines.push(lines[i] === '>' ? '' : (lines[i]?.slice(2) as string))
         i++
       }
       // Recursively parse the inner content
@@ -577,8 +577,8 @@ export function parse(markdown: string): DocNode {
     // Heading: # to ######
     const headingMatch = line.match(/^(#{1,6}) (.*)$/)
     if (headingMatch) {
-      const level = headingMatch[1]!.length
-      const content = headingMatch[2]!
+      const level = headingMatch[1]?.length as number
+      const content = headingMatch[2] as string
       const inlineNodes = parseLine(content)
       if (inlineNodes.length === 0) {
         blocks.push({ type: 'heading', attrs: { level } })
@@ -592,13 +592,13 @@ export function parse(markdown: string): DocNode {
     // Table: lines starting with |
     if (line.startsWith('|')) {
       const tableLines: string[] = []
-      while (i < lines.length && lines[i]!.startsWith('|')) {
-        tableLines.push(lines[i]!)
+      while (i < lines.length && lines[i]?.startsWith('|')) {
+        tableLines.push(lines[i] as string)
         i++
       }
       const rows: TableRowNode[] = []
       for (let r = 0; r < tableLines.length; r++) {
-        const tableLine = tableLines[r]!
+        const tableLine = tableLines[r] as string
         if (/^\|[\s\-:|]+\|$/.test(tableLine)) continue
         const cellTexts = tableLine
           .replace(/^\|/, '')

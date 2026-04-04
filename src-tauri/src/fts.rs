@@ -365,8 +365,7 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
         if let Some(r) = row {
             if r.deleted_at.is_none() && !r.is_conflict {
                 if let Some(ref content) = r.content {
-                    let stripped =
-                        strip_for_fts_with_maps(content, &tag_names, &page_titles);
+                    let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
                     sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
                         .bind(bid)
                         .bind(&stripped)
@@ -781,7 +780,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         insert_block(&pool, TAG_ULID, "tag", "urgent", None, None).await;
 
-        let input = format!("task #{}", format!("[{TAG_ULID}]"));
+        let input = format!("task #[{TAG_ULID}]");
         let result = strip_for_fts(&input, &pool).await.unwrap();
         assert_eq!(result, "task urgent");
     }
@@ -799,7 +798,7 @@ mod tests {
     #[tokio::test]
     async fn strip_unknown_tag_ref_becomes_empty() {
         let (pool, _dir) = test_pool().await;
-        let input = format!("task #{}", format!("[{UNKNOWN_ULID}]"));
+        let input = format!("task #[{UNKNOWN_ULID}]");
         let result = strip_for_fts(&input, &pool).await.unwrap();
         assert_eq!(result, "task ");
     }
@@ -1110,7 +1109,7 @@ mod tests {
         // and the content block references it via #[ULID], stripped to "urgent"
         let tag_results = search_fts(&pool, "urgent", &page).await.unwrap();
         assert!(
-            tag_results.items.len() >= 1,
+            !tag_results.items.is_empty(),
             "at least the tag block should match 'urgent'"
         );
 

@@ -42,7 +42,7 @@ export function useUndoShortcuts(): void {
       const { currentView, pageStack } = useNavigationStore.getState()
       if (currentView !== 'page-editor' || pageStack.length === 0) return
 
-      const pageId = pageStack[pageStack.length - 1]!.pageId
+      const pageId = pageStack[pageStack.length - 1]?.pageId as string
 
       // Ctrl+Z (or Cmd+Z on Mac) — Undo
       // Skip Ctrl+Shift+Z (that's page-level redo, handled below)

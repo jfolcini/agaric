@@ -20,13 +20,13 @@ async fn seed_tags(pool: &SqlitePool, count: usize) {
         let blk_id = format!("BLK{i:020}");
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'tag', ?)")
             .bind(&tag_id)
-            .bind(&format!("tag-{i}"))
+            .bind(format!("tag-{i}"))
             .execute(&mut *tx)
             .await
             .unwrap();
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', ?)")
             .bind(&blk_id)
-            .bind(&format!("note {i}"))
+            .bind(format!("note {i}"))
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -47,7 +47,7 @@ async fn seed_pages(pool: &SqlitePool, count: usize) {
         let id = format!("PG{i:021}");
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', ?)")
             .bind(&id)
-            .bind(&format!("Page Title {i}"))
+            .bind(format!("Page Title {i}"))
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -70,7 +70,7 @@ async fn seed_agenda(pool: &SqlitePool, count: usize) {
         let date = format!("2025-{:02}-{:02}", (i % 12) + 1, (i % 28) + 1);
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', ?)")
             .bind(&id)
-            .bind(&format!("agenda item {i}"))
+            .bind(format!("agenda item {i}"))
             .execute(&mut *tx)
             .await
             .unwrap();

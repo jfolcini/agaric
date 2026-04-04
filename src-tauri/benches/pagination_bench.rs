@@ -23,7 +23,7 @@ async fn seed_children(pool: &sqlx::SqlitePool, n: usize) {
              VALUES (?, 'content', ?, 'PARENT', ?)",
         )
         .bind(&id)
-        .bind(&format!("c{i}"))
+        .bind(format!("c{i}"))
         .bind(i as i64 + 1)
         .execute(&mut *tx)
         .await
@@ -40,7 +40,7 @@ async fn seed_typed_blocks(pool: &sqlx::SqlitePool, block_type: &str, n: usize) 
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, ?, ?)")
             .bind(&id)
             .bind(block_type)
-            .bind(&format!("content {i}"))
+            .bind(format!("content {i}"))
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -64,7 +64,7 @@ async fn seed_trash(pool: &sqlx::SqlitePool, n: usize) {
             "INSERT INTO blocks (id, block_type, content, deleted_at) VALUES (?, 'content', ?, ?)",
         )
         .bind(&id)
-        .bind(&format!("trash {i}"))
+        .bind(format!("trash {i}"))
         .bind(&ts)
         .execute(&mut *tx)
         .await
@@ -89,7 +89,7 @@ async fn seed_tagged_blocks(pool: &sqlx::SqlitePool, n: usize) {
         let id = format!("TAGGED{i:020}");
         sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', ?)")
             .bind(&id)
-            .bind(&format!("tagged {i}"))
+            .bind(format!("tagged {i}"))
             .execute(&mut *tx)
             .await
             .unwrap();

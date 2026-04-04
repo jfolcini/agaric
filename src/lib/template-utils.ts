@@ -22,7 +22,7 @@ export async function loadJournalTemplate(): Promise<{
   const pages = resp.items.filter((b) => b.block_type === 'page')
   const duplicateWarning =
     pages.length > 1
-      ? `Multiple journal templates found (${pages.length}). Using "${pages[0]!.content ?? pages[0]!.id}". ` +
+      ? `Multiple journal templates found (${pages.length}). Using "${pages[0]?.content ?? pages[0]?.id}". ` +
         'Remove the journal-template property from extra pages to avoid ambiguity.'
       : null
   return { template: pages[0] ?? null, duplicateWarning }
@@ -42,7 +42,7 @@ export async function loadTemplatePagesWithPreview(): Promise<
     try {
       const children = await listBlocks({ parentId: page.id, limit: 1 })
       if (children.items.length > 0) {
-        const text = children.items[0]!.content ?? ''
+        const text = children.items[0]?.content ?? ''
         preview = text.length > 60 ? `${text.slice(0, 60)}…` : text
       }
     } catch {

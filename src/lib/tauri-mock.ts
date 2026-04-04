@@ -1399,7 +1399,7 @@ export function setupMock(): void {
         // If first line is a heading, use it as the page title
         const headingMatch = lines[0]?.match(/^#+\s+(.+)/)
         if (headingMatch) {
-          pageTitle = headingMatch[1]!.trim()
+          pageTitle = headingMatch[1]?.trim() as string
           lines.shift() // remove heading line from block content
         }
 
@@ -1413,7 +1413,10 @@ export function setupMock(): void {
         let position = 0
         for (const line of lines) {
           // Strip leading list markers (-, *, +, numbered) and whitespace
-          const trimmed = line.replace(/^\s*[-*+]\s+/, '').replace(/^\s*\d+\.\s+/, '').trim()
+          const trimmed = line
+            .replace(/^\s*[-*+]\s+/, '')
+            .replace(/^\s*\d+\.\s+/, '')
+            .trim()
           if (!trimmed) continue
 
           const blockId = fakeId()

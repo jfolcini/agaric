@@ -28,8 +28,8 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { ulidToDate } from '@/lib/format'
-import { useNavigationStore } from '../../stores/navigation'
 import { emptyPage, makeConflict } from '../../__tests__/fixtures'
+import { useNavigationStore } from '../../stores/navigation'
 import { ConflictList } from '../ConflictList'
 import { renderRichContent } from '../StaticBlock'
 
@@ -63,12 +63,11 @@ function makeUlid(timestampMs: number): string {
   let ts = timestampMs
   const chars: string[] = []
   for (let i = 0; i < 10; i++) {
-    chars.unshift(CROCKFORD[ts % 32]!)
+    chars.unshift(CROCKFORD[ts % 32] as string)
     ts = Math.floor(ts / 32)
   }
   return `${chars.join('')}AAAAAAAAAAAAAAAA`
 }
-
 
 const originalBlock = {
   id: 'ORIG001',
@@ -81,7 +80,6 @@ const originalBlock = {
   is_conflict: false,
   conflict_type: null,
 }
-
 
 /**
  * Helper: set up invoke mock that dispatches by command name.
@@ -134,7 +132,10 @@ describe('ConflictList', () => {
 
   it('renders conflict items with type badge and content', async () => {
     const page = {
-      items: [makeConflict({ id: 'C1', content: 'conflict content 1' }), makeConflict({ id: 'C2', content: 'conflict content 2' })],
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict content 1' }),
+        makeConflict({ id: 'C2', content: 'conflict content 2' }),
+      ],
       next_cursor: null,
       has_more: false,
     }
@@ -788,7 +789,10 @@ describe('ConflictList', () => {
 
   it('renders conflict type badge with "Text" for each conflict', async () => {
     const page = {
-      items: [makeConflict({ id: 'C1', content: 'conflict content 1' }), makeConflict({ id: 'C2', content: 'conflict content 2' })],
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict content 1' }),
+        makeConflict({ id: 'C2', content: 'conflict content 2' }),
+      ],
       next_cursor: null,
       has_more: false,
     }
@@ -801,8 +805,8 @@ describe('ConflictList', () => {
     // Each conflict item should have a "Text" conflict type badge
     const typeBadges = container.querySelectorAll('.conflict-type-badge')
     expect(typeBadges).toHaveLength(2)
-    expect(typeBadges[0]!.textContent).toBe('Text')
-    expect(typeBadges[1]!.textContent).toBe('Text')
+    expect(typeBadges[0]?.textContent).toBe('Text')
+    expect(typeBadges[1]?.textContent).toBe('Text')
   })
 
   it('renders Property conflict type badge when backend provides it', async () => {
@@ -1793,7 +1797,10 @@ describe('ConflictList', () => {
   it('shows batch toolbar when conflicts are selected (#651 C-8)', async () => {
     const user = userEvent.setup()
     const page = {
-      items: [makeConflict({ id: 'C1', content: 'conflict 1' }), makeConflict({ id: 'C2', content: 'conflict 2' })],
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
+      ],
       next_cursor: null,
       has_more: false,
     }
@@ -1805,7 +1812,7 @@ describe('ConflictList', () => {
 
     // Click first checkbox
     const checkboxes = screen.getAllByRole('checkbox')
-    await user.click(checkboxes[0]!)
+    await user.click(checkboxes[0] as HTMLElement)
 
     expect(screen.getByText('1 selected')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Keep all/i })).toBeInTheDocument()
@@ -1815,7 +1822,10 @@ describe('ConflictList', () => {
   it('select all selects all conflicts (#651 C-8)', async () => {
     const user = userEvent.setup()
     const page = {
-      items: [makeConflict({ id: 'C1', content: 'conflict 1' }), makeConflict({ id: 'C2', content: 'conflict 2' })],
+      items: [
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
+      ],
       next_cursor: null,
       has_more: false,
     }
@@ -1827,7 +1837,7 @@ describe('ConflictList', () => {
 
     // Select one to show toolbar
     const checkboxes = screen.getAllByRole('checkbox')
-    await user.click(checkboxes[0]!)
+    await user.click(checkboxes[0] as HTMLElement)
 
     // Click "Select all"
     const selectAllBtn = screen.getByRole('button', { name: /Select all/i })
@@ -1869,8 +1879,8 @@ describe('ConflictList', () => {
 
     // Select both conflicts
     const checkboxes = screen.getAllByRole('checkbox')
-    await user.click(checkboxes[0]!)
-    await user.click(checkboxes[1]!)
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
 
     expect(screen.getByText('2 selected')).toBeInTheDocument()
 
@@ -1918,8 +1928,8 @@ describe('ConflictList', () => {
 
     // Select both conflicts
     const checkboxes = screen.getAllByRole('checkbox')
-    await user.click(checkboxes[0]!)
-    await user.click(checkboxes[1]!)
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
 
     // Click "Discard all"
     const discardAllBtn = screen.getByRole('button', { name: /Discard all/i })
@@ -1968,7 +1978,7 @@ describe('ConflictList', () => {
     await screen.findByText('conflict 1')
 
     // Select a conflict to show toolbar
-    const checkbox = screen.getAllByRole('checkbox')[0]!
+    const checkbox = screen.getAllByRole('checkbox')[0] as HTMLElement
     await user.click(checkbox)
 
     expect(screen.getByText('1 selected')).toBeInTheDocument()
@@ -2011,8 +2021,8 @@ describe('ConflictList', () => {
     await screen.findByText('conflict 1')
 
     const checkboxes = screen.getAllByRole('checkbox')
-    await user.click(checkboxes[0]!)
-    await user.click(checkboxes[1]!)
+    await user.click(checkboxes[0] as HTMLElement)
+    await user.click(checkboxes[1] as HTMLElement)
 
     const keepAllBtn = screen.getByRole('button', { name: /Keep all/i })
     await user.click(keepAllBtn)

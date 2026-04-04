@@ -190,7 +190,7 @@ describe('QueryResult', () => {
     await screen.findByText(/Result/)
 
     // Click header to collapse
-    const header = screen.getByText('type:tag expr:test').closest('button')!
+    const header = screen.getByText('type:tag expr:test').closest('button') as HTMLElement
     await user.click(header)
 
     expect(screen.queryByText(/Result/)).not.toBeInTheDocument()
@@ -236,7 +236,7 @@ describe('QueryResult', () => {
     render(<QueryResult expression="type:tag expr:test" onNavigate={onNavigate} />)
 
     const item = await screen.findByText(/Click me/)
-    await user.click(item.closest('button')!)
+    await user.click(item.closest('button') as HTMLElement)
 
     expect(onNavigate).toHaveBeenCalledWith('P1')
   })
@@ -413,15 +413,17 @@ describe('detectColumns', () => {
 describe('QueryResult – table mode', () => {
   const TABLE_EXPRESSION = 'type:tag expr:project table:true'
 
-  const makeBlock = (overrides: Partial<{
-    id: string
-    content: string
-    parent_id: string | null
-    todo_state: string | null
-    priority: string | null
-    due_date: string | null
-    scheduled_date: string | null
-  }> = {}) => ({
+  const makeBlock = (
+    overrides: Partial<{
+      id: string
+      content: string
+      parent_id: string | null
+      todo_state: string | null
+      priority: string | null
+      due_date: string | null
+      scheduled_date: string | null
+    }> = {},
+  ) => ({
     id: overrides.id ?? 'B1',
     block_type: 'content',
     content: overrides.content ?? 'Task A',
@@ -485,7 +487,13 @@ describe('QueryResult – table mode', () => {
 
   it('table has correct columns from block properties', async () => {
     mockTagResults([
-      makeBlock({ id: 'B1', content: 'Task A', todo_state: 'TODO', priority: '1', due_date: '2025-06-01' }),
+      makeBlock({
+        id: 'B1',
+        content: 'Task A',
+        todo_state: 'TODO',
+        priority: '1',
+        due_date: '2025-06-01',
+      }),
       makeBlock({ id: 'B2', content: 'Task B', todo_state: 'DONE', priority: '2', due_date: null }),
     ])
 
@@ -534,8 +542,8 @@ describe('QueryResult – table mode', () => {
     const firstDataRow = rows[1]
     const secondDataRow = rows[2]
 
-    expect(within(firstDataRow!).getByText(/Alpha task/)).toBeInTheDocument()
-    expect(within(secondDataRow!).getByText(/Beta task/)).toBeInTheDocument()
+    expect(within(firstDataRow as HTMLElement).getByText(/Alpha task/)).toBeInTheDocument()
+    expect(within(secondDataRow as HTMLElement).getByText(/Beta task/)).toBeInTheDocument()
 
     // Verify aria-sort is set
     expect(contentHeader.closest('th')).toHaveAttribute('aria-sort', 'ascending')
@@ -546,13 +554,15 @@ describe('QueryResult – table mode', () => {
     expect(contentHeader.closest('th')).toHaveAttribute('aria-sort', 'descending')
 
     const rowsAfter = within(table).getAllByRole('row')
-    expect(within(rowsAfter[1]!).getByText(/Beta task/)).toBeInTheDocument()
-    expect(within(rowsAfter[2]!).getByText(/Alpha task/)).toBeInTheDocument()
+    expect(within(rowsAfter[1] as HTMLElement).getByText(/Beta task/)).toBeInTheDocument()
+    expect(within(rowsAfter[2] as HTMLElement).getByText(/Alpha task/)).toBeInTheDocument()
   })
 
   it('table content cells are clickable and navigate', async () => {
     const onNavigate = vi.fn()
-    mockTagResults([makeBlock({ id: 'B1', content: 'Navigate me', parent_id: 'P1', todo_state: 'TODO' })])
+    mockTagResults([
+      makeBlock({ id: 'B1', content: 'Navigate me', parent_id: 'P1', todo_state: 'TODO' }),
+    ])
 
     const user = userEvent.setup()
     render(<QueryResult expression={TABLE_EXPRESSION} onNavigate={onNavigate} />)
@@ -562,7 +572,7 @@ describe('QueryResult – table mode', () => {
     })
 
     const link = screen.getByText(/Navigate me/)
-    await user.click(link.closest('button')!)
+    await user.click(link.closest('button') as HTMLElement)
 
     expect(onNavigate).toHaveBeenCalledWith('P1')
   })
@@ -603,9 +613,7 @@ describe('buildFilters', () => {
 
   it('maps custom property key to PropertyText filter', () => {
     const filters = buildFilters([{ key: 'status', value: 'active' }], [])
-    expect(filters).toEqual([
-      { type: 'PropertyText', key: 'status', op: 'Eq', value: 'active' },
-    ])
+    expect(filters).toEqual([{ type: 'PropertyText', key: 'status', op: 'Eq', value: 'active' }])
   })
 
   it('maps tag filters to HasTagPrefix', () => {
@@ -638,15 +646,17 @@ describe('buildFilters', () => {
 /* ------------------------------------------------------------------ */
 
 describe('QueryResult – multi-filter (filtered)', () => {
-  const makeBlock = (overrides: Partial<{
-    id: string
-    content: string
-    parent_id: string | null
-    todo_state: string | null
-    priority: string | null
-    due_date: string | null
-    scheduled_date: string | null
-  }> = {}) => ({
+  const makeBlock = (
+    overrides: Partial<{
+      id: string
+      content: string
+      parent_id: string | null
+      todo_state: string | null
+      priority: string | null
+      due_date: string | null
+      scheduled_date: string | null
+    }> = {},
+  ) => ({
     id: overrides.id ?? 'B1',
     block_type: 'content',
     content: overrides.content ?? 'Task A',
@@ -666,9 +676,7 @@ describe('QueryResult – multi-filter (filtered)', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_property') {
         return {
-          items: [
-            makeBlock({ id: 'B1', content: 'TODO task', todo_state: 'TODO' }),
-          ],
+          items: [makeBlock({ id: 'B1', content: 'TODO task', todo_state: 'TODO' })],
           next_cursor: null,
           has_more: false,
         }

@@ -185,18 +185,17 @@ pub async fn find_lca(
     let mut chain_a: Vec<(String, i64)> = Vec::new();
     {
         // Process op_a by borrowing from the parameter — no clone needed.
-        let mut next: Option<(String, i64)> =
-            match get_op_by_seq(pool, &op_a.0, op_a.1).await {
-                Ok(record) => extract_prev_edit(&record)?,
-                Err(AppError::NotFound(_)) if has_snapshots > 0 => {
-                    return Err(AppError::InvalidOperation(format!(
-                        "edit chain broken at ({}, {}) — likely due to op log compaction; \
+        let mut next: Option<(String, i64)> = match get_op_by_seq(pool, &op_a.0, op_a.1).await {
+            Ok(record) => extract_prev_edit(&record)?,
+            Err(AppError::NotFound(_)) if has_snapshots > 0 => {
+                return Err(AppError::InvalidOperation(format!(
+                    "edit chain broken at ({}, {}) — likely due to op log compaction; \
                          LCA requires intact chains",
-                        op_a.0, op_a.1
-                    )));
-                }
-                Err(e) => return Err(e),
-            };
+                    op_a.0, op_a.1
+                )));
+            }
+            Err(e) => return Err(e),
+        };
         while let Some(key) = next.take() {
             if (key.0 == op_a.0 && key.1 == op_a.1)
                 || chain_a.iter().any(|(s, n)| *s == key.0 && *n == key.1)
@@ -232,18 +231,17 @@ pub async fn find_lca(
     }
     let mut chain_b: Vec<(String, i64)> = Vec::new();
     {
-        let mut next: Option<(String, i64)> =
-            match get_op_by_seq(pool, &op_b.0, op_b.1).await {
-                Ok(record) => extract_prev_edit(&record)?,
-                Err(AppError::NotFound(_)) if has_snapshots > 0 => {
-                    return Err(AppError::InvalidOperation(format!(
-                        "edit chain broken at ({}, {}) — likely due to op log compaction; \
+        let mut next: Option<(String, i64)> = match get_op_by_seq(pool, &op_b.0, op_b.1).await {
+            Ok(record) => extract_prev_edit(&record)?,
+            Err(AppError::NotFound(_)) if has_snapshots > 0 => {
+                return Err(AppError::InvalidOperation(format!(
+                    "edit chain broken at ({}, {}) — likely due to op log compaction; \
                          LCA requires intact chains",
-                        op_b.0, op_b.1
-                    )));
-                }
-                Err(e) => return Err(e),
-            };
+                    op_b.0, op_b.1
+                )));
+            }
+            Err(e) => return Err(e),
+        };
         while let Some(key) = next.take() {
             if visited.contains(&(key.0.as_str(), key.1)) {
                 return Ok(Some(key));

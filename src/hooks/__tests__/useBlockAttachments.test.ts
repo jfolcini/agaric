@@ -82,9 +82,7 @@ describe('useBlockAttachments loading', () => {
     })
 
     expect(result.current.attachments).toHaveLength(0)
-    const listCalls = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'list_attachments',
-    )
+    const listCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments')
     expect(listCalls).toHaveLength(0)
   })
 
@@ -169,7 +167,12 @@ describe('useBlockAttachments loading state', () => {
 describe('useBlockAttachments handleAddAttachment', () => {
   it('calls addAttachment IPC and notifies undo store', async () => {
     const onNewActionSpy = vi.fn()
-    useBlockStore.setState({ blocks: [], rootParentId: 'PAGE_1', focusedBlockId: null, loading: false })
+    useBlockStore.setState({
+      blocks: [],
+      rootParentId: 'PAGE_1',
+      focusedBlockId: null,
+      loading: false,
+    })
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
     const newRow = makeAttachmentRow('ATT_NEW', 'BLOCK_1', 'new.pdf')
@@ -187,7 +190,12 @@ describe('useBlockAttachments handleAddAttachment', () => {
     })
 
     await act(async () => {
-      await result.current.handleAddAttachment('new.pdf', 'application/pdf', 12345, '/files/new.pdf')
+      await result.current.handleAddAttachment(
+        'new.pdf',
+        'application/pdf',
+        12345,
+        '/files/new.pdf',
+      )
     })
 
     expect(mockedInvoke).toHaveBeenCalledWith('add_attachment', {
@@ -204,7 +212,12 @@ describe('useBlockAttachments handleAddAttachment', () => {
 
   it('does not notify undo on failure', async () => {
     const onNewActionSpy = vi.fn()
-    useBlockStore.setState({ blocks: [], rootParentId: 'PAGE_1', focusedBlockId: null, loading: false })
+    useBlockStore.setState({
+      blocks: [],
+      rootParentId: 'PAGE_1',
+      focusedBlockId: null,
+      loading: false,
+    })
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -220,7 +233,12 @@ describe('useBlockAttachments handleAddAttachment', () => {
     })
 
     await act(async () => {
-      await result.current.handleAddAttachment('fail.pdf', 'application/pdf', 100, '/files/fail.pdf')
+      await result.current.handleAddAttachment(
+        'fail.pdf',
+        'application/pdf',
+        100,
+        '/files/fail.pdf',
+      )
     })
 
     expect(onNewActionSpy).not.toHaveBeenCalled()
@@ -238,12 +256,15 @@ describe('useBlockAttachments handleAddAttachment', () => {
     })
 
     await act(async () => {
-      await result.current.handleAddAttachment('file.pdf', 'application/pdf', 100, '/files/file.pdf')
+      await result.current.handleAddAttachment(
+        'file.pdf',
+        'application/pdf',
+        100,
+        '/files/file.pdf',
+      )
     })
 
-    const addCalls = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'add_attachment',
-    )
+    const addCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'add_attachment')
     expect(addCalls).toHaveLength(0)
   })
 })
@@ -255,7 +276,12 @@ describe('useBlockAttachments handleAddAttachment', () => {
 describe('useBlockAttachments handleDeleteAttachment', () => {
   it('calls deleteAttachment IPC and notifies undo store', async () => {
     const onNewActionSpy = vi.fn()
-    useBlockStore.setState({ blocks: [], rootParentId: 'PAGE_1', focusedBlockId: null, loading: false })
+    useBlockStore.setState({
+      blocks: [],
+      rootParentId: 'PAGE_1',
+      focusedBlockId: null,
+      loading: false,
+    })
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
     const existing = [
@@ -285,12 +311,17 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
 
     expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
     expect(result.current.attachments).toHaveLength(1)
-    expect(result.current.attachments[0]!.id).toBe('ATT_2')
+    expect(result.current.attachments[0]?.id).toBe('ATT_2')
   })
 
   it('does not notify undo on failure', async () => {
     const onNewActionSpy = vi.fn()
-    useBlockStore.setState({ blocks: [], rootParentId: 'PAGE_1', focusedBlockId: null, loading: false })
+    useBlockStore.setState({
+      blocks: [],
+      rootParentId: 'PAGE_1',
+      focusedBlockId: null,
+      loading: false,
+    })
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
     const existing = [makeAttachmentRow('ATT_1', 'BLOCK_1', 'file1.pdf')]
@@ -330,9 +361,7 @@ describe('useBlockAttachments handleDeleteAttachment', () => {
       await result.current.handleDeleteAttachment('ATT_1')
     })
 
-    const deleteCalls = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'delete_attachment',
-    )
+    const deleteCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_attachment')
     expect(deleteCalls).toHaveLength(0)
   })
 })

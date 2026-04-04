@@ -169,7 +169,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
         return { selectedBlockIds: [blockId] }
       }
       const visibleIds = blocks.map((b) => b.id)
-      const lastSelected = selectedBlockIds[selectedBlockIds.length - 1]!
+      const lastSelected = selectedBlockIds[selectedBlockIds.length - 1] as string
       const lastIdx = visibleIds.indexOf(lastSelected)
       const targetIdx = visibleIds.indexOf(blockId)
       if (lastIdx < 0 || targetIdx < 0) {
@@ -216,7 +216,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       // and all its descendants.
       const descendants = getDragDescendants(blocks, afterBlockId)
       let insertIdx = idx + 1
-      while (insertIdx < blocks.length && descendants.has(blocks[insertIdx]!.id)) {
+      while (insertIdx < blocks.length && descendants.has((blocks[insertIdx] as FlatBlock).id)) {
         insertIdx++
       }
 
@@ -284,7 +284,10 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     const blocks = doc.content ?? []
     if (blocks.length <= 1) {
       // Single block or empty — just edit, no split needed
-      const content = blocks.length === 1 ? serialize({ type: 'doc', content: [blocks[0]!] }) : ''
+      const content =
+        blocks.length === 1
+          ? serialize({ type: 'doc', content: [blocks[0] as (typeof blocks)[number]] })
+          : ''
       if (content !== markdown) await get().edit(blockId, content)
       return
     }
@@ -296,13 +299,16 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     if (nonEmpty.length === 0) return
 
     // First block: edit the original
-    const first = serialize({ type: 'doc', content: [nonEmpty[0]!] })
+    const first = serialize({ type: 'doc', content: [nonEmpty[0] as (typeof nonEmpty)[number]] })
     await get().edit(blockId, first)
 
     // Remaining blocks: create new blocks below, in order
     let lastId = blockId
     for (let i = 1; i < nonEmpty.length; i++) {
-      const content = serialize({ type: 'doc', content: [nonEmpty[i]!] })
+      const content = serialize({
+        type: 'doc',
+        content: [nonEmpty[i] as (typeof nonEmpty)[number]],
+      })
       const newId = await get().createBelow(lastId, content)
       if (newId) lastId = newId
     }
@@ -323,16 +329,16 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     const siblings = blocks.filter(
       (b) => b.id !== blockId && (b.parent_id ?? null) === (parentId ?? null),
     )
-    const lastSiblingPos = siblings.length > 0 ? (siblings[siblings.length - 1]!.position ?? 0) : 0
-    const firstSiblingPos = siblings.length > 0 ? (siblings[0]!.position ?? 0) : 0
+    const lastSiblingPos = siblings.length > 0 ? (siblings[siblings.length - 1]?.position ?? 0) : 0
+    const firstSiblingPos = siblings.length > 0 ? (siblings[0]?.position ?? 0) : 0
 
     let newPosition: number
     if (newIndex > oldIndex) {
       if (newIndex >= blocks.length - 1) {
         newPosition = lastSiblingPos + 1
       } else {
-        const beforePos = blocks[newIndex]!.position ?? 0
-        const afterPos = blocks[newIndex + 1]!.position ?? 0
+        const beforePos = blocks[newIndex]?.position ?? 0
+        const afterPos = blocks[newIndex + 1]?.position ?? 0
         newPosition = Math.floor((beforePos + afterPos) / 2)
         if (newPosition <= beforePos) {
           newPosition = beforePos + 1
@@ -342,8 +348,8 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       if (newIndex === 0) {
         newPosition = firstSiblingPos - 1
       } else {
-        const beforePos = blocks[newIndex - 1]!.position ?? 0
-        const afterPos = blocks[newIndex]!.position ?? 0
+        const beforePos = blocks[newIndex - 1]?.position ?? 0
+        const afterPos = blocks[newIndex]?.position ?? 0
         newPosition = Math.floor((beforePos + afterPos) / 2)
         if (newPosition <= beforePos) {
           newPosition = beforePos + 1
@@ -356,7 +362,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       const newBlocks = [...blocks]
       const [moved] = newBlocks.splice(oldIndex, 1)
       newBlocks.splice(newIndex, 0, {
-        ...moved!,
+        ...(moved as FlatBlock),
         position: newPosition,
       })
       set({ blocks: newBlocks })
@@ -392,14 +398,14 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     let prevSibling: FlatBlock | undefined
     for (let i = idx - 1; i >= 0; i--) {
       if (
-        blocks[i]!.depth === block.depth &&
-        (blocks[i]!.parent_id ?? null) === (block.parent_id ?? null)
+        blocks[i]?.depth === block.depth &&
+        (blocks[i]?.parent_id ?? null) === (block.parent_id ?? null)
       ) {
         prevSibling = blocks[i]
         break
       }
       // If we hit a shallower block, there's no previous sibling
-      if (blocks[i]!.depth < block.depth) break
+      if ((blocks[i] as FlatBlock).depth < block.depth) break
     }
 
     if (!prevSibling) return
@@ -425,7 +431,10 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       const remaining = blocks.filter((b) => !movedSet.has(b.id))
       const prevSibDescendants = getDragDescendants(remaining, prevSibling.id)
       let insertAt = remaining.findIndex((b) => b.id === prevSibling?.id) + 1
-      while (insertAt < remaining.length && prevSibDescendants.has(remaining[insertAt]!.id)) {
+      while (
+        insertAt < remaining.length &&
+        prevSibDescendants.has((remaining[insertAt] as FlatBlock).id)
+      ) {
         insertAt++
       }
 
@@ -468,7 +477,10 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       const remaining = blocks.filter((b) => !movedSet.has(b.id))
       const parentDescendants = getDragDescendants(remaining, parent.id)
       let insertAt = remaining.findIndex((b) => b.id === parent.id) + 1
-      while (insertAt < remaining.length && parentDescendants.has(remaining[insertAt]!.id)) {
+      while (
+        insertAt < remaining.length &&
+        parentDescendants.has((remaining[insertAt] as FlatBlock).id)
+      ) {
         insertAt++
       }
 
@@ -494,7 +506,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     const sibIndex = siblings.findIndex((b) => b.id === blockId)
     if (sibIndex <= 0) return // Already first sibling or not found
 
-    const prevSibling = siblings[sibIndex - 1]!
+    const prevSibling = siblings[sibIndex - 1] as FlatBlock
     const newPosition = (prevSibling.position ?? 0) - 1
 
     try {
@@ -520,7 +532,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     const sibIndex = siblings.findIndex((b) => b.id === blockId)
     if (sibIndex < 0 || sibIndex >= siblings.length - 1) return // Already last sibling
 
-    const nextSibling = siblings[sibIndex + 1]!
+    const nextSibling = siblings[sibIndex + 1] as FlatBlock
     const newPosition = (nextSibling.position ?? 0) + 1
 
     try {

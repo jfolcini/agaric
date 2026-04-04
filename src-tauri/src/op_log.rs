@@ -1124,12 +1124,11 @@ mod tests {
         .unwrap();
 
         // Attempt UPDATE — currently succeeds (no trigger guards op_log).
-        let update_result = sqlx::query(
-            "UPDATE op_log SET payload = '{}' WHERE device_id = ? AND seq = 1",
-        )
-        .bind(TEST_DEVICE)
-        .execute(&pool)
-        .await;
+        let update_result =
+            sqlx::query("UPDATE op_log SET payload = '{}' WHERE device_id = ? AND seq = 1")
+                .bind(TEST_DEVICE)
+                .execute(&pool)
+                .await;
 
         assert!(
             update_result.is_ok(),
@@ -1143,11 +1142,10 @@ mod tests {
         );
 
         // Attempt DELETE — currently succeeds (no trigger guards op_log).
-        let delete_result =
-            sqlx::query("DELETE FROM op_log WHERE device_id = ? AND seq = 1")
-                .bind(TEST_DEVICE)
-                .execute(&pool)
-                .await;
+        let delete_result = sqlx::query("DELETE FROM op_log WHERE device_id = ? AND seq = 1")
+            .bind(TEST_DEVICE)
+            .execute(&pool)
+            .await;
 
         assert!(
             delete_result.is_ok(),

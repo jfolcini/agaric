@@ -73,8 +73,8 @@ function defaultYear(month: number, day: number, today: Date): number {
 function tryRelative(input: string, today: Date): string | null {
   const match = input.match(/^\+(\d+)([dwm])$/i)
   if (!match) return null
-  const n = Number.parseInt(match[1]!, 10)
-  const unit = match[2]!.toLowerCase()
+  const n = Number.parseInt(match[1] as string, 10)
+  const unit = match[2]?.toLowerCase()
   const result = new Date(today)
   if (unit === 'd') {
     result.setDate(result.getDate() + n)
@@ -118,7 +118,7 @@ function tryNatural(input: string, today: Date): string | null {
     /^next\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)$/,
   )
   if (nextDayMatch) {
-    const targetDay = DAY_NAMES[nextDayMatch[1]!]!
+    const targetDay = DAY_NAMES[nextDayMatch[1] as string] as number
     const currentDay = today.getDay()
     let diff = targetDay - currentDay
     if (diff <= 0) diff += 7
@@ -129,8 +129,8 @@ function tryNatural(input: string, today: Date): string | null {
 
   const inMatch = lower.match(/^in\s+(\d+)\s+(days?|weeks?|months?)$/)
   if (inMatch) {
-    const n = Number.parseInt(inMatch[1]!, 10)
-    const unit = inMatch[2]!
+    const n = Number.parseInt(inMatch[1] as string, 10)
+    const unit = inMatch[2] as string
     const d = new Date(today)
     if (unit.startsWith('day')) {
       d.setDate(d.getDate() + n)
@@ -148,9 +148,9 @@ function tryNatural(input: string, today: Date): string | null {
 function tryIso(input: string): string | null {
   const match = input.match(/^(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})$/)
   if (!match) return null
-  const year = Number.parseInt(match[1]!, 10)
-  const month = Number.parseInt(match[2]!, 10)
-  const day = Number.parseInt(match[3]!, 10)
+  const year = Number.parseInt(match[1] as string, 10)
+  const month = Number.parseInt(match[2] as string, 10)
+  const day = Number.parseInt(match[3] as string, 10)
   return buildDate(year, month, day)
 }
 
@@ -158,30 +158,30 @@ function tryMonthName(input: string): string | null {
   // "Apr 15, 2026" or "April 15 2026"
   const m1 = input.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/)
   if (m1) {
-    const month = parseMonthName(m1[1]!)
+    const month = parseMonthName(m1[1] as string)
     if (month === undefined) return null
-    const day = Number.parseInt(m1[2]!, 10)
-    const year = Number.parseInt(m1[3]!, 10)
+    const day = Number.parseInt(m1[2] as string, 10)
+    const year = Number.parseInt(m1[3] as string, 10)
     return buildDate(year, month, day)
   }
 
   // "15 April 2026" or "15 Apr 2026"
   const m2 = input.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/)
   if (m2) {
-    const day = Number.parseInt(m2[1]!, 10)
-    const month = parseMonthName(m2[2]!)
+    const day = Number.parseInt(m2[1] as string, 10)
+    const month = parseMonthName(m2[2] as string)
     if (month === undefined) return null
-    const year = Number.parseInt(m2[3]!, 10)
+    const year = Number.parseInt(m2[3] as string, 10)
     return buildDate(year, month, day)
   }
 
   // "15-Apr-2026"
   const m3 = input.match(/^(\d{1,2})-([A-Za-z]+)-(\d{4})$/)
   if (m3) {
-    const day = Number.parseInt(m3[1]!, 10)
-    const month = parseMonthName(m3[2]!)
+    const day = Number.parseInt(m3[1] as string, 10)
+    const month = parseMonthName(m3[2] as string)
     if (month === undefined) return null
-    const year = Number.parseInt(m3[3]!, 10)
+    const year = Number.parseInt(m3[3] as string, 10)
     return buildDate(year, month, day)
   }
 
@@ -192,9 +192,9 @@ function tryNoYear(input: string, today: Date): string | null {
   // "Apr 15" or "April 15"
   const m1 = input.match(/^([A-Za-z]+)\s+(\d{1,2})$/)
   if (m1) {
-    const month = parseMonthName(m1[1]!)
+    const month = parseMonthName(m1[1] as string)
     if (month === undefined) return null
-    const day = Number.parseInt(m1[2]!, 10)
+    const day = Number.parseInt(m1[2] as string, 10)
     const year = defaultYear(month, day, today)
     return buildDate(year, month, day)
   }
@@ -202,8 +202,8 @@ function tryNoYear(input: string, today: Date): string | null {
   // "15 Apr" or "15 April"
   const m2 = input.match(/^(\d{1,2})\s+([A-Za-z]+)$/)
   if (m2) {
-    const day = Number.parseInt(m2[1]!, 10)
-    const month = parseMonthName(m2[2]!)
+    const day = Number.parseInt(m2[1] as string, 10)
+    const month = parseMonthName(m2[2] as string)
     if (month === undefined) return null
     const year = defaultYear(month, day, today)
     return buildDate(year, month, day)
@@ -212,8 +212,8 @@ function tryNoYear(input: string, today: Date): string | null {
   // "MM-DD" or "MM/DD"
   const m3 = input.match(/^(\d{1,2})[/-](\d{1,2})$/)
   if (m3) {
-    const a = Number.parseInt(m3[1]!, 10)
-    const b = Number.parseInt(m3[2]!, 10)
+    const a = Number.parseInt(m3[1] as string, 10)
+    const b = Number.parseInt(m3[2] as string, 10)
     // Treat as MM-DD
     const year = defaultYear(a, b, today)
     return buildDate(year, a, b)
@@ -226,9 +226,9 @@ function tryAmbiguousNumeric(input: string): string | null {
   // DD-MM-YYYY or MM-DD-YYYY
   const match = input.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/)
   if (!match) return null
-  const a = Number.parseInt(match[1]!, 10)
-  const b = Number.parseInt(match[2]!, 10)
-  const year = Number.parseInt(match[3]!, 10)
+  const a = Number.parseInt(match[1] as string, 10)
+  const b = Number.parseInt(match[2] as string, 10)
+  const year = Number.parseInt(match[3] as string, 10)
 
   // If first number > 12, it must be a day → DD-MM-YYYY
   if (a > 12) {

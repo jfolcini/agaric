@@ -314,7 +314,7 @@ function formatGroupDate(dateStr: string): string {
   const day = d ?? 1
   const now = new Date()
   // Include weekday for dates within 7 days
-  const date = new Date(y!, m! - 1, d)
+  const date = new Date(y as number, (m as number) - 1, d)
   const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
   const weekday = WEEKDAYS[date.getDay()]
   if (y === now.getFullYear()) return `${weekday}, ${month} ${day}`

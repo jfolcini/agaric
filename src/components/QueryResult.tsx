@@ -247,7 +247,7 @@ export function QueryResult({
         if (resultSets.length === 0) {
           items = []
         } else if (resultSets.length === 1) {
-          items = resultSets[0]!
+          items = resultSets[0] as BlockRow[]
         } else {
           // AND intersection: keep only blocks present in ALL result sets
           const blockMap = new Map<string, BlockRow>()
@@ -389,6 +389,7 @@ export function QueryResult({
           )}
           {!loading && !error && results.length > 0 && tableMode && (
             <div className="overflow-x-auto">
+              {/* biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: table uses grid role for sortable column headers */}
               <table className="w-full text-xs" role="grid">
                 <thead>
                   <tr className="border-b border-muted-foreground/20">

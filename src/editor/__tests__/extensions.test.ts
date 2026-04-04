@@ -2,6 +2,7 @@ import { getSchema } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
+import type { NodeType, Node as PmNode } from '@tiptap/pm/model'
 import { describe, expect, it, vi } from 'vitest'
 import { AtTagPicker } from '../extensions/at-tag-picker'
 import { BlockLink } from '../extensions/block-link'
@@ -22,7 +23,7 @@ const schema = getSchema([
 // -- TagRef -------------------------------------------------------------------
 
 describe('TagRef extension', () => {
-  const nodeType = schema.nodes.tag_ref!
+  const nodeType = schema.nodes.tag_ref as unknown as NodeType
 
   it('exists in the schema', () => {
     expect(nodeType).toBeDefined()
@@ -46,7 +47,7 @@ describe('TagRef extension', () => {
   })
 
   it('id attribute defaults to null', () => {
-    expect(nodeType.spec.attrs?.id!.default).toBeNull()
+    expect(nodeType.spec.attrs?.id?.default).toBeNull()
   })
 
   it('renders as a span with data-type="tag-ref"', () => {
@@ -72,14 +73,14 @@ describe('TagRef extension', () => {
     const parseRules = nodeType.spec.parseDOM
     expect(parseRules).toBeDefined()
     expect(parseRules?.length).toBeGreaterThan(0)
-    expect(parseRules![0]!.tag).toBe('span[data-type="tag-ref"]')
+    expect(parseRules?.[0]?.tag).toBe('span[data-type="tag-ref"]')
   })
 })
 
 // -- BlockLink ----------------------------------------------------------------
 
 describe('BlockLink extension', () => {
-  const nodeType = schema.nodes.block_link!
+  const nodeType = schema.nodes.block_link as unknown as NodeType
 
   it('exists in the schema', () => {
     expect(nodeType).toBeDefined()
@@ -103,7 +104,7 @@ describe('BlockLink extension', () => {
   })
 
   it('id attribute defaults to null', () => {
-    expect(nodeType.spec.attrs?.id!.default).toBeNull()
+    expect(nodeType.spec.attrs?.id?.default).toBeNull()
   })
 
   it('renders as a span with data-type="block-link"', () => {
@@ -124,7 +125,7 @@ describe('BlockLink extension', () => {
     const parseRules = nodeType.spec.parseDOM
     expect(parseRules).toBeDefined()
     expect(parseRules?.length).toBeGreaterThan(0)
-    expect(parseRules![0]!.tag).toBe('span[data-type="block-link"]')
+    expect(parseRules?.[0]?.tag).toBe('span[data-type="block-link"]')
   })
 })
 
@@ -133,29 +134,36 @@ describe('BlockLink extension', () => {
 describe('Schema integration', () => {
   it('tag_ref can be content of paragraph', () => {
     // Paragraph allows inline content — tag_ref is inline group
-    const tagNode = schema.nodes.tag_ref!.create({ id: 'TEST00000000000000000000' })
+    const tagType = schema.nodes.tag_ref as unknown as NodeType
+    const tagNode = tagType.create({ id: 'TEST00000000000000000000' })
     // Should not throw when creating a paragraph with tag_ref content
-    const para = schema.nodes.paragraph!.create(null, tagNode)
+    const paraType = schema.nodes.paragraph as unknown as NodeType
+    const para = paraType.create(null, tagNode)
     expect(para.content.childCount).toBe(1)
     expect(para.content.child(0).type.name).toBe('tag_ref')
   })
 
   it('block_link can be content of paragraph', () => {
-    const linkNode = schema.nodes.block_link!.create({ id: 'TEST00000000000000000000' })
-    const para = schema.nodes.paragraph!.create(null, linkNode)
+    const linkType = schema.nodes.block_link as unknown as NodeType
+    const linkNode = linkType.create({ id: 'TEST00000000000000000000' })
+    const paraType = schema.nodes.paragraph as unknown as NodeType
+    const para = paraType.create(null, linkNode)
     expect(para.content.childCount).toBe(1)
     expect(para.content.child(0).type.name).toBe('block_link')
   })
 
   it('tag_ref and block_link can coexist with text in a paragraph', () => {
-    const nodes = [
+    const tagType = schema.nodes.tag_ref as unknown as NodeType
+    const linkType = schema.nodes.block_link as unknown as NodeType
+    const paraType = schema.nodes.paragraph as unknown as NodeType
+    const nodes: PmNode[] = [
       schema.text('before '),
-      schema.nodes.tag_ref!.create({ id: 'TAG00000000000000000000000' }),
+      tagType.create({ id: 'TAG00000000000000000000000' }),
       schema.text(' and '),
-      schema.nodes.block_link!.create({ id: 'LINK0000000000000000000000' }),
+      linkType.create({ id: 'LINK0000000000000000000000' }),
       schema.text(' after'),
     ]
-    const para = schema.nodes.paragraph!.create(null, nodes)
+    const para = paraType.create(null, nodes)
     expect(para.content.childCount).toBe(5)
   })
 })
@@ -296,4 +304,3 @@ describe('ExternalLink extension', () => {
     expect(ExternalLink.options.HTMLAttributes.rel).toBe('noopener noreferrer')
   })
 })
-

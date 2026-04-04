@@ -289,7 +289,7 @@ describe('UnlinkedReferences', () => {
 
     // Click the first "Link it" button
     const linkItBtns = screen.getAllByRole('button', { name: /link it/i })
-    await user.click(linkItBtns[0]!)
+    await user.click(linkItBtns[0] as HTMLElement)
 
     // First block should be removed
     await waitFor(() => {

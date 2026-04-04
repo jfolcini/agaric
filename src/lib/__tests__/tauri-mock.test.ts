@@ -76,7 +76,7 @@ describe('seed data', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items).toHaveLength(5)
-    expect(result.items[0]!.content as string).toContain('Welcome')
+    expect(result.items[0]?.content as string).toContain('Welcome')
   })
 
   it('populates children of daily page', () => {
@@ -84,7 +84,7 @@ describe('seed data', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items).toHaveLength(5)
-    expect(result.items[0]!.content as string).toContain('standup')
+    expect(result.items[0]?.content as string).toContain('standup')
   })
 
   it('resetMock re-seeds the store', () => {
@@ -247,8 +247,8 @@ describe('list_tags_by_prefix', () => {
       Record<string, unknown>
     >
     expect(result).toHaveLength(1)
-    expect(result[0]!.name).toBe('personal')
-    expect(result[0]!.tag_id).toBe(SEED_IDS.TAG_PERSONAL)
+    expect(result[0]?.name).toBe('personal')
+    expect(result[0]?.tag_id).toBe(SEED_IDS.TAG_PERSONAL)
   })
 
   it('returns TagCacheRow shape', () => {
@@ -256,10 +256,10 @@ describe('list_tags_by_prefix', () => {
       Record<string, unknown>
     >
     expect(result).toHaveLength(1)
-    expect(result[0]!).toHaveProperty('tag_id', SEED_IDS.TAG_WORK)
-    expect(result[0]!).toHaveProperty('name', 'work')
-    expect(result[0]!).toHaveProperty('usage_count', 0)
-    expect(result[0]!).toHaveProperty('updated_at')
+    expect(result[0] as Record<string, unknown>).toHaveProperty('tag_id', SEED_IDS.TAG_WORK)
+    expect(result[0] as Record<string, unknown>).toHaveProperty('name', 'work')
+    expect(result[0] as Record<string, unknown>).toHaveProperty('usage_count', 0)
+    expect(result[0] as Record<string, unknown>).toHaveProperty('updated_at')
   })
 
   it('returns empty for non-matching prefix', () => {
@@ -274,7 +274,7 @@ describe('list_tags_by_prefix', () => {
       Record<string, unknown>
     >
     expect(result).toHaveLength(1)
-    expect(result[0]!.name).toBe('work')
+    expect(result[0]?.name).toBe('work')
   })
 
   it('includes dynamically created tags', () => {
@@ -283,7 +283,7 @@ describe('list_tags_by_prefix', () => {
       Record<string, unknown>
     >
     expect(result).toHaveLength(1)
-    expect(result[0]!.name).toBe('project-alpha')
+    expect(result[0]?.name).toBe('project-alpha')
   })
 })
 
@@ -297,7 +297,7 @@ describe('search_blocks', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items.length).toBeGreaterThanOrEqual(1)
-    expect((result.items[0]!.content as string).toLowerCase()).toContain('knowledge base')
+    expect((result.items[0]?.content as string).toLowerCase()).toContain('knowledge base')
   })
 
   it('search is case-insensitive', () => {
@@ -369,7 +369,7 @@ describe('edit_block', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items).toHaveLength(1)
-    expect(result.items[0]!.id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result.items[0]?.id).toBe(SEED_IDS.BLOCK_GS_1)
   })
 
   it('edited page title persists across list_blocks', () => {
@@ -509,7 +509,7 @@ describe('property commands', () => {
       unknown
     >[]
     expect(props).toHaveLength(1)
-    expect(props[0]!.value_text).toBe('2')
+    expect(props[0]?.value_text).toBe('2')
   })
 
   it('delete_property removes a property', () => {
@@ -632,8 +632,8 @@ describe('add_tag + list_tags_for_block', () => {
       Record<string, unknown>
     >
     expect(tags).toHaveLength(1)
-    expect(tags[0]!.tag_id).toBe(SEED_IDS.TAG_WORK)
-    expect(tags[0]!.name).toBe('work')
+    expect(tags[0]?.tag_id).toBe(SEED_IDS.TAG_WORK)
+    expect(tags[0]?.name).toBe('work')
   })
 
   it('list_tags_for_block returns multiple tags', () => {
@@ -687,7 +687,7 @@ describe('remove_tag', () => {
       Record<string, unknown>
     >
     expect(tags).toHaveLength(1)
-    expect(tags[0]!.tag_id).toBe(SEED_IDS.TAG_PERSONAL)
+    expect(tags[0]?.tag_id).toBe(SEED_IDS.TAG_PERSONAL)
   })
 
   it('removing non-existent tag is a no-op', () => {
@@ -738,7 +738,7 @@ describe('query_by_tags', () => {
       tagIds: [SEED_IDS.TAG_WORK, SEED_IDS.TAG_PERSONAL],
     }) as { items: Record<string, unknown>[] }
     expect(result.items).toHaveLength(1)
-    expect(result.items[0]!.id).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result.items[0]?.id).toBe(SEED_IDS.BLOCK_GS_1)
   })
 
   it('excludes deleted blocks', () => {
@@ -953,7 +953,7 @@ describe('get_backlinks', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items).toHaveLength(1)
-    expect(result.items[0]!.id).toBe(created.id)
+    expect(result.items[0]?.id).toBe(created.id)
   })
 
   it('returns PageResponse shape', () => {
@@ -1019,7 +1019,7 @@ describe('query_backlinks_filtered', () => {
       filters: [{ type: 'Contains', query: 'xylophone' }],
     }) as { items: Record<string, unknown>[] }
     expect(result.items).toHaveLength(1)
-    expect((result.items[0]!.content as string).toLowerCase()).toContain('xylophone')
+    expect((result.items[0]?.content as string).toLowerCase()).toContain('xylophone')
   })
 
   it('returns correct total_count', () => {
@@ -1652,7 +1652,7 @@ describe('seed task blocks', () => {
       blockId: SEED_IDS.BLOCK_PROJ_1,
     }) as Array<Record<string, unknown>>
     expect(tags).toHaveLength(1)
-    expect(tags[0]!.tag_id).toBe(SEED_IDS.TAG_WORK)
+    expect(tags[0]?.tag_id).toBe(SEED_IDS.TAG_WORK)
   })
 })
 

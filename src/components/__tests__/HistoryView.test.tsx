@@ -135,11 +135,11 @@ describe('HistoryView', () => {
 
     // Click the first item row
     const items = screen.getAllByTestId(/^history-item-/)
-    await user.click(items[0]!)
+    await user.click(items[0] as HTMLElement)
 
     // Shift+click the third item row
     await user.keyboard('{Shift>}')
-    await user.click(items[2]!)
+    await user.click(items[2] as HTMLElement)
     await user.keyboard('{/Shift}')
 
     // All three should be selected
@@ -224,7 +224,7 @@ describe('HistoryView', () => {
 
     // Select via clicking the row
     const items = screen.getAllByTestId(/^history-item-/)
-    await user.click(items[0]!)
+    await user.click(items[0] as HTMLElement)
 
     // Press Enter
     await user.keyboard('{Enter}')
@@ -419,11 +419,11 @@ describe('HistoryView', () => {
 
     // Select first item
     const items = screen.getAllByTestId(/^history-item-/)
-    await user.click(items[0]!)
+    await user.click(items[0] as HTMLElement)
     expect(screen.getByText('1 selected')).toBeInTheDocument()
 
     // Select second item
-    await user.click(items[1]!)
+    await user.click(items[1] as HTMLElement)
     expect(screen.getByText('2 selected')).toBeInTheDocument()
   })
 
@@ -442,7 +442,7 @@ describe('HistoryView', () => {
 
     // Select item
     const items = screen.getAllByTestId(/^history-item-/)
-    await user.click(items[0]!)
+    await user.click(items[0] as HTMLElement)
 
     expect(screen.getByText('1 selected')).toBeInTheDocument()
 
@@ -469,7 +469,7 @@ describe('HistoryView', () => {
 
     // Select item
     const items = screen.getAllByTestId(/^history-item-/)
-    await user.click(items[0]!)
+    await user.click(items[0] as HTMLElement)
     expect(screen.getByText('1 selected')).toBeInTheDocument()
 
     // Press Escape
@@ -605,7 +605,7 @@ describe('HistoryView', () => {
 
     // Select the entry
     const items = screen.getAllByTestId(/^history-item-/)
-    await user.click(items[0]!)
+    await user.click(items[0] as HTMLElement)
     expect(screen.getByText('1 selected')).toBeInTheDocument()
 
     // Open confirmation dialog via Enter
@@ -649,7 +649,7 @@ describe('HistoryView', () => {
 
     // Select an entry
     const items = screen.getAllByTestId(/^history-item-/)
-    await user.click(items[0]!)
+    await user.click(items[0] as HTMLElement)
 
     // Open dialog and confirm revert
     await user.click(screen.getByRole('button', { name: /Revert selected/ }))
@@ -699,7 +699,7 @@ describe('HistoryView', () => {
 
     // Select the entry
     const items = screen.getAllByTestId(/^history-item-/)
-    await user.click(items[0]!)
+    await user.click(items[0] as HTMLElement)
     expect(screen.getByText('1 selected')).toBeInTheDocument()
 
     // Open dialog and confirm
@@ -739,8 +739,8 @@ describe('HistoryView', () => {
 
     // Select both entries
     const items = screen.getAllByTestId(/^history-item-/)
-    await user.click(items[0]!)
-    await user.click(items[1]!)
+    await user.click(items[0] as HTMLElement)
+    await user.click(items[1] as HTMLElement)
     expect(screen.getByText('2 selected')).toBeInTheDocument()
 
     // Open dialog and confirm
@@ -875,7 +875,7 @@ describe('HistoryView', () => {
 
     // Select an entry
     const items = screen.getAllByTestId(/^history-item-/)
-    await user.click(items[0]!)
+    await user.click(items[0] as HTMLElement)
 
     // Open dialog and confirm revert
     await user.click(screen.getByRole('button', { name: /Revert selected/ }))

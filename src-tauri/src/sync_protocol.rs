@@ -468,8 +468,7 @@ pub async fn merge_diverged_blocks(
                 }
 
                 // Apply the winner by appending a new set_property op
-                let winning_payload =
-                    crate::op::OpPayload::SetProperty(resolution.winner_value);
+                let winning_payload = crate::op::OpPayload::SetProperty(resolution.winner_value);
                 let new_record = op_log::append_local_op_at(
                     pool,
                     device_id,
@@ -575,25 +574,17 @@ pub async fn merge_diverged_blocks(
                 // Idempotent guard: skip if the local device's latest move
                 // already matches the winning move (avoids infinite
                 // re-resolution).
-                let local_move: crate::op::MoveBlockPayload =
-                    serde_json::from_str(&op_a.payload)?;
+                let local_move: crate::op::MoveBlockPayload = serde_json::from_str(&op_a.payload)?;
                 if local_move == winner_move {
                     continue;
                 }
 
                 let move_payload = crate::op::OpPayload::MoveBlock(winner_move);
-                let new_record = op_log::append_local_op_at(
-                    pool,
-                    device_id,
-                    move_payload,
-                    crate::now_rfc3339(),
-                )
-                .await?;
+                let new_record =
+                    op_log::append_local_op_at(pool, device_id, move_payload, crate::now_rfc3339())
+                        .await?;
 
-                tracing::debug!(
-                    "LWW auto-resolved move conflict for block {}",
-                    bid
-                );
+                tracing::debug!("LWW auto-resolved move conflict for block {}", bid);
 
                 materializer
                     .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
@@ -2016,14 +2007,9 @@ mod tests {
 
         // Create blocks
         for blk in &["BLK1", "BLK2", "BLK3", "PARENT-A", "PARENT-B"] {
-            append_local_op_at(
-                &pool,
-                "device-A",
-                test_create_payload(blk),
-                ts_a.into(),
-            )
-            .await
-            .unwrap();
+            append_local_op_at(&pool, "device-A", test_create_payload(blk), ts_a.into())
+                .await
+                .unwrap();
         }
 
         // ── 3 property conflicts on 2 different blocks ──────────────────
@@ -2341,9 +2327,13 @@ mod tests {
         bad_op.seq = 99; // different seq so it's not just a duplicate of t2
 
         // Batch containing a bad hash should be rejected entirely
-        let err = apply_remote_ops(&local_pool, &materializer, vec![t1.clone(), t2.clone(), bad_op])
-            .await
-            .expect_err("batch with bad hash must be rejected");
+        let err = apply_remote_ops(
+            &local_pool,
+            &materializer,
+            vec![t1.clone(), t2.clone(), bad_op],
+        )
+        .await
+        .expect_err("batch with bad hash must be rejected");
         assert!(
             err.to_string().contains("integrity check failed"),
             "error must mention integrity check, got: {err}"
@@ -2929,14 +2919,9 @@ mod tests {
         let ts_b = "2025-01-15T12:01:00Z"; // later — B wins
 
         // Create the block
-        append_local_op_at(
-            &pool,
-            "device-A",
-            test_create_payload("BLK1"),
-            ts_a.into(),
-        )
-        .await
-        .unwrap();
+        append_local_op_at(&pool, "device-A", test_create_payload("BLK1"), ts_a.into())
+            .await
+            .unwrap();
 
         // Device A sets property "priority" = "high" at t=1
         append_local_op_at(
@@ -3026,14 +3011,9 @@ mod tests {
 
         // Create blocks
         for blk in &["BLK1", "PARENT-A", "PARENT-B"] {
-            append_local_op_at(
-                &pool,
-                "device-A",
-                test_create_payload(blk),
-                ts_a.into(),
-            )
-            .await
-            .unwrap();
+            append_local_op_at(&pool, "device-A", test_create_payload(blk), ts_a.into())
+                .await
+                .unwrap();
         }
 
         // Device A moves BLK1 to PARENT-A at t=1
@@ -3084,8 +3064,7 @@ mod tests {
             .rev()
             .find(|op| op.op_type == "move_block")
             .expect("should have a resolution move_block op");
-        let winner_payload: MoveBlockPayload =
-            serde_json::from_str(&last_move.payload).unwrap();
+        let winner_payload: MoveBlockPayload = serde_json::from_str(&last_move.payload).unwrap();
         assert_eq!(
             winner_payload.new_parent_id.as_ref().map(|id| id.as_str()),
             Some("PARENT-B"),
@@ -3219,10 +3198,9 @@ mod tests {
             seq: 42,
             hash: "abc123def456".into(),
         };
-        let json = serde_json::to_string(&head)
-            .expect("DeviceHead serialization must succeed");
-        let deser: DeviceHead = serde_json::from_str(&json)
-            .expect("DeviceHead deserialization must succeed");
+        let json = serde_json::to_string(&head).expect("DeviceHead serialization must succeed");
+        let deser: DeviceHead =
+            serde_json::from_str(&json).expect("DeviceHead deserialization must succeed");
         assert_eq!(deser, head, "DeviceHead must survive serde roundtrip");
     }
 
@@ -3239,10 +3217,9 @@ mod tests {
             payload: r#"{"block_id":"BLK1","to_text":"hello"}"#.into(),
             created_at: "2025-01-15T12:00:00+00:00".into(),
         };
-        let json = serde_json::to_string(&transfer)
-            .expect("OpTransfer serialization must succeed");
-        let deser: OpTransfer = serde_json::from_str(&json)
-            .expect("OpTransfer deserialization must succeed");
+        let json = serde_json::to_string(&transfer).expect("OpTransfer serialization must succeed");
+        let deser: OpTransfer =
+            serde_json::from_str(&json).expect("OpTransfer deserialization must succeed");
         assert_eq!(deser, transfer, "OpTransfer must survive serde roundtrip");
     }
 
@@ -3273,8 +3250,16 @@ mod tests {
     fn serde_roundtrip_sync_message_head_exchange() {
         let msg = SyncMessage::HeadExchange {
             heads: vec![
-                DeviceHead { device_id: "A".into(), seq: 1, hash: "h1".into() },
-                DeviceHead { device_id: "B".into(), seq: 5, hash: "h5".into() },
+                DeviceHead {
+                    device_id: "A".into(),
+                    seq: 1,
+                    hash: "h1".into(),
+                },
+                DeviceHead {
+                    device_id: "B".into(),
+                    seq: 5,
+                    hash: "h5".into(),
+                },
             ],
         };
         let json = serde_json::to_string(&msg).expect("serialize HeadExchange");
@@ -3313,7 +3298,9 @@ mod tests {
 
     #[test]
     fn serde_roundtrip_sync_message_snapshot_offer() {
-        let msg = SyncMessage::SnapshotOffer { size_bytes: 1_048_576 };
+        let msg = SyncMessage::SnapshotOffer {
+            size_bytes: 1_048_576,
+        };
         let json = serde_json::to_string(&msg).expect("serialize SnapshotOffer");
         let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SnapshotOffer");
         assert_eq!(deser, msg, "SnapshotOffer must survive serde roundtrip");
@@ -3366,14 +3353,17 @@ mod tests {
                 hash: "abc".into(),
             }],
         };
-        let json: serde_json::Value = serde_json::to_value(&msg)
-            .expect("SyncMessage must serialize to Value");
+        let json: serde_json::Value =
+            serde_json::to_value(&msg).expect("SyncMessage must serialize to Value");
 
         assert_eq!(
             json["type"], "HeadExchange",
             "HeadExchange must use internally-tagged 'type' field"
         );
-        assert!(json["heads"].is_array(), "HeadExchange must have 'heads' array");
+        assert!(
+            json["heads"].is_array(),
+            "HeadExchange must have 'heads' array"
+        );
         let head = &json["heads"][0];
         assert_eq!(head["device_id"], "dev-A", "head device_id must match");
         assert_eq!(head["seq"], 3, "head seq must match");
@@ -3394,8 +3384,8 @@ mod tests {
             }],
             is_last: true,
         };
-        let json: serde_json::Value = serde_json::to_value(&msg)
-            .expect("SyncMessage must serialize to Value");
+        let json: serde_json::Value =
+            serde_json::to_value(&msg).expect("SyncMessage must serialize to Value");
 
         assert_eq!(
             json["type"], "OpBatch",
@@ -3409,20 +3399,45 @@ mod tests {
         assert_eq!(op["parent_seqs"], "0", "op parent_seqs must match");
         assert_eq!(op["hash"], "h1", "op hash must match");
         assert_eq!(op["op_type"], "create_block", "op op_type must match");
-        assert_eq!(op["created_at"], "2025-06-01T00:00:00Z", "op created_at must match");
+        assert_eq!(
+            op["created_at"], "2025-06-01T00:00:00Z",
+            "op created_at must match"
+        );
     }
 
     #[test]
     fn json_shape_all_variants_have_type_tag() {
         let variants: Vec<(&str, SyncMessage)> = vec![
             ("HeadExchange", SyncMessage::HeadExchange { heads: vec![] }),
-            ("OpBatch", SyncMessage::OpBatch { ops: vec![], is_last: true }),
-            ("ResetRequired", SyncMessage::ResetRequired { reason: "r".into() }),
-            ("SnapshotOffer", SyncMessage::SnapshotOffer { size_bytes: 0 }),
+            (
+                "OpBatch",
+                SyncMessage::OpBatch {
+                    ops: vec![],
+                    is_last: true,
+                },
+            ),
+            (
+                "ResetRequired",
+                SyncMessage::ResetRequired { reason: "r".into() },
+            ),
+            (
+                "SnapshotOffer",
+                SyncMessage::SnapshotOffer { size_bytes: 0 },
+            ),
             ("SnapshotAccept", SyncMessage::SnapshotAccept),
             ("SnapshotReject", SyncMessage::SnapshotReject),
-            ("SyncComplete", SyncMessage::SyncComplete { last_hash: "h".into() }),
-            ("Error", SyncMessage::Error { message: "e".into() }),
+            (
+                "SyncComplete",
+                SyncMessage::SyncComplete {
+                    last_hash: "h".into(),
+                },
+            ),
+            (
+                "Error",
+                SyncMessage::Error {
+                    message: "e".into(),
+                },
+            ),
         ];
 
         for (expected_tag, msg) in &variants {
@@ -3438,9 +3453,10 @@ mod tests {
 
     #[test]
     fn json_shape_snapshot_offer_has_size_bytes() {
-        let msg = SyncMessage::SnapshotOffer { size_bytes: 999_999 };
-        let json: serde_json::Value = serde_json::to_value(&msg)
-            .expect("serialize SnapshotOffer");
+        let msg = SyncMessage::SnapshotOffer {
+            size_bytes: 999_999,
+        };
+        let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize SnapshotOffer");
         assert_eq!(json["type"], "SnapshotOffer");
         assert_eq!(
             json["size_bytes"], 999_999,
@@ -3450,9 +3466,10 @@ mod tests {
 
     #[test]
     fn json_shape_sync_complete_has_last_hash() {
-        let msg = SyncMessage::SyncComplete { last_hash: "xyz789".into() };
-        let json: serde_json::Value = serde_json::to_value(&msg)
-            .expect("serialize SyncComplete");
+        let msg = SyncMessage::SyncComplete {
+            last_hash: "xyz789".into(),
+        };
+        let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize SyncComplete");
         assert_eq!(json["type"], "SyncComplete");
         assert_eq!(
             json["last_hash"], "xyz789",
@@ -3462,9 +3479,10 @@ mod tests {
 
     #[test]
     fn json_shape_error_has_message() {
-        let msg = SyncMessage::Error { message: "something broke".into() };
-        let json: serde_json::Value = serde_json::to_value(&msg)
-            .expect("serialize Error");
+        let msg = SyncMessage::Error {
+            message: "something broke".into(),
+        };
+        let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize Error");
         assert_eq!(json["type"], "Error");
         assert_eq!(
             json["message"], "something broke",
@@ -3474,9 +3492,10 @@ mod tests {
 
     #[test]
     fn json_shape_reset_required_has_reason() {
-        let msg = SyncMessage::ResetRequired { reason: "compacted".into() };
-        let json: serde_json::Value = serde_json::to_value(&msg)
-            .expect("serialize ResetRequired");
+        let msg = SyncMessage::ResetRequired {
+            reason: "compacted".into(),
+        };
+        let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize ResetRequired");
         assert_eq!(json["type"], "ResetRequired");
         assert_eq!(
             json["reason"], "compacted",
@@ -3511,12 +3530,8 @@ mod tests {
             is_last: true,
         };
         let json = serde_json::to_string(&msg).expect("serialize empty OpBatch");
-        let deser: SyncMessage =
-            serde_json::from_str(&json).expect("deserialize empty OpBatch");
-        assert_eq!(
-            deser, msg,
-            "OpBatch with empty ops must survive roundtrip"
-        );
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize empty OpBatch");
+        assert_eq!(deser, msg, "OpBatch with empty ops must survive roundtrip");
     }
 
     #[test]
@@ -3534,9 +3549,11 @@ mod tests {
             is_last: true,
         };
         let json = serde_json::to_string(&msg).expect("serialize unicode OpBatch");
-        let deser: SyncMessage =
-            serde_json::from_str(&json).expect("deserialize unicode OpBatch");
-        assert_eq!(deser, msg, "OpBatch with unicode content must survive roundtrip");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize unicode OpBatch");
+        assert_eq!(
+            deser, msg,
+            "OpBatch with unicode content must survive roundtrip"
+        );
 
         // Verify the unicode is preserved in the JSON string
         assert!(
@@ -3559,9 +3576,11 @@ mod tests {
             message: "连接失败: タイムアウト 🔥".into(),
         };
         let json = serde_json::to_string(&msg).expect("serialize unicode Error");
-        let deser: SyncMessage =
-            serde_json::from_str(&json).expect("deserialize unicode Error");
-        assert_eq!(deser, msg, "Error with unicode message must survive roundtrip");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize unicode Error");
+        assert_eq!(
+            deser, msg,
+            "Error with unicode message must survive roundtrip"
+        );
     }
 
     #[test]
@@ -3570,7 +3589,11 @@ mod tests {
             .map(|i| OpTransfer {
                 device_id: "bulk-device".into(),
                 seq: i,
-                parent_seqs: if i > 0 { Some(format!("{}", i - 1)) } else { None },
+                parent_seqs: if i > 0 {
+                    Some(format!("{}", i - 1))
+                } else {
+                    None
+                },
                 hash: format!("hash_{i:04}"),
                 op_type: "create_block".into(),
                 payload: format!(r#"{{"block_id":"BLK{i}","content":"content for block {i}"}}"#),
@@ -3583,16 +3606,23 @@ mod tests {
             is_last: true,
         };
         let json = serde_json::to_string(&msg).expect("serialize large OpBatch");
-        let deser: SyncMessage =
-            serde_json::from_str(&json).expect("deserialize large OpBatch");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize large OpBatch");
         assert_eq!(
             deser, msg,
             "OpBatch with 500 ops must survive serde roundtrip"
         );
 
         // Verify the count is preserved
-        if let SyncMessage::OpBatch { ops: deser_ops, is_last } = &deser {
-            assert_eq!(deser_ops.len(), 500, "deserialized batch must contain all 500 ops");
+        if let SyncMessage::OpBatch {
+            ops: deser_ops,
+            is_last,
+        } = &deser
+        {
+            assert_eq!(
+                deser_ops.len(),
+                500,
+                "deserialized batch must contain all 500 ops"
+            );
             assert!(is_last, "is_last flag must be preserved");
         } else {
             panic!("deserialized message must be OpBatch");
@@ -3617,8 +3647,7 @@ mod tests {
             is_last: true,
         };
         let json = serde_json::to_string(&msg).expect("serialize large payload");
-        let deser: SyncMessage =
-            serde_json::from_str(&json).expect("deserialize large payload");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize large payload");
         assert_eq!(
             deser, msg,
             "OpBatch with 100KB payload must survive serde roundtrip"
@@ -3635,7 +3664,9 @@ mod tests {
             })
             .collect();
 
-        let msg = SyncMessage::HeadExchange { heads: heads.clone() };
+        let msg = SyncMessage::HeadExchange {
+            heads: heads.clone(),
+        };
         let json = serde_json::to_string(&msg).expect("serialize many-heads HeadExchange");
         let deser: SyncMessage =
             serde_json::from_str(&json).expect("deserialize many-heads HeadExchange");
@@ -3651,8 +3682,7 @@ mod tests {
             last_hash: String::new(),
         };
         let json = serde_json::to_string(&msg).expect("serialize empty last_hash");
-        let deser: SyncMessage =
-            serde_json::from_str(&json).expect("deserialize empty last_hash");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize empty last_hash");
         assert_eq!(
             deser, msg,
             "SyncComplete with empty last_hash must survive roundtrip"
@@ -3679,7 +3709,9 @@ mod tests {
 
     #[test]
     fn serde_roundtrip_max_u64_snapshot_offer() {
-        let msg = SyncMessage::SnapshotOffer { size_bytes: u64::MAX };
+        let msg = SyncMessage::SnapshotOffer {
+            size_bytes: u64::MAX,
+        };
         let json = serde_json::to_string(&msg).expect("serialize max-u64 SnapshotOffer");
         let deser: SyncMessage =
             serde_json::from_str(&json).expect("deserialize max-u64 SnapshotOffer");

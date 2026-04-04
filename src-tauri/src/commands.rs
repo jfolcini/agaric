@@ -1633,10 +1633,10 @@ pub(crate) async fn set_property_in_tx(
     }
 
     // 1d. Type validation against property_definitions (non-reserved keys only)
-    if !is_clear && !is_reserved_property_key(&key) {
+    if !is_clear && !is_reserved_property_key(key) {
         let def_type: Option<String> =
             sqlx::query_scalar("SELECT value_type FROM property_definitions WHERE key = ?")
-                .bind(&key)
+                .bind(key)
                 .fetch_optional(&mut **tx)
                 .await?;
 
@@ -1687,7 +1687,7 @@ pub(crate) async fn set_property_in_tx(
     let op_record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
 
     // 4. Materialize: route reserved keys to blocks columns, others to block_properties
-    if is_reserved_property_key(&key) {
+    if is_reserved_property_key(key) {
         let col = match key {
             "todo_state" => "todo_state",
             "priority" => "priority",
@@ -1710,7 +1710,7 @@ pub(crate) async fn set_property_in_tx(
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&block_id)
-        .bind(&key)
+        .bind(key)
         .bind(&value_text)
         .bind(value_num)
         .bind(&value_date)
@@ -3587,6 +3587,7 @@ pub async fn import_markdown_inner(
 ///
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
 /// - [`AppError::Validation`] — size exceeds 50 MB or MIME type not allowed
+#[allow(clippy::too_many_arguments)]
 pub async fn add_attachment_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -3645,8 +3646,7 @@ pub async fn add_attachment_inner(
     }
 
     // Append to op_log within transaction
-    let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+    let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
 
     // Insert into attachments table within same transaction
     sqlx::query(
@@ -3709,9 +3709,7 @@ pub async fn delete_attachment_inner(
     .fetch_optional(&mut *tx)
     .await?;
     if exists.is_none() {
-        return Err(AppError::NotFound(format!(
-            "attachment '{attachment_id}'"
-        )));
+        return Err(AppError::NotFound(format!("attachment '{attachment_id}'")));
     }
 
     // Append to op_log within transaction
@@ -4748,6 +4746,7 @@ pub async fn import_markdown(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn add_attachment(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
@@ -4870,10 +4869,7 @@ pub async fn flush_draft(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
-pub async fn delete_draft(
-    pool: State<'_, WritePool>,
-    block_id: String,
-) -> Result<(), AppError> {
+pub async fn delete_draft(pool: State<'_, WritePool>, block_id: String) -> Result<(), AppError> {
     draft::delete_draft(&pool.0, &block_id)
         .await
         .map_err(sanitize_internal_error)
@@ -4959,9 +4955,9 @@ mod tests {
     //! write-lock contention.
 
     use super::*;
-    use chrono::Datelike;
     use crate::db::init_pool;
     use crate::materializer::Materializer;
+    use chrono::Datelike;
     use sqlx::SqlitePool;
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -5950,9 +5946,11 @@ mod tests {
         insert_block(&pool, "TOP2", "content", "b", None, Some(2)).await;
         insert_block(&pool, "CHILD1", "content", "c", Some("TOP1"), Some(1)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, None)
-            .await
-            .unwrap();
+        let resp = list_blocks_inner(
+            &pool, None, None, None, None, None, None, None, None, None, None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             resp.items.len(),
@@ -6074,9 +6072,21 @@ mod tests {
             .await
             .unwrap();
 
-        let resp = list_blocks_inner(&pool, None, None, None, Some(true), None, None, None, None, None, None)
-            .await
-            .unwrap();
+        let resp = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            None,
+            Some(true),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             resp.items.len(),
@@ -6213,9 +6223,21 @@ mod tests {
             "block_type alone should be accepted"
         );
         assert!(
-            list_blocks_inner(&pool, None, None, None, Some(true), None, None, None, None, None, None)
-                .await
-                .is_ok(),
+            list_blocks_inner(
+                &pool,
+                None,
+                None,
+                None,
+                Some(true),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None
+            )
+            .await
+            .is_ok(),
             "show_deleted alone should be accepted"
         );
         // show_deleted=false should NOT count as a filter
@@ -6243,9 +6265,11 @@ mod tests {
     async fn list_blocks_empty_db_returns_empty_page() {
         let (pool, _dir) = test_pool().await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, None)
-            .await
-            .unwrap();
+        let resp = list_blocks_inner(
+            &pool, None, None, None, None, None, None, None, None, None, None,
+        )
+        .await
+        .unwrap();
 
         assert!(
             resp.items.is_empty(),
@@ -6774,9 +6798,21 @@ mod tests {
         insert_block(&pool, "SNAP_BLK1", "content", "first", None, Some(1)).await;
         insert_block(&pool, "SNAP_BLK2", "page", "second", None, Some(2)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, Some(10))
-            .await
-            .unwrap();
+        let resp = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(10),
+        )
+        .await
+        .unwrap();
 
         insta::assert_yaml_snapshot!(resp);
     }
@@ -7541,9 +7577,21 @@ mod tests {
         insert_block(&pool, "PS_BLK1", "content", "a", None, Some(1)).await;
         insert_block(&pool, "PS_BLK2", "content", "b", None, Some(2)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, Some(0))
-            .await
-            .unwrap();
+        let resp = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(0),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             resp.items.len(),
@@ -7560,9 +7608,21 @@ mod tests {
         insert_block(&pool, "PS_N1", "content", "a", None, Some(1)).await;
         insert_block(&pool, "PS_N2", "content", "b", None, Some(2)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, Some(-1))
-            .await
-            .unwrap();
+        let resp = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(-1),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             resp.items.len(),
@@ -7580,9 +7640,21 @@ mod tests {
         insert_block(&pool, "PS_L2", "content", "b", None, Some(2)).await;
         insert_block(&pool, "PS_L3", "content", "c", None, Some(3)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, Some(1000))
-            .await
-            .unwrap();
+        let resp = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(1000),
+        )
+        .await
+        .unwrap();
 
         // With only 3 items and clamped limit=100, all 3 should be returned
         assert_eq!(resp.items.len(), 3);
@@ -7595,9 +7667,11 @@ mod tests {
 
         insert_block(&pool, "PS_D1", "content", "a", None, Some(1)).await;
 
-        let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, None)
-            .await
-            .unwrap();
+        let resp = list_blocks_inner(
+            &pool, None, None, None, None, None, None, None, None, None, None,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(resp.items.len(), 1);
     }
@@ -9771,7 +9845,7 @@ mod tests {
         );
 
         // Verify all block IDs are from the page tree
-        let valid_ids = vec![
+        let valid_ids = [
             page.id.clone(),
             child.id.clone(),
             grandchild.id.clone(),
@@ -12277,11 +12351,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(
-            resp.items.len(),
-            1,
-            "single-day range should return 1 item"
-        );
+        assert_eq!(resp.items.len(), 1, "single-day range should return 1 item");
         assert_eq!(resp.items[0].id, "RNG_SD1");
     }
 
@@ -15730,9 +15800,7 @@ mod tests {
         );
 
         // An edit_block op should exist in the log
-        let ops = crate::op_log::get_ops_since(&pool, DEV, 0)
-            .await
-            .unwrap();
+        let ops = crate::op_log::get_ops_since(&pool, DEV, 0).await.unwrap();
         assert_eq!(ops.len(), 1, "flush must produce one op");
         assert_eq!(ops[0].op_type, "edit_block");
     }

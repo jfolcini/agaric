@@ -746,10 +746,8 @@ describe('PagePropertyTable edit select options', () => {
   it('shows error toast when save fails', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'get_properties')
-        return [makeProp('stage', { value_text: 'TODO' })]
-      if (cmd === 'list_property_defs')
-        return [makeDef('stage', 'select', '["TODO","DOING"]')]
+      if (cmd === 'get_properties') return [makeProp('stage', { value_text: 'TODO' })]
+      if (cmd === 'list_property_defs') return [makeDef('stage', 'select', '["TODO","DOING"]')]
       if (cmd === 'update_property_def_options') throw new Error('backend error')
       if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
       if (cmd === 'list_tags_for_block') return []

@@ -16,8 +16,8 @@ pub mod op_log;
 pub mod pagination;
 pub mod pairing;
 pub mod peer_refs;
-pub mod recurrence;
 pub mod recovery;
+pub mod recurrence;
 pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;
@@ -47,165 +47,6 @@ mod command_integration_tests;
 mod integration_tests;
 #[cfg(test)]
 mod sync_integration_tests;
-
-#[cfg(test)]
-mod specta_tests {
-    use tauri_specta::{collect_commands, Builder};
-
-    /// Build the tauri-specta [`Builder`] with every registered command.
-    ///
-    /// Shared between the export test and (potentially) runtime setup so the
-    /// command list stays in sync.
-    fn specta_builder() -> Builder {
-        Builder::<tauri::Wry>::new().commands(collect_commands![
-            crate::commands::create_block,
-            crate::commands::edit_block,
-            crate::commands::delete_block,
-            crate::commands::restore_block,
-            crate::commands::purge_block,
-            crate::commands::move_block,
-            crate::commands::list_blocks,
-            crate::commands::get_block,
-            crate::commands::batch_resolve,
-            crate::commands::add_tag,
-            crate::commands::remove_tag,
-            crate::commands::get_backlinks,
-            crate::commands::get_block_history,
-            crate::commands::get_conflicts,
-            crate::commands::get_status,
-            crate::commands::search_blocks,
-            crate::commands::query_by_tags,
-            crate::commands::query_by_property,
-            crate::commands::list_tags_by_prefix,
-            crate::commands::list_tags_for_block,
-            crate::commands::set_property,
-            crate::commands::set_todo_state,
-            crate::commands::set_priority,
-            crate::commands::set_due_date,
-            crate::commands::set_scheduled_date,
-            crate::commands::delete_property,
-            crate::commands::get_properties,
-            crate::commands::get_batch_properties,
-            crate::commands::list_page_history,
-            crate::commands::revert_ops,
-            crate::commands::undo_page_op,
-            crate::commands::redo_page_op,
-            crate::commands::compute_edit_diff,
-            crate::commands::query_backlinks_filtered,
-            crate::commands::list_backlinks_grouped,
-            crate::commands::list_unlinked_references,
-            crate::commands::list_property_keys,
-            crate::commands::create_property_def,
-            crate::commands::list_property_defs,
-            crate::commands::update_property_def_options,
-            crate::commands::delete_property_def,
-            // Sync
-            crate::commands::list_peer_refs,
-            crate::commands::get_peer_ref,
-            crate::commands::delete_peer_ref,
-            crate::commands::update_peer_name,
-            crate::commands::set_peer_address,
-            crate::commands::get_device_id,
-            // Sync — pairing & session (#275, #278)
-            crate::commands::start_pairing,
-            crate::commands::confirm_pairing,
-            crate::commands::cancel_pairing,
-            crate::commands::start_sync,
-            crate::commands::cancel_sync,
-            // Batch count commands (#604)
-            crate::commands::count_agenda_batch,
-            crate::commands::count_backlinks_batch,
-            // Page aliases (#598)
-            crate::commands::set_page_aliases,
-            crate::commands::get_page_aliases,
-            crate::commands::resolve_page_by_alias,
-            // Markdown export (#519)
-            crate::commands::export_page_markdown,
-            // Agenda projection (#644)
-            crate::commands::list_projected_agenda,
-            // Logseq/Markdown import (#660)
-            crate::commands::import_markdown,
-            // Attachments (F-7)
-            crate::commands::add_attachment,
-            crate::commands::delete_attachment,
-            crate::commands::list_attachments,
-            // Draft autosave (F-17)
-            crate::commands::save_draft,
-            crate::commands::flush_draft,
-            crate::commands::delete_draft,
-        ])
-    }
-
-    /// Verify the generated TypeScript bindings match the committed file.
-    ///
-    /// Writes to a temp file and compares against `src/lib/bindings.ts`.
-    /// To regenerate: `cargo test -p agaric-lib -- specta_tests --ignored`
-    #[test]
-    fn ts_bindings_up_to_date() {
-        let builder = specta_builder();
-        let tmp = std::env::temp_dir().join("agaric_bindings_check.ts");
-        builder
-            .export(
-                specta_typescript::Typescript::default()
-                    .bigint(specta_typescript::BigIntExportBehavior::Number),
-                &tmp,
-            )
-            .expect("Failed to export TypeScript bindings to temp file");
-
-        let generated = std::fs::read_to_string(&tmp).expect("read generated");
-        let committed_path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/lib/bindings.ts");
-        let committed = std::fs::read_to_string(&committed_path)
-            .expect("read committed bindings.ts — run the ignored regenerate test first");
-
-        // Normalize: trim trailing whitespace, strip `// @ts-nocheck` header,
-        // and trim leading/trailing blank lines so minor whitespace differences
-        // between specta output and the committed file don't cause spurious diffs.
-        let norm = |s: &str| -> String {
-            let lines: Vec<&str> = s
-                .lines()
-                .map(|l| l.trim_end())
-                .filter(|l| *l != "// @ts-nocheck")
-                .collect();
-            // Trim leading and trailing empty lines
-            let start = lines.iter().position(|l| !l.is_empty()).unwrap_or(0);
-            let end = lines
-                .iter()
-                .rposition(|l| !l.is_empty())
-                .map_or(0, |i| i + 1);
-            lines[start..end].join("\n")
-        };
-
-        assert_eq!(
-            norm(&generated),
-            norm(&committed),
-            "TypeScript bindings are stale — regenerate with: \
-             cd src-tauri && cargo test -p agaric-lib -- specta_tests --ignored"
-        );
-    }
-
-    /// Regenerate `src/lib/bindings.ts` from the current Rust types.
-    ///
-    /// Run manually: `cd src-tauri && cargo test -p agaric-lib -- specta_tests --ignored`
-    #[test]
-    #[ignore]
-    fn regenerate_ts_bindings() {
-        let builder = specta_builder();
-        let out_path = "../src/lib/bindings.ts";
-        builder
-            .export(
-                specta_typescript::Typescript::default()
-                    .bigint(specta_typescript::BigIntExportBehavior::Number),
-                out_path,
-            )
-            .expect("Failed to export TypeScript bindings");
-
-        // Prepend `// @ts-nocheck` so tsc ignores unused specta-generated declarations
-        let content = std::fs::read_to_string(out_path).expect("read generated bindings");
-        std::fs::write(out_path, format!("// @ts-nocheck\n{content}"))
-            .expect("write bindings with ts-nocheck header");
-    }
-}
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -408,4 +249,163 @@ pub fn run() {
             tracing::error!(error = %e, "failed to run Tauri application");
             std::process::exit(1);
         });
+}
+
+#[cfg(test)]
+mod specta_tests {
+    use tauri_specta::{collect_commands, Builder};
+
+    /// Build the tauri-specta [`Builder`] with every registered command.
+    ///
+    /// Shared between the export test and (potentially) runtime setup so the
+    /// command list stays in sync.
+    fn specta_builder() -> Builder {
+        Builder::<tauri::Wry>::new().commands(collect_commands![
+            crate::commands::create_block,
+            crate::commands::edit_block,
+            crate::commands::delete_block,
+            crate::commands::restore_block,
+            crate::commands::purge_block,
+            crate::commands::move_block,
+            crate::commands::list_blocks,
+            crate::commands::get_block,
+            crate::commands::batch_resolve,
+            crate::commands::add_tag,
+            crate::commands::remove_tag,
+            crate::commands::get_backlinks,
+            crate::commands::get_block_history,
+            crate::commands::get_conflicts,
+            crate::commands::get_status,
+            crate::commands::search_blocks,
+            crate::commands::query_by_tags,
+            crate::commands::query_by_property,
+            crate::commands::list_tags_by_prefix,
+            crate::commands::list_tags_for_block,
+            crate::commands::set_property,
+            crate::commands::set_todo_state,
+            crate::commands::set_priority,
+            crate::commands::set_due_date,
+            crate::commands::set_scheduled_date,
+            crate::commands::delete_property,
+            crate::commands::get_properties,
+            crate::commands::get_batch_properties,
+            crate::commands::list_page_history,
+            crate::commands::revert_ops,
+            crate::commands::undo_page_op,
+            crate::commands::redo_page_op,
+            crate::commands::compute_edit_diff,
+            crate::commands::query_backlinks_filtered,
+            crate::commands::list_backlinks_grouped,
+            crate::commands::list_unlinked_references,
+            crate::commands::list_property_keys,
+            crate::commands::create_property_def,
+            crate::commands::list_property_defs,
+            crate::commands::update_property_def_options,
+            crate::commands::delete_property_def,
+            // Sync
+            crate::commands::list_peer_refs,
+            crate::commands::get_peer_ref,
+            crate::commands::delete_peer_ref,
+            crate::commands::update_peer_name,
+            crate::commands::set_peer_address,
+            crate::commands::get_device_id,
+            // Sync — pairing & session (#275, #278)
+            crate::commands::start_pairing,
+            crate::commands::confirm_pairing,
+            crate::commands::cancel_pairing,
+            crate::commands::start_sync,
+            crate::commands::cancel_sync,
+            // Batch count commands (#604)
+            crate::commands::count_agenda_batch,
+            crate::commands::count_backlinks_batch,
+            // Page aliases (#598)
+            crate::commands::set_page_aliases,
+            crate::commands::get_page_aliases,
+            crate::commands::resolve_page_by_alias,
+            // Markdown export (#519)
+            crate::commands::export_page_markdown,
+            // Agenda projection (#644)
+            crate::commands::list_projected_agenda,
+            // Logseq/Markdown import (#660)
+            crate::commands::import_markdown,
+            // Attachments (F-7)
+            crate::commands::add_attachment,
+            crate::commands::delete_attachment,
+            crate::commands::list_attachments,
+            // Draft autosave (F-17)
+            crate::commands::save_draft,
+            crate::commands::flush_draft,
+            crate::commands::delete_draft,
+        ])
+    }
+
+    /// Verify the generated TypeScript bindings match the committed file.
+    ///
+    /// Writes to a temp file and compares against `src/lib/bindings.ts`.
+    /// To regenerate: `cargo test -p agaric-lib -- specta_tests --ignored`
+    #[test]
+    fn ts_bindings_up_to_date() {
+        let builder = specta_builder();
+        let tmp = std::env::temp_dir().join("agaric_bindings_check.ts");
+        builder
+            .export(
+                specta_typescript::Typescript::default()
+                    .bigint(specta_typescript::BigIntExportBehavior::Number),
+                &tmp,
+            )
+            .expect("Failed to export TypeScript bindings to temp file");
+
+        let generated = std::fs::read_to_string(&tmp).expect("read generated");
+        let committed_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/lib/bindings.ts");
+        let committed = std::fs::read_to_string(&committed_path)
+            .expect("read committed bindings.ts — run the ignored regenerate test first");
+
+        // Normalize: trim trailing whitespace, strip `// @ts-nocheck` header,
+        // and trim leading/trailing blank lines so minor whitespace differences
+        // between specta output and the committed file don't cause spurious diffs.
+        let norm = |s: &str| -> String {
+            let lines: Vec<&str> = s
+                .lines()
+                .map(|l| l.trim_end())
+                .filter(|l| *l != "// @ts-nocheck")
+                .collect();
+            // Trim leading and trailing empty lines
+            let start = lines.iter().position(|l| !l.is_empty()).unwrap_or(0);
+            let end = lines
+                .iter()
+                .rposition(|l| !l.is_empty())
+                .map_or(0, |i| i + 1);
+            lines[start..end].join("\n")
+        };
+
+        assert_eq!(
+            norm(&generated),
+            norm(&committed),
+            "TypeScript bindings are stale — regenerate with: \
+             cd src-tauri && cargo test -p agaric-lib -- specta_tests --ignored"
+        );
+    }
+
+    /// Regenerate `src/lib/bindings.ts` from the current Rust types.
+    ///
+    /// Run manually: `cd src-tauri && cargo test -p agaric-lib -- specta_tests --ignored`
+    #[test]
+    #[ignore]
+    fn regenerate_ts_bindings() {
+        let builder = specta_builder();
+        let out_path = "../src/lib/bindings.ts";
+        builder
+            .export(
+                specta_typescript::Typescript::default()
+                    .bigint(specta_typescript::BigIntExportBehavior::Number),
+                out_path,
+            )
+            .expect("Failed to export TypeScript bindings");
+
+        // Prepend `// @ts-nocheck` so tsc ignores unused specta-generated declarations
+        let content = std::fs::read_to_string(out_path).expect("read generated bindings");
+        std::fs::write(out_path, format!("// @ts-nocheck\n{content}"))
+            .expect("write bindings with ts-nocheck header");
+    }
 }

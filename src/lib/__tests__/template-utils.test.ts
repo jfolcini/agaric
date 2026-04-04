@@ -36,8 +36,8 @@ describe('loadTemplatePages', () => {
       limit: 100,
     })
     expect(result).toHaveLength(2)
-    expect(result[0]!.id).toBe('T1')
-    expect(result[1]!.id).toBe('T2')
+    expect(result[0]?.id).toBe('T1')
+    expect(result[1]?.id).toBe('T2')
   })
 
   it('returns empty array when no templates exist', async () => {
@@ -330,7 +330,7 @@ describe('loadTemplatePagesWithPreview', () => {
 
     const result = await loadTemplatePagesWithPreview()
     expect(result).toHaveLength(1)
-    expect(result[0]!.preview).toBe('## Attendees')
+    expect(result[0]?.preview).toBe('## Attendees')
   })
 
   it('returns null preview when template has no children', async () => {
@@ -346,7 +346,7 @@ describe('loadTemplatePagesWithPreview', () => {
     })
 
     const result = await loadTemplatePagesWithPreview()
-    expect(result[0]!.preview).toBeNull()
+    expect(result[0]?.preview).toBeNull()
   })
 
   it('truncates long preview text at 60 chars', async () => {
@@ -365,7 +365,7 @@ describe('loadTemplatePagesWithPreview', () => {
     })
 
     const result = await loadTemplatePagesWithPreview()
-    expect(result[0]!.preview).toBe(`${'A'.repeat(60)}\u2026`)
+    expect(result[0]?.preview).toBe(`${'A'.repeat(60)}\u2026`)
   })
 
   it('handles preview fetch failure gracefully', async () => {
@@ -377,7 +377,7 @@ describe('loadTemplatePagesWithPreview', () => {
     mockedInvoke.mockRejectedValueOnce(new Error('list_blocks failed'))
 
     const result = await loadTemplatePagesWithPreview()
-    expect(result[0]!.preview).toBeNull()
+    expect(result[0]?.preview).toBeNull()
   })
 })
 

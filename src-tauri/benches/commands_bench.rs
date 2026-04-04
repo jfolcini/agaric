@@ -316,9 +316,21 @@ fn bench_list_blocks_empty(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             async move {
-                list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(50))
-                    .await
-                    .unwrap()
+                list_blocks_inner(
+                    &pool,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(50),
+                )
+                .await
+                .unwrap()
             }
         })
     });
@@ -336,9 +348,21 @@ fn bench_list_blocks_10_items(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             async move {
-                list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(50))
-                    .await
-                    .unwrap()
+                list_blocks_inner(
+                    &pool,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(50),
+                )
+                .await
+                .unwrap()
             }
         })
     });
@@ -358,9 +382,21 @@ fn bench_list_blocks_100_items(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let pool = pool.clone();
             async move {
-                list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(200))
-                    .await
-                    .unwrap()
+                list_blocks_inner(
+                    &pool,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(200),
+                )
+                .await
+                .unwrap()
             }
         })
     });
@@ -381,14 +417,38 @@ fn bench_list_blocks_paginate_10_of_100(c: &mut Criterion) {
             let pool = pool.clone();
             async move {
                 // First page — fetch 10 of 100
-                let page1 = list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(10))
-                    .await
-                    .unwrap();
+                let page1 = list_blocks_inner(
+                    &pool,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(10),
+                )
+                .await
+                .unwrap();
                 // Second page using cursor from first page
                 if let Some(cursor) = page1.next_cursor {
-                    list_blocks_inner(&pool, None, None, None, None, None, None, Some(cursor), Some(10))
-                        .await
-                        .unwrap();
+                    list_blocks_inner(
+                        &pool,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(cursor),
+                        Some(10),
+                    )
+                    .await
+                    .unwrap();
                 }
             }
         })
@@ -429,6 +489,8 @@ fn bench_list_blocks_with_type_filter(c: &mut Criterion) {
                     &pool,
                     None,
                     Some("page".into()),
+                    None,
+                    None,
                     None,
                     None,
                     None,
@@ -647,9 +709,21 @@ fn bench_list_blocks_at_scale(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
                     async move {
-                        list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(50))
-                            .await
-                            .unwrap()
+                        list_blocks_inner(
+                            &pool,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            Some(50),
+                        )
+                        .await
+                        .unwrap()
                     }
                 })
             },
@@ -685,10 +759,7 @@ criterion_group!(
     bench_list_blocks_with_type_filter,
 );
 
-criterion_group!(
-    resolve_benches,
-    bench_batch_resolve,
-);
+criterion_group!(resolve_benches, bench_batch_resolve,);
 
 criterion_group!(properties_benches, bench_batch_properties,);
 

@@ -85,7 +85,7 @@ async fn seed_flat_page(
              VALUES (?, 'content', ?, ?, ?)",
         )
         .bind(&block_id)
-        .bind(&format!("Initial content {i}"))
+        .bind(format!("Initial content {i}"))
         .bind(&page_id)
         .bind(position)
         .execute(&mut *tx)
@@ -143,7 +143,7 @@ async fn seed_flat_page(
         // Update block content to final edit
         if ops_per_block > 0 {
             sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
-                .bind(&format!("Edit {} of block {i}", ops_per_block - 1))
+                .bind(format!("Edit {} of block {i}", ops_per_block - 1))
                 .bind(&block_id)
                 .execute(&mut *tx)
                 .await
@@ -227,7 +227,7 @@ async fn seed_deep_page(
                  VALUES (?, 'content', ?, ?, ?)",
             )
             .bind(&block_id)
-            .bind(&format!("depth={} width={w}", item.current_depth))
+            .bind(format!("depth={} width={w}", item.current_depth))
             .bind(&item.parent_id)
             .bind(position)
             .execute(&mut *tx)

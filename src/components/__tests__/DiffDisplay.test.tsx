@@ -75,18 +75,17 @@ describe('DiffDisplay', () => {
     const p = container.querySelector('p.diff-display')
     expect(p).not.toBeNull()
 
-    // biome-ignore lint/style/noNonNullAssertion: guarded by toBeNull assertion above
-    const children = Array.from(p!.children)
+    const children = Array.from((p as HTMLElement).children)
     expect(children).toHaveLength(3)
 
-    expect(children[0]!.tagName).toBe('DEL')
-    expect(children[0]!).toHaveTextContent('old')
+    expect(children[0]?.tagName).toBe('DEL')
+    expect(children[0] as HTMLElement).toHaveTextContent('old')
 
-    expect(children[1]!.tagName).toBe('INS')
-    expect(children[1]!).toHaveTextContent('new')
+    expect(children[1]?.tagName).toBe('INS')
+    expect(children[1] as HTMLElement).toHaveTextContent('new')
 
-    expect(children[2]!.tagName).toBe('SPAN')
-    expect(children[2]!).toHaveTextContent('same')
+    expect(children[2]?.tagName).toBe('SPAN')
+    expect(children[2] as HTMLElement).toHaveTextContent('same')
   })
 
   it('handles very long text', () => {
@@ -97,8 +96,7 @@ describe('DiffDisplay', () => {
 
     const span = container.querySelector('p.diff-display span')
     expect(span).not.toBeNull()
-    // biome-ignore lint/style/noNonNullAssertion: guarded by toBeNull assertion above
-    expect(span!.textContent).toHaveLength(10000)
+    expect((span as HTMLElement).textContent).toHaveLength(10000)
   })
 
   it('handles empty string values', () => {
@@ -113,12 +111,11 @@ describe('DiffDisplay', () => {
     const p = container.querySelector('p.diff-display')
     expect(p).not.toBeNull()
 
-    // biome-ignore lint/style/noNonNullAssertion: guarded by toBeNull assertion above
-    const children = Array.from(p!.children)
+    const children = Array.from((p as HTMLElement).children)
     expect(children).toHaveLength(3)
-    expect(children[0]!.tagName).toBe('DEL')
-    expect(children[1]!.tagName).toBe('INS')
-    expect(children[2]!.tagName).toBe('SPAN')
+    expect(children[0]?.tagName).toBe('DEL')
+    expect(children[1]?.tagName).toBe('INS')
+    expect(children[2]?.tagName).toBe('SPAN')
   })
 
   it('handles unicode characters', () => {

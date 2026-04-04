@@ -12,7 +12,6 @@
 
 import { Trash2, X } from 'lucide-react'
 import type React from 'react'
-import { Button } from '../ui/button'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,6 +22,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../ui/alert-dialog'
+import { Button } from '../ui/button'
 
 interface BlockContextMenuProps {
   selectedBlockIds: string[]
@@ -48,9 +48,7 @@ export function BlockContextMenu({
   return (
     <>
       <div className="batch-toolbar sticky top-0 z-10 flex items-center gap-2 rounded-lg border bg-background/95 backdrop-blur px-3 py-2 mb-2 shadow-sm">
-        <span className="text-sm font-medium tabular-nums">
-          {selectedBlockIds.length} selected
-        </span>
+        <span className="text-sm font-medium tabular-nums">{selectedBlockIds.length} selected</span>
 
         <div className="flex-1" />
 

@@ -369,10 +369,10 @@ describe('StatusPanel', () => {
 
       await screen.findByText('Foreground Queue')
       const metricCards = container.querySelectorAll('.status-metric')
-      expect(metricCards[0]!.className).toContain('border-emerald-200')
-      expect(metricCards[0]!.className).toContain('text-emerald-600')
-      expect(metricCards[1]!.className).toContain('border-emerald-200')
-      expect(metricCards[1]!.className).toContain('text-emerald-600')
+      expect(metricCards[0]?.className).toContain('border-emerald-200')
+      expect(metricCards[0]?.className).toContain('text-emerald-600')
+      expect(metricCards[1]?.className).toContain('border-emerald-200')
+      expect(metricCards[1]?.className).toContain('text-emerald-600')
     })
 
     it('applies no health accent for queue depth 1-10', async () => {
@@ -383,10 +383,10 @@ describe('StatusPanel', () => {
 
       await screen.findByText('Foreground Queue')
       const metricCards = container.querySelectorAll('.status-metric')
-      expect(metricCards[0]!.className).not.toContain('border-emerald')
-      expect(metricCards[0]!.className).not.toContain('border-amber')
-      expect(metricCards[1]!.className).not.toContain('border-emerald')
-      expect(metricCards[1]!.className).not.toContain('border-amber')
+      expect(metricCards[0]?.className).not.toContain('border-emerald')
+      expect(metricCards[0]?.className).not.toContain('border-amber')
+      expect(metricCards[1]?.className).not.toContain('border-emerald')
+      expect(metricCards[1]?.className).not.toContain('border-amber')
     })
 
     it('applies amber accent when queue depth exceeds 10', async () => {
@@ -407,10 +407,10 @@ describe('StatusPanel', () => {
 
       await screen.findByText('Foreground Queue')
       const metricCards = container.querySelectorAll('.status-metric')
-      expect(metricCards[0]!.className).toContain('border-amber-200')
-      expect(metricCards[0]!.className).toContain('text-amber-600')
-      expect(metricCards[1]!.className).toContain('border-amber-200')
-      expect(metricCards[1]!.className).toContain('text-amber-600')
+      expect(metricCards[0]?.className).toContain('border-amber-200')
+      expect(metricCards[0]?.className).toContain('text-amber-600')
+      expect(metricCards[1]?.className).toContain('border-amber-200')
+      expect(metricCards[1]?.className).toContain('text-amber-600')
     })
   })
 
@@ -442,10 +442,10 @@ describe('StatusPanel', () => {
       // All 4 labels should be wrapped in tooltip trigger spans with cursor-help
       const tooltipTriggers = container.querySelectorAll('.cursor-help')
       expect(tooltipTriggers).toHaveLength(4)
-      expect(tooltipTriggers[0]!.textContent).toBe('Foreground Queue')
-      expect(tooltipTriggers[1]!.textContent).toBe('Background Queue')
-      expect(tooltipTriggers[2]!.textContent).toBe('Ops Dispatched')
-      expect(tooltipTriggers[3]!.textContent).toBe('Background Dispatched')
+      expect(tooltipTriggers[0]?.textContent).toBe('Foreground Queue')
+      expect(tooltipTriggers[1]?.textContent).toBe('Background Queue')
+      expect(tooltipTriggers[2]?.textContent).toBe('Ops Dispatched')
+      expect(tooltipTriggers[3]?.textContent).toBe('Background Dispatched')
     })
   })
 

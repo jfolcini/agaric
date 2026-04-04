@@ -1432,9 +1432,7 @@ async fn handle_background_task(pool: &SqlitePool, task: &MaterializeTask) -> Re
         }
         MaterializeTask::RebuildFtsIndex => crate::fts::rebuild_fts_index(pool).await,
         MaterializeTask::FtsOptimize => crate::fts::fts_optimize(pool).await,
-        MaterializeTask::CleanupOrphanedAttachments => {
-            cleanup_orphaned_attachments(pool).await
-        }
+        MaterializeTask::CleanupOrphanedAttachments => cleanup_orphaned_attachments(pool).await,
         MaterializeTask::ApplyOp(ref record) => {
             tracing::warn!(seq = record.seq, "unexpected ApplyOp in background queue");
             Ok(())

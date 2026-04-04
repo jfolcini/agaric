@@ -8,7 +8,12 @@ import { useUndoStore } from '../stores/undo'
 export interface UseBlockAttachmentsReturn {
   attachments: AttachmentRow[]
   loading: boolean
-  handleAddAttachment: (filename: string, mimeType: string, sizeBytes: number, fsPath: string) => Promise<void>
+  handleAddAttachment: (
+    filename: string,
+    mimeType: string,
+    sizeBytes: number,
+    fsPath: string,
+  ) => Promise<void>
   handleDeleteAttachment: (attachmentId: string) => Promise<void>
 }
 
@@ -19,7 +24,10 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
   // Load attachments when blockId changes
   useEffect(() => {
     setAttachments([])
-    if (!blockId) { setLoading(false); return }
+    if (!blockId) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     listAttachments(blockId)
       .then(setAttachments)

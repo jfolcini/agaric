@@ -1,10 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  MAX_REDO_STACK,
-  UNDO_GROUP_WINDOW_MS,
-  isWithinUndoGroup,
-  useUndoStore,
-} from '../undo'
+import { isWithinUndoGroup, MAX_REDO_STACK, UNDO_GROUP_WINDOW_MS, useUndoStore } from '../undo'
 
 vi.mock('@/lib/tauri', () => ({
   undoPageOp: vi.fn(),

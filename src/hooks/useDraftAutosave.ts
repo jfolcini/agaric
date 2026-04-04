@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-import { saveDraft, flushDraft, deleteDraft } from '@/lib/tauri'
+import { deleteDraft, flushDraft, saveDraft } from '@/lib/tauri'
 
 /**
  * Autosave hook for block draft content.

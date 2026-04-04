@@ -200,7 +200,7 @@ describe('DeviceManagement', () => {
     await screen.findByText('peer-abc-123...')
 
     const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
-    await user.click(syncBtns[0]!)
+    await user.click(syncBtns[0] as HTMLElement)
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('start_sync', {
@@ -222,7 +222,7 @@ describe('DeviceManagement', () => {
     await screen.findByText('peer-abc-123...')
 
     const unpairBtns = screen.getAllByRole('button', { name: /Unpair/i })
-    await user.click(unpairBtns[0]!)
+    await user.click(unpairBtns[0] as HTMLElement)
 
     // Confirmation dialog
     expect(screen.getByText('Unpair device?')).toBeInTheDocument()
@@ -319,7 +319,7 @@ describe('DeviceManagement', () => {
     await screen.findByText('peer-abc-123...')
 
     const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
-    await user.click(syncBtns[0]!)
+    await user.click(syncBtns[0] as HTMLElement)
 
     await waitFor(() => {
       expect(screen.getByText('sync failed')).toBeInTheDocument()
@@ -352,7 +352,7 @@ describe('DeviceManagement', () => {
     await screen.findByText('peer-abc-123...')
 
     const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
-    await user.click(syncBtns[0]!)
+    await user.click(syncBtns[0] as HTMLElement)
 
     // Wait for the visible error to appear first
     await waitFor(() => {
@@ -466,7 +466,7 @@ describe('DeviceManagement', () => {
       // Use fireEvent instead of userEvent — userEvent waits for the async
       // handler to settle which can't happen until we advance the timer.
       await act(async () => {
-        fireEvent.click(syncBtns[0]!)
+        fireEvent.click(syncBtns[0] as HTMLElement)
       })
 
       // Advance by 60 seconds to trigger the timeout promise
@@ -526,7 +526,7 @@ describe('DeviceManagement', () => {
     await screen.findByText('peer-abc-123...')
 
     const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
-    await user.click(syncBtns[0]!)
+    await user.click(syncBtns[0] as HTMLElement)
 
     await waitFor(() => {
       expect(screen.getByText('Connection refused by peer')).toBeInTheDocument()
@@ -601,11 +601,11 @@ describe('DeviceManagement', () => {
           },
         ]
       if (cmd === 'start_sync') {
-        syncCalls.push((args as Record<string, string>).peerId!)
+        syncCalls.push((args as Record<string, string>).peerId as string)
         return {
           state: 'completed',
           local_device_id: 'device-123',
-          remote_device_id: (args as Record<string, string>).peerId!,
+          remote_device_id: (args as Record<string, string>).peerId as string,
           ops_received: 0,
           ops_sent: 0,
         }
@@ -679,7 +679,7 @@ describe('DeviceManagement', () => {
           },
         ]
       if (cmd === 'start_sync') {
-        const peerId = (args as Record<string, string>).peerId!
+        const peerId = (args as Record<string, string>).peerId as string
         syncCalls.push(peerId)
         if (peerId === 'peer-1') throw new Error('Connection refused')
         return {
@@ -726,7 +726,7 @@ describe('DeviceManagement', () => {
 
     // Trigger a sync error
     const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
-    await user.click(syncBtns[0]!)
+    await user.click(syncBtns[0] as HTMLElement)
 
     // Wait for error to appear
     await waitFor(() => {
@@ -758,7 +758,7 @@ describe('DeviceManagement', () => {
     await screen.findByText('peer-abc-123...')
 
     const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
-    await user.click(syncBtns[0]!)
+    await user.click(syncBtns[0] as HTMLElement)
 
     await waitFor(() => {
       expect(
@@ -895,7 +895,7 @@ describe('DeviceManagement', () => {
     const renameBtns = container.querySelectorAll('.device-rename-btn')
     expect(renameBtns.length).toBeGreaterThan(0)
     await act(async () => {
-      fireEvent.click(renameBtns[0]!)
+      fireEvent.click(renameBtns[0] as HTMLElement)
     })
 
     // Click Save in the mock dialog
@@ -906,8 +906,8 @@ describe('DeviceManagement', () => {
 
     // The button should be disabled and show a spinner while renaming
     await waitFor(() => {
-      expect(renameBtns[0]!).toBeDisabled()
-      expect(renameBtns[0]!.querySelector('.animate-spin')).toBeTruthy()
+      expect(renameBtns[0] as HTMLElement).toBeDisabled()
+      expect(renameBtns[0]?.querySelector('.animate-spin')).toBeTruthy()
     })
 
     // Resolve the rename to clean up

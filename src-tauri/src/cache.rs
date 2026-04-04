@@ -1694,7 +1694,13 @@ mod tests {
     async fn reindex_block_links_tracks_block_refs() {
         let (pool, _dir) = test_pool().await;
 
-        insert_block(&pool, "01HZ00000000000000000000AB", "content", "target block").await;
+        insert_block(
+            &pool,
+            "01HZ00000000000000000000AB",
+            "content",
+            "target block",
+        )
+        .await;
         insert_block(
             &pool,
             "01HZ0000000000000000000SRC",
@@ -1725,8 +1731,20 @@ mod tests {
     async fn reindex_block_links_tracks_both_link_types() {
         let (pool, _dir) = test_pool().await;
 
-        insert_block(&pool, "01HZ00000000000000000000AB", "content", "page target").await;
-        insert_block(&pool, "01HZ00000000000000000000CD", "content", "block target").await;
+        insert_block(
+            &pool,
+            "01HZ00000000000000000000AB",
+            "content",
+            "page target",
+        )
+        .await;
+        insert_block(
+            &pool,
+            "01HZ00000000000000000000CD",
+            "content",
+            "block target",
+        )
+        .await;
         insert_block(
             &pool,
             "01HZ0000000000000000000SRC",
@@ -1747,7 +1765,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(rows.len(), 2, "both [[ ]] and (( )) targets must be tracked");
+        assert_eq!(
+            rows.len(),
+            2,
+            "both [[ ]] and (( )) targets must be tracked"
+        );
         assert_eq!(rows[0].target_id, "01HZ00000000000000000000AB");
         assert_eq!(rows[1].target_id, "01HZ00000000000000000000CD");
     }

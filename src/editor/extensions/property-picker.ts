@@ -47,12 +47,7 @@ export const PropertyPicker = Extension.create<PropertyPickerOptions>({
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
           // Replace the :: trigger + query with `key:: `
-          editor
-            .chain()
-            .focus()
-            .deleteRange(range)
-            .insertContent(`${item.label}:: `)
-            .run()
+          editor.chain().focus().deleteRange(range).insertContent(`${item.label}:: `).run()
           // Notify parent to create the property
           extensionOptions.onSelect?.(item, editor)
         },

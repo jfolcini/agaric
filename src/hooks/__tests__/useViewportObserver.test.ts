@@ -110,7 +110,7 @@ describe('useViewportObserver', () => {
     const { unmount } = renderHook(() => useViewportObserver())
 
     expect(MockIntersectionObserver.instances).toHaveLength(1)
-    expect(MockIntersectionObserver.instances[0]!.rootMargin).toBe('200px 0px')
+    expect(MockIntersectionObserver.instances[0]?.rootMargin).toBe('200px 0px')
 
     unmount()
   })
@@ -118,7 +118,7 @@ describe('useViewportObserver', () => {
   it('accepts a custom rootMargin', () => {
     const { unmount } = renderHook(() => useViewportObserver('100px 0px'))
 
-    const obs = MockIntersectionObserver.instances[0]!
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
     expect(obs.rootMargin).toBe('100px 0px')
 
     unmount()
@@ -127,7 +127,7 @@ describe('useViewportObserver', () => {
   it('disconnects the observer on unmount', () => {
     const { unmount } = renderHook(() => useViewportObserver())
 
-    const obs = MockIntersectionObserver.instances[0]!
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
     const spy = vi.spyOn(obs, 'disconnect')
 
     unmount()
@@ -142,7 +142,7 @@ describe('useViewportObserver', () => {
     el.dataset.blockId = 'BLOCK_A'
     result.current.observeRef(el)
 
-    const obs = MockIntersectionObserver.instances[0]!
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
     expect(obs.observed.has(el)).toBe(true)
 
     unmount()
@@ -154,7 +154,7 @@ describe('useViewportObserver', () => {
     // Should not throw
     result.current.observeRef(null)
 
-    const obs = MockIntersectionObserver.instances[0]!
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
     expect(obs.observed.size).toBe(0)
 
     unmount()
@@ -167,7 +167,7 @@ describe('useViewportObserver', () => {
     el.dataset.blockId = 'BLOCK_A'
     result.current.observeRef(el)
 
-    const obs = MockIntersectionObserver.instances[0]!
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
     act(() => {
       obs.trigger([
         {
@@ -190,7 +190,7 @@ describe('useViewportObserver', () => {
     el.dataset.blockId = 'BLOCK_A'
     result.current.observeRef(el)
 
-    const obs = MockIntersectionObserver.instances[0]!
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
     act(() => {
       obs.trigger([
         {
@@ -213,7 +213,7 @@ describe('useViewportObserver', () => {
     el.dataset.blockId = 'BLOCK_A'
     result.current.observeRef(el)
 
-    const obs = MockIntersectionObserver.instances[0]!
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
 
     // Go offscreen
     act(() => {
@@ -256,7 +256,7 @@ describe('useViewportObserver', () => {
     const el = document.createElement('div') // no dataset.blockId
     result.current.observeRef(el)
 
-    const obs = MockIntersectionObserver.instances[0]!
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
     act(() => {
       obs.trigger([
         {
@@ -284,7 +284,7 @@ describe('useViewportObserver', () => {
     result.current.observeRef(elA)
     result.current.observeRef(elB)
 
-    const obs = MockIntersectionObserver.instances[0]!
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
 
     // A goes offscreen, B stays visible
     act(() => {
@@ -316,7 +316,7 @@ describe('useViewportObserver', () => {
     el.dataset.blockId = 'A'
     result.current.observeRef(el)
 
-    const obs = MockIntersectionObserver.instances[0]!
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
 
     // Block is already visible (default), trigger intersecting — should be a no-op
     act(() => {

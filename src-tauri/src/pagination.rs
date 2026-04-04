@@ -218,13 +218,8 @@ pub async fn list_children(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_pos, cursor_id): (Option<i64>, i64, &str) = match page.after.as_ref()
-    {
-        Some(c) => (
-            Some(1),
-            c.position.unwrap_or(NULL_POSITION_SENTINEL),
-            &c.id,
-        ),
+    let (cursor_flag, cursor_pos, cursor_id): (Option<i64>, i64, &str) = match page.after.as_ref() {
+        Some(c) => (Some(1), c.position.unwrap_or(NULL_POSITION_SENTINEL), &c.id),
         None => (None, 0, ""),
     };
 
@@ -313,16 +308,16 @@ pub async fn list_trash(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_del, cursor_id): (Option<i64>, &str, &str) =
-        match page.after.as_ref() {
-            Some(c) => {
-                let del = c.deleted_at.as_deref().ok_or_else(|| {
-                    AppError::Validation("cursor missing deleted_at for trash query".into())
-                })?;
-                (Some(1), del, &c.id)
-            }
-            None => (None, "", ""),
-        };
+    let (cursor_flag, cursor_del, cursor_id): (Option<i64>, &str, &str) = match page.after.as_ref()
+    {
+        Some(c) => {
+            let del = c.deleted_at.as_deref().ok_or_else(|| {
+                AppError::Validation("cursor missing deleted_at for trash query".into())
+            })?;
+            (Some(1), del, &c.id)
+        }
+        None => (None, "", ""),
+    };
 
     let rows = sqlx::query_as!(
         BlockRow,
@@ -556,15 +551,11 @@ pub async fn list_agenda_range(
 
     // For the range query we use a composite cursor: (date, block_id).
     // We stash the cursor date in `deleted_at` and block_id in `id`.
-    let (cursor_flag, cursor_date, cursor_id): (Option<i64>, &str, &str) =
-        match page.after.as_ref() {
-            Some(c) => (
-                Some(1),
-                c.deleted_at.as_deref().unwrap_or(""),
-                &c.id,
-            ),
-            None => (None, "", ""),
-        };
+    let (cursor_flag, cursor_date, cursor_id): (Option<i64>, &str, &str) = match page.after.as_ref()
+    {
+        Some(c) => (Some(1), c.deleted_at.as_deref().unwrap_or(""), &c.id),
+        None => (None, "", ""),
+    };
 
     let rows = sqlx::query_as!(
         BlockRow,
@@ -596,12 +587,8 @@ pub async fn list_agenda_range(
     // This is a best-effort approach; the cursor just needs to be consistent.
     fn extract_date_for_cursor(b: &BlockRow, source: Option<&str>) -> String {
         match source {
-            Some(s) if s.contains("due_date") => {
-                b.due_date.clone().unwrap_or_default()
-            }
-            Some(s) if s.contains("scheduled_date") => {
-                b.scheduled_date.clone().unwrap_or_default()
-            }
+            Some(s) if s.contains("due_date") => b.due_date.clone().unwrap_or_default(),
+            Some(s) if s.contains("scheduled_date") => b.scheduled_date.clone().unwrap_or_default(),
             _ => b
                 .due_date
                 .clone()
@@ -2728,7 +2715,10 @@ mod tests {
         all_ids.extend(r2.items.iter().map(|b| b.id.clone()));
         let unique_count = {
             let mut set = std::collections::HashSet::new();
-            all_ids.iter().filter(|id| set.insert(id.clone())).count()
+            all_ids
+                .iter()
+                .filter(|id| set.insert((*id).clone()))
+                .count()
         };
         assert_eq!(unique_count, all_ids.len(), "no duplicate IDs across pages");
 
@@ -2834,11 +2824,11 @@ mod proptest_tests {
     /// Strategy for arbitrary Cursor values.
     fn arb_cursor() -> impl Strategy<Value = Cursor> {
         (
-            "[a-zA-Z0-9_-]{1,40}",           // id
+            "[a-zA-Z0-9_-]{1,40}",                 // id
             proptest::option::of(0i64..=i64::MAX), // position
             proptest::option::of("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\+00:00"), // deleted_at
-            proptest::option::of(1i64..100000),    // seq
-            proptest::option::of(-100.0f64..0.0),  // rank (FTS ranks are negative)
+            proptest::option::of(1i64..100000),   // seq
+            proptest::option::of(-100.0f64..0.0), // rank (FTS ranks are negative)
         )
             .prop_map(|(id, position, deleted_at, seq, rank)| Cursor {
                 id,

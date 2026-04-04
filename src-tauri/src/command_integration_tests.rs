@@ -743,9 +743,11 @@ async fn deleted_blocks_excluded_from_list_blocks() {
         .await
         .unwrap();
 
-    let live = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, None)
-        .await
-        .unwrap();
+    let live = list_blocks_inner(
+        &pool, None, None, None, None, None, None, None, None, None, None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(live.items.len(), 1, "only alive blocks in normal list");
     assert_eq!(live.items[0].id, b1.id, "surviving block must be b1");
@@ -783,9 +785,21 @@ async fn deleted_blocks_visible_in_list_blocks_show_deleted() {
         .await
         .unwrap();
 
-    let trash = list_blocks_inner(&pool, None, None, None, Some(true), None, None, None, None, None, None)
-        .await
-        .unwrap();
+    let trash = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        Some(true),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(trash.items.len(), 1, "only deleted blocks in trash view");
     assert_eq!(trash.items[0].id, b2.id, "deleted block must be b2");
@@ -1244,9 +1258,11 @@ async fn list_blocks_top_level_returns_root_blocks() {
     insert_block(&pool, "ROOT2", "content", "b", None, Some(2)).await;
     insert_block(&pool, "CHILD1", "content", "c", Some("ROOT1"), Some(1)).await;
 
-    let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = list_blocks_inner(
+        &pool, None, None, None, None, None, None, None, None, None, None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         resp.items.len(),
@@ -1329,9 +1345,11 @@ async fn list_blocks_with_block_type_filter_returns_matching_type() {
 async fn list_blocks_empty_db_returns_empty_page_no_more() {
     let (pool, _dir) = test_pool().await;
 
-    let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, None)
-        .await
-        .unwrap();
+    let resp = list_blocks_inner(
+        &pool, None, None, None, None, None, None, None, None, None, None,
+    )
+    .await
+    .unwrap();
 
     assert!(resp.items.is_empty(), "empty DB must return empty items");
     assert!(!resp.has_more, "empty DB must have has_more=false");
@@ -1358,9 +1376,21 @@ async fn list_blocks_show_deleted_returns_only_deleted() {
         .await
         .unwrap();
 
-    let trash = list_blocks_inner(&pool, None, None, None, Some(true), None, None, None, None, None, None)
-        .await
-        .unwrap();
+    let trash = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        Some(true),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         trash.items.len(),
@@ -1404,9 +1434,21 @@ async fn pagination_walk_all_pages_no_duplicates() {
     let mut cursor: Option<String> = None;
     let mut pages = 0;
     loop {
-        let page = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, cursor, Some(4))
-            .await
-            .unwrap();
+        let page = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            cursor,
+            Some(4),
+        )
+        .await
+        .unwrap();
         for item in &page.items {
             all_ids.push(item.id.clone());
         }
@@ -1441,9 +1483,21 @@ async fn pagination_limit_1_produces_single_item_pages() {
     let mut pages = 0;
 
     loop {
-        let page = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, cursor, Some(1))
-            .await
-            .unwrap();
+        let page = list_blocks_inner(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            cursor,
+            Some(1),
+        )
+        .await
+        .unwrap();
         assert!(
             page.items.len() <= 1,
             "limit=1 must produce at most 1 item per page"
@@ -1683,17 +1737,18 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
     let mut pages = 0;
 
     loop {
-        let page = list_blocks_inner(&pool,
-None,
-None,
-None,
-None,
-None,
+        let page = list_blocks_inner(
+            &pool,
             None,
             None,
-None,
-cursor,
-Some(PAGE_SIZE),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            cursor,
+            Some(PAGE_SIZE),
         )
         .await
         .unwrap();
@@ -7350,21 +7405,28 @@ async fn set_and_get_page_aliases() {
     settle(&mat).await;
 
     // Set aliases
-    let inserted = set_page_aliases_inner(
-        &pool,
-        &page.id,
-        vec!["my-alias".into(), "another".into()],
-    )
-    .await
-    .unwrap();
+    let inserted =
+        set_page_aliases_inner(&pool, &page.id, vec!["my-alias".into(), "another".into()])
+            .await
+            .unwrap();
 
     assert_eq!(inserted.len(), 2, "both aliases must be inserted");
-    assert!(inserted.contains(&"my-alias".to_string()), "must contain my-alias");
-    assert!(inserted.contains(&"another".to_string()), "must contain another");
+    assert!(
+        inserted.contains(&"my-alias".to_string()),
+        "must contain my-alias"
+    );
+    assert!(
+        inserted.contains(&"another".to_string()),
+        "must contain another"
+    );
 
     // Get aliases (returned sorted alphabetically)
     let fetched = get_page_aliases_inner(&pool, &page.id).await.unwrap();
-    assert_eq!(fetched, vec!["another", "my-alias"], "aliases must be sorted alphabetically");
+    assert_eq!(
+        fetched,
+        vec!["another", "my-alias"],
+        "aliases must be sorted alphabetically"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7442,23 +7504,19 @@ async fn alias_collision_returns_error() {
     settle(&mat).await;
 
     // Page A claims the alias first
-    let inserted_a = set_page_aliases_inner(
-        &pool,
-        &page_a.id,
-        vec!["shared-alias".into()],
-    )
-    .await
-    .unwrap();
-    assert_eq!(inserted_a, vec!["shared-alias"], "page A must own the alias");
+    let inserted_a = set_page_aliases_inner(&pool, &page_a.id, vec!["shared-alias".into()])
+        .await
+        .unwrap();
+    assert_eq!(
+        inserted_a,
+        vec!["shared-alias"],
+        "page A must own the alias"
+    );
 
     // Page B tries to claim the same alias — INSERT OR IGNORE silently skips it
-    let inserted_b = set_page_aliases_inner(
-        &pool,
-        &page_b.id,
-        vec!["shared-alias".into()],
-    )
-    .await
-    .unwrap();
+    let inserted_b = set_page_aliases_inner(&pool, &page_b.id, vec!["shared-alias".into()])
+        .await
+        .unwrap();
     assert!(
         inserted_b.is_empty(),
         "duplicate alias must be silently ignored (INSERT OR IGNORE)"

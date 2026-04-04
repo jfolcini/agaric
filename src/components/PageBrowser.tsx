@@ -52,7 +52,7 @@ function buildPageTree(pages: Array<{ id: string; content: string | null }>): Pa
     let current = root
 
     for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i]!
+      const segment = segments[i] as string
       const fullPath = segments.slice(0, i + 1).join('/')
       let node = current.find((n) => n.name === segment)
 
@@ -117,7 +117,9 @@ function PageTreeItem({
       <button
         type="button"
         style={{ paddingLeft: `${depth * 16}px` }}
-        onClick={() => { if (node.pageId) onNavigate(node.pageId, node.fullPath) }}
+        onClick={() => {
+          if (node.pageId) onNavigate(node.pageId, node.fullPath)
+        }}
         className="w-full text-left px-2 py-1 text-sm hover:bg-accent rounded truncate"
         title={node.fullPath}
       >

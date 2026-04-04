@@ -583,7 +583,7 @@ describe('DuePanel', () => {
       render(<DuePanel date="2026-04-20" onNavigateToPage={onNavigate} />)
 
       const item = await screen.findByText(/Navigate me/)
-      await user.click(item.closest('li')!)
+      await user.click(item.closest('li') as HTMLElement)
 
       expect(onNavigate).toHaveBeenCalledWith('PAGE2', 'My Page', 'PROJ2')
     })

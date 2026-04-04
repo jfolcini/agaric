@@ -190,7 +190,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       .filter((b) => b.deleted_at === null)
       .map((b) => {
         const content = b.content ?? 'Untitled'
-        const firstLine = content.split('\n')[0]!
+        const firstLine = content.split('\n')[0] as string
         const label = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine
         return { id: b.id, label }
       })
@@ -201,7 +201,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
         results.map((r) => {
           const block = resp.items.find((b) => b.id === r.id)
           return { id: r.id, title: block?.content ?? 'Untitled', deleted: false }
-        })
+        }),
       )
     }
     return results

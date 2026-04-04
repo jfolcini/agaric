@@ -49,7 +49,11 @@ const SHORTCUT_GROUPS: { category: string; shortcuts: ShortcutDef[] }[] = [
       { keys: 'Ctrl + Shift + H', condition: 'in editor', description: 'Toggle highlight' },
       { keys: 'Ctrl + Shift + Arrow Up', description: 'Move block up' },
       { keys: 'Ctrl + Shift + Arrow Down', description: 'Move block down' },
-      { keys: 'Shift + Enter', condition: 'in editor', description: 'Insert line break (soft return)' },
+      {
+        keys: 'Shift + Enter',
+        condition: 'in editor',
+        description: 'Insert line break (soft return)',
+      },
     ],
   },
   {

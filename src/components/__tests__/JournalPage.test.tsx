@@ -111,7 +111,6 @@ import { JournalControls, JournalPage, MAX_JOURNAL_DATE, MIN_JOURNAL_DATE } from
 
 const mockedInvoke = vi.mocked(invoke)
 
-
 /** Format a Date as YYYY-MM-DD (mirrors the component's formatDate). */
 function formatDate(d: Date): string {
   return format(d, 'yyyy-MM-dd')
@@ -126,7 +125,6 @@ function formatDateDisplay(d: Date): string {
     day: 'numeric',
   })
 }
-
 
 // jsdom does not implement scrollIntoView — stub it globally
 if (!HTMLElement.prototype.scrollIntoView) {
@@ -554,7 +552,7 @@ describe('JournalPage', () => {
 
       // Click the "Add block" button in today's section
       const sections = screen.getAllByRole('region')
-      const todaySection = sections[0]!
+      const todaySection = sections[0] as HTMLElement
       const addBtn = within(todaySection).getByRole('button', { name: /add.*block/i })
       await user.click(addBtn)
 
@@ -606,7 +604,7 @@ describe('JournalPage', () => {
         })
 
       const sections = screen.getAllByRole('region')
-      const todaySection = sections[0]!
+      const todaySection = sections[0] as HTMLElement
       const addBtn = within(todaySection).getByRole('button', { name: /add.*block/i })
       await user.click(addBtn)
 
@@ -697,7 +695,7 @@ describe('JournalPage', () => {
       const weekTab = screen.getByRole('tab', { name: /weekly view/i })
       await user.click(weekTab)
       const dayButtons = screen.getAllByRole('button', { name: /go to daily view for/i })
-      await user.click(dayButtons[0]!)
+      await user.click(dayButtons[0] as HTMLElement)
       expect(screen.getByRole('tab', { name: /daily view/i })).toHaveAttribute(
         'aria-selected',
         'true',
@@ -1487,7 +1485,7 @@ describe('JournalPage', () => {
         // Should be a single range call instead of 7 individual day calls
         expect(listBlockCalls).toHaveLength(1)
 
-        const callArgs = listBlockCalls[0]![1] as {
+        const callArgs = listBlockCalls[0]?.[1] as {
           agendaDateRange?: { start: string; end: string }
         }
         expect(callArgs.agendaDateRange).toBeDefined()
@@ -1499,8 +1497,8 @@ describe('JournalPage', () => {
         weekStart.setDate(today.getDate() + mondayOffset)
         const weekEnd = new Date(weekStart)
         weekEnd.setDate(weekStart.getDate() + 6)
-        expect(callArgs.agendaDateRange!.start).toBe(formatDate(weekStart))
-        expect(callArgs.agendaDateRange!.end).toBe(formatDate(weekEnd))
+        expect(callArgs.agendaDateRange?.start).toBe(formatDate(weekStart))
+        expect(callArgs.agendaDateRange?.end).toBe(formatDate(weekEnd))
       })
     })
 
@@ -1566,7 +1564,7 @@ describe('JournalPage', () => {
           (callArgs as { agendaSource?: string })?.agendaSource === 'column:scheduled_date',
       )
       expect(listBlockCalls.length).toBeGreaterThanOrEqual(1)
-      expect((listBlockCalls[0]![1] as { agendaDate: string }).agendaDate).toBe(todayStr)
+      expect((listBlockCalls[0]?.[1] as { agendaDate: string }).agendaDate).toBe(todayStr)
     })
 
     it("completedDate 'Today' filter queries completed_at with today's date", async () => {
@@ -1631,7 +1629,7 @@ describe('JournalPage', () => {
           cmd === 'query_by_property' && (callArgs as { key?: string })?.key === 'completed_at',
       )
       expect(completedCalls.length).toBeGreaterThanOrEqual(1)
-      expect((completedCalls[0]![1] as { valueDate: string }).valueDate).toBe(todayStr)
+      expect((completedCalls[0]?.[1] as { valueDate: string }).valueDate).toBe(todayStr)
     })
   })
 

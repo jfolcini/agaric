@@ -12,8 +12,8 @@ import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { AttachmentRow } from '../lib/tauri'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
+import type { AttachmentRow } from '../lib/tauri'
 
 interface AttachmentListProps {
   blockId: string

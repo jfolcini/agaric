@@ -35,7 +35,10 @@ fn days_in_month(year: i32, month: u32) -> u32 {
 /// the given base date.
 ///
 /// Returns the shifted date or `None` if parsing fails.
-pub(crate) fn shift_date_once(base: chrono::NaiveDate, interval: &str) -> Option<chrono::NaiveDate> {
+pub(crate) fn shift_date_once(
+    base: chrono::NaiveDate,
+    interval: &str,
+) -> Option<chrono::NaiveDate> {
     let year = base.year();
     let month = base.month();
     let day = base.day();
@@ -316,9 +319,7 @@ pub(crate) async fn handle_recurrence(
     // Shift scheduled_date if present
     if let Some(shifted) = shifted_sched {
         if !is_valid_iso_date(&shifted) {
-            tracing::warn!(
-                "shifted scheduled_date '{shifted}' is not valid YYYY-MM-DD, skipping"
-            );
+            tracing::warn!("shifted scheduled_date '{shifted}' is not valid YYYY-MM-DD, skipping");
         } else {
             match set_property_in_tx(
                 &mut tx,
@@ -548,7 +549,10 @@ mod tests {
         // Jan 31 + 1 month → Feb 28 (non-leap)
         let base = chrono::NaiveDate::from_ymd_opt(2025, 1, 31).unwrap();
         let result = shift_date_once(base, "monthly").unwrap();
-        assert_eq!(result, chrono::NaiveDate::from_ymd_opt(2025, 2, 28).unwrap());
+        assert_eq!(
+            result,
+            chrono::NaiveDate::from_ymd_opt(2025, 2, 28).unwrap()
+        );
     }
 
     #[test]

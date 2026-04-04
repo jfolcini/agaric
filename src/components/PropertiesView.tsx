@@ -83,7 +83,9 @@ function TaskStatesSection(): React.ReactElement {
               type="button"
               className="ml-0.5 hover:text-destructive"
               aria-label={`Remove state ${s}`}
-              onClick={() => { if (s) handleRemove(s) }}
+              onClick={() => {
+                if (s) handleRemove(s)
+              }}
             >
               <X size={10} />
             </button>

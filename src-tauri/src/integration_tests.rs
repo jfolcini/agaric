@@ -745,9 +745,21 @@ async fn purge_after_cascade_removes_entire_subtree() {
 async fn pagination_on_empty_database_returns_no_items() {
     let (pool, _dir) = test_pool().await;
 
-    let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, Some(50))
-        .await
-        .unwrap();
+    let resp = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(50),
+    )
+    .await
+    .unwrap();
 
     assert!(
         resp.items.is_empty(),
@@ -790,9 +802,21 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
         .await
         .unwrap();
 
-    let live = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, Some(50))
-        .await
-        .unwrap();
+    let live = list_blocks_inner(
+        &pool,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(50),
+    )
+    .await
+    .unwrap();
     assert_eq!(live.items.len(), 3, "should show 3 live blocks");
 
     let trash = list_blocks_inner(

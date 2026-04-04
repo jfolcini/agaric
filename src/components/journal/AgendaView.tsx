@@ -461,9 +461,9 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
 
           // Intersect all result sets
           if (resultSets.length > 0) {
-            let intersection = resultSets[0]!
+            let intersection = resultSets[0] as Set<string>
             for (let i = 1; i < resultSets.length; i++) {
-              intersection = new Set([...intersection].filter((id) => resultSets[i]!.has(id)))
+              intersection = new Set([...intersection].filter((id) => resultSets[i]?.has(id)))
             }
             blocks = [...intersection].map((id) => allBlocks.get(id) as BlockRow).filter(Boolean)
           }
