@@ -1,5 +1,22 @@
 # Session Log
 
+## Session 143 — 2026-04-03 — Device info in ConflictList (#651 C-3 completion)
+
+### Build: device name lookup via getBlockHistory + listPeerRefs
+
+1 build subagent. Fetches device_id from first history entry per conflict block, maps to peer name via listPeerRefs. "This device" for local, truncated ID fallback for unknown. Completes #651 (all 16 issues resolved).
+
+| File | Change |
+|------|--------|
+| `ConflictList.tsx` | New useEffect fetches device info via getBlockHistory + listPeerRefs + getDeviceId. "From: DeviceName" in metadata row. Silently handles errors. |
+| `ConflictList.test.tsx` | 3 new tests (peer name, truncated ID, This device). Fixed 2 existing test assertions for invoke call counting. 72/72 pass. |
+| `REVIEW-LATER.md` | Removed #651 entirely. 6 → 5 open items. |
+
+### Stats
+- Frontend: 3 new tests (72/72 ConflictList pass)
+- Commit: `a2ee218`
+- REVIEW-LATER: #651 fully resolved and removed. 5 open items.
+
 ## Session 142 — 2026-04-03 — Custom property filter dimension (#642 completion)
 
 ### Build: PropertyValuePicker + JournalPage query handler
