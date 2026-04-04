@@ -173,7 +173,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
           return (
             <li
               key={entry.seq}
-              className="history-item flex flex-col rounded-lg border bg-card p-4"
+              className="history-item flex flex-col gap-2 rounded-lg border bg-card p-4"
             >
               <div className="history-item-row flex items-start justify-between gap-3 w-full">
                 <div className="history-item-content flex flex-col gap-1 min-w-0 flex-1">

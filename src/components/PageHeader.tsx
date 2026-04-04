@@ -530,7 +530,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
                 <button
                   key={tag.id}
                   type="button"
-                  className="w-full rounded px-2 py-1 text-left text-sm hover:bg-accent"
+                  className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
                   onClick={() => handleTagAdd(tag.id)}
                 >
                   {tag.name}
@@ -539,7 +539,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               {tagQuery.trim() && !allTags.some((t_) => t_.name === tagQuery.trim()) && (
                 <button
                   type="button"
-                  className="w-full rounded px-2 py-1 text-left text-sm text-muted-foreground hover:bg-accent"
+                  className="w-full rounded px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent"
                   onClick={handleTagCreate}
                 >
                   {t('pageHeader.createTag', { name: tagQuery.trim() })}

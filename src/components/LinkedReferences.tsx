@@ -328,7 +328,7 @@ export function LinkedReferences({
       <button
         type="button"
         onClick={toggleExpanded}
-        className="linked-references-header flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent/50 transition-colors"
+        className="linked-references-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-accent/50 transition-colors"
         aria-expanded={expanded}
       >
         {expanded ? (
@@ -394,7 +394,7 @@ export function LinkedReferences({
               <button
                 type="button"
                 onClick={() => toggleGroup(group.page_id)}
-                className="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1 text-sm font-medium hover:bg-accent/50 transition-colors"
+                className="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 transition-colors"
                 aria-expanded={groupExpanded[group.page_id] ?? false}
               >
                 {groupExpanded[group.page_id] ? (

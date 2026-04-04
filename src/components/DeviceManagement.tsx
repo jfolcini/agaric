@@ -293,7 +293,7 @@ export function DeviceManagement(): React.ReactElement {
                     {peers.map((peer) => (
                       <div
                         key={peer.peer_id}
-                        className="device-peer-item flex items-center justify-between rounded-lg border bg-card p-3 transition-colors hover:bg-accent/50"
+                        className="device-peer-item flex items-center justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
