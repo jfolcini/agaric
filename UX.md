@@ -11,7 +11,8 @@ Consolidated best practices implemented across the app. New components, features
 | Icons | Lucide (consistent 24px stroke set) |
 | Editor | TipTap (ProseMirror) — single roving instance |
 | Drag & drop | @dnd-kit with tree-aware depth projection |
-| State management | Zustand (6 stores) |
+| State management | Zustand (7 stores) |
+| Internationalization | i18next + react-i18next (`src/i18n.ts`) |
 | Toasts | Sonner (`src/components/ui/sonner.tsx`) |
 | Code style | 2-space indent, single quotes, no semicolons, 100-char width (Biome) |
 
@@ -131,6 +132,8 @@ File: `src/components/ui/button.tsx` (button variants), `src/components/Sortable
 
 **Minimum:** 44px on touch devices (WCAG 2.5.8 / Apple HIG / Material 3). Enforced via `@media(pointer: coarse)` overrides, never by viewport width.
 
+**Agent guidance:** Every new interactive element needs a `@media(pointer: coarse)` size override. Check `button.tsx` variants for the pattern. If adding inline controls (like the gutter icons in `SortableBlock`), add explicit `min-h-[44px] min-w-[44px]` on coarse pointer.
+
 | Component | Desktop | Touch (coarse pointer) |
 |-----------|---------|------------------------|
 | Button (default) | `h-9` (36px) | `h-11` (44px) |
@@ -244,7 +247,34 @@ File: `src/editor/use-roving-editor.ts` (priority shortcuts), TipTap built-ins (
 |---------|-------|
 | `@` | Tag picker (fuzzy search tags) |
 | `[[` | Block link picker (fuzzy search pages) |
-| `/` | Slash command menu (`/TODO`, `/DOING`, `/DONE`, `/date`) |
+| `/` | Slash command menu (see full list below) |
+
+### Slash Commands
+
+File: `src/components/BlockTree.tsx` (`handleSlashCommand`)
+
+| Command | Effect |
+|---------|--------|
+| `/TODO` / `/DOING` / `/DONE` | Set task state |
+| `/date` / `/schedule` | Set scheduled date via picker |
+| `/due` | Set due date via picker |
+| `/priority-high` / `-medium` / `-low` | Set priority (A/B/C) |
+| `/link` | Insert block link `[[` |
+| `/tag` | Insert tag reference `@` |
+| `/code` | Toggle code block |
+| `/quote` | Toggle blockquote |
+| `/table` | Insert 3x3 table with header row |
+| `/query` | Insert query block `{{query ...}}` |
+| `/template` | Open template picker |
+| `/repeat-*` | Set repeat pattern (daily, weekly, monthly, etc.) |
+| `/effort-*` | Set effort property (1-5) |
+| `/assignee` | Set assignee property |
+| `/location` | Set location property |
+| `/h1`–`/h6` | Set heading level |
+| `/strikethrough` | Toggle strikethrough |
+| `/highlight` | Toggle highlight |
+
+**Agent guidance:** Slash commands are the primary way to expose new block-level actions. To add a new one: add an entry to the commands array in `BlockTree.tsx`, handle it in `handleSlashCommand`, add i18n keys under `slash.*`, and update the command count in `BlockTree.test.tsx`.
 
 ### Global Shortcuts
 
@@ -263,7 +293,7 @@ File: `src/App.tsx` (global keydown handler), `src/components/ui/sidebar.tsx` (C
 | Ctrl+Y | Redo (page-level, outside editor) |
 | Escape | Close dialog / cancel editing |
 
-### History View Shortcuts
+### History View Shortcuts (inside HistorySheet)
 
 File: `src/components/KeyboardShortcuts.tsx`
 
@@ -435,6 +465,8 @@ document.querySelector('[data-radix-popper-content-wrapper]')
 ```
 
 If focus moves outside all blur boundaries, the editor unmounts: serialize → compare → flush if dirty.
+
+**Agent guidance:** When adding new floating UI (popovers, pickers, date pickers), add the CSS selector to the blur boundary checks in `EditableBlock.tsx`. Without this, clicking the new UI unmounts the editor mid-interaction.
 
 ### Semantic HTML
 
@@ -666,6 +698,268 @@ File: `src/components/BlockContextMenu.tsx`
 - Scrollbar width: `w-2.5` desktop, `w-4` touch
 - Scrollable panels: `max-h-96` (was `max-h-60`, increased for usability)
 
+## Internationalization (i18n)
+
+File: `src/i18n.ts`
+
+Every user-visible string must go through `i18next`. ~253+ translation keys across all components.
+
+```ts
+import { useTranslation } from 'react-i18next'
+
+const { t } = useTranslation()
+t('pageBrowser.deleteSuccess')  // "Page deleted"
+t('agenda.overdue')              // "Overdue"
+```
+
+**Rules:**
+- Never hard-code user-visible strings. Use `t('namespace.key')`.
+- Keys are namespaced by component/feature: `pageBrowser.*`, `agenda.*`, `conflict.*`, `property.*`, `search.*`, `sidebar.*`, `editor.*`, `toolbar.*`, `slash.*`, `block.*`, etc.
+- Toast messages, ARIA labels, empty state text, button labels, placeholders — all go through i18n.
+- When adding a new feature, add keys to `src/i18n.ts` in the English resources object. Group with existing namespaces.
+
+**Agent guidance:** This is a non-negotiable requirement. Every user-visible string — including toast messages, ARIA labels, button text, placeholders, empty state copy, and error messages — must use `t('key')`. Hard-coded strings will be caught in review.
+
+## Two-Tier Undo/Redo Model
+
+The app has two independent undo systems operating at different scopes:
+
+| Tier | Scope | Mechanism | Trigger | Boundary |
+|------|-------|-----------|---------|----------|
+| **In-editor** | Current block, current edit session | TipTap/ProseMirror history plugin | Ctrl+Z / Ctrl+Y inside editor | Cleared on mount via `state.reconfigure()`. Only covers typing/formatting since last focus. |
+| **Page-level** | All ops on current page | Op log reverse system (`reverse.rs` computes inverse ops) | Ctrl+Z / Ctrl+Y outside editor, or undo/redo buttons in PageHeader (touch) | Per-page stack in `useUndoStore`. Cleared on page navigation. |
+
+**How they interact:**
+- When the editor is focused, Ctrl+Z triggers ProseMirror undo (in-editor tier).
+- When the editor is blurred, Ctrl+Z triggers `useUndoStore.undo()` (page-level tier).
+- `useUndoShortcuts.ts` also handles Ctrl+Shift+Z as alternative redo.
+- Page-level undo calls `reverse.rs` which computes inverse ops from the op log, then replays them.
+- Non-reversible operations: `purge_block`, `delete_attachment` — these are truly destructive.
+- Touch devices: Undo2/Redo2 icon buttons in `PageHeader.tsx` provide page-level undo/redo without keyboard.
+
+**Agent guidance:** When building features that modify blocks, ensure the operation goes through the op log (so page-level undo works automatically). If adding a new op type, verify `reverse.rs` can compute its inverse.
+
+## Multi-Selection & Batch Operations
+
+File: `src/stores/blocks.ts` (selection state), `src/components/BlockTree.tsx` (batch toolbar)
+
+### Selection Mechanics
+
+| Action | Effect |
+|--------|--------|
+| Ctrl+Click | Toggle individual block selection |
+| Shift+Click | Range select from last-selected to clicked block |
+| Ctrl+A | Select all visible blocks |
+| Escape | Clear selection |
+
+Selection state lives in `useBlockStore.selectedBlockIds` (Set). Selection is orthogonal to the roving editor — does not break the single-focus invariant.
+
+### Batch Toolbar
+
+Sticky floating toolbar appears when `selectedBlockIds.size > 0`:
+
+```
+┌─────────────────────────────────────────────────────┐
+│ {N} selected  │ TODO │ DOING │ DONE │ Delete │  ✕  │
+└─────────────────────────────────────────────────────┘
+```
+
+- `batchInProgress` state guard prevents concurrent batch operations (buttons disabled during operation).
+- `handleBatchSetTodo` iterates selected blocks, calls `setTodoStateCmd`, optimistic store update.
+- `handleBatchDelete` filters descendant blocks (avoid double-delete), uses AlertDialog confirmation.
+- Partial failure: `toast.error()` with count of failures.
+- `remove()` clears deleted block from `selectedBlockIds`. `load()` clears selection on page navigation.
+
+**Agent guidance:** New batch actions follow the same pattern — iterate `selectedBlockIds`, guard with `batchInProgress`, show partial failure toasts.
+
+## Optimistic Updates
+
+File: `src/stores/blocks.ts`, `src/hooks/useBlockProperties.ts`
+
+The store is updated immediately before the IPC call. On failure, the store reverts to the previous value and shows an error toast.
+
+```ts
+// Pattern: optimistic update with revert
+const prev = get().blocks.get(id)
+set(/* updated state */)
+try {
+  await invoke('command', args)
+} catch {
+  set(/* revert to prev */)
+  toast.error(t('specific.error'))
+}
+```
+
+Applied to: `edit()`, `remove()`, `setTodoState()`, `setPriority()`, and batch operations.
+
+**Agent guidance:** New write operations should follow this pattern. The user should never see a loading spinner for local writes — the UI updates instantly.
+
+## Sheet/Drawer Pattern
+
+Several features use Radix `<Sheet>` as a slide-in panel:
+
+| Sheet | File | Side | Trigger |
+|-------|------|------|---------|
+| History | `HistorySheet.tsx` | Right | Gutter clock icon / context menu "History" |
+| Block properties | `BlockPropertyDrawer.tsx` | Right | Toolbar button / context menu "Properties" |
+| Keyboard shortcuts | `KeyboardShortcuts.tsx` | Right | Press `?` globally |
+| Mobile sidebar | `sidebar.tsx` | Left | Swipe from left edge / hamburger button |
+
+**Conventions:**
+- Sheets render content only when the trigger state is truthy (e.g., `blockId` for History).
+- Close restores focus to the trigger element.
+- Sheet content supports keyboard navigation and has proper ARIA labeling.
+- History sheet: displays op log entries with revert-to-point capability, multi-select with Shift+Click.
+- Property drawer: inline editing via Input, blur-to-save, delete per property, add from definitions popover.
+
+## Conflict Resolution UX
+
+File: `src/components/ConflictList.tsx`
+
+Sync conflicts are displayed in the Conflicts sidebar view with rich, type-specific rendering:
+
+| Conflict Type | Rendering |
+|---------------|-----------|
+| Text | Side-by-side "Current:" / "Incoming:" with `renderRichContent()` |
+| Property | Field-by-field diffs with blue badges |
+| Move | Parent/position changes with purple badges |
+
+**Interactions:**
+- **Keep** (accept current): success toast with "Undo" action (6s duration) — restores via `restoreBlock` + `editBlock`.
+- **Discard** (accept incoming): success toast with "Undo" action (6s duration) — restores via `restoreBlock`.
+- **Batch actions:** Checkbox per item, sticky toolbar with "Select all" / "Keep all" / "Discard all". Batch confirmation via AlertDialog.
+- **Partial failure:** Toast with retry action (5s duration).
+- **Device info:** Shows "From: DeviceName" (via peer ref lookup) or "This device" for local conflicts.
+- **Rich content:** Uses `renderRichContent()` from `StaticBlock` with `interactive: false`.
+
+## Inline Query Blocks
+
+File: `src/components/QueryResult.tsx`
+
+Blocks can contain query expressions that render live results:
+
+```
+{{query: #tag1 AND #tag2}}
+{{query: property:key=value}}
+```
+
+`parseQueryExpression()` parses the expression. `QueryResult` component fetches via `queryByTags`/`queryByProperty`/`listBlocks`. Renders a collapsible panel with:
+- Todo state badges, priority badges, page breadcrumbs
+- Click-to-navigate to source block
+- Loading / error / empty states
+- Input validation: `params.target` for backlinks, `params.key` for property queries, empty expression guard.
+
+## Block Zoom-In
+
+File: `src/components/BlockTree.tsx`
+
+Context menu "Zoom in" focuses the view on a single block and its descendants:
+- Block tree filters to descendants only.
+- Breadcrumb trail shows: `Home > Page Title > Parent Block > Current Block`.
+- "Home" resets zoom to full page.
+- Breadcrumb segments are clickable for intermediate navigation.
+
+## Kebab / Overflow Menu
+
+File: `src/components/PageHeader.tsx`
+
+Page-level actions that don't warrant dedicated buttons go in a Popover-based kebab menu (MoreVertical icon):
+
+| Action | Behavior |
+|--------|----------|
+| Save as template / Remove template | Toggles page-is-template property |
+| Set journal template / Remove | Toggles journal-template property |
+| Export Markdown | Copies page content to clipboard, success toast |
+| Delete page | AlertDialog confirmation, then navigate back |
+
+**Pattern:** Fetch properties on mount to determine toggle labels ("Save as template" vs "Remove template"). Actions use the standard toast feedback pattern.
+
+## Agenda Views
+
+### DuePanel
+
+File: `src/components/DuePanel.tsx`
+
+Shows blocks with due dates for a given date:
+- **Overdue section** (red, `destructive/5`): blocks with `due_date < today` and not DONE. Only shown when viewing today.
+- **Upcoming section** (amber): blocks due within N days (configurable via `DeadlineWarningSection`, 0-90, localStorage). Default 0 (disabled).
+- **Hide-before-scheduled toggle**: localStorage-persisted toggle hides blocks with `scheduled_date > today`. Default OFF.
+- **Deduplication**: Projected repeating task entries are filtered against real agenda blocks by block ID.
+- Groups by todo state (DOING > TODO > DONE > Other), sorted by priority within groups.
+
+### AgendaFilterBuilder
+
+File: `src/components/AgendaFilterBuilder.tsx`
+
+Dimension-based filter system with 8 dimensions: `todoState`, `priority`, `tag`, `dueDate`, `scheduledDate`, `completedDate`, `createdDate`, `property`.
+
+- **Pill-based display**: Removable `<Badge>` chips.
+- **Date presets**: "Today", "This week", "This month" for each date dimension.
+- **Property dimension**: Two-step picker (key dropdown + value input). Multiple property filters allowed.
+- **Group modes**: By page, by priority, by todo state, or flat.
+- **Sort controls**: Dropdown with explicit default label.
+
+## Template System UX
+
+### Template Picker
+
+File: `src/components/BlockTree.tsx` (slash command), `src/lib/template-utils.ts`
+
+- `/template` slash command opens a picker with all template pages.
+- `loadTemplatePagesWithPreview()` fetches first child preview per template (60-char truncation).
+- Responsive positioning + `max-h-[60vh]` overflow scroll.
+- "No templates" state shows step-by-step guidance.
+
+### Dynamic Variables
+
+File: `src/lib/template-utils.ts`
+
+`expandTemplateVariables()` replaces placeholders on template insertion:
+
+| Variable | Expansion |
+|----------|-----------|
+| `<% today %>` | Current date (YYYY-MM-DD) |
+| `<% time %>` | Current time (HH:MM) |
+| `<% datetime %>` | Date + time |
+| `<% page title %>` | Title of the target page |
+
+### Journal Templates
+
+- Journal template is a page marked via property.
+- `loadJournalTemplate()` returns `{ template, duplicateWarning }` — caller shows `toast.warning()` when multiple journal templates exist.
+
+## Property Drawer
+
+File: `src/components/BlockPropertyDrawer.tsx`
+
+Sheet component for editing block properties:
+- Loads properties + definitions on open.
+- Inline editing: `<Input>` with blur-to-save (no explicit Save button).
+- Delete per property with confirmation.
+- `AddPropertySection`: definitions popover with search, type badges.
+- Ref-type properties use a page picker (`PageResponse.items`).
+
+## Import UX
+
+File: `src/components/StatusPanel.tsx` (UI), `src-tauri/src/import.rs` (parser)
+
+- File picker with multi-file support.
+- Result display: blocks imported, properties found, warnings count.
+- Handles Logseq-flavored Markdown (indented list items, properties, block ref stripping, tab normalization, YAML frontmatter stripping).
+
+## Toast Action Patterns
+
+Extended toast patterns beyond basic success/error:
+
+| Pattern | Example | Duration |
+|---------|---------|----------|
+| **Undo action** | `toast.success('Resolved', { action: { label: 'Undo', onClick: revert } })` | 6s |
+| **Retry action** | `toast.error('Partial failure', { action: { label: 'Retry', onClick: retry } })` | 5s |
+| **Warning** | `toast.warning('Multiple journal templates found')` | default |
+| **Partial failure** | `toast.error('3 of 5 blocks failed')` with retry | 5s |
+
+**Agent guidance:** Destructive or state-changing actions that can be reversed should include an "Undo" toast action. Batch operations that may partially fail should show the failure count and a "Retry" option.
+
 ## Editor UX
 
 ### Roving Editor Pattern
@@ -739,7 +1033,7 @@ Syntax highlighting via lowlight with OKLCH-based colors:
 
 ### Sidebar Navigation
 
-- Journal / Pages / Tags / Trash / Status / Conflicts / Sync
+- Journal / Search / Pages / Tags / Properties / Trash / Status / Conflicts / History
 - Active item: `border-l-2 border-l-primary` (light) / `border-l-4` (dark, for contrast)
 - Mobile: `<Sheet>` offcanvas with left-edge swipe gesture
 - Collapsed labels: `opacity-0` with negative margin (`-mt-8`) to maintain layout
@@ -750,7 +1044,7 @@ File: `src/stores/navigation.ts`
 
 Managed by `useNavigationStore` (Zustand). Tracks current view and page stack.
 
-**View types:** `journal`, `search`, `pages`, `tags`, `trash`, `status`, `conflicts`, `history`, `page-editor`
+**View types:** `journal`, `search`, `pages`, `tags`, `properties`, `trash`, `status`, `conflicts`, `history`, `page-editor`
 
 | Method | Behavior |
 |--------|----------|
@@ -770,7 +1064,7 @@ Managed by `useNavigationStore` (Zustand). Tracks current view and page stack.
 
 | Indicator | Visual |
 |-----------|--------|
-| Sync status | Colored dot (gray/green/yellow/red) in sidebar |
+| Sync status | Colored dot in Status view: idle=green (`emerald-500`), syncing/discovering/pairing=amber (`amber-500`), error=red (`destructive`), offline=gray (`slate-400`) |
 | Conflict count | Badge on sidebar item |
 | Filter count | Badge on filter button |
 | Loading | Skeleton placeholders + spinner |
@@ -828,3 +1122,9 @@ Before shipping any UI change, verify:
 14. **Scrollbar too thin on touch** — Default 10px scrollbars are hard to grab on touch. The `w-4`/`h-4` override on coarse pointer makes them usable.
 
 15. **New floating UI breaks editor** — Any new popover, picker, or floating element must be added to the blur boundary selectors in `EditableBlock.tsx`. Without this, clicking the new UI unmounts the editor.
+
+16. **Hard-coded user-visible strings** — All text must go through `i18next`. Add keys to `src/i18n.ts` with appropriate namespace. See the i18n section above.
+
+17. **Missing toast feedback on destructive/state-changing actions** — Every Keep, Discard, Delete, or batch action should show a success toast. Reversible destructive actions should include an "Undo" toast action with 6s duration. Batch operations that may partially fail should show failure count with a "Retry" action.
+
+18. **Stale selection state** — `selectedBlockIds` must be cleaned up: `remove()` clears the deleted block, `load()` clears all selections on page navigation. Batch delete must filter descendant blocks to avoid double-deleting.
