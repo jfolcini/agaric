@@ -1,5 +1,23 @@
 # Session Log
 
+## Session 174 — 2026-04-04 — Phase 1 batch 27: E2E properties + query blocks (TH-1, TH-2)
+
+### Phase 1 (batch 27): E2E test coverage for properties and query blocks (TH-1, TH-2)
+
+2 parallel subagents (one per spec file).
+
+| File | Change |
+|------|--------|
+| `e2e/properties-system.spec.ts` | TH-1: 11 new E2E tests — property chips on blocks, property drawer (open/view/set/delete), property definitions management (list/search/create/delete/edit options). |
+| `e2e/query-blocks.spec.ts` | TH-2: 10 new E2E tests — /query slash command, tag-based queries (tag:work/personal), property-based queries (property:context=@office), legacy syntax, result interactions (collapse/badges), query reactivity on edit. |
+| `tauri-mock.ts` | TH-2: Fixed `query_by_tags` mock to support `prefixes` param (prefix-to-tag-ID resolution) and `mode` param (or/and). Required for QueryResult's `tag:PREFIX` shorthand syntax. |
+
+### Stats
+- E2E: 21 new tests (11 properties + 10 query blocks)
+- Mock: 156 existing tests still pass
+- Commits: `bcbcdee` (TH-1), `b3ec5b1` (TH-2)
+- REVIEW-LATER: TH-1, TH-2 resolved. 20 -> **18 open items**.
+
 ## Session 173 — 2026-04-04 — Phase 1 batch 26: noNonNullAssertion + inline attachments (M-17, F-10)
 
 ### Phase 1 (batch 26): Lint strictness + attachment rendering (M-17, F-10)
