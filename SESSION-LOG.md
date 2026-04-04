@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 149 — 2026-04-03 — Manual IP entry for peer sync (#522)
+
+### Build: migration + daemon fallback + frontend UI
+
+2 parallel build subagents (Rust backend, frontend). Migration adds `last_address` to peer_refs. Sync daemon saves peer address after successful sync, falls back to stored address when mDNS unavailable. DeviceManagement shows peer address with edit button.
+
+| File | Change |
+|------|--------|
+| `0017_peer_refs_last_address.sql` | NEW: migration adds `last_address TEXT` to peer_refs. |
+| `peer_refs.rs` | Added `last_address` field + `update_last_address()` function. Updated queries. |
+| `sync_daemon.rs` | Saves address after sync. Branch B+C: fallback to `last_address` when not in mDNS `discovered` map. |
+| `commands.rs` | New `set_peer_address_inner` + Tauri command. Validates SocketAddr format. |
+| `lib.rs` | Registered `set_peer_address` in both builders. |
+| `bindings.ts` | Regenerated with new command + PeerRef field. |
+| `tauri.ts` | Added `last_address` to PeerRefRow + `setPeerAddress` wrapper. |
+| `DeviceManagement.tsx` | Peer address display + edit button (prompt for host:port). Manual IP hint text. |
+| `DeviceManagement.test.tsx` | 5 new tests (display, edit, aria-label, invoke, hint). 40/40 pass. |
+| `i18n.ts` | 6 new keys for address UI. |
+
+### Stats
+- Backend: 3 new tests (1505/1505 pass)
+- Frontend: 5 new tests (40/40 DeviceManagement pass)
+- Commit: `6d38407`
+- REVIEW-LATER: #522 fully resolved and removed. 4 → 3 open items.
+
 ## Session 148 — 2026-04-03 — Phase 2 journal review + #522 investigation
 
 ### Phase 2: Journal filter review + sync architecture investigation
