@@ -452,7 +452,7 @@ pub async fn merge_diverged_blocks(
             }
         }
 
-        for ((_bid, _pk), (op_a_opt, op_b_opt)) in groups {
+        for ((bid, pk), (op_a_opt, op_b_opt)) in groups {
             if let (Some(op_a), Some(op_b)) = (op_a_opt, op_b_opt) {
                 let resolution = merge::resolve_property_conflict(&op_a, &op_b)?;
 
@@ -477,6 +477,12 @@ pub async fn merge_diverged_blocks(
                     crate::now_rfc3339(),
                 )
                 .await?;
+
+                tracing::debug!(
+                    "LWW auto-resolved property conflict for block {} key {}",
+                    bid,
+                    pk
+                );
 
                 materializer
                     .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
@@ -548,7 +554,7 @@ pub async fn merge_diverged_blocks(
             }
         }
 
-        for (_bid, (op_a_opt, op_b_opt)) in groups {
+        for (bid, (op_a_opt, op_b_opt)) in groups {
             if let (Some(op_a), Some(op_b)) = (op_a_opt, op_b_opt) {
                 // LWW: later created_at wins, with device_id tiebreaker
                 let winner = match op_a.created_at.cmp(&op_b.created_at) {
@@ -583,6 +589,11 @@ pub async fn merge_diverged_blocks(
                     crate::now_rfc3339(),
                 )
                 .await?;
+
+                tracing::debug!(
+                    "LWW auto-resolved move conflict for block {}",
+                    bid
+                );
 
                 materializer
                     .enqueue_foreground(MaterializeTask::ApplyOp(new_record))
@@ -2897,6 +2908,299 @@ mod tests {
             local_ops.len(),
             5,
             "all 5 remote ops should be in local op log"
+        );
+
+        materializer.shutdown();
+    }
+
+    // ======================================================================
+    // F-21 — LWW auto-resolve property/move conflicts
+    // ======================================================================
+
+    /// Device A sets a property at t=1, device B sets the same property at
+    /// t=2. After merge, B's value wins via LWW and no conflict copy is
+    /// created in the blocks table.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn lww_resolves_property_conflict_by_timestamp() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00Z"; // earlier
+        let ts_b = "2025-01-15T12:01:00Z"; // later — B wins
+
+        // Create the block
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload("BLK1"),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device A sets property "priority" = "high" at t=1
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("high".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B sets property "priority" = "low" at t=2 (later)
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK1"),
+                key: "priority".into(),
+                value_text: Some("low".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        let results = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+
+        // Property conflict resolved via LWW
+        assert_eq!(
+            results.property_lww, 1,
+            "should resolve 1 property conflict via LWW"
+        );
+
+        // B's value should win — verify the resolution op has B's value
+        let resolution_ops: Vec<crate::op_log::OpRecord> =
+            crate::op_log::get_ops_since(&pool, "device-A", 0)
+                .await
+                .unwrap();
+        let last_set_prop = resolution_ops
+            .iter()
+            .rev()
+            .find(|op| op.op_type == "set_property")
+            .expect("should have a resolution set_property op");
+        let winner_payload: SetPropertyPayload =
+            serde_json::from_str(&last_set_prop.payload).unwrap();
+        assert_eq!(
+            winner_payload.value_text.as_deref(),
+            Some("low"),
+            "device B's value (later timestamp) should win"
+        );
+
+        // No conflict copy blocks should exist
+        let conflict_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE is_conflict = 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            conflict_count.0, 0,
+            "LWW property resolution must not create conflict copies"
+        );
+
+        materializer.shutdown();
+    }
+
+    /// Device A moves a block at t=1, device B moves the same block at t=2.
+    /// After merge, B's move wins via LWW.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn lww_resolves_move_conflict_by_timestamp() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00Z"; // earlier
+        let ts_b = "2025-01-15T12:01:00Z"; // later — B wins
+
+        // Create blocks
+        for blk in &["BLK1", "PARENT-A", "PARENT-B"] {
+            append_local_op_at(
+                &pool,
+                "device-A",
+                test_create_payload(blk),
+                ts_a.into(),
+            )
+            .await
+            .unwrap();
+        }
+
+        // Device A moves BLK1 to PARENT-A at t=1
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+                new_parent_id: Some(BlockId::test_id("PARENT-A")),
+                new_position: 0,
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B moves BLK1 to PARENT-B at t=2 (later)
+        append_local_op_at(
+            &pool,
+            "device-B",
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+                new_parent_id: Some(BlockId::test_id("PARENT-B")),
+                new_position: 1,
+            }),
+            ts_b.into(),
+        )
+        .await
+        .unwrap();
+
+        let results = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+
+        // Move conflict resolved via LWW
+        assert_eq!(
+            results.move_lww, 1,
+            "should resolve 1 move conflict via LWW"
+        );
+
+        // B's move should win — verify the resolution op has B's parent+position
+        let resolution_ops: Vec<crate::op_log::OpRecord> =
+            crate::op_log::get_ops_since(&pool, "device-A", 0)
+                .await
+                .unwrap();
+        let last_move = resolution_ops
+            .iter()
+            .rev()
+            .find(|op| op.op_type == "move_block")
+            .expect("should have a resolution move_block op");
+        let winner_payload: MoveBlockPayload =
+            serde_json::from_str(&last_move.payload).unwrap();
+        assert_eq!(
+            winner_payload.new_parent_id.as_ref().map(|id| id.as_str()),
+            Some("PARENT-B"),
+            "device B's move (later timestamp) should win"
+        );
+        assert_eq!(
+            winner_payload.new_position, 1,
+            "device B's position should win"
+        );
+
+        materializer.shutdown();
+    }
+
+    /// Text edit conflicts (`edit_block`) should still produce conflict copy
+    /// blocks — LWW auto-resolution only applies to property and move ops.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn text_edit_conflict_still_creates_copy() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+
+        let ts_a = "2025-01-15T12:00:00Z";
+        let ts_b = "2025-01-15T12:01:00Z";
+
+        // Create the block with initial content (single line → concurrent
+        // edits to the same line will conflict in diffy).
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(0),
+                content: "original content".into(),
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        // Insert the block into the blocks table (needed for create_conflict_copy)
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind("BLK1")
+        .bind("content")
+        .bind("original content")
+        .bind(0)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Device A edits the block — single-line edit
+        append_local_op_at(
+            &pool,
+            "device-A",
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: BlockId::test_id("BLK1"),
+                to_text: "device A changed this".into(),
+                prev_edit: Some(("device-A".into(), 1)),
+            }),
+            ts_a.into(),
+        )
+        .await
+        .unwrap();
+
+        // Device B edits the block — different single-line edit, prev_edit
+        // points to the same create op → diverges from device A's edit.
+        let b_payload = serde_json::json!({
+            "block_id": "BLK1",
+            "to_text": "device B changed this",
+            "prev_edit": ["device-A", 1]
+        })
+        .to_string();
+        let b_record = crate::op_log::OpRecord {
+            device_id: "device-B".into(),
+            seq: 1,
+            parent_seqs: None,
+            hash: crate::hash::compute_op_hash("device-B", 1, None, "edit_block", &b_payload),
+            op_type: "edit_block".into(),
+            payload: b_payload,
+            created_at: ts_b.into(),
+        };
+        crate::dag::insert_remote_op(&pool, &b_record)
+            .await
+            .unwrap();
+
+        let results = merge_diverged_blocks(&pool, "device-A", &materializer, "device-B")
+            .await
+            .unwrap();
+
+        // Text conflict should produce a conflict copy (NOT LWW)
+        assert_eq!(
+            results.conflicts, 1,
+            "text edit conflict should still create a conflict copy"
+        );
+        assert_eq!(
+            results.property_lww, 0,
+            "no property LWW should occur for text conflicts"
+        );
+        assert_eq!(
+            results.move_lww, 0,
+            "no move LWW should occur for text conflicts"
+        );
+
+        // Verify a conflict copy block was created in the blocks table
+        let conflict_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE is_conflict = 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            conflict_count.0 > 0,
+            "text edit conflict must create a conflict copy block"
         );
 
         materializer.shutdown();

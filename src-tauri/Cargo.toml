@@ -131,3 +131,7 @@ harness = false
 [[bench]]
 name = "snapshot_bench"
 harness = false
+
+[[bench]]
+name = "import_bench"
+harness = false
