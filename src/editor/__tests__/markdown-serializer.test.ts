@@ -198,6 +198,17 @@ describe('serialize', () => {
     it('serializes blockquote with marks', () => {
       expect(serialize(doc(blockquote(paragraph(bold('strong')))))).toBe('> **strong**')
     })
+
+    it('serializes blockquote containing table', () => {
+      expect(serialize(doc(
+        blockquote(
+          table(
+            tableRow(tableHeader(paragraph(text('A')))),
+            tableRow(tableCell(paragraph(text('1')))),
+          )
+        )
+      ))).toBe('> | A |\n> | --- |\n> | 1 |')
+    })
   })
 
   describe('table', () => {
@@ -222,6 +233,15 @@ describe('serialize', () => {
 
     it('serializes empty table', () => {
       expect(serialize(doc(table()))).toBe('')
+    })
+
+    it('serializes table cell with pipe character', () => {
+      expect(serialize(doc(
+        table(
+          tableRow(tableHeader(paragraph(text('A|B')))),
+          tableRow(tableCell(paragraph(text('1|2')))),
+        )
+      ))).toBe('| A\\|B |\n| --- |\n| 1\\|2 |')
     })
   })
 
@@ -590,6 +610,23 @@ describe('parse', () => {
       expect(result.content![0].type).toBe('table')
       expect(result.content![1].type).toBe('paragraph')
     })
+
+    it('handles table rows with fewer columns than header', () => {
+      const result = parse('| A | B | C |\n| --- | --- | --- |\n| 1 | 2 |')
+      expect(result.content).toHaveLength(1)
+      const tbl = result.content![0] as TableNode
+      expect(tbl.content).toHaveLength(2) // header + 1 data row
+      // Data row should have 2 cells (fewer than header's 3)
+      expect(tbl.content![1].content!.length).toBe(2)
+    })
+
+    it('parses header-only table (no data rows)', () => {
+      const result = parse('| A | B |\n| --- | --- |')
+      expect(result.content).toHaveLength(1)
+      const tbl = result.content![0] as TableNode
+      expect(tbl.content).toHaveLength(1) // just the header row
+      expect(tbl.content![0].content![0].type).toBe('tableHeader')
+    })
   })
 })
 
@@ -638,6 +675,12 @@ describe('round-trip: serialize(parse(s)) === s', () => {
       expect(serialize(parse(input))).toBe(input)
     })
   }
+
+  it('round-trips header-only table', () => {
+    // Header-only table serializes as header + separator
+    const md = '| A | B |\n| --- | --- |'
+    expect(serialize(parse(md))).toBe(md)
+  })
 })
 
 // -- mark coalescing (bold-inside-italic) -------------------------------------

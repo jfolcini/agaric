@@ -278,6 +278,7 @@ function serializeBlockquote(node: BlockquoteNode): string {
       if (child.type === 'heading') return serializeHeading(child)
       if (child.type === 'codeBlock') return serializeCodeBlock(child)
       if (child.type === 'blockquote') return serializeBlockquote(child)
+      if (child.type === 'table') return serializeTable(child)
       return ''
     })
     .join('\n')
