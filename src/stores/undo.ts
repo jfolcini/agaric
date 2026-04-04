@@ -40,9 +40,6 @@ interface UndoStore {
    */
   redo: (pageId: string) => Promise<UndoResult | null>
 
-  /** Whether undo is available for a page (always true — backend decides). */
-  canUndo: (pageId: string) => boolean
-
   /** Whether redo is available for a page. */
   canRedo: (pageId: string) => boolean
 
@@ -170,11 +167,6 @@ export const useUndoStore = create<UndoStore>((set, get) => ({
       })
       return null
     }
-  },
-
-  canUndo: (_pageId: string) => {
-    // We don't know the total op count; the backend will return error if none.
-    return true
   },
 
   canRedo: (pageId: string) => {

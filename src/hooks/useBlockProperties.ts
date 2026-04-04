@@ -16,6 +16,7 @@ import { toast } from 'sonner'
 import { announce } from '../lib/announcer'
 import { setPriority as setPriorityCmd, setTodoState as setTodoStateCmd } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
+import { useUndoStore } from '../stores/undo'
 
 /** Default task state cycle: none -> TODO -> DOING -> DONE -> none. */
 const TASK_CYCLE_DEFAULT: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE']
@@ -69,6 +70,8 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
 
     try {
       await setTodoStateCmd(blockId, nextState)
+      const { rootParentId } = useBlockStore.getState()
+      if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
     } catch {
       // Revert optimistic update on failure
       useBlockStore.setState((s) => ({
@@ -95,6 +98,8 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
 
     try {
       await setPriorityCmd(blockId, nextState)
+      const { rootParentId } = useBlockStore.getState()
+      if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
     } catch {
       // Revert optimistic update on failure
       useBlockStore.setState((s) => ({

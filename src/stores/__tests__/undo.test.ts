@@ -45,10 +45,6 @@ describe('useUndoStore', () => {
       expect(useUndoStore.getState().canRedo('page1')).toBe(false)
     })
 
-    it('canUndo returns true (backend decides)', () => {
-      expect(useUndoStore.getState().canUndo('page1')).toBe(true)
-    })
-
     it('pages map is empty', () => {
       expect(useUndoStore.getState().pages.size).toBe(0)
     })

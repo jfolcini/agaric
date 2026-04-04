@@ -17,6 +17,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { announce } from '../../lib/announcer'
 import { useBlockStore } from '../../stores/blocks'
+import { useUndoStore } from '../../stores/undo'
 import { useBlockProperties } from '../useBlockProperties'
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
@@ -375,5 +376,68 @@ describe('useBlockProperties handleTogglePriority toast and announcer', () => {
     })
 
     expect(mockedToastError).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Undo store notification tests
+// ---------------------------------------------------------------------------
+
+describe('useBlockProperties undo notifications', () => {
+  const onNewActionSpy = vi.fn((_pageId: string) => {})
+
+  beforeEach(() => {
+    onNewActionSpy.mockClear()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
+  })
+
+  it('handleToggleTodo calls onNewAction after successful IPC', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')], rootParentId: 'PAGE_1' })
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+    })
+
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+  })
+
+  it('handleTogglePriority calls onNewAction after successful IPC', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')], rootParentId: 'PAGE_1' })
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
+
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+  })
+
+  it('handleToggleTodo does not call onNewAction on IPC failure', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', 'TODO')], rootParentId: 'PAGE_1' })
+    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+    })
+
+    expect(onNewActionSpy).not.toHaveBeenCalled()
+  })
+
+  it('handleTogglePriority does not call onNewAction on IPC failure', async () => {
+    useBlockStore.setState({ blocks: [makeBlock('BLOCK_1', null, '1')], rootParentId: 'PAGE_1' })
+    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+
+    const { result } = renderHook(() => useBlockProperties())
+
+    await act(async () => {
+      await result.current.handleTogglePriority('BLOCK_1')
+    })
+
+    expect(onNewActionSpy).not.toHaveBeenCalled()
   })
 })

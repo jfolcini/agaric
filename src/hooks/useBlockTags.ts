@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import type { BlockRow } from '../lib/tauri'
 import { addTag, createBlock, listBlocks, listTagsForBlock, removeTag } from '../lib/tauri'
+import { useBlockStore } from '../stores/blocks'
 import { useResolveStore } from '../stores/resolve'
+import { useUndoStore } from '../stores/undo'
 
 export interface TagEntry {
   id: string
@@ -64,6 +66,8 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       if (!blockId) return
       try {
         await addTag(blockId, tagId)
+        const { rootParentId } = useBlockStore.getState()
+        if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAppliedTagIds((prev) => new Set([...prev, tagId]))
       } catch {
         toast.error('Failed to add tag')
@@ -77,6 +81,8 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       if (!blockId) return
       try {
         await removeTag(blockId, tagId)
+        const { rootParentId } = useBlockStore.getState()
+        if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAppliedTagIds((prev) => {
           const next = new Set(prev)
           next.delete(tagId)
@@ -100,6 +106,8 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         useResolveStore.getState().set(resp.id, trimmed, false)
         if (blockId) {
           await addTag(blockId, resp.id)
+          const { rootParentId } = useBlockStore.getState()
+          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
           setAppliedTagIds((prev) => new Set([...prev, resp.id]))
         }
       } catch {
