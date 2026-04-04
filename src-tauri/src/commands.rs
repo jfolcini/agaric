@@ -21,6 +21,7 @@ use tauri::State;
 use crate::backlink_query::{
     self, BacklinkFilter, BacklinkQueryResponse, BacklinkSort, GroupedBacklinkResponse,
 };
+use crate::import::{self, ImportResult};
 use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
@@ -3988,6 +3989,115 @@ pub(crate) async fn export_page_markdown_inner(
 }
 
 // ---------------------------------------------------------------------------
+// Import — Logseq/Markdown import (#660)
+// ---------------------------------------------------------------------------
+
+/// Import a Logseq-style markdown file as a page with block hierarchy.
+///
+/// Creates a page from the filename (or first heading), then creates
+/// blocks following the indentation hierarchy. Properties are set via
+/// SetProperty ops. Returns import statistics.
+pub async fn import_markdown_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    content: String,
+    filename: Option<String>,
+) -> Result<ImportResult, AppError> {
+    let parsed = import::parse_logseq_markdown(&content);
+
+    // Derive page title from filename (strip .md extension)
+    let page_title = filename
+        .map(|f| f.trim_end_matches(".md").to_string())
+        .unwrap_or_else(|| "Imported Page".to_string());
+
+    // Create the page
+    let page = create_block_inner(
+        pool,
+        device_id,
+        materializer,
+        "page".into(),
+        page_title.clone(),
+        None,
+        None,
+    )
+    .await?;
+    let page_id = page.id.clone();
+
+    let mut blocks_created: i64 = 0;
+    let mut properties_set: i64 = 0;
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Track parent stack: (depth, block_id)
+    let mut parent_stack: Vec<(usize, String)> = vec![(0, page_id.clone())];
+
+    for block in &parsed {
+        // Find the correct parent: pop stack until we find a parent at depth < block.depth
+        while parent_stack.len() > 1
+            && parent_stack
+                .last()
+                .map_or(false, |(d, _)| *d >= block.depth)
+        {
+            parent_stack.pop();
+        }
+        let parent_id = parent_stack
+            .last()
+            .map(|(_, id)| id.clone())
+            .unwrap_or(page_id.clone());
+
+        // Create the block
+        match create_block_inner(
+            pool,
+            device_id,
+            materializer,
+            "content".into(),
+            block.content.clone(),
+            Some(parent_id.clone()),
+            None,
+        )
+        .await
+        {
+            Ok(new_block) => {
+                blocks_created += 1;
+                parent_stack.push((block.depth, new_block.id.clone()));
+
+                // Set properties
+                for (key, value) in &block.properties {
+                    match set_property_inner(
+                        pool,
+                        device_id,
+                        materializer,
+                        new_block.id.clone(),
+                        key.clone(),
+                        Some(value.clone()),
+                        None,
+                        None,
+                        None,
+                    )
+                    .await
+                    {
+                        Ok(_) => properties_set += 1,
+                        Err(e) => {
+                            warnings.push(format!("Property '{key}' on block failed: {e}"))
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warnings.push(format!("Block creation failed: {e}"));
+            }
+        }
+    }
+
+    Ok(ImportResult {
+        page_title,
+        blocks_created,
+        properties_set,
+        warnings,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tauri command wrappers
 // ---------------------------------------------------------------------------
 
@@ -4945,6 +5055,23 @@ pub async fn list_projected_agenda(
     limit: Option<i64>,
 ) -> Result<Vec<ProjectedAgendaEntry>, AppError> {
     list_projected_agenda_inner(&pool.0, start_date, end_date, limit)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: import a Logseq-style markdown file as a page with
+/// block hierarchy. Delegates to [`import_markdown_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn import_markdown(
+    content: String,
+    filename: Option<String>,
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+) -> Result<ImportResult, AppError> {
+    import_markdown_inner(&pool.0, device_id.as_str(), &materializer, content, filename)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -15292,5 +15419,91 @@ mod tests {
         let result =
             set_peer_address_inner(&pool, "nonexistent".into(), "192.168.1.1:9090".into()).await;
         assert!(matches!(result, Err(AppError::NotFound(_))));
+    }
+
+    // ======================================================================
+    // import_markdown — Logseq/Markdown import (#660)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn import_markdown_creates_page_and_blocks() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let content = "- Block 1\n  - Child 1\n  - Child 2\n- Block 2";
+        let result = import_markdown_inner(
+            &pool,
+            DEV,
+            &mat,
+            content.into(),
+            Some("TestPage.md".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.page_title, "TestPage");
+        assert_eq!(result.blocks_created, 4);
+        assert!(result.warnings.is_empty());
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn import_markdown_handles_properties() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let content = "- Task\n  priority:: high\n  status:: TODO";
+        let result = import_markdown_inner(
+            &pool,
+            DEV,
+            &mat,
+            content.into(),
+            Some("Props.md".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.blocks_created, 1);
+        assert_eq!(result.properties_set, 2);
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn import_markdown_strips_block_refs() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let content = "- See ((abc-123-def)) for details";
+        let result = import_markdown_inner(&pool, DEV, &mat, content.into(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.blocks_created, 1);
+        assert_eq!(result.page_title, "Imported Page");
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn import_markdown_empty_content() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let result = import_markdown_inner(
+            &pool,
+            DEV,
+            &mat,
+            "".into(),
+            Some("Empty.md".into()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.page_title, "Empty");
+        assert_eq!(result.blocks_created, 0);
+
+        mat.shutdown();
     }
 }

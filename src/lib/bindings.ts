@@ -656,6 +656,18 @@ async listProjectedAgenda(startDate: string, endDate: string, limit: number | nu
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Tauri command: import a Logseq-style markdown file as a page with
+ * block hierarchy. Delegates to [`import_markdown_inner`].
+ */
+async importMarkdown(content: string, filename: string | null) : Promise<Result<ImportResult, { kind: string; message: string }>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_markdown", { content, filename }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -729,6 +741,10 @@ export type GroupedBacklinkResponse = { groups: BacklinkGroup[]; next_cursor: st
  * Row returned by block history queries (op_log entries for a block).
  */
 export type HistoryEntry = { device_id: string; seq: number; op_type: string; payload: string; created_at: string }
+/**
+ * Result of parsing a markdown file.
+ */
+export type ImportResult = { page_title: string; blocks_created: number; properties_set: number; warnings: string[] }
 export type MoveResponse = { block_id: string; new_parent_id: string | null; new_position: number }
 /**
  * Reference to a specific op in the log.

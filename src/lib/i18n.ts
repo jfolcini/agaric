@@ -453,6 +453,11 @@ const resources = {
       'status.addressInvalid': 'Invalid address format (expected host:port)',
       'status.manualIpHint':
         'If mDNS discovery is unavailable, share this device\u2019s IP and sync port with the remote peer, then set it via the address edit button below.',
+
+      // Import
+      'status.importTitle': 'Import',
+      'status.importDesc': 'Import Logseq or Markdown files. Pages are created from filenames, blocks from indented list items.',
+      'status.importButton': 'Select .md files',
     },
   },
 }

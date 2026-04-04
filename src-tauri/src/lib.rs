@@ -8,6 +8,7 @@ pub mod draft;
 pub mod error;
 pub mod fts;
 pub mod hash;
+pub mod import;
 pub mod materializer;
 pub mod merge;
 pub mod op;
@@ -121,6 +122,8 @@ mod specta_tests {
             crate::commands::export_page_markdown,
             // Agenda projection (#644)
             crate::commands::list_projected_agenda,
+            // Logseq/Markdown import (#660)
+            crate::commands::import_markdown,
         ])
     }
 
@@ -286,6 +289,8 @@ pub fn run() {
         commands::export_page_markdown,
         // Agenda projection (#644)
         commands::list_projected_agenda,
+        // Logseq/Markdown import (#660)
+        commands::import_markdown,
     ]);
 
     tauri::Builder::default()

@@ -6,17 +6,20 @@
  * total ops dispatched, total background dispatched.
  */
 
-import { Activity, AlertTriangle, RefreshCw } from 'lucide-react'
+import { Activity, AlertTriangle, RefreshCw, Upload } from 'lucide-react'
 import type React from 'react'
-import { useCallback } from 'react'
+import { useCallback, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTimestamp } from '@/lib/format'
 import { usePollingQuery } from '../hooks/usePollingQuery'
-import type { StatusInfo } from '../lib/tauri'
-import { getStatus } from '../lib/tauri'
+import type { ImportResult, StatusInfo } from '../lib/tauri'
+import { getStatus, importMarkdown } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
 import { DeviceManagement } from './DeviceManagement'
 
@@ -117,6 +120,52 @@ export function StatusPanel(): React.ReactElement {
   const syncLastSynced = useSyncStore((s) => s.lastSyncedAt)
   const syncOpsReceived = useSyncStore((s) => s.opsReceived)
   const syncOpsSent = useSyncStore((s) => s.opsSent)
+
+  const { t } = useTranslation()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<ImportResult | null>(null)
+
+  const handleFileImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    setImporting(true)
+    setImportResult(null)
+
+    let totalBlocks = 0
+    let totalProps = 0
+    const allWarnings: string[] = []
+    let lastTitle = ''
+
+    for (const file of Array.from(files)) {
+      try {
+        const content = await file.text()
+        const result = await importMarkdown(content, file.name)
+        totalBlocks += result.blocks_created
+        totalProps += result.properties_set
+        allWarnings.push(...result.warnings)
+        lastTitle = result.page_title
+      } catch {
+        allWarnings.push(`Failed to import ${file.name}`)
+      }
+    }
+
+    setImportResult({
+      page_title: files.length === 1 ? lastTitle : `${files.length} files`,
+      blocks_created: totalBlocks,
+      properties_set: totalProps,
+      warnings: allWarnings,
+    })
+    setImporting(false)
+
+    if (totalBlocks > 0) {
+      toast.success(`Imported ${totalBlocks} blocks from ${files.length} file(s)`)
+    }
+
+    // Reset file input
+    e.target.value = ''
+  }, [])
 
   return (
     <TooltipProvider>
@@ -272,6 +321,54 @@ export function StatusPanel(): React.ReactElement {
 
         <Separator className="my-4" />
         <DeviceManagement />
+
+        <Separator className="my-4" />
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="import-panel-title flex items-center gap-2 text-base">
+              <Upload className="h-4 w-4" />
+              {t('status.importTitle')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-muted-foreground mb-3">
+              {t('status.importDesc')}
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="file"
+                accept=".md"
+                multiple
+                ref={fileInputRef}
+                className="hidden"
+                onChange={handleFileImport}
+                data-testid="import-file-input"
+                aria-label={t('status.importButton')}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importing}
+              >
+                {importing ? 'Importing...' : t('status.importButton')}
+              </Button>
+            </div>
+            {importResult && (
+              <div className="import-result mt-3 text-xs space-y-1">
+                <p className="text-emerald-600">
+                  Imported &ldquo;{importResult.page_title}&rdquo;: {importResult.blocks_created} blocks
+                  {importResult.properties_set > 0 && `, ${importResult.properties_set} properties`}
+                </p>
+                {importResult.warnings.length > 0 && (
+                  <p className="text-amber-600">
+                    {importResult.warnings.length} warning(s)
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </TooltipProvider>
   )

@@ -648,3 +648,19 @@ export async function resolvePageByAlias(alias: string): Promise<[string, string
 export async function exportPageMarkdown(pageId: string): Promise<string> {
   return invoke('export_page_markdown', { pageId })
 }
+
+// ---------------------------------------------------------------------------
+// Markdown import (#660)
+// ---------------------------------------------------------------------------
+
+export interface ImportResult {
+  page_title: string
+  blocks_created: number
+  properties_set: number
+  warnings: string[]
+}
+
+/** Import a Logseq/Markdown file. Creates a page from the filename and blocks from content. */
+export async function importMarkdown(content: string, filename?: string): Promise<ImportResult> {
+  return invoke('import_markdown', { content, filename: filename ?? null })
+}

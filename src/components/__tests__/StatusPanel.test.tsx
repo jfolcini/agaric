@@ -575,4 +575,107 @@ describe('StatusPanel', () => {
       })
     })
   })
+
+  describe('import section', () => {
+    it('renders import section with title and button', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      render(<StatusPanel />)
+
+      expect(await screen.findByText('Import')).toBeInTheDocument()
+      expect(screen.getByText('Select .md files')).toBeInTheDocument()
+    })
+
+    it('calls import_markdown when a file is selected', async () => {
+      const importResult = {
+        page_title: 'Test Page',
+        blocks_created: 5,
+        properties_set: 2,
+        warnings: [],
+      }
+      mockedInvoke
+        .mockResolvedValue(mockStatus)            // get_status
+      mockedInvoke
+        .mockResolvedValueOnce(mockStatus)         // initial get_status
+        .mockResolvedValueOnce(importResult)       // import_markdown
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Select .md files')
+
+      const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+      const file = new File(['# Hello'], 'test.md', { type: 'text/markdown' })
+      Object.defineProperty(fileInput, 'files', { value: [file] })
+
+      await act(async () => {
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('import_markdown', {
+          content: '# Hello',
+          filename: 'test.md',
+        })
+      })
+    })
+
+    it('shows import result after successful import', async () => {
+      const importResult = {
+        page_title: 'Test Page',
+        blocks_created: 5,
+        properties_set: 2,
+        warnings: [],
+      }
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_status') return mockStatus
+        if (cmd === 'import_markdown') return importResult
+        return null
+      })
+
+      render(<StatusPanel />)
+      await screen.findByText('Select .md files')
+
+      const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+      const file = new File(['# Hello'], 'test.md', { type: 'text/markdown' })
+      Object.defineProperty(fileInput, 'files', { value: [file] })
+
+      await act(async () => {
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      await waitFor(() => {
+        expect(screen.getByText(/5 blocks/)).toBeInTheDocument()
+        expect(screen.getByText(/2 properties/)).toBeInTheDocument()
+      })
+    })
+
+    it('shows warnings count when import has warnings', async () => {
+      const importResult = {
+        page_title: 'Test Page',
+        blocks_created: 3,
+        properties_set: 0,
+        warnings: ['Unknown property: foo', 'Skipped empty block'],
+      }
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'get_status') return mockStatus
+        if (cmd === 'import_markdown') return importResult
+        return null
+      })
+
+      render(<StatusPanel />)
+      await screen.findByText('Select .md files')
+
+      const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+      const file = new File(['content'], 'warn.md', { type: 'text/markdown' })
+      Object.defineProperty(fileInput, 'files', { value: [file] })
+
+      await act(async () => {
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+
+      await waitFor(() => {
+        expect(screen.getByText('2 warning(s)')).toBeInTheDocument()
+      })
+    })
+  })
 })
