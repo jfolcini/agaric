@@ -1,5 +1,20 @@
 # Session Log
 
+## Session 147 — 2026-04-03 — Phase 2 stores review + StatusPanel offline fix (#668)
+
+### Phase 2: Zustand stores review
+
+1 review subagent covering all 7 stores. Found P1: StatusPanel missing 'offline' case (added in session 146 but not wired to UI). Also found P3 test gaps (rangeSelect edge case). Fixed immediately.
+
+| File | Change |
+|------|--------|
+| `StatusPanel.tsx` | Added 'offline' case to `syncStateLabel()` ("Offline") and `syncStateDotClasses()` (bg-slate-400). |
+| `blocks.test.ts` | 1 new test: rangeSelect with missing last-selected block. 83/83 pass. |
+
+### Stats
+- Frontend: 1 new test
+- Commit: `21daca2`
+
 ## Session 146 — 2026-04-03 — Sync resilience fixes (#667)
 
 ### Fixes: offline state + timeout tuning
