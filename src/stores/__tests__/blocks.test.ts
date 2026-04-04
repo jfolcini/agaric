@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeBlock } from '../../__tests__/fixtures'
 import { useBlockStore } from '../blocks'
 
 vi.mock('sonner', () => {
@@ -21,38 +22,6 @@ vi.mock('@/stores/undo', () => ({
   },
 }))
 
-/** Helper — build a FlatBlock with defaults. */
-function makeBlock(
-  overrides: Partial<{
-    id: string
-    block_type: string
-    content: string | null
-    parent_id: string | null
-    position: number | null
-    deleted_at: string | null
-    archived_at: string | null
-    is_conflict: boolean
-    conflict_type: string | null
-    depth: number
-  }> = {},
-) {
-  return {
-    id: overrides.id ?? 'BLOCK_001',
-    block_type: overrides.block_type ?? 'text',
-    content: overrides.content ?? 'hello',
-    parent_id: overrides.parent_id ?? null,
-    position: overrides.position ?? 0,
-    deleted_at: overrides.deleted_at ?? null,
-    archived_at: overrides.archived_at ?? null,
-    is_conflict: overrides.is_conflict ?? false,
-    conflict_type: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    depth: overrides.depth ?? 0,
-  }
-}
 
 describe('useBlockStore', () => {
   beforeEach(() => {

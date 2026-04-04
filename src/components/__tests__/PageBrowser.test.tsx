@@ -17,6 +17,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { emptyPage, makePage } from '../../__tests__/fixtures'
 import { PageBrowser } from '../PageBrowser'
 
 vi.mock('sonner', () => ({
@@ -28,21 +29,6 @@ vi.mock('sonner', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
-
-function makePage(id: string, content: string) {
-  return {
-    id,
-    block_type: 'page',
-    content,
-    parent_id: null,
-    position: null,
-    deleted_at: null,
-    archived_at: null,
-    is_conflict: false,
-  }
-}
-
-const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 /** Find the trash (delete) button within a page row via its aria-label. */
 function findTrashButton(row: HTMLElement): HTMLButtonElement {
@@ -75,7 +61,7 @@ describe('PageBrowser', () => {
 
   it('renders pages when data is returned', async () => {
     const page = {
-      items: [makePage('P1', 'First page'), makePage('P2', 'Second page')],
+      items: [makePage({ id: 'P1', content: 'First page' }), makePage({ id: 'P2', content: 'Second page' })],
       next_cursor: null,
       has_more: false,
     }
@@ -108,10 +94,7 @@ describe('PageBrowser', () => {
   it('shows Untitled for pages with null content', async () => {
     const page = {
       items: [
-        {
-          ...makePage('P1', ''),
-          content: null,
-        },
+        makePage({ id: 'P1', content: null }),
       ],
       next_cursor: null,
       has_more: false,
@@ -126,12 +109,12 @@ describe('PageBrowser', () => {
   it('uses cursor-based pagination with Load More', async () => {
     const user = userEvent.setup()
     const page1 = {
-      items: [makePage('P1', 'Page 1')],
+      items: [makePage({ id: 'P1', content: 'Page 1' })],
       next_cursor: 'cursor_abc',
       has_more: true,
     }
     const page2 = {
-      items: [makePage('P2', 'Page 2')],
+      items: [makePage({ id: 'P2', content: 'Page 2' })],
       next_cursor: null,
       has_more: false,
     }
@@ -171,7 +154,7 @@ describe('PageBrowser', () => {
     const user = userEvent.setup()
     const onPageSelect = vi.fn()
     const page = {
-      items: [makePage('P1', 'Click me')],
+      items: [makePage({ id: 'P1', content: 'Click me' })],
       next_cursor: null,
       has_more: false,
     }
@@ -189,7 +172,7 @@ describe('PageBrowser', () => {
   describe('page deletion', () => {
     it('shows trash icon on page item hover area', async () => {
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'My Page')],
+        items: [makePage({ id: 'P1', content: 'My Page' })],
         next_cursor: null,
         has_more: false,
       })
@@ -212,7 +195,7 @@ describe('PageBrowser', () => {
     it('shows AlertDialog when trash icon is clicked', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'Deletable Page')],
+        items: [makePage({ id: 'P1', content: 'Deletable Page' })],
         next_cursor: null,
         has_more: false,
       })
@@ -237,7 +220,7 @@ describe('PageBrowser', () => {
     it('cancelling the dialog keeps the page', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'Keep This Page')],
+        items: [makePage({ id: 'P1', content: 'Keep This Page' })],
         next_cursor: null,
         has_more: false,
       })
@@ -263,7 +246,7 @@ describe('PageBrowser', () => {
     it('confirming the dialog deletes the page', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'To Be Deleted')],
+        items: [makePage({ id: 'P1', content: 'To Be Deleted' })],
         next_cursor: null,
         has_more: false,
       })
@@ -322,7 +305,7 @@ describe('PageBrowser', () => {
       })
 
       // Mock create_block response
-      mockedInvoke.mockResolvedValueOnce(makePage('P_NEW', 'My Custom Page'))
+      mockedInvoke.mockResolvedValueOnce(makePage({ id: 'P_NEW', content: 'My Custom Page' }))
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'My Custom Page')
@@ -351,7 +334,7 @@ describe('PageBrowser', () => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
 
-      mockedInvoke.mockResolvedValueOnce(makePage('P_NEW', 'Temp Name'))
+      mockedInvoke.mockResolvedValueOnce(makePage({ id: 'P_NEW', content: 'Temp Name' }))
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'Temp Name')
@@ -394,7 +377,7 @@ describe('PageBrowser', () => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
 
-      mockedInvoke.mockResolvedValueOnce(makePage('P_ENTER', 'Enter Page'))
+      mockedInvoke.mockResolvedValueOnce(makePage({ id: 'P_ENTER', content: 'Enter Page' }))
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'Enter Page{Enter}')
@@ -456,7 +439,7 @@ describe('PageBrowser', () => {
     it('shows toast on failed page deletion', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'Fail Delete')],
+        items: [makePage({ id: 'P1', content: 'Fail Delete' })],
         next_cursor: null,
         has_more: false,
       })
@@ -488,7 +471,7 @@ describe('PageBrowser', () => {
 
   it('has no a11y violations', async () => {
     const page = {
-      items: [makePage('P1', 'Accessible page')],
+      items: [makePage({ id: 'P1', content: 'Accessible page' })],
       next_cursor: null,
       has_more: false,
     }
@@ -504,7 +487,7 @@ describe('PageBrowser', () => {
 
   it('page item button has focus-visible ring classes', async () => {
     mockedInvoke.mockResolvedValueOnce({
-      items: [makePage('P1', 'Focus Page')],
+      items: [makePage({ id: 'P1', content: 'Focus Page' })],
       next_cursor: null,
       has_more: false,
     })
@@ -523,7 +506,7 @@ describe('PageBrowser', () => {
   it('delete button is disabled while deletion is in progress', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce({
-      items: [makePage('P1', 'Deleting Page')],
+      items: [makePage({ id: 'P1', content: 'Deleting Page' })],
       next_cursor: null,
       has_more: false,
     })
@@ -553,7 +536,7 @@ describe('PageBrowser', () => {
   it('success toast shown after delete', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce({
-      items: [makePage('P1', 'Toast Page')],
+      items: [makePage({ id: 'P1', content: 'Toast Page' })],
       next_cursor: null,
       has_more: false,
     })
@@ -583,7 +566,7 @@ describe('PageBrowser', () => {
 
   it('page name has title attribute for accessibility', async () => {
     mockedInvoke.mockResolvedValueOnce({
-      items: [makePage('P1', 'A very long page name that should be truncated')],
+      items: [makePage({ id: 'P1', content: 'A very long page name that should be truncated' })],
       next_cursor: null,
       has_more: false,
     })
@@ -646,7 +629,7 @@ describe('PageBrowser', () => {
       expect(newPageBtn).toBeDisabled()
 
       // Resolve the create call
-      resolveCreate(makePage('P_NEW', 'Test Page'))
+      resolveCreate(makePage({ id: 'P_NEW', content: 'Test Page' }))
 
       // After creation, input is cleared so button is disabled due to empty input
       await waitFor(() => {
@@ -661,7 +644,7 @@ describe('PageBrowser', () => {
 
   it('renders Export all pages button', async () => {
     mockedInvoke.mockResolvedValueOnce({
-      items: [makePage('P1', 'A Page')],
+      items: [makePage({ id: 'P1', content: 'A Page' })],
       next_cursor: null,
       has_more: false,
     })
@@ -676,7 +659,7 @@ describe('PageBrowser', () => {
   describe('namespaced pages tree view', () => {
     it('renders flat list when no pages have namespaces', async () => {
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'First page'), makePage('P2', 'Second page')],
+        items: [makePage({ id: 'P1', content: 'First page' }), makePage({ id: 'P2', content: 'Second page' })],
         next_cursor: null,
         has_more: false,
       })
@@ -693,9 +676,9 @@ describe('PageBrowser', () => {
     it('renders tree structure for namespaced pages', async () => {
       mockedInvoke.mockResolvedValueOnce({
         items: [
-          makePage('P1', 'work/project-a'),
-          makePage('P2', 'work/project-b'),
-          makePage('P3', 'personal/journal'),
+          makePage({ id: 'P1', content: 'work/project-a' }),
+          makePage({ id: 'P2', content: 'work/project-b' }),
+          makePage({ id: 'P3', content: 'personal/journal' }),
         ],
         next_cursor: null,
         has_more: false,
@@ -716,7 +699,7 @@ describe('PageBrowser', () => {
     it('namespace folders are collapsible', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'work/project-a'), makePage('P2', 'work/project-b')],
+        items: [makePage({ id: 'P1', content: 'work/project-a' }), makePage({ id: 'P2', content: 'work/project-b' })],
         next_cursor: null,
         has_more: false,
       })
@@ -750,7 +733,7 @@ describe('PageBrowser', () => {
       const user = userEvent.setup()
       const onPageSelect = vi.fn()
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'work/project-a')],
+        items: [makePage({ id: 'P1', content: 'work/project-a' })],
         next_cursor: null,
         has_more: false,
       })
@@ -767,7 +750,7 @@ describe('PageBrowser', () => {
   describe('create page under namespace', () => {
     it('namespace folder shows + button', async () => {
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'work/project-a')],
+        items: [makePage({ id: 'P1', content: 'work/project-a' })],
         next_cursor: null,
         has_more: false,
       })
@@ -783,7 +766,7 @@ describe('PageBrowser', () => {
     it('clicking + on namespace prefills input', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'work/project-a')],
+        items: [makePage({ id: 'P1', content: 'work/project-a' })],
         next_cursor: null,
         has_more: false,
       })
@@ -801,7 +784,7 @@ describe('PageBrowser', () => {
 
     it('a11y: + button has proper aria-label with namespace path', async () => {
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'work/dev/task-1'), makePage('P2', 'work/dev/task-2')],
+        items: [makePage({ id: 'P1', content: 'work/dev/task-1' }), makePage({ id: 'P2', content: 'work/dev/task-2' })],
         next_cursor: null,
         has_more: false,
       })
@@ -821,9 +804,9 @@ describe('PageBrowser', () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
         items: [
-          makePage('P1', 'Meeting notes'),
-          makePage('P2', 'Shopping list'),
-          makePage('P3', 'Meeting agenda'),
+          makePage({ id: 'P1', content: 'Meeting notes' }),
+          makePage({ id: 'P2', content: 'Shopping list' }),
+          makePage({ id: 'P3', content: 'Meeting agenda' }),
         ],
         next_cursor: null,
         has_more: false,
@@ -847,9 +830,9 @@ describe('PageBrowser', () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
         items: [
-          makePage('P1', 'work/project-a'),
-          makePage('P2', 'work/project-b'),
-          makePage('P3', 'personal/journal'),
+          makePage({ id: 'P1', content: 'work/project-a' }),
+          makePage({ id: 'P2', content: 'work/project-b' }),
+          makePage({ id: 'P3', content: 'personal/journal' }),
         ],
         next_cursor: null,
         has_more: false,
@@ -875,7 +858,7 @@ describe('PageBrowser', () => {
     it('search with no matches shows empty state', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'Meeting notes')],
+        items: [makePage({ id: 'P1', content: 'Meeting notes' })],
         next_cursor: null,
         has_more: false,
       })
@@ -894,7 +877,7 @@ describe('PageBrowser', () => {
     it('search is case-insensitive', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'Meeting Notes')],
+        items: [makePage({ id: 'P1', content: 'Meeting Notes' })],
         next_cursor: null,
         has_more: false,
       })
@@ -912,7 +895,7 @@ describe('PageBrowser', () => {
     it('clearing search shows all pages again', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage('P1', 'Meeting notes'), makePage('P2', 'Shopping list')],
+        items: [makePage({ id: 'P1', content: 'Meeting notes' }), makePage({ id: 'P2', content: 'Shopping list' })],
         next_cursor: null,
         has_more: false,
       })

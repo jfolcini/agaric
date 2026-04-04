@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event'
 import { addDays, addMonths, endOfWeek, format, startOfWeek, subDays } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { emptyPage, makeDailyPage } from '../../__tests__/fixtures'
 
 // ── Mock BlockTree ──────────────────────────────────────────────────
 vi.mock('../BlockTree', () => ({
@@ -110,7 +111,6 @@ import { JournalControls, JournalPage, MAX_JOURNAL_DATE, MIN_JOURNAL_DATE } from
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 /** Format a Date as YYYY-MM-DD (mirrors the component's formatDate). */
 function formatDate(d: Date): string {
@@ -127,18 +127,6 @@ function formatDateDisplay(d: Date): string {
   })
 }
 
-function makeDailyPage(id: string, dateStr: string) {
-  return {
-    id,
-    block_type: 'page',
-    content: dateStr,
-    parent_id: null,
-    position: null,
-    deleted_at: null,
-    archived_at: null,
-    is_conflict: false,
-  }
-}
 
 // jsdom does not implement scrollIntoView — stub it globally
 if (!HTMLElement.prototype.scrollIntoView) {
@@ -227,7 +215,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage('DP-TODAY', todayStr)],
+        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
         next_cursor: null,
         has_more: false,
       })
@@ -375,7 +363,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage('DP-TODAY', todayStr)],
+        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
         next_cursor: null,
         has_more: false,
       })
@@ -441,7 +429,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage('DP-TODAY', todayStr)],
+        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
         next_cursor: null,
         has_more: false,
       })
@@ -589,7 +577,7 @@ describe('JournalPage', () => {
     it('creates block under existing page without creating new page', async () => {
       const user = userEvent.setup()
       const todayStr = formatDate(new Date())
-      const dailyPage = makeDailyPage('DP1', todayStr)
+      const dailyPage = makeDailyPage({ id: 'DP1', content: todayStr })
 
       mockedInvoke.mockResolvedValue({
         items: [dailyPage],
@@ -644,7 +632,7 @@ describe('JournalPage', () => {
   describe('open in editor', () => {
     it('shows "Open in editor" button for days that have pages', async () => {
       const todayStr = formatDate(new Date())
-      const dailyPage = makeDailyPage('DP1', todayStr)
+      const dailyPage = makeDailyPage({ id: 'DP1', content: todayStr })
       const onNavigateToPage = vi.fn()
 
       mockedInvoke.mockResolvedValue({
@@ -814,7 +802,7 @@ describe('JournalPage', () => {
 
   it('has no a11y violations when daily pages exist', async () => {
     const todayStr = formatDate(new Date())
-    const dailyPage = makeDailyPage('DP1', todayStr)
+    const dailyPage = makeDailyPage({ id: 'DP1', content: todayStr })
 
     mockedInvoke.mockResolvedValue({
       items: [dailyPage],
@@ -1653,7 +1641,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage('DP-TODAY', todayStr)],
+        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
         next_cursor: null,
         has_more: false,
       })
@@ -1671,7 +1659,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage('DP-TODAY', todayStr)],
+        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
         next_cursor: null,
         has_more: false,
       })
@@ -1690,7 +1678,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage('DP-TODAY', todayStr)],
+        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
         next_cursor: null,
         has_more: false,
       })
@@ -1717,7 +1705,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage('DP-TODAY', todayStr)],
+        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
         next_cursor: null,
         has_more: false,
       })
@@ -1756,7 +1744,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage('DP-TODAY', todayStr)],
+        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
         next_cursor: null,
         has_more: false,
       })
@@ -1784,7 +1772,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage('DP-TODAY', todayStr)],
+        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
         next_cursor: null,
         has_more: false,
       })
@@ -1802,7 +1790,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage('DP-TODAY', todayStr)],
+        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
         next_cursor: null,
         has_more: false,
       })
@@ -1852,7 +1840,7 @@ describe('JournalPage', () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_blocks') {
           return {
-            items: pages.map((p) => makeDailyPage(p.id, p.dateStr)),
+            items: pages.map((p) => makeDailyPage({ id: p.id, content: p.dateStr })),
             next_cursor: null,
             has_more: false,
           }
@@ -2085,7 +2073,7 @@ describe('JournalPage', () => {
       const todayStr = formatDate(new Date())
 
       mockedInvoke.mockResolvedValue({
-        items: [makeDailyPage('DP-TODAY', todayStr)],
+        items: [makeDailyPage({ id: 'DP-TODAY', content: todayStr })],
         next_cursor: null,
         has_more: false,
       })

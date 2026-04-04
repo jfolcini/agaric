@@ -29,6 +29,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { ulidToDate } from '@/lib/format'
 import { useNavigationStore } from '../../stores/navigation'
+import { emptyPage, makeConflict } from '../../__tests__/fixtures'
 import { ConflictList } from '../ConflictList'
 import { renderRichContent } from '../StaticBlock'
 
@@ -68,18 +69,6 @@ function makeUlid(timestampMs: number): string {
   return `${chars.join('')}AAAAAAAAAAAAAAAA`
 }
 
-function makeConflict(id: string, content: string, parentId: string | null = 'ORIG001') {
-  return {
-    id,
-    block_type: 'content',
-    content,
-    parent_id: parentId,
-    position: null,
-    deleted_at: null,
-    archived_at: null,
-    is_conflict: true,
-  }
-}
 
 const originalBlock = {
   id: 'ORIG001',
@@ -93,7 +82,6 @@ const originalBlock = {
   conflict_type: null,
 }
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 /**
  * Helper: set up invoke mock that dispatches by command name.
@@ -146,7 +134,7 @@ describe('ConflictList', () => {
 
   it('renders conflict items with type badge and content', async () => {
     const page = {
-      items: [makeConflict('C1', 'conflict content 1'), makeConflict('C2', 'conflict content 2')],
+      items: [makeConflict({ id: 'C1', content: 'conflict content 1' }), makeConflict({ id: 'C2', content: 'conflict content 2' })],
       next_cursor: null,
       has_more: false,
     }
@@ -164,7 +152,7 @@ describe('ConflictList', () => {
 
   it('Keep action requires confirmation then calls editBlock + deleteBlock', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     const page = {
       items: [conflict],
       next_cursor: null,
@@ -210,7 +198,7 @@ describe('ConflictList', () => {
 
   it('Discard requires two-click confirmation', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'to discard')
+    const conflict = makeConflict({ id: 'C1', content: 'to discard' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -237,7 +225,7 @@ describe('ConflictList', () => {
 
   it('pressing Escape dismisses the discard confirmation', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'to discard')
+    const conflict = makeConflict({ id: 'C1', content: 'to discard' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -260,7 +248,7 @@ describe('ConflictList', () => {
 
   it('Discard executes on confirmation Yes click', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'to discard')
+    const conflict = makeConflict({ id: 'C1', content: 'to discard' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -288,7 +276,7 @@ describe('ConflictList', () => {
 
   it('removes conflict from list after successful discard', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'will be discarded')
+    const conflict = makeConflict({ id: 'C1', content: 'will be discarded' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -316,7 +304,7 @@ describe('ConflictList', () => {
 
   it('shows Load More button when has_more is true', async () => {
     const page1 = {
-      items: [makeConflict('C1', 'conflict 1')],
+      items: [makeConflict({ id: 'C1', content: 'conflict 1' })],
       next_cursor: 'cursor_page2',
       has_more: true,
     }
@@ -331,12 +319,12 @@ describe('ConflictList', () => {
   it('loads next page with cursor when Load More is clicked', async () => {
     const user = userEvent.setup()
     const page1 = {
-      items: [makeConflict('C1', 'conflict 1')],
+      items: [makeConflict({ id: 'C1', content: 'conflict 1' })],
       next_cursor: 'cursor_page2',
       has_more: true,
     }
     const page2 = {
-      items: [makeConflict('C2', 'conflict 2')],
+      items: [makeConflict({ id: 'C2', content: 'conflict 2' })],
       next_cursor: null,
       has_more: false,
     }
@@ -363,7 +351,7 @@ describe('ConflictList', () => {
 
   it('removes conflict from list after successful Keep', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'will be kept', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'will be kept' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -393,7 +381,7 @@ describe('ConflictList', () => {
 
   it('has no a11y violations with items', async () => {
     const page = {
-      items: [makeConflict('C1', 'accessible conflict')],
+      items: [makeConflict({ id: 'C1', content: 'accessible conflict' })],
       next_cursor: null,
       has_more: false,
     }
@@ -440,7 +428,7 @@ describe('ConflictList', () => {
 
   it('shows toast on failed Keep action with backend error text (#281)', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     // edit_block will reject
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return { items: [conflict], next_cursor: null, has_more: false }
@@ -465,7 +453,7 @@ describe('ConflictList', () => {
 
   it('shows toast on failed Discard action with backend error text (#281)', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'conflict text')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     // delete_block will reject
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return { items: [conflict], next_cursor: null, has_more: false }
@@ -489,7 +477,7 @@ describe('ConflictList', () => {
 
   it('shows success toast after successful Keep', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -522,7 +510,7 @@ describe('ConflictList', () => {
 
   it('shows success toast after successful Discard', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'conflict text')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -553,7 +541,7 @@ describe('ConflictList', () => {
 
   it('Keep with null parent_id only deletes the conflict (skips editBlock)', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'orphan conflict', null)
+    const conflict = makeConflict({ id: 'C1', content: 'orphan conflict', parent_id: null })
     const page = {
       items: [conflict],
       next_cursor: null,
@@ -632,7 +620,7 @@ describe('ConflictList', () => {
   // --- New tests for original block display and Keep confirmation ---
 
   it('fetches and displays original block content for comparison', async () => {
-    const conflict = makeConflict('C1', 'new version', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'new version' })
     const page = {
       items: [conflict],
       next_cursor: null,
@@ -668,7 +656,7 @@ describe('ConflictList', () => {
   })
 
   it('shows fallback text when original block fetch fails', async () => {
-    const conflict = makeConflict('C1', 'conflict text', 'ORIG_GONE')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text', parent_id: 'ORIG_GONE' })
     const page = {
       items: [conflict],
       next_cursor: null,
@@ -692,7 +680,7 @@ describe('ConflictList', () => {
 
   it('Keep confirmation dialog opens on Keep click', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -716,7 +704,7 @@ describe('ConflictList', () => {
 
   it('Keep confirmation dialog completes the operation on confirm', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'incoming text', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'incoming text' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -768,7 +756,7 @@ describe('ConflictList', () => {
 
   it('Keep confirmation dialog can be cancelled', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -800,7 +788,7 @@ describe('ConflictList', () => {
 
   it('renders conflict type badge with "Text" for each conflict', async () => {
     const page = {
-      items: [makeConflict('C1', 'conflict content 1'), makeConflict('C2', 'conflict content 2')],
+      items: [makeConflict({ id: 'C1', content: 'conflict content 1' }), makeConflict({ id: 'C2', content: 'conflict content 2' })],
       next_cursor: null,
       has_more: false,
     }
@@ -908,7 +896,7 @@ describe('ConflictList', () => {
   })
 
   it('displays conflict metadata: source block ID (truncated)', async () => {
-    const conflict = makeConflict('CONFLICT-ID-VERY-LONG-1234', 'conflict text')
+    const conflict = makeConflict({ id: 'CONFLICT-ID-VERY-LONG-1234', content: 'conflict text' })
     const page = {
       items: [conflict],
       next_cursor: null,
@@ -931,7 +919,7 @@ describe('ConflictList', () => {
     // Create a ULID encoding a known timestamp
     const knownTs = Date.now() - 3600_000 // 1 hour ago
     const ulidId = makeUlid(knownTs)
-    const conflict = makeConflict(ulidId, 'conflict text')
+    const conflict = makeConflict({ id: ulidId, content: 'conflict text' })
     const page = {
       items: [conflict],
       next_cursor: null,
@@ -953,7 +941,7 @@ describe('ConflictList', () => {
   })
 
   it('shows "Unknown" timestamp when block ID is not a valid ULID', async () => {
-    const conflict = makeConflict('C1', 'conflict text')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     const page = {
       items: [conflict],
       next_cursor: null,
@@ -972,7 +960,7 @@ describe('ConflictList', () => {
 
   it('conflict type badge has amber styling for Text type', async () => {
     const page = {
-      items: [makeConflict('C1', 'conflict content')],
+      items: [makeConflict({ id: 'C1', content: 'conflict content' })],
       next_cursor: null,
       has_more: false,
     }
@@ -990,7 +978,7 @@ describe('ConflictList', () => {
 
   it('Keep/Discard flow still works with badges and metadata present', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'conflict with badge', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict with badge' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1057,7 +1045,7 @@ describe('ConflictList', () => {
 
   it('handles Keep partial failure: editBlock succeeds but deleteBlock fails (#286)', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'incoming changes', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'incoming changes' })
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return { items: [conflict], next_cursor: null, has_more: false }
       if (cmd === 'get_block') return originalBlock
@@ -1093,7 +1081,7 @@ describe('ConflictList', () => {
 
   it('toggles expand/collapse on conflict item click (#292)', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'A very long incoming content string', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'A very long incoming content string' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1128,7 +1116,7 @@ describe('ConflictList', () => {
   // --- #296 View original button / navigation ---
 
   it('shows "View original" button when parent_id exists (#296)', async () => {
-    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1141,7 +1129,7 @@ describe('ConflictList', () => {
   })
 
   it('does not show "View original" button when parent_id is null (#296)', async () => {
-    const conflict = makeConflict('C1', 'orphan conflict', null)
+    const conflict = makeConflict({ id: 'C1', content: 'orphan conflict', parent_id: null })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
     })
@@ -1155,7 +1143,7 @@ describe('ConflictList', () => {
 
   it('"View original" navigates to the parent page (#296)', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1175,7 +1163,7 @@ describe('ConflictList', () => {
   // --- #298 Aria-labels on Keep/Discard buttons ---
 
   it('Keep and Discard buttons have aria-labels with block ID context (#298)', async () => {
-    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1195,7 +1183,7 @@ describe('ConflictList', () => {
   // --- #304 Help text banner ---
 
   it('shows help text banner when conflicts exist (#304)', async () => {
-    const conflict = makeConflict('C1', 'conflict text')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1227,7 +1215,7 @@ describe('ConflictList', () => {
     // Reset navigation store to avoid state from prior tests
     useNavigationStore.setState({ pageStack: [], currentView: 'pages', selectedBlockId: null })
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'my block content', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'my block content' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1248,7 +1236,7 @@ describe('ConflictList', () => {
   // --- #651 C-9 Conflict type badge has aria-label ---
 
   it('conflict type badge has aria-label (#651 C-9)', async () => {
-    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1295,7 +1283,7 @@ describe('ConflictList', () => {
 
   it('refetches conflicts when sync:complete event fires (#651-C5)', async () => {
     const page = {
-      items: [makeConflict('C1', 'conflict 1')],
+      items: [makeConflict({ id: 'C1', content: 'conflict 1' })],
       next_cursor: null,
       has_more: false,
     }
@@ -1326,7 +1314,7 @@ describe('ConflictList', () => {
 
   it('shows a Refresh button when conflicts exist (#651-C5)', async () => {
     const page = {
-      items: [makeConflict('C1', 'conflict 1')],
+      items: [makeConflict({ id: 'C1', content: 'conflict 1' })],
       next_cursor: null,
       has_more: false,
     }
@@ -1341,7 +1329,7 @@ describe('ConflictList', () => {
   it('clicking Refresh button triggers a refetch (#651-C5)', async () => {
     const user = userEvent.setup()
     const page = {
-      items: [makeConflict('C1', 'conflict 1')],
+      items: [makeConflict({ id: 'C1', content: 'conflict 1' })],
       next_cursor: null,
       has_more: false,
     }
@@ -1370,7 +1358,7 @@ describe('ConflictList', () => {
 
   it('Keep dialog shows content preview of original and incoming (#651 C-6)', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'incoming changes', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'incoming changes' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1394,7 +1382,7 @@ describe('ConflictList', () => {
 
   it('Discard dialog shows content preview of conflict (#651 C-6)', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'conflict to discard', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict to discard' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1417,7 +1405,7 @@ describe('ConflictList', () => {
   it('Keep dialog truncates long content in preview (#651 C-6)', async () => {
     const user = userEvent.setup()
     const longContent = 'A'.repeat(200)
-    const conflict = makeConflict('C1', longContent, 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: longContent })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1444,7 +1432,7 @@ describe('ConflictList', () => {
     const mockedRender = vi.mocked(renderRichContent)
     mockedRender.mockClear()
 
-    const conflict = makeConflict('C1', '**bold** text', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: '**bold** text' })
     const origWithMarkdown = {
       ...originalBlock,
       content: '*italic* content',
@@ -1466,7 +1454,7 @@ describe('ConflictList', () => {
 
   it('partial failure toast includes retry action (C-16)', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'incoming changes', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'incoming changes' })
     let deleteCallCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_conflicts') return { items: [conflict], next_cursor: null, has_more: false }
@@ -1523,7 +1511,7 @@ describe('ConflictList', () => {
 
   it('Keep toast includes undo action (C-4)', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'conflict text', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict text' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1580,7 +1568,7 @@ describe('ConflictList', () => {
 
   it('Discard toast includes undo action (C-4)', async () => {
     const user = userEvent.setup()
-    const conflict = makeConflict('C1', 'conflict to discard', 'ORIG001')
+    const conflict = makeConflict({ id: 'C1', content: 'conflict to discard' })
     mockInvokeByCommand({
       get_conflicts: { items: [conflict], next_cursor: null, has_more: false },
       get_block: originalBlock,
@@ -1805,7 +1793,7 @@ describe('ConflictList', () => {
   it('shows batch toolbar when conflicts are selected (#651 C-8)', async () => {
     const user = userEvent.setup()
     const page = {
-      items: [makeConflict('C1', 'conflict 1'), makeConflict('C2', 'conflict 2')],
+      items: [makeConflict({ id: 'C1', content: 'conflict 1' }), makeConflict({ id: 'C2', content: 'conflict 2' })],
       next_cursor: null,
       has_more: false,
     }
@@ -1827,7 +1815,7 @@ describe('ConflictList', () => {
   it('select all selects all conflicts (#651 C-8)', async () => {
     const user = userEvent.setup()
     const page = {
-      items: [makeConflict('C1', 'conflict 1'), makeConflict('C2', 'conflict 2')],
+      items: [makeConflict({ id: 'C1', content: 'conflict 1' }), makeConflict({ id: 'C2', content: 'conflict 2' })],
       next_cursor: null,
       has_more: false,
     }
@@ -1858,8 +1846,8 @@ describe('ConflictList', () => {
     const user = userEvent.setup()
     const page = {
       items: [
-        makeConflict('C1', 'conflict 1', 'ORIG001'),
-        makeConflict('C2', 'conflict 2', 'ORIG001'),
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
       ],
       next_cursor: null,
       has_more: false,
@@ -1908,8 +1896,8 @@ describe('ConflictList', () => {
     const user = userEvent.setup()
     const page = {
       items: [
-        makeConflict('C1', 'conflict 1', 'ORIG001'),
-        makeConflict('C2', 'conflict 2', 'ORIG001'),
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
       ],
       next_cursor: null,
       has_more: false,
@@ -1951,7 +1939,7 @@ describe('ConflictList', () => {
 
   it('batch toolbar hidden when no selection (#651 C-8)', async () => {
     const page = {
-      items: [makeConflict('C1', 'conflict 1')],
+      items: [makeConflict({ id: 'C1', content: 'conflict 1' })],
       next_cursor: null,
       has_more: false,
     }
@@ -1969,7 +1957,7 @@ describe('ConflictList', () => {
   it('a11y: no violations with batch toolbar visible (#651 C-8)', async () => {
     const user = userEvent.setup()
     const page = {
-      items: [makeConflict('C1', 'conflict 1')],
+      items: [makeConflict({ id: 'C1', content: 'conflict 1' })],
       next_cursor: null,
       has_more: false,
     }
@@ -1997,8 +1985,8 @@ describe('ConflictList', () => {
     const user = userEvent.setup()
     const page = {
       items: [
-        makeConflict('C1', 'conflict 1', 'ORIG001'),
-        makeConflict('C2', 'conflict 2', 'ORIG001'),
+        makeConflict({ id: 'C1', content: 'conflict 1' }),
+        makeConflict({ id: 'C2', content: 'conflict 2' }),
       ],
       next_cursor: null,
       has_more: false,
@@ -2044,7 +2032,7 @@ describe('ConflictList', () => {
 
   it('displays source device name for conflict blocks (#651 C-3)', async () => {
     const page = {
-      items: [makeConflict('C1', 'conflict content')],
+      items: [makeConflict({ id: 'C1', content: 'conflict content' })],
       next_cursor: null,
       has_more: false,
     }
@@ -2091,7 +2079,7 @@ describe('ConflictList', () => {
 
   it('shows truncated device ID when peer name not found (#651 C-3)', async () => {
     const page = {
-      items: [makeConflict('C2', 'unknown device')],
+      items: [makeConflict({ id: 'C2', content: 'unknown device' })],
       next_cursor: null,
       has_more: false,
     }
@@ -2125,7 +2113,7 @@ describe('ConflictList', () => {
 
   it('shows "This device" for locally-created conflicts (#651 C-3)', async () => {
     const page = {
-      items: [makeConflict('C3', 'local conflict')],
+      items: [makeConflict({ id: 'C3', content: 'local conflict' })],
       next_cursor: null,
       has_more: false,
     }

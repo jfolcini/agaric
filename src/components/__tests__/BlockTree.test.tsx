@@ -219,12 +219,12 @@ vi.mock('@dnd-kit/sortable', () => ({
   verticalListSortingStrategy: vi.fn(),
 }))
 
+import { emptyPage, makeBlock } from '../../__tests__/fixtures'
 import { announce } from '../../lib/announcer'
 import { BlockTree, guessMimeType, processCheckboxSyntax } from '../BlockTree'
 
 const mockedInvoke = vi.mocked(invoke)
 
-const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -862,27 +862,6 @@ describe('BlockTree rendering edge cases', () => {
 // Collapse / expand tests
 // =========================================================================
 
-const makeBlock = (
-  id: string,
-  parentId: string | null,
-  depth: number,
-  content = `Block ${id}`,
-) => ({
-  id,
-  block_type: 'content',
-  content,
-  parent_id: parentId,
-  position: 0,
-  deleted_at: null,
-  archived_at: null,
-  is_conflict: false,
-  conflict_type: null,
-  todo_state: null,
-  priority: null,
-  due_date: null,
-  scheduled_date: null,
-  depth,
-})
 
 describe('BlockTree collapse/expand', () => {
   beforeEach(() => {
@@ -891,7 +870,7 @@ describe('BlockTree collapse/expand', () => {
   })
 
   it('passes hasChildren=true for blocks with children', async () => {
-    const parentChild = [makeBlock('A', null, 0, 'Parent'), makeBlock('B', 'A', 1, 'Child')]
+    const parentChild = [makeBlock({ id: 'A', content: 'Parent' }), makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' })]
 
     useBlockStore.setState({ blocks: parentChild, loading: false, focusedBlockId: null })
 
@@ -904,7 +883,7 @@ describe('BlockTree collapse/expand', () => {
   })
 
   it('passes hasChildren=false for leaf blocks', async () => {
-    const leaf = [makeBlock('LEAF', null, 0)]
+    const leaf = [makeBlock({ id: 'LEAF' })]
 
     useBlockStore.setState({ blocks: leaf, loading: false, focusedBlockId: null })
 
@@ -920,7 +899,7 @@ describe('BlockTree collapse/expand', () => {
 
   it('hides children when parent is collapsed via toggle button', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Parent'), makeBlock('B', 'A', 1, 'Child')]
+    const tree = [makeBlock({ id: 'A', content: 'Parent' }), makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
@@ -944,7 +923,7 @@ describe('BlockTree collapse/expand', () => {
 
   it('shows children again when parent is expanded', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Parent'), makeBlock('B', 'A', 1, 'Child')]
+    const tree = [makeBlock({ id: 'A', content: 'Parent' }), makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
@@ -967,10 +946,10 @@ describe('BlockTree collapse/expand', () => {
   it('hides all descendants when an ancestor is collapsed', async () => {
     const user = userEvent.setup()
     const tree = [
-      makeBlock('A', null, 0),
-      makeBlock('B', 'A', 1),
-      makeBlock('C', 'B', 2),
-      makeBlock('D', 'C', 3),
+      makeBlock({ id: 'A' }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1 }),
+      makeBlock({ id: 'C', parent_id: 'B', depth: 2 }),
+      makeBlock({ id: 'D', parent_id: 'C', depth: 3 }),
     ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
@@ -993,10 +972,10 @@ describe('BlockTree collapse/expand', () => {
   it('collapsing one sibling does not affect the other', async () => {
     const user = userEvent.setup()
     const tree = [
-      makeBlock('A', null, 0),
-      makeBlock('A1', 'A', 1),
-      makeBlock('B', null, 0),
-      makeBlock('B1', 'B', 1),
+      makeBlock({ id: 'A' }),
+      makeBlock({ id: 'A1', parent_id: 'A', depth: 1 }),
+      makeBlock({ id: 'B' }),
+      makeBlock({ id: 'B1', parent_id: 'B', depth: 1 }),
     ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
@@ -1016,7 +995,7 @@ describe('BlockTree collapse/expand', () => {
   })
 
   it('does not show toggle button for leaf blocks (no children)', async () => {
-    const tree = [makeBlock('LEAF', null, 0)]
+    const tree = [makeBlock({ id: 'LEAF' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
@@ -1040,7 +1019,7 @@ describe('BlockTree task cycling', () => {
   })
 
   it('passes todoState to SortableBlock from block store field', async () => {
-    const tree = [{ ...makeBlock('A', null, 0, 'Task block'), todo_state: 'TODO' }]
+    const tree = [makeBlock({ id: 'A', content: 'Task block', todo_state: 'TODO' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue([])
@@ -1053,7 +1032,7 @@ describe('BlockTree task cycling', () => {
   })
 
   it('passes empty todoState when block has no todo_state', async () => {
-    const tree = [makeBlock('A', null, 0, 'No task')]
+    const tree = [makeBlock({ id: 'A', content: 'No task' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue([])
@@ -1067,7 +1046,7 @@ describe('BlockTree task cycling', () => {
 
   it('cycles from none to TODO when todo toggle is clicked', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue(null)
@@ -1096,7 +1075,7 @@ describe('BlockTree task cycling', () => {
 
   it('cycles from TODO to DOING', async () => {
     const user = userEvent.setup()
-    const tree = [{ ...makeBlock('A', null, 0, 'Block'), todo_state: 'TODO' }]
+    const tree = [makeBlock({ id: 'A', content: 'Block', todo_state: 'TODO' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue(null)
@@ -1123,7 +1102,7 @@ describe('BlockTree task cycling', () => {
 
   it('cycles from DONE to none (clears state)', async () => {
     const user = userEvent.setup()
-    const tree = [{ ...makeBlock('A', null, 0, 'Block'), todo_state: 'DONE' }]
+    const tree = [makeBlock({ id: 'A', content: 'Block', todo_state: 'DONE' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue(null)
@@ -1149,7 +1128,7 @@ describe('BlockTree task cycling', () => {
   })
 
   it('renders todo toggle button for each block', async () => {
-    const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
+    const tree = [makeBlock({ id: 'A', content: 'First' }), makeBlock({ id: 'B', content: 'Second' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue([])
@@ -1163,7 +1142,7 @@ describe('BlockTree task cycling', () => {
   })
 
   it('Ctrl+Enter cycles task state on focused block', async () => {
-    const tree = [makeBlock('A', null, 0, 'Focused block')]
+    const tree = [makeBlock({ id: 'A', content: 'Focused block' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
     mockedInvoke.mockResolvedValue(null)
@@ -1191,7 +1170,7 @@ describe('BlockTree task cycling', () => {
   })
 
   it('Ctrl+Enter does nothing when no block is focused', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue([])
@@ -2022,7 +2001,7 @@ describe('BlockTree priority slash commands', () => {
   })
 
   it('onSlashCommand sets priority 1 for priority-high', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2048,7 +2027,7 @@ describe('BlockTree priority slash commands', () => {
   })
 
   it('onSlashCommand sets priority 2 for priority-medium', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2074,7 +2053,7 @@ describe('BlockTree priority slash commands', () => {
   })
 
   it('onSlashCommand sets priority 3 for priority-low', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2100,7 +2079,7 @@ describe('BlockTree priority slash commands', () => {
   })
 
   it('passes priority prop to SortableBlock from block store field', async () => {
-    const tree = [{ ...makeBlock('A', null, 0, 'Priority block'), priority: '2' }]
+    const tree = [makeBlock({ id: 'A', content: 'Priority block', priority: '2' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue([])
@@ -2113,7 +2092,7 @@ describe('BlockTree priority slash commands', () => {
   })
 
   it('renders priority toggle button for each block', async () => {
-    const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
+    const tree = [makeBlock({ id: 'A', content: 'First' }), makeBlock({ id: 'B', content: 'Second' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
@@ -2129,7 +2108,7 @@ describe('BlockTree priority slash commands', () => {
 
   it('priority toggle cycles priority via handleTogglePriority', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue(null)
@@ -2218,7 +2197,7 @@ describe('BlockTree repeat slash commands', () => {
   })
 
   it('onSlashCommand sets repeat property to weekly for repeat-weekly', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2248,7 +2227,7 @@ describe('BlockTree repeat slash commands', () => {
   })
 
   it('onSlashCommand sets repeat property to daily for repeat-daily', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2278,7 +2257,7 @@ describe('BlockTree repeat slash commands', () => {
   })
 
   it('onSlashCommand sets repeat property to monthly for repeat-monthly', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2308,7 +2287,7 @@ describe('BlockTree repeat slash commands', () => {
   })
 
   it('onSlashCommand sets repeat property to yearly for repeat-yearly', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2365,7 +2344,7 @@ describe('BlockTree repeat mode variants', () => {
   })
 
   it('onSlashCommand sets repeat property with .+ prefix for from-completion mode', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2398,7 +2377,7 @@ describe('BlockTree repeat mode variants', () => {
   })
 
   it('onSlashCommand sets repeat property with ++ prefix for catch-up mode', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2431,7 +2410,7 @@ describe('BlockTree repeat mode variants', () => {
   })
 
   it('repeat-remove deletes the repeat property', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2482,7 +2461,7 @@ describe('BlockTree repeat end-condition commands', () => {
   })
 
   it('repeat-until opens date picker with repeat-until mode', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
     useMockEditor = true
 
@@ -2507,7 +2486,7 @@ describe('BlockTree repeat end-condition commands', () => {
   })
 
   it('handleDatePick sets repeat-until property when date is selected', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
     useMockEditor = true
 
@@ -2551,7 +2530,7 @@ describe('BlockTree repeat end-condition commands', () => {
   })
 
   it('repeat-limit sets repeat-count property', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2584,7 +2563,7 @@ describe('BlockTree repeat end-condition commands', () => {
   })
 
   it('repeat-limit-remove deletes end condition properties', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2644,7 +2623,7 @@ describe('BlockTree effort slash commands', () => {
   })
 
   it('effort-1h preset sets effort property to "1h"', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2778,7 +2757,7 @@ describe('BlockTree schedule slash command', () => {
   })
 
   it('sets scheduled date on block when /schedule command is executed', async () => {
-    const tree = [makeBlock('A', null, 0, 'Some block')]
+    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     // Return block A for list_blocks so load() doesn't wipe the store
@@ -2859,7 +2838,7 @@ describe('BlockTree heading slash command execution', () => {
   })
 
   it('when /h1 is selected, block content gets "# " prefix', async () => {
-    const tree = [makeBlock('A', null, 0, 'My heading text')]
+    const tree = [makeBlock({ id: 'A', content: 'My heading text' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2892,7 +2871,7 @@ describe('BlockTree heading slash command execution', () => {
   })
 
   it('when /h3 is selected, block content gets "### " prefix', async () => {
-    const tree = [makeBlock('A', null, 0, 'Small heading')]
+    const tree = [makeBlock({ id: 'A', content: 'Small heading' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2923,7 +2902,7 @@ describe('BlockTree heading slash command execution', () => {
   })
 
   it('when /h2 is selected, block content gets "## " prefix', async () => {
-    const tree = [makeBlock('A', null, 0, 'Medium')]
+    const tree = [makeBlock({ id: 'A', content: 'Medium' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -2981,7 +2960,7 @@ describe('BlockTree aria-live announcements', () => {
   // ── #41 — Focus change announcements ──────────────────────────────
 
   it('announces block content when navigating to previous block', async () => {
-    const tree = [makeBlock('A', null, 0, 'First block'), makeBlock('B', null, 0, 'Second block')]
+    const tree = [makeBlock({ id: 'A', content: 'First block' }), makeBlock({ id: 'B', content: 'Second block' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
@@ -3001,7 +2980,7 @@ describe('BlockTree aria-live announcements', () => {
   })
 
   it('announces block content when navigating to next block', async () => {
-    const tree = [makeBlock('A', null, 0, 'First block'), makeBlock('B', null, 0, 'Second block')]
+    const tree = [makeBlock({ id: 'A', content: 'First block' }), makeBlock({ id: 'B', content: 'Second block' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
@@ -3021,7 +3000,7 @@ describe('BlockTree aria-live announcements', () => {
   })
 
   it('announces "empty block" when navigating to a block with no content', async () => {
-    const tree = [makeBlock('A', null, 0, ''), makeBlock('B', null, 0, 'Has content')]
+    const tree = [makeBlock({ id: 'A', content: '' }), makeBlock({ id: 'B', content: 'Has content' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
@@ -3042,7 +3021,7 @@ describe('BlockTree aria-live announcements', () => {
 
   it('truncates long content to 50 characters in focus announcement', async () => {
     const longContent = 'A'.repeat(80)
-    const tree = [makeBlock('A', null, 0, longContent), makeBlock('B', null, 0, 'Short')]
+    const tree = [makeBlock({ id: 'A', content: longContent }), makeBlock({ id: 'B', content: 'Short' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
@@ -3064,7 +3043,7 @@ describe('BlockTree aria-live announcements', () => {
   // ── #48 — Delete block announcement ───────────────────────────────
 
   it('announces "Block deleted" when a block is deleted', async () => {
-    const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
+    const tree = [makeBlock({ id: 'A', content: 'First' }), makeBlock({ id: 'B', content: 'Second' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
@@ -3087,7 +3066,7 @@ describe('BlockTree aria-live announcements', () => {
 
   it('announces task state when cycling from none to TODO via button click', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Task block')]
+    const tree = [makeBlock({ id: 'A', content: 'Task block' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue(null)
@@ -3107,7 +3086,7 @@ describe('BlockTree aria-live announcements', () => {
 
   it('announces task state when cycling from TODO to DOING', async () => {
     const user = userEvent.setup()
-    const tree = [{ ...makeBlock('A', null, 0, 'Task block'), todo_state: 'TODO' }]
+    const tree = [makeBlock({ id: 'A', content: 'Task block', todo_state: 'TODO' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue(null)
@@ -3127,7 +3106,7 @@ describe('BlockTree aria-live announcements', () => {
 
   it('announces "Task state: none" when cycling from DONE to none', async () => {
     const user = userEvent.setup()
-    const tree = [{ ...makeBlock('A', null, 0, 'Task block'), todo_state: 'DONE' }]
+    const tree = [makeBlock({ id: 'A', content: 'Task block', todo_state: 'DONE' })]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue(null)
@@ -3261,7 +3240,7 @@ describe('BlockTree handleDeleteBlock', () => {
   })
 
   it('deleting a block calls delete_block via invoke', async () => {
-    const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
+    const tree = [makeBlock({ id: 'A', content: 'First' }), makeBlock({ id: 'B', content: 'Second' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3283,7 +3262,7 @@ describe('BlockTree handleDeleteBlock', () => {
 
   it('deleting the only block in the tree is prevented (#75)', async () => {
     const { toast } = await import('sonner')
-    const tree = [makeBlock('ONLY', null, 0, 'The only block')]
+    const tree = [makeBlock({ id: 'ONLY', content: 'The only block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'ONLY' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3306,9 +3285,9 @@ describe('BlockTree handleDeleteBlock', () => {
 
   it('deleting a focused block moves focus to the previous block', async () => {
     const tree = [
-      makeBlock('A', null, 0, 'First'),
-      makeBlock('B', null, 0, 'Second'),
-      makeBlock('C', null, 0, 'Third'),
+      makeBlock({ id: 'A', content: 'First' }),
+      makeBlock({ id: 'B', content: 'Second' }),
+      makeBlock({ id: 'C', content: 'Third' }),
     ]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
@@ -3331,7 +3310,7 @@ describe('BlockTree handleDeleteBlock', () => {
   })
 
   it('deleting the first block moves focus to the next block', async () => {
-    const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
+    const tree = [makeBlock({ id: 'A', content: 'First' }), makeBlock({ id: 'B', content: 'Second' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3363,7 +3342,7 @@ describe('BlockTree handleMergeWithPrev', () => {
   })
 
   it('merge concatenates previous block content with current and removes current', async () => {
-    const tree = [makeBlock('A', null, 0, 'Hello '), makeBlock('B', null, 0, 'World')]
+    const tree = [makeBlock({ id: 'A', content: 'Hello ' }), makeBlock({ id: 'B', content: 'World' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3399,7 +3378,7 @@ describe('BlockTree handleMergeWithPrev', () => {
   })
 
   it('merge on first block is a no-op', async () => {
-    const tree = [makeBlock('A', null, 0, 'Only block')]
+    const tree = [makeBlock({ id: 'A', content: 'Only block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3432,7 +3411,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
   })
 
   it('indent calls move_block with previous sibling as new parent', async () => {
-    const tree = [makeBlock('A', null, 0, 'First'), makeBlock('B', null, 0, 'Second')]
+    const tree = [makeBlock({ id: 'A', content: 'First' }), makeBlock({ id: 'B', content: 'Second' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3458,7 +3437,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
   })
 
   it('dedent calls move_block with grandparent as new parent', async () => {
-    const tree = [makeBlock('A', null, 0, 'Parent'), makeBlock('B', 'A', 1, 'Child')]
+    const tree = [makeBlock({ id: 'A', content: 'Parent' }), makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3484,7 +3463,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
   })
 
   it('indent on the first block is a no-op', async () => {
-    const tree = [makeBlock('A', null, 0, 'Only block')]
+    const tree = [makeBlock({ id: 'A', content: 'Only block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3506,7 +3485,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
   })
 
   it('dedent on a root-level block is a no-op', async () => {
-    const tree = [makeBlock('A', null, 0, 'Root block')]
+    const tree = [makeBlock({ id: 'A', content: 'Root block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3538,7 +3517,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
   })
 
   it('set-priority-1 event sets priority 1 on focused block', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue(null)
@@ -3567,7 +3546,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
   })
 
   it('set-priority-2 event sets priority 2 on focused block', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue(null)
@@ -3595,7 +3574,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
   })
 
   it('set-priority-3 event sets priority 3 on focused block', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue(null)
@@ -3623,7 +3602,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
   })
 
   it('priority event does nothing when no block is focused', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
     mockedInvoke.mockResolvedValue([])
@@ -3653,7 +3632,7 @@ describe('BlockTree handleDatePick date format', () => {
   })
 
   it('creates date page in YYYY-MM-DD format (not DD/MM/YYYY)', async () => {
-    const tree = [makeBlock('A', null, 0, 'Some block')]
+    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     // Default response for load/preload/batch-resolve effects
@@ -3716,7 +3695,7 @@ describe('BlockTree handleDatePick date format', () => {
   })
 
   it('finds existing date page by YYYY-MM-DD format', async () => {
-    const tree = [makeBlock('A', null, 0, 'Some block')]
+    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue(emptyPage)
@@ -3771,7 +3750,7 @@ describe('BlockTree handleDatePick date format', () => {
   })
 
   it('sets due date on block when /due command is executed', async () => {
-    const tree = [makeBlock('A', null, 0, 'Some block')]
+    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     // Return block A for list_blocks so load() doesn't wipe the store
@@ -3848,7 +3827,7 @@ describe('BlockTree handleDatePick date format', () => {
 describe('BlockTree link/tag/code slash commands', () => {
   it('onSlashCommand for /link inserts [[ via editor chain', async () => {
     useMockEditor = true
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3868,7 +3847,7 @@ describe('BlockTree link/tag/code slash commands', () => {
 
   it('onSlashCommand for /tag inserts @ via editor chain', async () => {
     useMockEditor = true
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3888,7 +3867,7 @@ describe('BlockTree link/tag/code slash commands', () => {
 
   it('onSlashCommand for /code calls toggleCodeBlock via editor chain', async () => {
     useMockEditor = true
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3908,7 +3887,7 @@ describe('BlockTree link/tag/code slash commands', () => {
 
   it('onSlashCommand for /query inserts query template via editor chain', async () => {
     useMockEditor = true
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3952,7 +3931,7 @@ describe('BlockTree /attach slash command', () => {
   })
 
   it('/attach creates a hidden file input and clicks it', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3984,7 +3963,7 @@ describe('BlockTree /attach slash command', () => {
   })
 
   it('/attach calls addAttachment on file selection with path', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue({ id: 'att-1', block_id: 'A', filename: 'test.pdf', mime_type: 'application/pdf', size_bytes: 1024, fs_path: '/tmp/test.pdf', created_at: '2025-01-01' })
@@ -4036,7 +4015,7 @@ describe('BlockTree /attach slash command', () => {
   })
 
   it('/attach shows error toast when file has no path', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -4079,7 +4058,7 @@ describe('BlockTree /attach slash command', () => {
   })
 
   it('/attach uses guessMimeType when file.type is empty', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue({ id: 'att-2', block_id: 'A', filename: 'photo.png', mime_type: 'image/png', size_bytes: 2048, fs_path: '/tmp/photo.png', created_at: '2025-01-01' })
@@ -4179,7 +4158,7 @@ describe('DatePickerOverlay text input', () => {
   })
 
   it('date picker shows text input field', async () => {
-    const tree = [makeBlock('A', null, 0, 'Some block')]
+    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue(emptyPage)
@@ -4207,7 +4186,7 @@ describe('DatePickerOverlay text input', () => {
 
   it("typing 'tomorrow' shows parsed preview", async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Some block')]
+    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue(emptyPage)
@@ -4238,7 +4217,7 @@ describe('DatePickerOverlay text input', () => {
 
   it('typing an invalid date shows error message', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Some block')]
+    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue(emptyPage)
@@ -4266,7 +4245,7 @@ describe('DatePickerOverlay text input', () => {
 
   it('pressing Enter with valid date applies it via the date handler', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Some block')]
+    const tree = [makeBlock({ id: 'A', content: 'Some block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     // Use mockImplementation to handle set_due_date specifically
@@ -4340,7 +4319,7 @@ describe('BlockTree Enter creates new sibling block', () => {
   })
 
   it('Enter creates a new sibling block below and focuses it', async () => {
-    const tree = [makeBlock('A', null, 0, 'First block')]
+    const tree = [makeBlock({ id: 'A', content: 'First block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     // Mock create_block to return a new block
@@ -4397,7 +4376,7 @@ describe('BlockTree Enter creates new sibling block', () => {
   })
 
   it('empty just-created block is deleted when focus changes', async () => {
-    const tree = [makeBlock('A', null, 0, 'First block')]
+    const tree = [makeBlock({ id: 'A', content: 'First block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
@@ -4452,7 +4431,7 @@ describe('BlockTree Enter creates new sibling block', () => {
   })
 
   it('non-empty just-created block is NOT deleted when focus changes', async () => {
-    const tree = [makeBlock('A', null, 0, 'First block')]
+    const tree = [makeBlock({ id: 'A', content: 'First block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
@@ -4537,10 +4516,10 @@ describe('BlockTree zoom-in', () => {
   it('zoom filters blocks to descendants only', async () => {
     const user = userEvent.setup()
     const tree = [
-      makeBlock('A', null, 0, 'Parent A'),
-      makeBlock('B', 'A', 1, 'Child B'),
-      makeBlock('D', 'B', 2, 'Grandchild D'),
-      makeBlock('C', 'A', 1, 'Child C'),
+      makeBlock({ id: 'A', content: 'Parent A' }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child B' }),
+      makeBlock({ id: 'D', parent_id: 'B', depth: 2, content: 'Grandchild D' }),
+      makeBlock({ id: 'C', parent_id: 'A', depth: 1, content: 'Child C' }),
     ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
@@ -4573,9 +4552,9 @@ describe('BlockTree zoom-in', () => {
   it('breadcrumb renders when zoomed', async () => {
     const user = userEvent.setup()
     const tree = [
-      makeBlock('A', null, 0, 'Root A'),
-      makeBlock('B', 'A', 1, 'Child B'),
-      makeBlock('C', 'B', 2, 'Grandchild C'),
+      makeBlock({ id: 'A', content: 'Root A' }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child B' }),
+      makeBlock({ id: 'C', parent_id: 'B', depth: 2, content: 'Grandchild C' }),
     ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
@@ -4605,9 +4584,9 @@ describe('BlockTree zoom-in', () => {
   it('clicking home button in breadcrumb resets zoom', async () => {
     const user = userEvent.setup()
     const tree = [
-      makeBlock('A', null, 0, 'Root A'),
-      makeBlock('B', 'A', 1, 'Child B'),
-      makeBlock('C', 'B', 2, 'Grandchild C'),
+      makeBlock({ id: 'A', content: 'Root A' }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child B' }),
+      makeBlock({ id: 'C', parent_id: 'B', depth: 2, content: 'Grandchild C' }),
     ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
@@ -4724,7 +4703,7 @@ describe('BlockTree assignee slash command presets', () => {
   })
 
   it('assignee-me preset sets assignee property to "Me"', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -4754,7 +4733,7 @@ describe('BlockTree assignee slash command presets', () => {
   })
 
   it('assignee-custom preset sets assignee property to empty string', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -4813,7 +4792,7 @@ describe('BlockTree location slash command presets', () => {
   })
 
   it('location-office preset sets location property to "Office"', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -4843,7 +4822,7 @@ describe('BlockTree location slash command presets', () => {
   })
 
   it('location-custom preset sets location property to empty string', async () => {
-    const tree = [makeBlock('A', null, 0, 'Block')]
+    const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -4886,7 +4865,7 @@ describe('BlockTree multi-selection (#657)', () => {
   })
 
   it('Ctrl+Click toggles block selection via onSelect', async () => {
-    const tree = [makeBlock('A', null, 0, 'Alpha'), makeBlock('B', null, 1, 'Beta')]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', depth: 1, content: 'Beta' })]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -4904,7 +4883,7 @@ describe('BlockTree multi-selection (#657)', () => {
   })
 
   it('isSelected prop is passed to SortableBlock', async () => {
-    const tree = [makeBlock('A', null, 0, 'Alpha')]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -4918,7 +4897,7 @@ describe('BlockTree multi-selection (#657)', () => {
   })
 
   it('unselected block has data-selected=false', async () => {
-    const tree = [makeBlock('A', null, 0, 'Alpha')]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -4932,7 +4911,7 @@ describe('BlockTree multi-selection (#657)', () => {
   })
 
   it('Escape clears selection when not editing', async () => {
-    const tree = [makeBlock('A', null, 0, 'Alpha')]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -4949,7 +4928,7 @@ describe('BlockTree multi-selection (#657)', () => {
   })
 
   it('selection is cleared when entering edit mode (setFocused)', () => {
-    const tree = [makeBlock('A', null, 0, 'Alpha')]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -4972,7 +4951,7 @@ describe('BlockTree batch toolbar (#657)', () => {
   })
 
   it('shows batch toolbar when blocks are selected', async () => {
-    const tree = [makeBlock('A', null, 0, 'Alpha'), makeBlock('B', null, 1, 'Beta')]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', depth: 1, content: 'Beta' })]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -4987,7 +4966,7 @@ describe('BlockTree batch toolbar (#657)', () => {
   })
 
   it('batch toolbar hidden when no selection', async () => {
-    const tree = [makeBlock('A', null, 0, 'Alpha')]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -5003,7 +4982,7 @@ describe('BlockTree batch toolbar (#657)', () => {
 
   it('batch delete shows confirmation dialog', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Alpha'), makeBlock('B', null, 1, 'Beta')]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', depth: 1, content: 'Beta' })]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -5022,7 +5001,7 @@ describe('BlockTree batch toolbar (#657)', () => {
 
   it('batch delete calls deleteBlock for each selected', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Alpha'), makeBlock('B', null, 1, 'Beta')]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', depth: 1, content: 'Beta' })]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -5058,7 +5037,7 @@ describe('BlockTree batch toolbar (#657)', () => {
 
   it('batch set todo state calls setTodoState for each selected', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Alpha'), makeBlock('B', null, 1, 'Beta')]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', depth: 1, content: 'Beta' })]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -5103,7 +5082,7 @@ describe('BlockTree batch toolbar (#657)', () => {
 
   it('clear selection button clears selectedBlockIds', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock('A', null, 0, 'Alpha')]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -5122,7 +5101,7 @@ describe('BlockTree batch toolbar (#657)', () => {
 
   it('batch buttons disabled during operation', async () => {
     let resolveInvoke!: (v: unknown) => void
-    const tree = [makeBlock('A', null, 0, 'Alpha'), makeBlock('B', null, 1, 'Beta')]
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', depth: 1, content: 'Beta' })]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
