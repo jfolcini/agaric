@@ -11,7 +11,8 @@
         "noUndeclaredDependencies": "error"
       },
       "suspicious": {
-        "useAwait": "error"
+        "useAwait": "error",
+        "noEvolvingTypes": "error"
       },
       "style": {
         "noNonNullAssertion": "error",

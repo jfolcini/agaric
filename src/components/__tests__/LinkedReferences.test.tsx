@@ -307,7 +307,7 @@ describe('LinkedReferences', () => {
 
   // 9. default expand: first 3 expanded if >5
   it('default expand: first 3 expanded if >5', async () => {
-    const groups = []
+    const groups: ReturnType<typeof makeGroup>[] = []
     for (let i = 1; i <= 7; i++) {
       groups.push(makeGroup(`P${i}`, `Page ${i}`, [{ id: `B${i}`, content: `block ${i}` }]))
     }
