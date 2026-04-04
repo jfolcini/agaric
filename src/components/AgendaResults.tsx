@@ -11,10 +11,10 @@
 
 import { CheckCircle2, Circle, Clock, Loader2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import {
   type AgendaSortBy,
   groupByDate,
@@ -25,6 +25,7 @@ import {
 import { priorityColor } from '../lib/priority-color'
 import type { BlockRow } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
+import { LoadMoreButton } from './LoadMoreButton'
 
 export interface AgendaResultsProps {
   /** Pre-filtered blocks to display. If empty, shows empty state. */
@@ -134,25 +135,12 @@ export function AgendaResults({
 }: AgendaResultsProps): React.ReactElement {
   const { t } = useTranslation()
 
-  const handleItemClick = useCallback(
-    (block: BlockRow) => {
-      if (block.parent_id && onNavigateToPage) {
-        const title = pageTitles.get(block.parent_id) ?? t('agenda.untitled')
-        onNavigateToPage(block.parent_id, title, block.id)
-      }
-    },
-    [onNavigateToPage, pageTitles, t],
-  )
-
-  const handleItemKeyDown = useCallback(
-    (e: React.KeyboardEvent, block: BlockRow) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault()
-        handleItemClick(block)
-      }
-    },
-    [handleItemClick],
-  )
+  const { handleBlockClick: handleItemClick, handleBlockKeyDown: handleItemKeyDown } =
+    useBlockNavigation({
+      onNavigateToPage,
+      pageTitles,
+      untitledLabel: t('agenda.untitled'),
+    })
 
   // ── Loading state (initial load, no blocks yet) ────────────────────
   if (loading && blocks.length === 0) {
@@ -303,26 +291,16 @@ export function AgendaResults({
       )}
 
       {/* Load more */}
-      {hasMore && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="agenda-results-load-more w-full mt-2"
-          onClick={onLoadMore}
-          disabled={loading}
-          aria-busy={loading}
-          aria-label={loading ? t('agenda.loadingMore') : t('agenda.loadMoreLabel')}
-        >
-          {loading ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" data-testid="loader-spinner" />{' '}
-              {t('agenda.loading')}
-            </>
-          ) : (
-            t('agenda.loadMore')
-          )}
-        </Button>
-      )}
+      <LoadMoreButton
+        hasMore={hasMore}
+        loading={loading}
+        onLoadMore={onLoadMore}
+        className="agenda-results-load-more mt-2"
+        label={t('agenda.loadMore')}
+        loadingLabel={t('agenda.loading')}
+        ariaLabel={t('agenda.loadMoreLabel')}
+        ariaLoadingLabel={t('agenda.loadingMore')}
+      />
     </div>
   )
 }

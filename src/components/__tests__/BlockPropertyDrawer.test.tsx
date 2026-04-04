@@ -14,16 +14,16 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
+import type { PropertyDefinition, PropertyRow as PropertyRowData } from '../../lib/tauri'
 import { useBlockStore } from '../../stores/blocks'
 
 const mockedInvoke = vi.mocked(invoke)
 
 vi.mock('sonner', () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }))
 
-import { BlockPropertyDrawer } from '../BlockPropertyDrawer'
+import { BlockPropertyDrawer, PropertyRow } from '../BlockPropertyDrawer'
 
-function makeProp(key: string, overrides?: Partial<PropertyRow>): PropertyRow {
+function makeProp(key: string, overrides?: Partial<PropertyRowData>): PropertyRowData {
   return {
     key,
     value_text: null,
@@ -43,7 +43,7 @@ function makeDef(key: string, valueType = 'text'): PropertyDefinition {
   }
 }
 
-function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
+function setupMock(props: PropertyRowData[] = [], defs: PropertyDefinition[] = []) {
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'get_properties') return props
     if (cmd === 'list_property_defs') return defs
@@ -449,5 +449,143 @@ describe('BlockPropertyDrawer', () => {
     // No icon for custom properties
     const svg = badge.querySelector('svg')
     expect(svg).not.toBeInTheDocument()
+  })
+})
+
+// ── PropertyRow unit tests ──────────────────────────────────────────────
+
+describe('PropertyRow', () => {
+  it('renders label and value', () => {
+    render(<PropertyRow label="Status" value="active" ariaLabel="Status value" onSave={vi.fn()} />)
+
+    expect(screen.getByTitle('Status')).toBeInTheDocument()
+    expect(screen.getByText('Status')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('active')).toBeInTheDocument()
+  })
+
+  it('calls onSave when input is blurred', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(<PropertyRow label="Name" value="" ariaLabel="Name value" onSave={onSave} />)
+
+    const input = screen.getByLabelText('Name value')
+    await user.click(input)
+    await user.type(input, 'hello')
+    await user.tab()
+
+    expect(onSave).toHaveBeenCalledWith('hello')
+  })
+
+  it('calls onSave via Enter key', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn()
+    render(<PropertyRow label="Name" value="" ariaLabel="Name value" onSave={onSave} />)
+
+    const input = screen.getByLabelText('Name value')
+    await user.click(input)
+    await user.type(input, 'world')
+    await user.keyboard('{Enter}')
+
+    expect(onSave).toHaveBeenCalledWith('world')
+  })
+
+  it('calls onRemove when X button is clicked', async () => {
+    const user = userEvent.setup()
+    const onRemove = vi.fn()
+    render(
+      <PropertyRow
+        label="Tag"
+        value="v1"
+        ariaLabel="Tag value"
+        onSave={vi.fn()}
+        onRemove={onRemove}
+        removeAriaLabel="Remove tag"
+      />,
+    )
+
+    const removeBtn = screen.getByRole('button', { name: 'Remove tag' })
+    await user.click(removeBtn)
+
+    expect(onRemove).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not render X button when onRemove is not provided', () => {
+    render(
+      <PropertyRow label="ReadOnly" value="locked" ariaLabel="ReadOnly value" onSave={vi.fn()} />,
+    )
+
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('renders a date input when inputType is "date"', () => {
+    render(
+      <PropertyRow
+        label="Due"
+        value="2026-06-15"
+        inputType="date"
+        ariaLabel="Due value"
+        onSave={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByLabelText('Due value')
+    expect(input).toHaveAttribute('type', 'date')
+    expect(input).toHaveValue('2026-06-15')
+  })
+
+  it('renders a text input by default', () => {
+    render(<PropertyRow label="Note" value="some text" ariaLabel="Note value" onSave={vi.fn()} />)
+
+    const input = screen.getByLabelText('Note value')
+    // When no type is specified, the input defaults to text
+    expect(input).not.toHaveAttribute('type', 'date')
+    expect(input).toHaveValue('some text')
+  })
+
+  it('shows icon styling when icon is provided', () => {
+    // Use a simple SVG component as a stand-in for a LucideIcon
+    const FakeIcon = ({ size }: { size: number }) => (
+      <svg data-testid="fake-icon" width={size} height={size} />
+    )
+    render(
+      <PropertyRow
+        icon={FakeIcon as unknown as import('lucide-react').LucideIcon}
+        label="Due Date"
+        value="2026-01-01"
+        ariaLabel="Due Date value"
+        onSave={vi.fn()}
+      />,
+    )
+
+    const badge = screen.getByTitle('Due Date')
+    expect(badge).toHaveClass('flex', 'items-center', 'gap-1')
+    expect(badge).not.toHaveClass('font-mono')
+    expect(badge.querySelector('svg')).toBeInTheDocument()
+  })
+
+  it('shows font-mono styling when no icon is provided', () => {
+    render(
+      <PropertyRow label="custom_key" value="val" ariaLabel="custom_key value" onSave={vi.fn()} />,
+    )
+
+    const badge = screen.getByTitle('custom_key')
+    expect(badge).toHaveClass('font-mono')
+    expect(badge.querySelector('svg')).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = render(
+      <PropertyRow
+        label="Status"
+        value="active"
+        ariaLabel="Status value"
+        onSave={vi.fn()}
+        onRemove={vi.fn()}
+        removeAriaLabel="Remove status"
+      />,
+    )
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 })

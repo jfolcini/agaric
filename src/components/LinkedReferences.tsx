@@ -6,14 +6,14 @@
  * Uses cursor-based pagination with "Load more" button.
  */
 
-import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort, BlockRow } from '../lib/tauri'
 import {
   batchResolve,
@@ -22,6 +22,7 @@ import {
   listTagsByPrefix,
 } from '../lib/tauri'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
+import { LoadMoreButton } from './LoadMoreButton'
 import { SourcePageFilter } from './SourcePageFilter'
 import { renderRichContent } from './StaticBlock'
 
@@ -343,11 +344,13 @@ export function LinkedReferences({
         <div className="linked-references-content mt-1 space-y-2">
           {/* Loading skeletons */}
           {loading && groups.length === 0 && (
-            <div className="linked-references-loading space-y-2" aria-busy="true" role="status">
-              <Skeleton className="h-8 w-48 rounded-lg" />
-              <Skeleton className="h-12 w-full rounded-lg" />
-              <Skeleton className="h-12 w-full rounded-lg" />
-            </div>
+            <LoadingSkeleton
+              count={3}
+              height="h-12"
+              className="linked-references-loading"
+              aria-busy="true"
+              role="status"
+            />
           )}
 
           {/* Filter controls */}
@@ -445,25 +448,16 @@ export function LinkedReferences({
             </div>
           ))}
 
-          {hasMore && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="linked-references-load-more w-full"
-              onClick={loadMore}
-              disabled={loading}
-              aria-busy={loading}
-              aria-label={loading ? t('references.loadingMore') : t('references.loadMoreLabel')}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> {t('references.loading')}
-                </>
-              ) : (
-                t('references.loadMore')
-              )}
-            </Button>
-          )}
+          <LoadMoreButton
+            hasMore={hasMore}
+            loading={loading}
+            onLoadMore={loadMore}
+            className="linked-references-load-more"
+            label={t('references.loadMore')}
+            loadingLabel={t('references.loading')}
+            ariaLabel={t('references.loadMoreLabel')}
+            ariaLoadingLabel={t('references.loadingMore')}
+          />
         </div>
       )}
     </section>

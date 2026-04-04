@@ -11,19 +11,10 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
@@ -31,6 +22,7 @@ import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
+import { LoadMoreButton } from './LoadMoreButton'
 
 interface PageBrowserProps {
   /** Called when a page is selected. */
@@ -331,11 +323,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       )}
 
       {loading && pages.length === 0 && (
-        <div className="page-browser-loading space-y-1">
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-        </div>
+        <LoadingSkeleton count={3} height="h-10" className="page-browser-loading" />
       )}
 
       {!loading && pages.length === 0 && (
@@ -405,7 +393,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 variant="ghost"
                 size="icon-xs"
                 aria-label={t('pageBrowser.deleteButton')}
-                className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
                 disabled={deletingId === page.id}
                 onClick={(e) => {
                   e.stopPropagation()
@@ -419,17 +407,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         )}
       </div>
 
-      {hasMore && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="page-browser-load-more w-full"
-          onClick={loadMore}
-          disabled={loading}
-        >
-          {loading ? t('pageBrowser.loading') : t('pageBrowser.loadMore')}
-        </Button>
-      )}
+      <LoadMoreButton
+        hasMore={hasMore}
+        loading={loading}
+        onLoadMore={loadMore}
+        className="page-browser-load-more"
+        label={t('pageBrowser.loadMore')}
+        loadingLabel={t('pageBrowser.loading')}
+      />
 
       <Button
         variant="outline"
@@ -447,27 +432,17 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       </output>
 
       {/* Delete confirmation dialog */}
-      <AlertDialog
+      <ConfirmDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null)
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('pageBrowser.deletePage')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('pageBrowser.deleteDescription', { name: deleteTarget?.name })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('pageBrowser.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDelete}>
-              {t('pageBrowser.delete')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={t('pageBrowser.deletePage')}
+        description={t('pageBrowser.deleteDescription', { name: deleteTarget?.name })}
+        cancelLabel={t('pageBrowser.cancel')}
+        actionLabel={t('pageBrowser.delete')}
+        onAction={handleConfirmDelete}
+      />
     </div>
   )
 }

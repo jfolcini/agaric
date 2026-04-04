@@ -341,7 +341,7 @@ export function BlockContextMenu({
                 role="menuitem"
                 tabIndex={idx === focusedIndex ? 0 : -1}
                 className={cn(
-                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:outline-none transition-colors [@media(pointer:coarse)]:min-h-[44px]',
+                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground focus-visible:outline-none transition-colors touch-target',
                   item.className,
                 )}
                 onClick={item.action}

@@ -92,12 +92,7 @@ export function QrScanner({ onScan, onError }: QrScannerProps) {
         )}
       </section>
       {!scanning && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={startScanning}
-          className="[@media(pointer:coarse)]:min-h-[44px]"
-        >
+        <Button variant="outline" size="sm" onClick={startScanning} className="touch-target">
           {error ? t('qrScanner.retryCameraButton') : t('qrScanner.scanQrCodeButton')}
         </Button>
       )}

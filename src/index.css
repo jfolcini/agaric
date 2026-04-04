@@ -442,6 +442,13 @@
   }
 }
 
+/* ── Touch-target utility ──────────────────────────────────────────── */
+@utility touch-target {
+  @media (pointer: coarse) {
+    min-height: 44px;
+  }
+}
+
 /* ── Accessibility: prefers-reduced-motion ─────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *,

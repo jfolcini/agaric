@@ -10,16 +10,7 @@ import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -160,35 +151,20 @@ export function TrashView(): React.ReactElement {
       )}
 
       {/* Purge confirmation dialog */}
-      <AlertDialog
+      <ConfirmDialog
         open={!!confirmPurgeId}
         onOpenChange={(open) => {
           if (!open) setConfirmPurgeId(null)
         }}
-      >
-        <AlertDialogContent className="trash-purge-confirm" data-testid="trash-purge-confirm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('trash.permanentlyDeleteTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('trash.permanentlyDeleteDescription')}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="trash-purge-no" data-testid="trash-purge-no">
-              {t('trash.noButton')}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className="trash-purge-yes"
-              data-testid="trash-purge-yes"
-              onClick={() => {
-                if (confirmPurgeId) handlePurge(confirmPurgeId)
-              }}
-            >
-              {t('trash.yesDeleteButton')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={t('trash.permanentlyDeleteTitle')}
+        description={t('trash.permanentlyDeleteDescription')}
+        cancelLabel={t('trash.noButton')}
+        actionLabel={t('trash.yesDeleteButton')}
+        onAction={() => {
+          if (confirmPurgeId) handlePurge(confirmPurgeId)
+        }}
+        className="trash-purge-confirm"
+      />
     </div>
   )
 }

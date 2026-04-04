@@ -36,7 +36,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import { LoadingSkeleton } from './LoadingSkeleton'
 import { formatTimestamp, truncateId, ulidToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
@@ -472,10 +472,7 @@ export function ConflictList(): React.ReactElement {
   return (
     <div className="conflict-list space-y-4">
       {loading && blocks.length === 0 && (
-        <div className="conflict-list-loading space-y-2">
-          <Skeleton className="h-14 w-full rounded-lg" />
-          <Skeleton className="h-14 w-full rounded-lg" />
-        </div>
+        <LoadingSkeleton count={2} height="h-14" className="conflict-list-loading" />
       )}
 
       {!loading && blocks.length === 0 && (
@@ -620,7 +617,7 @@ export function ConflictList(): React.ReactElement {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="conflict-keep-btn [@media(pointer:coarse)]:min-h-[44px]"
+                  className="conflict-keep-btn touch-target"
                   data-testid="conflict-keep-btn"
                   onClick={() => setConfirmKeepBlock(block)}
                   aria-label={t('conflict.keepIncomingLabel', { id: truncateId(block.id) })}
@@ -631,7 +628,7 @@ export function ConflictList(): React.ReactElement {
                 <Button
                   variant="destructive"
                   size="sm"
-                  className="conflict-discard-btn [@media(pointer:coarse)]:min-h-[44px]"
+                  className="conflict-discard-btn touch-target"
                   data-testid="conflict-discard-btn"
                   onClick={() => setConfirmDiscardId(block.id)}
                   aria-label={t('conflict.discardConflictLabel', { id: truncateId(block.id) })}

@@ -327,14 +327,14 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             >
               <button
                 type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent [@media(pointer:coarse)]:min-h-[44px]"
+                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
                 onClick={handleToggleTemplate}
               >
                 {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
               </button>
               <button
                 type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent [@media(pointer:coarse)]:min-h-[44px]"
+                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
                 onClick={handleToggleJournalTemplate}
               >
                 {isJournalTemplate
@@ -344,7 +344,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               <hr className="my-1 h-px bg-border border-none" />
               <button
                 type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent [@media(pointer:coarse)]:min-h-[44px]"
+                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
                 onClick={handleExport}
               >
                 {t('pageHeader.exportMarkdown')}
@@ -352,7 +352,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               <hr className="my-1 h-px bg-border border-none" />
               <button
                 type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent [@media(pointer:coarse)]:min-h-[44px]"
+                className="w-full rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent touch-target"
                 onClick={() => {
                   setKebabOpen(false)
                   setDeleteDialogOpen(true)

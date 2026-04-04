@@ -25,7 +25,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Skeleton } from '@/components/ui/skeleton'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import {
@@ -36,6 +35,7 @@ import {
   setProperty,
   updatePropertyDefOptions,
 } from '../lib/tauri'
+import { LoadingSkeleton } from './LoadingSkeleton'
 
 // Properties designed for task blocks (content blocks with todo_state).
 // Filtered out of the "add property" popover for pages.
@@ -191,12 +191,7 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
 
       {expanded && (
         <div className="mt-1 space-y-1.5 pl-2">
-          {loading && (
-            <div className="space-y-2" data-testid="property-loading">
-              <Skeleton className="h-6 w-full rounded-lg" />
-              <Skeleton className="h-6 w-full rounded-lg" />
-            </div>
-          )}
+          {loading && <LoadingSkeleton count={2} height="h-6" data-testid="property-loading" />}
 
           {!loading &&
             properties.map((prop) => {

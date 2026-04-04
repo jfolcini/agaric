@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { LoadMoreButton } from './LoadMoreButton'
 import type { BacklinkGroup } from '../lib/tauri'
 import { editBlock, listUnlinkedReferences } from '../lib/tauri'
 import { EmptyState } from './EmptyState'
@@ -248,25 +249,16 @@ export function UnlinkedReferences({
           })}
 
           {/* Load more pagination */}
-          {hasMore && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="unlinked-references-load-more w-full"
-              onClick={loadMore}
-              disabled={loading}
-              aria-busy={loading}
-              aria-label={loading ? t('unlinkedRefs.loadingMore') : t('unlinkedRefs.loadMoreLabel')}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> {t('unlinkedRefs.loadingDots')}
-                </>
-              ) : (
-                t('unlinkedRefs.loadMore')
-              )}
-            </Button>
-          )}
+          <LoadMoreButton
+            hasMore={hasMore}
+            loading={loading}
+            onLoadMore={loadMore}
+            className="unlinked-references-load-more"
+            label={t('unlinkedRefs.loadMore')}
+            loadingLabel={t('unlinkedRefs.loadingDots')}
+            ariaLabel={t('unlinkedRefs.loadMoreLabel')}
+            ariaLoadingLabel={t('unlinkedRefs.loadingMore')}
+          />
         </div>
       )}
     </section>

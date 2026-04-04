@@ -662,7 +662,7 @@ export function BacklinkFilterBuilder({
                   {filterSummary(filter, tagResolver)}
                   <button
                     type="button"
-                    className="ml-0.5 inline-flex items-center justify-center rounded-full p-1 hover:bg-muted active:bg-muted active:scale-95 focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px]"
+                    className="ml-0.5 inline-flex items-center justify-center rounded-full p-1 hover:bg-muted active:bg-muted active:scale-95 focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-w-[44px] touch-target"
                     onClick={() => handleRemoveFilter(index)}
                     onKeyDown={(e: React.KeyboardEvent) => {
                       if (e.key === 'Delete' || e.key === 'Backspace') {

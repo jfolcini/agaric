@@ -5,16 +5,7 @@
  */
 
 import type React from 'react'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 
 interface UnpairConfirmDialogProps {
   open: boolean
@@ -32,24 +23,15 @@ export function UnpairConfirmDialog({
   className,
 }: UnpairConfirmDialogProps): React.ReactElement {
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent className={className}>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Unpair device?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This will remove {deviceName ? `"${deviceName}"` : 'the paired device'}. You will need
-            to pair again to sync.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel className="[@media(pointer:coarse)]:min-h-[44px]">
-            Cancel
-          </AlertDialogCancel>
-          <AlertDialogAction className="[@media(pointer:coarse)]:min-h-[44px]" onClick={onConfirm}>
-            Yes, unpair{deviceName ? ` ${deviceName}` : ''}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Unpair device?"
+      description={`This will remove ${deviceName ? `"${deviceName}"` : 'the paired device'}. You will need to pair again to sync.`}
+      cancelLabel="Cancel"
+      actionLabel={`Yes, unpair${deviceName ? ` ${deviceName}` : ''}`}
+      onAction={onConfirm}
+      className={className}
+    />
   )
 }

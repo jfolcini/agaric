@@ -6,16 +6,7 @@
 
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Input } from '@/components/ui/input'
 
 interface RenameDialogProps {
@@ -46,31 +37,26 @@ export function RenameDialog({
   }
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent className={className}>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Rename device</AlertDialogTitle>
-          <AlertDialogDescription>Enter a name for this device.</AlertDialogDescription>
-        </AlertDialogHeader>
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleSave()
-          }}
-          placeholder="Device name"
-          aria-label="Device name"
-          autoFocus
-        />
-        <AlertDialogFooter>
-          <AlertDialogCancel className="[@media(pointer:coarse)]:min-h-[44px]">
-            Cancel
-          </AlertDialogCancel>
-          <AlertDialogAction className="[@media(pointer:coarse)]:min-h-[44px]" onClick={handleSave}>
-            Save
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Rename device"
+      description="Enter a name for this device."
+      cancelLabel="Cancel"
+      actionLabel="Save"
+      onAction={handleSave}
+      className={className}
+    >
+      <Input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') handleSave()
+        }}
+        placeholder="Device name"
+        aria-label="Device name"
+        autoFocus
+      />
+    </ConfirmDialog>
   )
 }

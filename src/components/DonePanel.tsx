@@ -11,11 +11,12 @@ import { CheckCircle2, Loader2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
+import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import type { BlockRow } from '../lib/tauri'
 import { batchResolve, queryByProperty } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
+import { LoadMoreButton } from './LoadMoreButton'
 
 export interface DonePanelProps {
   date: string // YYYY-MM-DD
@@ -130,26 +131,11 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
     setCollapsed((prev) => !prev)
   }, [])
 
-  const handleBlockClick = useCallback(
-    (block: BlockRow) => {
-      const parentId = block.parent_id
-      if (parentId) {
-        const title = pageTitles.get(parentId) ?? t('donePanel.untitled')
-        onNavigateToPage?.(parentId, title, block.id)
-      }
-    },
-    [onNavigateToPage, pageTitles, t],
-  )
-
-  const handleBlockKeyDown = useCallback(
-    (e: React.KeyboardEvent, block: BlockRow) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault()
-        handleBlockClick(block)
-      }
-    },
-    [handleBlockClick],
-  )
+  const { handleBlockClick, handleBlockKeyDown } = useBlockNavigation({
+    onNavigateToPage,
+    pageTitles,
+    untitledLabel: t('donePanel.untitled'),
+  })
 
   // Group blocks by source page (parent_id → resolved page title)
   // Sort groups alphabetically by page title
@@ -251,25 +237,16 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
           ))}
 
           {/* Load more */}
-          {hasMore && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="done-panel-load-more w-full"
-              onClick={loadMore}
-              disabled={loading}
-              aria-busy={loading}
-              aria-label={loading ? t('donePanel.loadingMore') : t('donePanel.loadMoreLabel')}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> {t('donePanel.loading')}
-                </>
-              ) : (
-                t('donePanel.loadMore')
-              )}
-            </Button>
-          )}
+          <LoadMoreButton
+            hasMore={hasMore}
+            loading={loading}
+            onLoadMore={loadMore}
+            className="done-panel-load-more"
+            label={t('donePanel.loadMore')}
+            loadingLabel={t('donePanel.loading')}
+            ariaLabel={t('donePanel.loadMoreLabel')}
+            ariaLoadingLabel={t('donePanel.loadingMore')}
+          />
         </div>
       )}
     </section>

@@ -11,16 +11,7 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -561,23 +552,16 @@ export function HistoryView(): React.ReactElement {
       </output>
 
       {/* Revert confirmation dialog */}
-      <AlertDialog open={confirmRevert} onOpenChange={setConfirmRevert}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Revert {selected.size} operations?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will create {selected.size} new operations that reverse the selected changes. The
-              original operations remain in history.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={reverting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRevert} disabled={reverting}>
-              {reverting ? t('history.revertingButton') : 'Revert'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={confirmRevert}
+        onOpenChange={setConfirmRevert}
+        title={`Revert ${selected.size} operations?`}
+        description={`This will create ${selected.size} new operations that reverse the selected changes. The original operations remain in history.`}
+        cancelLabel="Cancel"
+        actionLabel="Revert"
+        onAction={handleRevert}
+        loading={reverting}
+      />
     </div>
   )
 }

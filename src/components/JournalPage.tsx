@@ -30,7 +30,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
-import { Skeleton } from '@/components/ui/skeleton'
+import { LoadingSkeleton } from './LoadingSkeleton'
 import type { DayEntry } from '../lib/date-utils'
 import {
   formatDate,
@@ -232,11 +232,7 @@ export function JournalPage({
     <div className="space-y-4">
       {/* Loading indicator on initial fetch */}
       {loading && (
-        <div className="space-y-1" data-testid="loading-skeleton">
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-8 w-full rounded-lg" />
-        </div>
+        <LoadingSkeleton count={3} height="h-10" data-testid="loading-skeleton" />
       )}
 
       {/* View content */}

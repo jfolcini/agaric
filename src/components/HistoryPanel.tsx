@@ -9,16 +9,7 @@ import { ChevronDown, ChevronRight, Clock, Loader2, RotateCcw } from 'lucide-rea
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -168,7 +159,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
                   <Button
                     variant="outline"
                     size="sm"
-                    className="history-restore-btn shrink-0 [@media(pointer:coarse)]:min-h-[44px]"
+                    className="history-restore-btn shrink-0 touch-target"
                     onClick={() => setConfirmEntry(entry)}
                     disabled={restoringSeq === entry.seq}
                   >
@@ -203,34 +194,20 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         </Button>
       )}
 
-      <AlertDialog
+      <ConfirmDialog
         open={confirmEntry !== null}
         onOpenChange={(open) => {
           if (!open) setConfirmEntry(null)
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Restore to this version?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will replace the current block content with the version from{' '}
-              {confirmEntry ? formatTimestamp(confirmEntry.created_at) : ''}. You can undo this
-              change.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (confirmEntry) handleRestore(confirmEntry)
-                setConfirmEntry(null)
-              }}
-            >
-              Restore
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title="Restore to this version?"
+        description={`This will replace the current block content with the version from ${confirmEntry ? formatTimestamp(confirmEntry.created_at) : ''}. You can undo this change.`}
+        cancelLabel="Cancel"
+        actionLabel="Restore"
+        onAction={() => {
+          if (confirmEntry) handleRestore(confirmEntry)
+          setConfirmEntry(null)
+        }}
+      />
     </div>
   )
 }

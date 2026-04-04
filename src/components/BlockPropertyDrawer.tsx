@@ -9,6 +9,7 @@
  * summary rows at the top, sourced from the block store for reactivity.
  */
 
+import type { LucideIcon } from 'lucide-react'
 import { CalendarCheck2, CalendarClock, Plus, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
@@ -21,7 +22,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { announce } from '../lib/announcer'
-import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
+import type { PropertyDefinition, PropertyRow as PropertyRowData } from '../lib/tauri'
 import {
   deleteProperty,
   getProperties,
@@ -62,7 +63,7 @@ export function BlockPropertyDrawer({
 }: BlockPropertyDrawerProps): React.ReactElement {
   const { t } = useTranslation()
   const [loading, setLoading] = useState(true)
-  const [properties, setProperties] = useState<PropertyRow[]>([])
+  const [properties, setProperties] = useState<PropertyRowData[]>([])
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
 
   // Subscribe to built-in date fields from the block store so the drawer
@@ -192,62 +193,30 @@ export function BlockPropertyDrawer({
           {!loading && hasBuiltinDates && (
             <>
               {dueDate !== null && (
-                <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
-                  <Badge
-                    variant="outline"
-                    className="shrink-0 text-xs max-w-[120px] truncate flex items-center gap-1"
-                    title={t('property.dueDate')}
-                  >
-                    <CalendarCheck2 size={12} />
-                    {t('property.dueDate')}
-                  </Badge>
-                  <Input
-                    className="flex-1 h-7 text-xs"
-                    type="date"
-                    aria-label={t('property.valueLabel', { key: t('property.dueDate') })}
-                    defaultValue={dueDate}
-                    key={`due-${dueDate}`}
-                    onBlur={(e) => handleSaveBuiltinDate('due_date', e.target.value)}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="shrink-0 text-muted-foreground hover:text-destructive"
-                    aria-label={t('property.clearDueDate')}
-                    onClick={() => handleClearBuiltinDate('due_date')}
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                </div>
+                <PropertyRow
+                  key={`due-${dueDate}`}
+                  icon={CalendarCheck2}
+                  label={t('property.dueDate')}
+                  value={dueDate}
+                  inputType="date"
+                  ariaLabel={t('property.valueLabel', { key: t('property.dueDate') })}
+                  onSave={(v) => handleSaveBuiltinDate('due_date', v)}
+                  onRemove={() => handleClearBuiltinDate('due_date')}
+                  removeAriaLabel={t('property.clearDueDate')}
+                />
               )}
               {scheduledDate !== null && (
-                <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
-                  <Badge
-                    variant="outline"
-                    className="shrink-0 text-xs max-w-[120px] truncate flex items-center gap-1"
-                    title={t('property.scheduledDate')}
-                  >
-                    <CalendarClock size={12} />
-                    {t('property.scheduledDate')}
-                  </Badge>
-                  <Input
-                    className="flex-1 h-7 text-xs"
-                    type="date"
-                    aria-label={t('property.valueLabel', { key: t('property.scheduledDate') })}
-                    defaultValue={scheduledDate}
-                    key={`sched-${scheduledDate}`}
-                    onBlur={(e) => handleSaveBuiltinDate('scheduled_date', e.target.value)}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="shrink-0 text-muted-foreground hover:text-destructive"
-                    aria-label={t('property.clearScheduledDate')}
-                    onClick={() => handleClearBuiltinDate('scheduled_date')}
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                </div>
+                <PropertyRow
+                  key={`sched-${scheduledDate}`}
+                  icon={CalendarClock}
+                  label={t('property.scheduledDate')}
+                  value={scheduledDate}
+                  inputType="date"
+                  ariaLabel={t('property.valueLabel', { key: t('property.scheduledDate') })}
+                  onSave={(v) => handleSaveBuiltinDate('scheduled_date', v)}
+                  onRemove={() => handleClearBuiltinDate('scheduled_date')}
+                  removeAriaLabel={t('property.clearScheduledDate')}
+                />
               )}
               {properties.length > 0 && <div className="border-t border-border/40" />}
             </>
@@ -260,45 +229,24 @@ export function BlockPropertyDrawer({
           ) : (
             properties.map((prop) => {
               const Icon = BUILTIN_PROPERTY_ICONS[prop.key]
+              const label = Icon ? formatPropertyName(prop.key) : prop.key
               return (
-                <div key={prop.key} className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
-                  <Badge
-                    variant="outline"
-                    className={
-                      Icon
-                        ? 'shrink-0 text-xs max-w-[120px] truncate flex items-center gap-1'
-                        : 'shrink-0 font-mono text-xs max-w-[120px] truncate'
-                    }
-                    title={Icon ? formatPropertyName(prop.key) : prop.key}
-                  >
-                    {Icon && <Icon size={12} />}
-                    {Icon ? formatPropertyName(prop.key) : prop.key}
-                  </Badge>
-                  <Input
-                    className="flex-1 h-7 text-xs"
-                    aria-label={t('property.valueLabel', { key: prop.key })}
-                    defaultValue={
-                      prop.value_text ??
-                      prop.value_date ??
-                      (prop.value_num != null ? String(prop.value_num) : '')
-                    }
-                    onBlur={(e) => handleSave(prop.key, e.target.value, getType(prop.key))}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                    }}
-                  />
-                  {!BUILTIN_PROPERTY_KEYS.has(prop.key) && (
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="shrink-0 text-muted-foreground hover:text-destructive"
-                      aria-label={t('property.delete')}
-                      onClick={() => handleDelete(prop.key)}
-                    >
-                      <X className="h-3 w-3" />
-                    </Button>
-                  )}
-                </div>
+                <PropertyRow
+                  key={prop.key}
+                  icon={Icon}
+                  label={label}
+                  value={
+                    prop.value_text ??
+                    prop.value_date ??
+                    (prop.value_num != null ? String(prop.value_num) : '')
+                  }
+                  ariaLabel={t('property.valueLabel', { key: prop.key })}
+                  onSave={(v) => handleSave(prop.key, v, getType(prop.key))}
+                  onRemove={
+                    !BUILTIN_PROPERTY_KEYS.has(prop.key) ? () => handleDelete(prop.key) : undefined
+                  }
+                  removeAriaLabel={t('property.delete')}
+                />
               )
             })
           )}
@@ -318,6 +266,76 @@ export function BlockPropertyDrawer({
         </div>
       </SheetContent>
     </Sheet>
+  )
+}
+
+// ── PropertyRow ─────────────────────────────────────────────────────────
+
+export interface PropertyRowProps {
+  /** Optional icon to display in the badge. When provided, the badge uses icon+text styling; otherwise font-mono. */
+  icon?: LucideIcon | undefined
+  /** Text displayed inside the badge and as its title attribute. */
+  label: string
+  /** Current value for the input field (used as defaultValue). */
+  value: string
+  /** HTML input type (e.g. "date", "text"). Defaults to the browser default (text). */
+  inputType?: string
+  /** Accessible label for the input element. */
+  ariaLabel: string
+  /** Called with the new value when the input loses focus or Enter is pressed. */
+  onSave: (value: string) => void
+  /** When provided, renders the X (remove) button. Omit or pass null/undefined to hide it. */
+  onRemove?: (() => void) | null | undefined
+  /** Accessible label for the remove button. */
+  removeAriaLabel?: string
+}
+
+export function PropertyRow({
+  icon: Icon,
+  label,
+  value,
+  inputType,
+  ariaLabel,
+  onSave,
+  onRemove,
+  removeAriaLabel,
+}: PropertyRowProps): React.ReactElement {
+  return (
+    <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
+      <Badge
+        variant="outline"
+        className={
+          Icon
+            ? 'shrink-0 text-xs max-w-[120px] truncate flex items-center gap-1'
+            : 'shrink-0 font-mono text-xs max-w-[120px] truncate'
+        }
+        title={label}
+      >
+        {Icon && <Icon size={12} />}
+        {label}
+      </Badge>
+      <Input
+        className="flex-1 h-7 text-xs"
+        type={inputType}
+        aria-label={ariaLabel}
+        defaultValue={value}
+        onBlur={(e) => onSave(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+        }}
+      />
+      {onRemove && (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="shrink-0 text-muted-foreground hover:text-destructive"
+          aria-label={removeAriaLabel}
+          onClick={onRemove}
+        >
+          <X className="h-3 w-3" />
+        </Button>
+      )}
+    </div>
   )
 }
 

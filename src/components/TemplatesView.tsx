@@ -152,7 +152,7 @@ export function TemplatesView(): React.ReactElement {
                   'shrink-0 opacity-0 group-hover:opacity-100 transition-opacity',
                   'text-muted-foreground hover:text-destructive focus-visible:opacity-100',
                   '[@media(pointer:coarse)]:opacity-100',
-                  '[@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]',
+                  'touch-target [@media(pointer:coarse)]:min-w-[44px]',
                 ].join(' ')}
                 onClick={() => handleRemoveTemplate(tpl.id, tpl.content)}
               >

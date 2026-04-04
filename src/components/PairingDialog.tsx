@@ -413,7 +413,7 @@ export function PairingDialog({
                     variant={entryMode === 'manual' ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => setEntryMode('manual')}
-                    className="[@media(pointer:coarse)]:min-h-[44px]"
+                    className="touch-target"
                   >
                     {t('pairing.typePassphraseButton')}
                   </Button>
@@ -421,7 +421,7 @@ export function PairingDialog({
                     variant={entryMode === 'scan' ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => setEntryMode('scan')}
-                    className="[@media(pointer:coarse)]:min-h-[44px]"
+                    className="touch-target"
                   >
                     <Camera className="h-4 w-4 mr-1" />
                     {t('pairing.scanQrCodeButton')}
@@ -441,7 +441,7 @@ export function PairingDialog({
                           ordinal: ['1st', '2nd', '3rd', '4th'][i],
                         })}
                         aria-label={t('pairing.wordLabel', { num: i + 1 })}
-                        className="text-center [@media(pointer:coarse)]:min-h-[44px]"
+                        className="text-center touch-target"
                         disabled={pairLoading || isExpired}
                       />
                     ))}
@@ -472,14 +472,14 @@ export function PairingDialog({
                     variant="outline"
                     onClick={handleCancel}
                     disabled={pairLoading}
-                    className="[@media(pointer:coarse)]:min-h-[44px]"
+                    className="touch-target"
                   >
                     {t('pairing.cancelButton')}
                   </Button>
                   <Button
                     onClick={handlePair}
                     disabled={pairLoading || words.some((w) => w === '') || isExpired}
-                    className="pairing-pair-btn [@media(pointer:coarse)]:min-h-[44px]"
+                    className="pairing-pair-btn touch-target"
                   >
                     {pairLoading && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
                     {t('pairing.pairButton')}
@@ -519,7 +519,7 @@ export function PairingDialog({
                               variant="destructive"
                               size="sm"
                               onClick={() => setUnpairPeerId(peer.peer_id)}
-                              className="pairing-unpair-btn shrink-0 [@media(pointer:coarse)]:min-h-[44px]"
+                              className="pairing-unpair-btn shrink-0 touch-target"
                             >
                               Unpair
                             </Button>

@@ -19,7 +19,6 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
 import { formatLastSynced, truncateId } from '@/lib/format'
 import type { PeerRefRow } from '../lib/tauri'
 import {
@@ -31,6 +30,7 @@ import {
   startSync,
   updatePeerName,
 } from '../lib/tauri'
+import { LoadingSkeleton } from './LoadingSkeleton'
 import { PairingDialog } from './PairingDialog'
 import { RenameDialog } from './RenameDialog'
 import { UnpairConfirmDialog } from './UnpairConfirmDialog'
@@ -194,10 +194,7 @@ export function DeviceManagement(): React.ReactElement {
         </CardHeader>
         <CardContent>
           {loading && !deviceId && (
-            <div className="device-management-loading space-y-2">
-              <Skeleton className="h-10 w-full rounded-lg" />
-              <Skeleton className="h-10 w-full rounded-lg" />
-            </div>
+            <LoadingSkeleton count={2} height="h-10" className="device-management-loading" />
           )}
 
           {error && (
@@ -255,7 +252,7 @@ export function DeviceManagement(): React.ReactElement {
               {/* Pair New Device button */}
               <Button
                 onClick={() => setPairingOpen(true)}
-                className="device-pair-btn w-full mb-4 [@media(pointer:coarse)]:min-h-[44px]"
+                className="device-pair-btn w-full mb-4 touch-target"
               >
                 {t('device.pairNewDeviceButton')}
               </Button>
@@ -270,7 +267,7 @@ export function DeviceManagement(): React.ReactElement {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="device-sync-all-btn w-full mb-2 [@media(pointer:coarse)]:min-h-[44px]"
+                    className="device-sync-all-btn w-full mb-2 touch-target"
                     onClick={handleSyncAll}
                     disabled={syncingAll || syncingPeerId !== null}
                     aria-label={t('device.syncAllLabel')}
@@ -352,7 +349,7 @@ export function DeviceManagement(): React.ReactElement {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="device-rename-btn [@media(pointer:coarse)]:min-h-[44px]"
+                            className="device-rename-btn touch-target"
                             onClick={() => setRenamePeerId(peer.peer_id)}
                             disabled={renamingPeerId === peer.peer_id}
                             aria-label={t('device.renameDeviceLabel', {
@@ -368,7 +365,7 @@ export function DeviceManagement(): React.ReactElement {
                           <Button
                             variant="outline"
                             size="sm"
-                            className="device-sync-btn [@media(pointer:coarse)]:min-h-[44px]"
+                            className="device-sync-btn touch-target"
                             onClick={() => handleSyncNow(peer.peer_id)}
                             disabled={syncingPeerId === peer.peer_id || syncingAll}
                             aria-label={t('device.syncNowLabel', { id: truncateId(peer.peer_id) })}
@@ -383,7 +380,7 @@ export function DeviceManagement(): React.ReactElement {
                           <Button
                             variant="destructive"
                             size="sm"
-                            className="device-unpair-btn [@media(pointer:coarse)]:min-h-[44px]"
+                            className="device-unpair-btn touch-target"
                             onClick={() => setUnpairPeerId(peer.peer_id)}
                             aria-label={t('device.unpairDeviceLabel', {
                               id: truncateId(peer.peer_id),

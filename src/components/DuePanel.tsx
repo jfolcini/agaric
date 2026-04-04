@@ -12,13 +12,14 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { priorityColor } from '../lib/priority-color'
 import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
+import { LoadMoreButton } from './LoadMoreButton'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -330,26 +331,11 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     setCollapsed((prev) => !prev)
   }, [])
 
-  const handleBlockClick = useCallback(
-    (block: BlockRow) => {
-      const parentId = block.parent_id
-      if (parentId) {
-        const title = pageTitles.get(parentId) ?? 'Untitled'
-        onNavigateToPage?.(parentId, title, block.id)
-      }
-    },
-    [onNavigateToPage, pageTitles],
-  )
-
-  const handleBlockKeyDown = useCallback(
-    (e: React.KeyboardEvent, block: BlockRow) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault()
-        handleBlockClick(block)
-      }
-    },
-    [handleBlockClick],
-  )
+  const { handleBlockClick, handleBlockKeyDown } = useBlockNavigation({
+    onNavigateToPage,
+    pageTitles,
+    untitledLabel: 'Untitled',
+  })
 
   // Filter out future-scheduled blocks when toggle is ON
   const visibleBlocks = useMemo(() => {
@@ -666,25 +652,16 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
           })()}
 
           {/* Load more */}
-          {hasMore && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="due-panel-load-more w-full"
-              onClick={loadMore}
-              disabled={loading}
-              aria-busy={loading}
-              aria-label={loading ? t('duePanel.loadingMore') : t('duePanel.loadMoreLabel')}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> {t('duePanel.loading')}
-                </>
-              ) : (
-                t('duePanel.loadMore')
-              )}
-            </Button>
-          )}
+          <LoadMoreButton
+            hasMore={hasMore}
+            loading={loading}
+            onLoadMore={loadMore}
+            className="due-panel-load-more"
+            label={t('duePanel.loadMore')}
+            loadingLabel={t('duePanel.loading')}
+            ariaLabel={t('duePanel.loadMoreLabel')}
+            ariaLoadingLabel={t('duePanel.loadingMore')}
+          />
         </div>
       )}
     </section>

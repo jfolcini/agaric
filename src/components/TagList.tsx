@@ -11,20 +11,11 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Skeleton } from '@/components/ui/skeleton'
+import { LoadingSkeleton } from './LoadingSkeleton'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
@@ -131,11 +122,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       </form>
 
       {loading && (
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-          <Skeleton className="h-10 w-full rounded-lg" />
-        </div>
+        <LoadingSkeleton count={3} height="h-10" />
       )}
 
       {!loading && tags.length === 0 && <EmptyState icon={Tag} message={t('tagList.empty')} />}
@@ -166,7 +153,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                 variant="ghost"
                 size="icon-xs"
                 aria-label="Delete tag"
-                className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 touch-target [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
                 onClick={() => setDeleteTarget({ id: tag.id, name: tag.content || 'Unnamed' })}
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -177,26 +164,17 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       )}
 
       {/* Delete confirmation dialog */}
-      <AlertDialog
+      <ConfirmDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null)
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete tag?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will delete the tag &ldquo;{deleteTarget?.name}&rdquo;. This action cannot be
-              undone. {t('tags.deleteWarning')}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDelete}>Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title="Delete tag?"
+        description={`This will delete the tag \u201c${deleteTarget?.name}\u201d. This action cannot be undone. ${t('tags.deleteWarning')}`}
+        cancelLabel="Cancel"
+        actionLabel="Delete"
+        onAction={handleConfirmDelete}
+      />
     </div>
   )
 }
