@@ -1,5 +1,21 @@
 # Session Log
 
+## Session 168 — 2026-04-04 — Phase 1 batch 20: LWW conflict auto-resolve + import bench
+
+### Phase 1 (batch 20): LWW conflicts + import benchmarks (F-21, TM-9)
+
+2 parallel Rust subagents (sync_protocol.rs, benches/).
+
+| File | Change |
+|------|--------|
+| `sync_protocol.rs` | F-21: Added debug logging for LWW resolution. 3 new tests verifying property LWW (no conflict copy), move LWW, text edit still creates copy. |
+| `import_bench.rs` | TM-9: New bench with parse_logseq_markdown (pure) + import_markdown_inner (full pipeline) at 100/1K/5K blocks. |
+
+### Stats
+- Backend: 3 new tests (205/205 sync pass). 2 new benchmarks compile cleanly.
+- Commit: `3029847`
+- REVIEW-LATER: F-21, TM-9 resolved. 35 → **33 open items**.
+
 ## Session 167 — 2026-04-04 — Phase 1 batch 15-16: FTS reindex + journal + sync N+1 + proptest
 
 ### Phase 1 (batch 15): FTS batch reindex + journal commands (H-2, TH-6)
