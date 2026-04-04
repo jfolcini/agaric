@@ -55,9 +55,9 @@ export { MAX_JOURNAL_DATE, MIN_JOURNAL_DATE } from '../lib/date-utils'
 
 interface JournalPageProps {
   /** Called when a block is clicked — navigates to block editor. */
-  onBlockClick?: (blockId: string) => void
+  onBlockClick?: ((blockId: string) => void) | undefined
   /** Called to navigate to a page for editing. */
-  onNavigateToPage?: (pageId: string, title?: string) => void
+  onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
 }
 
 // ── Component ─────────────────────────────────────────────────────────
@@ -163,7 +163,7 @@ export function JournalPage({
             })
             await load(pageId)
             if (autoFocus && ids.length > 0) {
-              useBlockStore.setState({ focusedBlockId: ids[0] })
+              useBlockStore.setState({ focusedBlockId: ids[0] ?? null })
             }
           } else {
             const block = await createBlock({

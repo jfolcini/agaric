@@ -7,11 +7,16 @@
       "recommended": true,
       "correctness": {
         "noUnusedImports": "error",
-        "noUnusedVariables": "error"
+        "noUnusedVariables": "error",
+        "noUndeclaredDependencies": "error"
+      },
+      "suspicious": {
+        "useAwait": "error"
       },
       "style": {
         "noNonNullAssertion": "error",
-        "useConst": "error"
+        "useConst": "error",
+        "useExplicitLengthCheck": "error"
       }
     }
   },
@@ -37,5 +42,17 @@
       "!**/.sqlx",
       "!src/lib/bindings.ts"
     ]
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["**/__tests__/**", "**/*.test.ts", "**/*.test.tsx", "**/*.property.test.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "useAwait": "off"
+          }
+        }
+      }
+    }
+  ]
 }

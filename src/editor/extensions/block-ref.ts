@@ -18,9 +18,9 @@ export interface BlockRefOptions {
   /** Resolve a block ULID to the first line of its content. Falls back to truncated ULID. */
   resolveContent: (id: string) => string
   /** Called when the user clicks a block ref chip. Navigates to the target block. */
-  onNavigate?: (id: string) => void
+  onNavigate?: ((id: string) => void) | undefined
   /** Check whether a referenced block is active or deleted (broken ref). */
-  resolveStatus?: (id: string) => 'active' | 'deleted'
+  resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 
 declare module '@tiptap/core' {

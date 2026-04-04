@@ -14,7 +14,7 @@ import { DaySection } from './DaySection'
 
 interface WeeklyViewProps {
   makeDayEntry: (d: Date) => DayEntry
-  onNavigateToPage?: (pageId: string, title?: string) => void
+  onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
   onAddBlock: (dateStr: string) => void
 }
 

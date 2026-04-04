@@ -64,7 +64,6 @@ function defaultProps(overrides: Partial<AgendaResultsProps> = {}): AgendaResult
     loading: false,
     hasMore: false,
     onLoadMore: noopFn,
-    onNavigateToPage: undefined,
     hasActiveFilters: false,
     onClearFilters: noopFn,
     pageTitles: new Map(),

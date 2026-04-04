@@ -29,15 +29,15 @@ export interface BlockKeyboardCallbacks {
   /** Escape pressed — cancel editing, discard changes, unfocus. */
   onEscapeCancel: () => void
   /** Move block up among siblings (Ctrl/Cmd+Shift+ArrowUp). */
-  onMoveUp?: () => void
+  onMoveUp?: (() => void) | undefined
   /** Move block down among siblings (Ctrl/Cmd+Shift+ArrowDown). */
-  onMoveDown?: () => void
+  onMoveDown?: (() => void) | undefined
   /** Toggle task state (Ctrl/Cmd+Enter). */
-  onToggleTodo?: () => void
+  onToggleTodo?: (() => void) | undefined
   /** Toggle collapse/expand children (Ctrl/Cmd+.). */
-  onToggleCollapse?: () => void
+  onToggleCollapse?: (() => void) | undefined
   /** Show block properties drawer (Ctrl/Cmd+Shift+P). */
-  onShowProperties?: () => void
+  onShowProperties?: (() => void) | undefined
 }
 
 /** Minimal editor shape needed by the key handler (for testability). */

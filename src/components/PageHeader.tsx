@@ -45,7 +45,7 @@ import { PagePropertyTable } from './PagePropertyTable'
 export interface PageHeaderProps {
   pageId: string
   title: string
-  onBack?: () => void
+  onBack?: (() => void) | undefined
 }
 
 export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {

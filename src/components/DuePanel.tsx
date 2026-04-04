@@ -19,7 +19,7 @@ import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
-  onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
+  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
 }
 
 const GROUP_ORDER = ['DOING', 'TODO', 'DONE', null] as const
@@ -210,8 +210,8 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
       try {
         const resp = await listBlocks({
           agendaDate: date,
-          agendaSource: sourceFilter ?? undefined,
-          cursor,
+          ...(sourceFilter != null && { agendaSource: sourceFilter }),
+          ...(cursor != null && { cursor }),
           limit: 50,
         })
         const newBlocks = cursor ? [...blocks, ...resp.items] : resp.items
@@ -257,7 +257,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
       try {
         const resp = await listBlocks({
           agendaDate: date,
-          agendaSource: sourceFilter ?? undefined,
+          ...(sourceFilter != null && { agendaSource: sourceFilter }),
           limit: 50,
         })
         if (cancelled) return

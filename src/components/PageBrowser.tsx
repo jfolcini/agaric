@@ -174,7 +174,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const { t } = useTranslation()
 
   const queryFn = useCallback(
-    (cursor?: string) => listBlocks({ blockType: 'page', cursor, limit: 50 }),
+    (cursor?: string) =>
+      listBlocks({ blockType: 'page', ...(cursor != null && { cursor }), limit: 50 }),
     [],
   )
   const {

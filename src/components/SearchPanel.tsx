@@ -54,7 +54,7 @@ export function SearchPanel(): React.ReactElement {
     async (q: string, cursor?: string) => {
       setLoading(true)
       try {
-        const resp = await searchBlocks({ query: q, cursor, limit: 50 })
+        const resp = await searchBlocks({ query: q, ...(cursor != null && { cursor }), limit: 50 })
         if (cursor) {
           setResults((prev) => [...prev, ...resp.items])
         } else {

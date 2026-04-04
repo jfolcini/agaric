@@ -55,11 +55,11 @@ export interface ProjectedAgendaEntry {
 // ---------------------------------------------------------------------------
 
 /** Create a new block. Returns the created block with its generated ID. */
-export async function createBlock(params: {
+export function createBlock(params: {
   blockType: string
   content: string
-  parentId?: string
-  position?: number
+  parentId?: string | undefined
+  position?: number | undefined
 }): Promise<BlockRow> {
   return invoke('create_block', {
     blockType: params.blockType,
@@ -70,39 +70,36 @@ export async function createBlock(params: {
 }
 
 /** Edit a block's text content. */
-export async function editBlock(blockId: string, toText: string): Promise<BlockRow> {
+export function editBlock(blockId: string, toText: string): Promise<BlockRow> {
   return invoke('edit_block', { blockId, toText })
 }
 
 /** Soft-delete a block (cascade to descendants). */
-export async function deleteBlock(blockId: string): Promise<DeleteResponse> {
+export function deleteBlock(blockId: string): Promise<DeleteResponse> {
   return invoke('delete_block', { blockId })
 }
 
 /** Restore a soft-deleted block using its `deleted_at` timestamp as ref. */
-export async function restoreBlock(
-  blockId: string,
-  deletedAtRef: string,
-): Promise<RestoreResponse> {
+export function restoreBlock(blockId: string, deletedAtRef: string): Promise<RestoreResponse> {
   return invoke('restore_block', { blockId, deletedAtRef })
 }
 
 /** Permanently purge a block and its descendants. Irreversible. */
-export async function purgeBlock(blockId: string): Promise<PurgeResponse> {
+export function purgeBlock(blockId: string): Promise<PurgeResponse> {
   return invoke('purge_block', { blockId })
 }
 
 /** List blocks with optional filters and cursor-based pagination. */
-export async function listBlocks(params?: {
-  parentId?: string
-  blockType?: string
-  tagId?: string
-  showDeleted?: boolean
-  agendaDate?: string
-  agendaDateRange?: DateRange
-  agendaSource?: string
-  cursor?: string
-  limit?: number
+export function listBlocks(params?: {
+  parentId?: string | undefined
+  blockType?: string | undefined
+  tagId?: string | undefined
+  showDeleted?: boolean | undefined
+  agendaDate?: string | undefined
+  agendaDateRange?: DateRange | undefined
+  agendaSource?: string | undefined
+  cursor?: string | undefined
+  limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
   return invoke('list_blocks', {
     parentId: params?.parentId ?? null,
@@ -118,10 +115,10 @@ export async function listBlocks(params?: {
 }
 
 /** List projected future occurrences of repeating tasks for a date range. */
-export async function listProjectedAgenda(opts: {
+export function listProjectedAgenda(opts: {
   startDate: string
   endDate: string
-  limit?: number
+  limit?: number | undefined
 }): Promise<ProjectedAgendaEntry[]> {
   return invoke('list_projected_agenda', {
     startDate: opts.startDate,
@@ -131,7 +128,7 @@ export async function listProjectedAgenda(opts: {
 }
 
 /** Fetch a single block by ID. */
-export async function getBlock(blockId: string): Promise<BlockRow> {
+export function getBlock(blockId: string): Promise<BlockRow> {
   return invoke('get_block', { blockId })
 }
 
@@ -144,12 +141,12 @@ export interface ResolvedBlock {
 }
 
 /** Batch-resolve block metadata for multiple IDs in a single call. */
-export async function batchResolve(ids: string[]): Promise<ResolvedBlock[]> {
+export function batchResolve(ids: string[]): Promise<ResolvedBlock[]> {
   return invoke('batch_resolve', { ids })
 }
 
 /** Move a block to a new parent and/or position. */
-export async function moveBlock(
+export function moveBlock(
   blockId: string,
   newParentId: string | null,
   newPosition: number,
@@ -158,20 +155,20 @@ export async function moveBlock(
 }
 
 /** Associate a tag with a block. */
-export async function addTag(blockId: string, tagId: string): Promise<TagResponse> {
+export function addTag(blockId: string, tagId: string): Promise<TagResponse> {
   return invoke('add_tag', { blockId, tagId })
 }
 
 /** Remove a tag association from a block. */
-export async function removeTag(blockId: string, tagId: string): Promise<TagResponse> {
+export function removeTag(blockId: string, tagId: string): Promise<TagResponse> {
   return invoke('remove_tag', { blockId, tagId })
 }
 
 /** List blocks that link to the given block (backlinks), paginated. */
-export async function getBacklinks(params: {
+export function getBacklinks(params: {
   blockId: string
-  cursor?: string
-  limit?: number
+  cursor?: string | undefined
+  limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
   return invoke('get_backlinks', {
     blockId: params.blockId,
@@ -181,10 +178,10 @@ export async function getBacklinks(params: {
 }
 
 /** List op-log history for a block, paginated (newest first). */
-export async function getBlockHistory(params: {
+export function getBlockHistory(params: {
   blockId: string
-  cursor?: string
-  limit?: number
+  cursor?: string | undefined
+  limit?: number | undefined
 }): Promise<PageResponse<HistoryEntry>> {
   return invoke('get_block_history', {
     blockId: params.blockId,
@@ -194,9 +191,9 @@ export async function getBlockHistory(params: {
 }
 
 /** List conflict blocks, paginated. */
-export async function getConflicts(params?: {
-  cursor?: string
-  limit?: number
+export function getConflicts(params?: {
+  cursor?: string | undefined
+  limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
   return invoke('get_conflicts', {
     cursor: params?.cursor ?? null,
@@ -205,10 +202,10 @@ export async function getConflicts(params?: {
 }
 
 /** Full-text search across all blocks, paginated by relevance. */
-export async function searchBlocks(params?: {
+export function searchBlocks(params?: {
   query: string
-  cursor?: string
-  limit?: number
+  cursor?: string | undefined
+  limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
   return invoke('search_blocks', {
     query: params?.query ?? '',
@@ -218,17 +215,17 @@ export async function searchBlocks(params?: {
 }
 
 /** Get materializer queue status and metrics. */
-export async function getStatus(): Promise<StatusInfo> {
+export function getStatus(): Promise<StatusInfo> {
   return invoke('get_status')
 }
 
 /** Query blocks by boolean tag expression (AND/OR mode), paginated. */
-export async function queryByTags(params: {
+export function queryByTags(params: {
   tagIds: string[]
   prefixes: string[]
   mode: string // 'and' | 'or'
-  cursor?: string
-  limit?: number
+  cursor?: string | undefined
+  limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
   return invoke('query_by_tags', {
     tagIds: params.tagIds,
@@ -240,9 +237,9 @@ export async function queryByTags(params: {
 }
 
 /** List tags whose name starts with the given prefix (autocomplete). */
-export async function listTagsByPrefix(params: {
+export function listTagsByPrefix(params: {
   prefix: string
-  limit?: number
+  limit?: number | undefined
 }): Promise<TagCacheRow[]> {
   return invoke('list_tags_by_prefix', {
     prefix: params.prefix,
@@ -250,7 +247,7 @@ export async function listTagsByPrefix(params: {
   })
 }
 
-export async function listTagsForBlock(blockId: string): Promise<string[]> {
+export function listTagsForBlock(blockId: string): Promise<string[]> {
   return invoke('list_tags_for_block', { blockId })
 }
 
@@ -267,13 +264,13 @@ export interface PropertyRow {
 }
 
 /** Set (upsert) a property on a block. Exactly one value field must be non-null. */
-export async function setProperty(params: {
+export function setProperty(params: {
   blockId: string
   key: string
-  valueText?: string | null
-  valueNum?: number | null
-  valueDate?: string | null
-  valueRef?: string | null
+  valueText?: string | null | undefined
+  valueNum?: number | null | undefined
+  valueDate?: string | null | undefined
+  valueRef?: string | null | undefined
 }): Promise<BlockRow> {
   return invoke('set_property', {
     blockId: params.blockId,
@@ -291,14 +288,12 @@ export async function deleteProperty(blockId: string, key: string): Promise<void
 }
 
 /** Get all properties for a block. */
-export async function getProperties(blockId: string): Promise<PropertyRow[]> {
+export function getProperties(blockId: string): Promise<PropertyRow[]> {
   return invoke('get_properties', { blockId })
 }
 
 /** Batch-fetch properties for multiple blocks in a single IPC call. */
-export async function getBatchProperties(
-  blockIds: string[],
-): Promise<Record<string, PropertyRow[]>> {
+export function getBatchProperties(blockIds: string[]): Promise<Record<string, PropertyRow[]>> {
   return invoke('get_batch_properties', { blockIds })
 }
 
@@ -307,14 +302,12 @@ export async function getBatchProperties(
 // ---------------------------------------------------------------------------
 
 /** Batch-count agenda items per date. Returns a map of date -> count. */
-export async function countAgendaBatch(params: {
-  dates: string[]
-}): Promise<Record<string, number>> {
+export function countAgendaBatch(params: { dates: string[] }): Promise<Record<string, number>> {
   return invoke('count_agenda_batch', { dates: params.dates })
 }
 
 /** Batch-count backlinks per target page. Returns a map of pageId -> count. */
-export async function countBacklinksBatch(params: {
+export function countBacklinksBatch(params: {
   pageIds: string[]
 }): Promise<Record<string, number>> {
   return invoke('count_backlinks_batch', { pageIds: params.pageIds })
@@ -325,31 +318,31 @@ export async function countBacklinksBatch(params: {
 // ---------------------------------------------------------------------------
 
 /** Set or clear the todo state on a block. Pass null to clear. */
-export async function setTodoState(blockId: string, state: string | null): Promise<BlockRow> {
+export function setTodoState(blockId: string, state: string | null): Promise<BlockRow> {
   return invoke('set_todo_state', { blockId, state })
 }
 
 /** Set or clear the priority level on a block. Pass null to clear. */
-export async function setPriority(blockId: string, level: string | null): Promise<BlockRow> {
+export function setPriority(blockId: string, level: string | null): Promise<BlockRow> {
   return invoke('set_priority', { blockId, level })
 }
 
 /** Set or clear the due date on a block. Pass null to clear. */
-export async function setDueDate(blockId: string, date: string | null): Promise<BlockRow> {
+export function setDueDate(blockId: string, date: string | null): Promise<BlockRow> {
   return invoke('set_due_date', { blockId, date })
 }
 
 /** Set or clear the scheduled date on a block. Pass null to clear. */
-export async function setScheduledDate(blockId: string, date: string | null): Promise<BlockRow> {
+export function setScheduledDate(blockId: string, date: string | null): Promise<BlockRow> {
   return invoke('set_scheduled_date', { blockId, date })
 }
 
 /** List global operation history (page-scoped), paginated (newest first). */
-export async function listPageHistory(params: {
+export function listPageHistory(params: {
   pageId: string
-  opTypeFilter?: string
-  cursor?: string
-  limit?: number
+  opTypeFilter?: string | undefined
+  cursor?: string | undefined
+  limit?: number | undefined
 }): Promise<PageResponse<HistoryEntry>> {
   return invoke('list_page_history', {
     pageId: params.pageId,
@@ -360,19 +353,19 @@ export async function listPageHistory(params: {
 }
 
 /** Revert a batch of operations (by device_id + seq pairs). */
-export async function revertOps(params: {
+export function revertOps(params: {
   ops: Array<{ device_id: string; seq: number }>
 }): Promise<unknown> {
   return invoke('revert_ops', { ops: params.ops })
 }
 
 /** Query blocks by property key and optional value, with cursor pagination. */
-export async function queryByProperty(params: {
+export function queryByProperty(params: {
   key: string
-  valueText?: string
-  valueDate?: string
-  cursor?: string
-  limit?: number
+  valueText?: string | undefined
+  valueDate?: string | undefined
+  cursor?: string | undefined
+  limit?: number | undefined
 }): Promise<PageResponse<BlockRow>> {
   return invoke('query_by_property', {
     key: params.key,
@@ -400,10 +393,7 @@ export interface UndoResult {
 }
 
 /** Undo the Nth most-recent undoable op on a page. */
-export async function undoPageOp(params: {
-  pageId: string
-  undoDepth: number
-}): Promise<UndoResult> {
+export function undoPageOp(params: { pageId: string; undoDepth: number }): Promise<UndoResult> {
   return invoke('undo_page_op', {
     pageId: params.pageId,
     undoDepth: params.undoDepth,
@@ -411,10 +401,7 @@ export async function undoPageOp(params: {
 }
 
 /** Redo a previously undone op by reversing it again. */
-export async function redoPageOp(params: {
-  undoDeviceId: string
-  undoSeq: number
-}): Promise<UndoResult> {
+export function redoPageOp(params: { undoDeviceId: string; undoSeq: number }): Promise<UndoResult> {
   return invoke('redo_page_op', {
     undoDeviceId: params.undoDeviceId,
     undoSeq: params.undoSeq,
@@ -426,7 +413,7 @@ export async function redoPageOp(params: {
 // ---------------------------------------------------------------------------
 
 /** Compute a word-level diff for an edit_block history entry. Returns null for non-edit ops. */
-export async function computeEditDiff(params: {
+export function computeEditDiff(params: {
   deviceId: string
   seq: number
 }): Promise<DiffSpan[] | null> {
@@ -441,12 +428,12 @@ export async function computeEditDiff(params: {
 // ---------------------------------------------------------------------------
 
 /** Query backlinks with composable filters, sort, and pagination. */
-export async function queryBacklinksFiltered(params: {
+export function queryBacklinksFiltered(params: {
   blockId: string
-  filters?: BacklinkFilter[]
-  sort?: BacklinkSort
-  cursor?: string
-  limit?: number
+  filters?: BacklinkFilter[] | undefined
+  sort?: BacklinkSort | undefined
+  cursor?: string | undefined
+  limit?: number | undefined
 }): Promise<BacklinkQueryResponse> {
   return invoke('query_backlinks_filtered', {
     blockId: params.blockId,
@@ -458,12 +445,12 @@ export async function queryBacklinksFiltered(params: {
 }
 
 /** Query backlinks grouped by source page, with filters and pagination. */
-export async function listBacklinksGrouped(params: {
+export function listBacklinksGrouped(params: {
   pageId: string
-  filters?: BacklinkFilter[]
-  sort?: BacklinkSort
-  cursor?: string
-  limit?: number
+  filters?: BacklinkFilter[] | undefined
+  sort?: BacklinkSort | undefined
+  cursor?: string | undefined
+  limit?: number | undefined
 }): Promise<GroupedBacklinkResponse> {
   return invoke('list_backlinks_grouped', {
     blockId: params.pageId,
@@ -475,10 +462,10 @@ export async function listBacklinksGrouped(params: {
 }
 
 /** Query unlinked references grouped by source page, with pagination. */
-export async function listUnlinkedReferences(params: {
+export function listUnlinkedReferences(params: {
   pageId: string
-  cursor?: string | null
-  limit?: number | null
+  cursor?: string | null | undefined
+  limit?: number | null | undefined
 }): Promise<GroupedBacklinkResponse> {
   return invoke('list_unlinked_references', {
     pageId: params.pageId,
@@ -488,7 +475,7 @@ export async function listUnlinkedReferences(params: {
 }
 
 /** List all distinct property keys currently in use. */
-export async function listPropertyKeys(): Promise<string[]> {
+export function listPropertyKeys(): Promise<string[]> {
   return invoke('list_property_keys')
 }
 
@@ -497,10 +484,10 @@ export async function listPropertyKeys(): Promise<string[]> {
 // ---------------------------------------------------------------------------
 
 /** Create a new property definition. */
-export async function createPropertyDef(params: {
+export function createPropertyDef(params: {
   key: string
   valueType: string
-  options?: string | null
+  options?: string | null | undefined
 }): Promise<PropertyDefinition> {
   return invoke('create_property_def', {
     key: params.key,
@@ -510,12 +497,12 @@ export async function createPropertyDef(params: {
 }
 
 /** List all property definitions. */
-export async function listPropertyDefs(): Promise<PropertyDefinition[]> {
+export function listPropertyDefs(): Promise<PropertyDefinition[]> {
   return invoke('list_property_defs')
 }
 
 /** Update the options JSON for a select-type property definition. */
-export async function updatePropertyDefOptions(
+export function updatePropertyDefOptions(
   key: string,
   options: string,
 ): Promise<PropertyDefinition> {
@@ -523,7 +510,7 @@ export async function updatePropertyDefOptions(
 }
 
 /** Delete a property definition by key. */
-export async function deletePropertyDef(key: string): Promise<void> {
+export function deletePropertyDef(key: string): Promise<void> {
   return invoke('delete_property_def', { key })
 }
 
@@ -549,32 +536,32 @@ export interface PeerRefRow {
 }
 
 /** List all known peer references. */
-export async function listPeerRefs(): Promise<PeerRefRow[]> {
+export function listPeerRefs(): Promise<PeerRefRow[]> {
   return invoke('list_peer_refs')
 }
 
 /** Fetch a single peer reference by ID, or null if not found. */
-export async function getPeerRef(peerId: string): Promise<PeerRefRow | null> {
+export function getPeerRef(peerId: string): Promise<PeerRefRow | null> {
   return invoke('get_peer_ref', { peerId })
 }
 
 /** Delete a peer reference by ID. */
-export async function deletePeerRef(peerId: string): Promise<void> {
+export function deletePeerRef(peerId: string): Promise<void> {
   return invoke('delete_peer_ref', { peerId })
 }
 
 /** Update the display name for a paired peer. Pass null to clear. */
-export async function updatePeerName(peerId: string, deviceName: string | null): Promise<void> {
+export function updatePeerName(peerId: string, deviceName: string | null): Promise<void> {
   return invoke('update_peer_name', { peerId, deviceName })
 }
 
 /** Manually set a peer's network address (host:port) for direct connection. */
-export async function setPeerAddress(peerId: string, address: string): Promise<void> {
+export function setPeerAddress(peerId: string, address: string): Promise<void> {
   return invoke('set_peer_address', { peerId, address })
 }
 
 /** Get the local device ID. */
-export async function getDeviceId(): Promise<string> {
+export function getDeviceId(): Promise<string> {
   return invoke('get_device_id')
 }
 
@@ -597,7 +584,7 @@ export interface SyncSessionInfo {
 }
 
 /** Start the pairing flow — returns a passphrase, QR SVG, and listener port. */
-export async function startPairing(): Promise<{
+export function startPairing(): Promise<{
   passphrase: string
   qr_svg: string
   port: number
@@ -606,22 +593,22 @@ export async function startPairing(): Promise<{
 }
 
 /** Confirm a pairing with the given passphrase and remote device ID. */
-export async function confirmPairing(passphrase: string, remoteDeviceId: string): Promise<void> {
+export function confirmPairing(passphrase: string, remoteDeviceId: string): Promise<void> {
   return invoke('confirm_pairing', { passphrase, remoteDeviceId })
 }
 
 /** Cancel an in-progress pairing. */
-export async function cancelPairing(): Promise<void> {
+export function cancelPairing(): Promise<void> {
   return invoke('cancel_pairing')
 }
 
 /** Start a sync session with a known peer. */
-export async function startSync(peerId: string): Promise<SyncSessionInfo> {
+export function startSync(peerId: string): Promise<SyncSessionInfo> {
   return invoke('start_sync', { peerId })
 }
 
 /** Cancel an in-progress sync session. */
-export async function cancelSync(): Promise<void> {
+export function cancelSync(): Promise<void> {
   return invoke('cancel_sync')
 }
 
@@ -630,17 +617,17 @@ export async function cancelSync(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /** Set the complete list of aliases for a page (replaces existing). */
-export async function setPageAliases(pageId: string, aliases: string[]): Promise<string[]> {
+export function setPageAliases(pageId: string, aliases: string[]): Promise<string[]> {
   return invoke('set_page_aliases', { pageId, aliases })
 }
 
 /** Get all aliases for a page. */
-export async function getPageAliases(pageId: string): Promise<string[]> {
+export function getPageAliases(pageId: string): Promise<string[]> {
   return invoke('get_page_aliases', { pageId })
 }
 
 /** Resolve a page by one of its aliases. Returns page ID + title, or null. */
-export async function resolvePageByAlias(alias: string): Promise<[string, string | null] | null> {
+export function resolvePageByAlias(alias: string): Promise<[string, string | null] | null> {
   return invoke('resolve_page_by_alias', { alias })
 }
 
@@ -649,7 +636,7 @@ export async function resolvePageByAlias(alias: string): Promise<[string, string
 // ---------------------------------------------------------------------------
 
 /** Export a page as Markdown with human-readable tag/page references. */
-export async function exportPageMarkdown(pageId: string): Promise<string> {
+export function exportPageMarkdown(pageId: string): Promise<string> {
   return invoke('export_page_markdown', { pageId })
 }
 
@@ -668,12 +655,12 @@ export interface AttachmentRow {
 }
 
 /** List all attachments for a block. */
-export async function listAttachments(blockId: string): Promise<AttachmentRow[]> {
+export function listAttachments(blockId: string): Promise<AttachmentRow[]> {
   return invoke('list_attachments', { blockId })
 }
 
 /** Add an attachment to a block. */
-export async function addAttachment(params: {
+export function addAttachment(params: {
   blockId: string
   filename: string
   mimeType: string
@@ -690,7 +677,7 @@ export async function addAttachment(params: {
 }
 
 /** Delete an attachment by ID. */
-export async function deleteAttachment(attachmentId: string): Promise<void> {
+export function deleteAttachment(attachmentId: string): Promise<void> {
   return invoke('delete_attachment', { attachmentId })
 }
 
@@ -706,7 +693,10 @@ export interface ImportResult {
 }
 
 /** Import a Logseq/Markdown file. Creates a page from the filename and blocks from content. */
-export async function importMarkdown(content: string, filename?: string): Promise<ImportResult> {
+export function importMarkdown(
+  content: string,
+  filename?: string | undefined,
+): Promise<ImportResult> {
   return invoke('import_markdown', { content, filename: filename ?? null })
 }
 

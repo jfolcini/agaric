@@ -22,8 +22,8 @@ import { UnlinkedReferences } from './UnlinkedReferences'
 export interface PageEditorProps {
   pageId: string
   title: string
-  onBack?: () => void
-  onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
+  onBack?: (() => void) | undefined
+  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
 }
 
 export function PageEditor({

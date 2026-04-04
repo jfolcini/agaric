@@ -2,11 +2,11 @@ import type React from 'react'
 import { cn } from '@/lib/utils'
 
 interface EmptyStateProps {
-  icon?: React.ComponentType<{ className?: string }>
+  icon?: React.ComponentType<Record<string, unknown>> | undefined
   message: string
-  description?: string
-  action?: React.ReactNode
-  compact?: boolean
+  description?: string | undefined
+  action?: React.ReactNode | undefined
+  compact?: boolean | undefined
 }
 
 export function EmptyState({

@@ -120,7 +120,7 @@ export function TagFilterPanel(): React.ReactElement {
           tagIds: selectedTags.map((t) => t.id),
           prefixes: [],
           mode,
-          cursor,
+          ...(cursor != null && { cursor }),
           limit: 50,
         })
         if (cursor) {

@@ -21,13 +21,13 @@ import { LinkedReferences } from '../LinkedReferences'
 
 interface DaySectionProps {
   entry: DayEntry
-  headingLevel?: 'h2' | 'h3'
-  hideHeading?: boolean
-  compact?: boolean
+  headingLevel?: ('h2' | 'h3') | undefined
+  hideHeading?: boolean | undefined
+  compact?: boolean | undefined
   mode: JournalMode
-  agendaCounts?: Record<string, number>
-  backlinkCounts?: Record<string, number>
-  onNavigateToPage?: (pageId: string, title?: string) => void
+  agendaCounts?: Record<string, number> | undefined
+  backlinkCounts?: Record<string, number> | undefined
+  onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
   onAddBlock: (dateStr: string) => void
 }
 

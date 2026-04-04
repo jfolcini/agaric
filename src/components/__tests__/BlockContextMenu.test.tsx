@@ -29,7 +29,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { BlockContextMenu, type BlockContextMenuProps } from '../BlockContextMenu'
 
-function renderMenu(overrides: Partial<BlockContextMenuProps> = {}) {
+type MenuOverrides = { [K in keyof BlockContextMenuProps]?: BlockContextMenuProps[K] | undefined }
+
+function renderMenu(overrides: MenuOverrides = {}) {
   const defaults: BlockContextMenuProps = {
     blockId: 'BLOCK_01',
     position: { x: 100, y: 200 },
@@ -47,9 +49,16 @@ function renderMenu(overrides: Partial<BlockContextMenuProps> = {}) {
     todoState: null,
     priority: null,
   }
-  const props = { ...defaults, ...overrides }
-  const result = render(<BlockContextMenu {...props} />)
-  return { ...result, props }
+  const merged = { ...defaults, ...overrides }
+  // Remove keys explicitly set to undefined so they are truly absent
+  // (satisfies exactOptionalPropertyTypes)
+  for (const key of Object.keys(merged) as (keyof typeof merged)[]) {
+    if (merged[key] === undefined) {
+      delete merged[key]
+    }
+  }
+  const result = render(<BlockContextMenu {...(merged as BlockContextMenuProps)} />)
+  return { ...result, props: merged }
 }
 
 describe('BlockContextMenu', () => {

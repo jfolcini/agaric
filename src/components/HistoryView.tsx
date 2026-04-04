@@ -136,8 +136,8 @@ export function HistoryView(): React.ReactElement {
     (cursor?: string) =>
       listPageHistory({
         pageId: '__all__',
-        opTypeFilter: opTypeFilter ?? undefined,
-        cursor,
+        ...(opTypeFilter != null && { opTypeFilter }),
+        ...(cursor != null && { cursor }),
         limit: 50,
       }),
     [opTypeFilter],

@@ -148,7 +148,6 @@ describe('BlockLink NodeView', () => {
 
   it('does not crash when onNavigate is undefined and chip is clicked', () => {
     editor = createEditor({
-      blockLinkOnNavigate: undefined,
       content: {
         type: 'doc',
         content: [
@@ -203,7 +202,6 @@ describe('BlockLink NodeView', () => {
 
   it('does not apply block-link-deleted class when resolveStatus is undefined', () => {
     editor = createEditor({
-      blockLinkResolveStatus: undefined,
       content: {
         type: 'doc',
         content: [
@@ -245,6 +243,7 @@ describe('BlockLink NodeView', () => {
         nodePos = pos
         return false
       }
+      return undefined
     })
     const { tr } = editor.state
     tr.setNodeMarkup(nodePos, undefined, { id: 'NEW_ID' })
@@ -285,6 +284,7 @@ describe('BlockLink NodeView', () => {
         nodePos = pos
         return false
       }
+      return undefined
     })
     const { tr } = editor.state
     tr.setNodeMarkup(nodePos, undefined, { id: 'DELETED_ID' })
@@ -341,6 +341,7 @@ describe('BlockLink NodeView', () => {
         nodePos = pos
         return false
       }
+      return undefined
     })
     const { tr } = editor.state
     tr.setNodeMarkup(nodePos, undefined, { id: 'SECOND' })
@@ -454,7 +455,6 @@ describe('TagRef NodeView', () => {
 
   it('does not apply tag-ref-deleted class when resolveStatus is undefined', () => {
     editor = createEditor({
-      tagRefResolveStatus: undefined,
       content: {
         type: 'doc',
         content: [
@@ -496,6 +496,7 @@ describe('TagRef NodeView', () => {
         nodePos = pos
         return false
       }
+      return undefined
     })
     const { tr } = editor.state
     tr.setNodeMarkup(nodePos, undefined, { id: 'NEW_TAG' })
@@ -536,6 +537,7 @@ describe('TagRef NodeView', () => {
         nodePos = pos
         return false
       }
+      return undefined
     })
     const { tr } = editor.state
     tr.setNodeMarkup(nodePos, undefined, { id: 'DEAD_TAG' })

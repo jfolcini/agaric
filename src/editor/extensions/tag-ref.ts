@@ -18,7 +18,7 @@ export interface TagRefOptions {
   /** Resolve a tag ULID to its display name. Falls back to truncated ULID. */
   resolveName: (id: string) => string
   /** Check whether a referenced tag is active or deleted. */
-  resolveStatus?: (id: string) => 'active' | 'deleted'
+  resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 
 declare module '@tiptap/core' {

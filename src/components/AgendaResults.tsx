@@ -34,7 +34,7 @@ export interface AgendaResultsProps {
   /** Load more callback */
   onLoadMore: () => void
   /** Navigate to a block's source page */
-  onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
+  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
   /** Whether any filters are active (affects empty state messaging) */
   hasActiveFilters: boolean
   /** Clear all filters callback */
@@ -42,9 +42,9 @@ export interface AgendaResultsProps {
   /** Resolved page titles for breadcrumbs */
   pageTitles: Map<string, string>
   /** Group blocks by this dimension. Default: 'none'. */
-  groupBy?: 'date' | 'priority' | 'state' | 'none'
+  groupBy?: ('date' | 'priority' | 'state' | 'none') | undefined
   /** Primary sort key. Default: 'date'. */
-  sortBy?: AgendaSortBy
+  sortBy?: AgendaSortBy | undefined
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────

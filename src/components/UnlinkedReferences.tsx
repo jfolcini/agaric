@@ -18,7 +18,7 @@ import { editBlock, listUnlinkedReferences } from '../lib/tauri'
 export interface UnlinkedReferencesProps {
   pageId: string
   pageTitle: string
-  onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
+  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
 }
 
 /** Escape special regex characters so a literal string can be used in `new RegExp`. */

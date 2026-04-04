@@ -53,7 +53,7 @@ export function sortAgendaBlocks(blocks: BlockRow[]): BlockRow[] {
 export interface AgendaGroup {
   label: string
   /** CSS class for the group header */
-  className?: string
+  className?: string | undefined
   blocks: BlockRow[]
 }
 

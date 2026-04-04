@@ -17,7 +17,7 @@ import { batchResolve, queryByProperty } from '../lib/tauri'
 
 export interface DonePanelProps {
   date: string // YYYY-MM-DD
-  onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
+  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
 }
 
 /** Truncate content to plain text. */
@@ -45,7 +45,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
         const resp = await queryByProperty({
           key: 'completed_at',
           valueDate: date,
-          cursor,
+          ...(cursor != null && { cursor }),
           limit: 50,
         })
         const newBlocks = cursor ? [...blocks, ...resp.items] : resp.items

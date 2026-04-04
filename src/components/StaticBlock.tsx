@@ -66,19 +66,19 @@ export interface StaticBlockProps {
   content: string
   onFocus: (blockId: string) => void
   /** Called when the user clicks a block-link chip. */
-  onNavigate?: (id: string) => void
+  onNavigate?: ((id: string) => void) | undefined
   /** Resolve a block/page ULID → display title. */
-  resolveBlockTitle?: (id: string) => string
+  resolveBlockTitle?: ((id: string) => string) | undefined
   /** Resolve a tag ULID → display name. */
-  resolveTagName?: (id: string) => string
+  resolveTagName?: ((id: string) => string) | undefined
   /** Check whether a linked block is active or deleted. */
-  resolveBlockStatus?: (id: string) => 'active' | 'deleted'
+  resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /** Check whether a referenced tag is active or deleted. */
-  resolveTagStatus?: (id: string) => 'active' | 'deleted'
+  resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /** Whether this block is part of a multi-selection. */
-  isSelected?: boolean
+  isSelected?: boolean | undefined
   /** Ctrl+Click / Shift+Click selection callback. */
-  onSelect?: (blockId: string, mode: 'toggle' | 'range') => void
+  onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
 }
 
 /**
@@ -88,12 +88,12 @@ export interface StaticBlockProps {
 export function renderRichContent(
   markdown: string,
   options: {
-    onNavigate?: (id: string) => void
-    resolveBlockTitle?: (id: string) => string | undefined
-    resolveTagName?: (id: string) => string | undefined
-    resolveBlockStatus?: (id: string) => 'active' | 'deleted'
-    resolveTagStatus?: (id: string) => 'active' | 'deleted'
-    interactive?: boolean
+    onNavigate?: ((id: string) => void) | undefined
+    resolveBlockTitle?: ((id: string) => string | undefined) | undefined
+    resolveTagName?: ((id: string) => string | undefined) | undefined
+    resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
+    resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
+    interactive?: boolean | undefined
   },
 ): React.ReactNode {
   if (!markdown) return null

@@ -34,7 +34,8 @@ import { EmptyState } from './EmptyState'
 export function TrashView(): React.ReactElement {
   const { t } = useTranslation()
   const queryFn = useCallback(
-    (cursor?: string) => listBlocks({ showDeleted: true, cursor, limit: 50 }),
+    (cursor?: string) =>
+      listBlocks({ showDeleted: true, ...(cursor != null && { cursor }), limit: 50 }),
     [],
   )
   const {

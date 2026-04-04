@@ -22,7 +22,7 @@ export interface PropertyPickerOptions {
   /** Return property keys matching the query. Called on every keystroke after ::. */
   items: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Called when a property is selected from the picker. */
-  onSelect?: (item: PickerItem, editor: Editor) => void
+  onSelect?: ((item: PickerItem, editor: Editor) => void) | undefined
 }
 
 export const PropertyPicker = Extension.create<PropertyPickerOptions>({

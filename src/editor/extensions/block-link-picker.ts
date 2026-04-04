@@ -20,7 +20,7 @@ export interface BlockLinkPickerOptions {
   /** Return pages/blocks matching the query. Called on every keystroke after [[. */
   items: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Create a new page with the given title. Returns the new block's ULID. */
-  onCreate?: (label: string) => Promise<string>
+  onCreate?: ((label: string) => Promise<string>) | undefined
 }
 
 export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({

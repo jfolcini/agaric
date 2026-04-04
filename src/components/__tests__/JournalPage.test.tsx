@@ -152,7 +152,7 @@ function renderJournal(props?: { onNavigateToPage?: (pageId: string, title?: str
   return render(
     <>
       <JournalControls />
-      <JournalPage onNavigateToPage={props?.onNavigateToPage} />
+      <JournalPage {...props} />
     </>,
   )
 }

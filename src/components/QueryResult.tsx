@@ -45,9 +45,9 @@ export interface QueryResultProps {
   /** The raw query expression, e.g. "type:tag expr:project" */
   expression: string
   /** Navigate to a block's parent page */
-  onNavigate?: (pageId: string) => void
+  onNavigate?: ((pageId: string) => void) | undefined
   /** Resolve block title by ID */
-  resolveBlockTitle?: (id: string) => string
+  resolveBlockTitle?: ((id: string) => string) | undefined
 }
 
 /** Parsed property filter from shorthand syntax (property:key=value). */
@@ -211,8 +211,8 @@ export function QueryResult({
         }
         const resp = await queryByProperty({
           key: params.key,
-          valueText: params.value ?? undefined,
-          valueDate: params.date ?? undefined,
+          ...(params.value != null && { valueText: params.value }),
+          ...(params.date != null && { valueDate: params.date }),
           limit: 50,
         })
         items = resp.items

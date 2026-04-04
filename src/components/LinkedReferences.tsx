@@ -27,7 +27,7 @@ import { renderRichContent } from './StaticBlock'
 
 export interface LinkedReferencesProps {
   pageId: string
-  onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
+  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
 }
 
 export function LinkedReferences({
@@ -73,10 +73,10 @@ export function LinkedReferences({
 
         const resp = await listBacklinksGrouped({
           pageId,
-          filters: allFilters.length > 0 ? allFilters : undefined,
-          sort: sort ?? undefined,
+          ...(allFilters.length > 0 && { filters: allFilters }),
+          ...(sort != null && { sort }),
           limit: 50,
-          cursor,
+          ...(cursor != null && { cursor }),
         })
         if (cursor) {
           // Append: merge groups with same page_id

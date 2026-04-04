@@ -179,10 +179,10 @@ export function guessMimeType(filename: string): string {
 
 interface BlockTreeProps {
   /** Optional parent block ID — when set, loads children of this block. */
-  parentId?: string
+  parentId?: string | undefined
   /** Navigate to a page in the page editor (cross-page navigation).
    *  Optional blockId scrolls to a specific block within the target page. */
-  onNavigateToPage?: (pageId: string, title: string, blockId?: string) => void
+  onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
 }
 
 export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): React.ReactElement {
@@ -543,7 +543,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   )
 
   const searchSlashCommands = useCallback(
-    async (query: string): Promise<PickerItem[]> => {
+    (query: string): PickerItem[] => {
       const q = query.toLowerCase()
       const baseResults = SLASH_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
       if (!q) return baseResults
@@ -1022,7 +1022,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         } else {
           const value = item.label.split(' — ')[0]?.replace('ASSIGNEE ', '')
           try {
-            await setProperty({ blockId: focusedBlockId, key: 'assignee', valueText: value })
+            await setProperty({
+              blockId: focusedBlockId,
+              key: 'assignee',
+              ...(value != null && { valueText: value }),
+            })
             if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
             toast.success(t('blockTree.setAssigneeMessage', { value }))
           } catch {
@@ -1742,7 +1746,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
 
   // ── Keyboard shortcut: Ctrl+1‑6 → toggle heading level ─────────────
   useEffect(() => {
-    const handleHeadingShortcut = async (e: KeyboardEvent) => {
+    const handleHeadingShortcut = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
       if (e.key < '1' || e.key > '6') return
       if (!focusedBlockId) return

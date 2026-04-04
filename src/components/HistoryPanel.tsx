@@ -49,7 +49,11 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
       if (!blockId) return
       setLoading(true)
       try {
-        const resp = await getBlockHistory({ blockId, cursor, limit: 50 })
+        const resp = await getBlockHistory({
+          blockId,
+          ...(cursor != null && { cursor }),
+          limit: 50,
+        })
         if (cursor) {
           setEntries((prev) => [...prev, ...resp.items])
         } else {

@@ -20,7 +20,7 @@ export interface AtTagPickerOptions {
   /** Return tags matching the query. Called on every keystroke after @. */
   items: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Create a new tag with the given name. Returns the new tag's ULID. */
-  onCreate?: (name: string) => Promise<string>
+  onCreate?: ((name: string) => Promise<string>) | undefined
 }
 
 export const AtTagPicker = Extension.create<AtTagPickerOptions>({

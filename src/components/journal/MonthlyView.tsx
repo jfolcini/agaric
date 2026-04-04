@@ -15,7 +15,7 @@ import { DaySection } from './DaySection'
 
 interface MonthlyViewProps {
   makeDayEntry: (d: Date) => DayEntry
-  onNavigateToPage?: (pageId: string, title?: string) => void
+  onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
   onAddBlock: (dateStr: string) => void
 }
 

@@ -34,28 +34,28 @@ export interface BlockContextMenuProps {
   position: { x: number; y: number }
   onClose: () => void
   /** Ref to the element that triggered the menu, for focus restoration. */
-  triggerRef?: React.RefObject<HTMLElement | null>
-  onDelete?: (blockId: string) => void
-  onIndent?: (blockId: string) => void
-  onDedent?: (blockId: string) => void
-  onToggleTodo?: (blockId: string) => void
-  onTogglePriority?: (blockId: string) => void
-  onToggleCollapse?: (blockId: string) => void
-  onMoveUp?: (blockId: string) => void
-  onMoveDown?: (blockId: string) => void
-  onMerge?: (blockId: string) => void
-  hasChildren?: boolean
-  isCollapsed?: boolean
-  todoState?: string | null
-  priority?: string | null
+  triggerRef?: React.RefObject<HTMLElement | null> | undefined
+  onDelete?: ((blockId: string) => void) | undefined
+  onIndent?: ((blockId: string) => void) | undefined
+  onDedent?: ((blockId: string) => void) | undefined
+  onToggleTodo?: ((blockId: string) => void) | undefined
+  onTogglePriority?: ((blockId: string) => void) | undefined
+  onToggleCollapse?: ((blockId: string) => void) | undefined
+  onMoveUp?: ((blockId: string) => void) | undefined
+  onMoveDown?: ((blockId: string) => void) | undefined
+  onMerge?: ((blockId: string) => void) | undefined
+  hasChildren?: boolean | undefined
+  isCollapsed?: boolean | undefined
+  todoState?: (string | null) | undefined
+  priority?: (string | null) | undefined
   /** Due date in YYYY-MM-DD format (for future use). */
-  dueDate?: string | null
+  dueDate?: (string | null) | undefined
   /** Show block history */
-  onShowHistory?: (blockId: string) => void
+  onShowHistory?: ((blockId: string) => void) | undefined
   /** Show block properties drawer */
-  onShowProperties?: (blockId: string) => void
+  onShowProperties?: ((blockId: string) => void) | undefined
   /** Zoom in to show only this block's children */
-  onZoomIn?: (blockId: string) => void
+  onZoomIn?: ((blockId: string) => void) | undefined
 }
 
 interface MenuItem {

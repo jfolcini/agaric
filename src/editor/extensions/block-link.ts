@@ -18,9 +18,9 @@ export interface BlockLinkOptions {
   /** Resolve a block/page ULID to its display title. Falls back to truncated ULID. */
   resolveTitle: (id: string) => string
   /** Called when the user clicks a block link chip. Navigates to the target page/block. */
-  onNavigate?: (id: string) => void
+  onNavigate?: ((id: string) => void) | undefined
   /** Check whether a linked block is active or deleted (broken link). */
-  resolveStatus?: (id: string) => 'active' | 'deleted'
+  resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 
 declare module '@tiptap/core' {

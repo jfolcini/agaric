@@ -209,7 +209,10 @@ function renderConflictContent(
 
 export function ConflictList(): React.ReactElement {
   const { t } = useTranslation()
-  const queryFn = useCallback((cursor?: string) => getConflicts({ cursor, limit: 50 }), [])
+  const queryFn = useCallback(
+    (cursor?: string) => getConflicts({ ...(cursor != null && { cursor }), limit: 50 }),
+    [],
+  )
   const {
     items: blocks,
     loading,
@@ -406,6 +409,7 @@ export function ConflictList(): React.ReactElement {
                   if (block.parent_id && originalContent !== null) {
                     return editBlock(block.parent_id, originalContent)
                   }
+                  return undefined
                 })
                 .then(() => {
                   // Re-add conflict to list

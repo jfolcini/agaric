@@ -98,54 +98,54 @@ interface SortableBlockProps {
   content: string
   isFocused: boolean
   /** Depth in the block tree (0 = root level). */
-  depth?: number
+  depth?: number | undefined
   rovingEditor: RovingEditorHandle
-  onNavigate?: (id: string) => void
-  onDelete?: (blockId: string) => void
+  onNavigate?: ((id: string) => void) | undefined
+  onDelete?: ((blockId: string) => void) | undefined
   /** Indent: make block a child of its previous sibling. */
-  onIndent?: (blockId: string) => void
+  onIndent?: ((blockId: string) => void) | undefined
   /** Dedent: move block up one level to grandparent. */
-  onDedent?: (blockId: string) => void
-  resolveBlockTitle?: (id: string) => string
-  resolveTagName?: (id: string) => string
-  resolveBlockStatus?: (id: string) => 'active' | 'deleted'
-  resolveTagStatus?: (id: string) => 'active' | 'deleted'
+  onDedent?: ((blockId: string) => void) | undefined
+  resolveBlockTitle?: ((id: string) => string) | undefined
+  resolveTagName?: ((id: string) => string) | undefined
+  resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
+  resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /** Whether this block has children in the tree. */
-  hasChildren?: boolean
+  hasChildren?: boolean | undefined
   /** Whether this block is currently collapsed. */
-  isCollapsed?: boolean
+  isCollapsed?: boolean | undefined
   /** Callback to toggle collapse state. */
-  onToggleCollapse?: (blockId: string) => void
+  onToggleCollapse?: ((blockId: string) => void) | undefined
   /** Current task state: 'TODO', 'DOING', 'DONE', or null/undefined for no task. */
-  todoState?: string | null
+  todoState?: (string | null) | undefined
   /** Callback to cycle task state. */
-  onToggleTodo?: (blockId: string) => void
+  onToggleTodo?: ((blockId: string) => void) | undefined
   /** Priority level: '1' (high), '2' (medium), '3' (low), or null/undefined. */
-  priority?: string | null
+  priority?: (string | null) | undefined
   /** Callback to cycle priority: none → 1 → 2 → 3 → none. */
-  onTogglePriority?: (blockId: string) => void
+  onTogglePriority?: ((blockId: string) => void) | undefined
   /** Due date in YYYY-MM-DD format, or null/undefined if not set. */
-  dueDate?: string | null
+  dueDate?: (string | null) | undefined
   /** Scheduled date in YYYY-MM-DD format, or null/undefined if not set. */
-  scheduledDate?: string | null
+  scheduledDate?: (string | null) | undefined
   /** Custom properties to display as inline chips. */
-  properties?: Array<{ key: string; value: string }>
+  properties?: Array<{ key: string; value: string }> | undefined
   /** Move block up among siblings. */
-  onMoveUp?: (blockId: string) => void
+  onMoveUp?: ((blockId: string) => void) | undefined
   /** Move block down among siblings. */
-  onMoveDown?: (blockId: string) => void
+  onMoveDown?: ((blockId: string) => void) | undefined
   /** Merge block with its previous sibling. */
-  onMerge?: (blockId: string) => void
+  onMerge?: ((blockId: string) => void) | undefined
   /** Show block history sheet */
-  onShowHistory?: (blockId: string) => void
+  onShowHistory?: ((blockId: string) => void) | undefined
   /** Show block properties drawer */
-  onShowProperties?: (blockId: string) => void
+  onShowProperties?: ((blockId: string) => void) | undefined
   /** Zoom in to show only this block's children */
-  onZoomIn?: (blockId: string) => void
+  onZoomIn?: ((blockId: string) => void) | undefined
   /** Whether this block is part of a multi-selection. */
-  isSelected?: boolean
+  isSelected?: boolean | undefined
   /** Ctrl+Click / Shift+Click selection callback. */
-  onSelect?: (blockId: string, mode: 'toggle' | 'range') => void
+  onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
 }
 
 function SortableBlockInner({

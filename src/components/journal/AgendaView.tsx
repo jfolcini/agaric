@@ -13,7 +13,7 @@ import { AgendaFilterBuilder, AgendaSortGroupControls } from '../AgendaFilterBui
 import { AgendaResults } from '../AgendaResults'
 
 interface AgendaViewProps {
-  onNavigateToPage?: (pageId: string, title?: string) => void
+  onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
 }
 
 export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactElement {
@@ -446,7 +446,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
                 const value = colonIdx > 0 ? filterValue.slice(colonIdx + 1) : undefined
                 const resp = await queryByProperty({
                   key,
-                  valueText: value ?? undefined,
+                  ...(value != null && { valueText: value }),
                   limit: 500,
                 })
                 for (const b of resp.items) {

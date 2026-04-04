@@ -851,8 +851,11 @@ describe('BlockTree rendering edge cases', () => {
 
 describe('BlockTree collapse/expand', () => {
   beforeEach(() => {
-    // Reset invoke so load() fails and doesn't overwrite store blocks
+    // Reset invoke so load() fails and doesn't overwrite store blocks.
+    // mockResolvedValue({}) ensures .then() chains work (tauri wrappers
+    // are non-async, so invoke must return a Promise).
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('passes hasChildren=true for blocks with children', async () => {
@@ -1011,6 +1014,7 @@ describe('BlockTree collapse/expand', () => {
 describe('BlockTree task cycling', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('passes todoState to SortableBlock from block store field', async () => {
@@ -2832,6 +2836,7 @@ describe('BlockTree schedule slash command', () => {
 describe('BlockTree heading slash command execution', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('when /h1 is selected, block content gets "# " prefix', async () => {
@@ -2952,6 +2957,7 @@ const mockedAnnounce = vi.mocked(announce)
 describe('BlockTree aria-live announcements', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   // ── #41 — Focus change announcements ──────────────────────────────
@@ -3247,6 +3253,7 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
 describe('BlockTree handleDeleteBlock', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('deleting a block calls delete_block via invoke', async () => {
@@ -3355,6 +3362,7 @@ describe('BlockTree handleDeleteBlock', () => {
 describe('BlockTree handleMergeWithPrev', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('merge concatenates previous block content with current and removes current', async () => {
@@ -3427,6 +3435,7 @@ describe('BlockTree handleMergeWithPrev', () => {
 describe('BlockTree handleIndent / handleDedent', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('indent calls move_block with previous sibling as new parent', async () => {
@@ -3539,6 +3548,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
 describe('BlockTree priority keyboard shortcuts', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('set-priority-1 event sets priority 1 on focused block', async () => {
@@ -3654,6 +3664,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
 describe('BlockTree handleDatePick date format', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('creates date page in YYYY-MM-DD format (not DD/MM/YYYY)', async () => {
@@ -3936,6 +3947,7 @@ describe('BlockTree link/tag/code slash commands', () => {
 describe('BlockTree /attach slash command', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
     useMockEditor = false
   })
 
@@ -4202,6 +4214,7 @@ describe('guessMimeType', () => {
 describe('DatePickerOverlay text input', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('date picker shows text input field', async () => {
@@ -4362,6 +4375,7 @@ describe('DatePickerOverlay text input', () => {
 describe('BlockTree Enter creates new sibling block', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('Enter creates a new sibling block below and focuses it', async () => {
@@ -4554,6 +4568,7 @@ describe('BlockTree Enter creates new sibling block', () => {
 describe('BlockTree zoom-in', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('zoom filters blocks to descendants only', async () => {
@@ -4905,6 +4920,7 @@ describe('BlockTree location slash command presets', () => {
 describe('BlockTree multi-selection (#657)', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('Ctrl+Click toggles block selection via onSelect', async () => {
@@ -4994,6 +5010,7 @@ describe('BlockTree multi-selection (#657)', () => {
 describe('BlockTree batch toolbar (#657)', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('shows batch toolbar when blocks are selected', async () => {
@@ -5219,6 +5236,7 @@ describe('BlockTree batch toolbar (#657)', () => {
 describe('BlockTree unfocused-Escape handler (UX-M8)', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('Escape on unfocused editor closes editor and saves content', async () => {
@@ -5294,6 +5312,7 @@ describe('BlockTree unfocused-Escape handler (UX-M8)', () => {
 describe('BlockTree container mousedown (UX-M9)', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
   })
 
   it('mousedown on whitespace within block tree closes active editor', async () => {
