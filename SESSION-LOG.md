@@ -1,5 +1,35 @@
 # Session Log
 
+## Session 184 — 2026-04-04 — Phase 1 batch 37: block references (F-4)
+
+### Phase 1 (batch 37): Block reference feature — `((` search, chip, hover preview (F-4)
+
+5 parallel build subagents (extensions, serializer, rendering, wiring, backend).
+
+| File | Change |
+|------|--------|
+| `block-ref.ts` (new) | F-4: TipTap inline atom node `block_ref` — resolveContent, onNavigate, resolveStatus, insertBlockRef command, NodeView with click/delete handling. |
+| `block-ref-picker.ts` (new) | F-4: `((` trigger suggestion extension — searchBlocks FTS5, no create option (refs only). |
+| `markdown-serializer.ts` | F-4: Serialize `block_ref` → `((ULID))`, parse `((ULID))` → `block_ref`. Added `nodeToPlainText` fallback. |
+| `types.ts` | F-4: Added `BlockRefNode` interface, added to `InlineNode` union. |
+| `StaticBlock.tsx` | F-4: Render `block_ref` as violet chip with Tooltip hover (first line truncated to 60 chars, full content in tooltip truncated to 300 chars). Click navigates. |
+| `index.css` | F-4: `.block-ref-chip` violet tint styles, `.block-ref-deleted`, coarse pointer sizing. |
+| `use-roving-editor.ts` | F-4: Register `BlockRef` + `BlockRefPicker` extensions, add `searchBlockRefs` option. |
+| `useBlockResolve.ts` | F-4: Added `searchBlockRefs` callback — FTS search, truncated first-line labels, resolve cache population. |
+| `BlockTree.tsx` | F-4: Wire `searchBlockRefs: resolve.searchBlockRefs` to roving editor. |
+| `cache.rs` | F-4: Updated ULID regex to match both `[[ULID]]` and `((ULID))` — block refs tracked in `block_links` table. |
+| `i18n.ts` | F-4: Added `blockRef.pickerLabel`, `blockRef.fallback` keys. |
+| `markdown-serializer.test.ts` | F-4: 5 new tests (serialize, parse, round-trip, lowercase rejection, non-ULID rejection). |
+| `StaticBlock.test.tsx` | F-4: 5 new tests (chip render, truncation, fallback, click navigate, deleted status). |
+| `cache.rs` tests | F-4: 2 new Rust tests (block ref tracking, mixed link type tracking). |
+
+### Stats
+- 13 files changed (2 new), 578 insertions, 13 deletions
+- 12 new tests (5 serializer + 5 StaticBlock + 2 Rust)
+- 2961 tests pass (8 pre-existing failures unchanged)
+- Commit: `835b312`
+- REVIEW-LATER: F-4 resolved. 3 -> **2 open items**. Closes the #1 feature gap vs Logseq.
+
 ## Session 183 — 2026-04-04 — Phase 1 batch 36: noUncheckedIndexedAccess (M-16)
 
 ### Phase 1 (batch 36): Enable noUncheckedIndexedAccess, fix 497 violations (M-16)
