@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 142 — 2026-04-03 — Custom property filter dimension (#642 completion)
+
+### Build: PropertyValuePicker + JournalPage query handler
+
+1 build subagent. Added 'property' as 8th filter dimension. PropertyValuePicker fetches keys via listPropertyKeys, two-step picker (key dropdown + value input). Multiple property filters allowed (not disabled when already used).
+
+| File | Change |
+|------|--------|
+| `AgendaFilterBuilder.tsx` | Added `property` dimension type + DIMENSION_OPTIONS + ALL_DIMENSIONS. New `PropertyValuePicker` component with key select + value input. Property dimension not disabled when used (allows multiples). React list key fixed for duplicate dimension support. |
+| `JournalPage.tsx` | Property filter handler: parses `key:value` format, calls `queryByProperty`. |
+| `AgendaFilterBuilder.test.tsx` | 4 new tests (popover shows Property, key picker + value input render, multiple allowed, chip display). 37/37 pass. |
+| `i18n.ts` | 5 new translation keys for property filter. |
+| `REVIEW-LATER.md` | Removed #642 entirely. 7 → 6 open items. |
+
+### Stats
+- Frontend: 4 new tests (37/37 AgendaFilterBuilder pass)
+- Commit: `3c7649a`
+- REVIEW-LATER: #642 fully resolved and removed. 6 open items.
+
 ## Session 141 — 2026-04-03 — "This month" date presets + #665 repeat hardening (#642)
 
 ### Direct edits: AgendaFilterBuilder + JournalPage
