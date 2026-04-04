@@ -1,13 +1,14 @@
 # Session Log
 
-## Session 192 — 2026-04-04 — Batch 44: UX-M27..M31 PairingDialog → shadcn Dialog, EmptyState consistency, AgendaResults spacing
+## Session 192 — 2026-04-04 — Batches 44-45: UX-M27..M37 (PairingDialog, EmptyState, spacing/padding/typography)
 
 ### Summary
-Refactored PairingDialog from custom overlay/dialog to shadcn Dialog (removing ~50 lines of manual focus trap + Escape handling). Consolidated 5 components onto shared EmptyState. Standardized AgendaResults spacing to match DuePanel/DonePanel.
+Batch 44: Refactored PairingDialog from custom overlay/dialog to shadcn Dialog (removing ~50 lines of manual focus trap + Escape handling). Consolidated 5 components onto shared EmptyState. Standardized AgendaResults spacing.
+Batch 45: Standardized spacing, padding, and typography across 6 components (LinkedReferences, DuePanel, DeviceManagement, PageHeader, HistoryPanel, PropertyChip).
+
+### Batch 44 — UX-M27..M31
 
 **Commit:** 6ecfe59
-
-### Changes
 
 | Area | Change |
 |------|--------|
@@ -21,14 +22,28 @@ Refactored PairingDialog from custom overlay/dialog to shadcn Dialog (removing ~
 | src/lib/i18n.ts | UX-M28: Added `tagList.empty` i18n key |
 | src/components/AgendaResults.tsx | UX-M29: Group header `px-2` → `px-3`. UX-M31: `space-y-1` → `space-y-2` (3 places) |
 
+### Batch 45 — UX-M32..M37
+
+**Commit:** 7822a85
+
+| Area | Change |
+|------|--------|
+| src/components/LinkedReferences.tsx | UX-M32: Main header `px-2`→`px-3`, group header `py-1`→`py-1.5` — both now `px-3 py-1.5` |
+| src/components/DuePanel.tsx | UX-M33: Filter pill `px-2 py-0.5`→`px-2.5 py-1` to match AgendaFilterBuilder |
+| src/components/DeviceManagement.tsx | UX-M34: Peer item `p-3`→`p-4` to match TrashView/ConflictList card tier |
+| src/components/PageHeader.tsx | UX-M35: Tag picker items `py-1`→`py-1.5` to match kebab menu |
+| src/components/HistoryPanel.tsx | UX-M36: Added `gap-2` to history items to match HistoryView |
+| src/components/PropertyChip.tsx | UX-M37: `text-[10px]`→`text-xs` to match design system |
+
 ### Stats
-- 9 files changed, 301 insertions, 352 deletions
-- 3088 frontend tests pass (29 PairingDialog tests pass)
+- 15 files changed across batches 44+45
+- 3088 frontend tests pass
 - All prek hooks pass
 
 ### REVIEW-LATER removals
-- Removed: UX-M27, UX-M28, UX-M29, UX-M31 (4 items)
-- Open items: 20 (was 24)
+- Batch 44: UX-M27, UX-M28, UX-M29, UX-M31 (4 items)
+- Batch 45: UX-M32, UX-M33, UX-M34, UX-M35, UX-M36, UX-M37 (6 items)
+- Open items: 14 (was 24)
 
 ---
 
