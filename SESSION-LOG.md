@@ -37,6 +37,22 @@
 - Commit: `3ca15c2`
 - REVIEW-LATER: H-3, H-7, L-2 resolved and removed. 109 → **106 open items**.
 
+### Phase 1 (batch 3): Rust backend perf (H-4, M-2, M-3, L-4)
+
+1 build subagent (H-4, backlink_query.rs), orchestrator direct fixes (M-2+L-4 materializer.rs, M-3 import.rs), 1 review subagent.
+
+| File | Change |
+|------|--------|
+| `backlink_query.rs` | H-4: Exclusion-only SourcePage filter now uses `NOT IN (WITH RECURSIVE ...)` SQL subquery instead of loading all block IDs into memory. 1 new test. |
+| `materializer.rs` | M-2: Replaced double deserialization (`BlockTypeHint` + `BlockIdHint`) with single `CreateBlockHint` struct. Removed dead `BlockTypeHint`. |
+| `materializer.rs` | L-4: Replaced `contains_key()` + `entry()` double hash lookup with single `entry()` match in `group_tasks_by_block_id()`. |
+| `import.rs` | M-3: Moved 2 per-call `Regex::new()` to module-level `LazyLock<Regex>` statics in `strip_block_refs()`. |
+
+### Stats
+- Backend: 1 new test (164/164 backlink pass, 102/102 materializer pass)
+- Commit: `402316d`
+- REVIEW-LATER: H-4, M-2, M-3, L-4 resolved and removed. 106 → **102 open items**.
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system
