@@ -1,5 +1,37 @@
 # Session Log
 
+## Session 191 — 2026-04-04 — Batch 43: UX-M22..M26 + M-30 + M-38 hardcoded colors → semantic badge tokens
+
+### Summary
+Replaced hardcoded Tailwind color classes with semantic CSS custom properties for status badges, conflict badges, and priority badges across 7 REVIEW-LATER items. Created shared `priorityColor()` utility. Added semantic tokens to both light and dark themes.
+
+**Commit:** 7952abc
+
+### Changes
+
+| Area | Change |
+|------|--------|
+| src/index.css | Added 14 semantic CSS custom properties for status/conflict/priority badges (light + dark themes) |
+| src/lib/priority-color.ts | New shared `priorityColor()` utility returning semantic badge classes |
+| src/components/QueryResult.tsx | UX-M22: status badges → `bg-status-done/active/pending` tokens; UX-M38: `text-[10px]` → `text-xs` |
+| src/components/ConflictList.tsx | UX-M23: type badges → `bg-conflict-text/move` + `bg-status-active` tokens |
+| src/components/SourcePageFilter.tsx | UX-M24: indicator colors → `text-primary`/`text-destructive`/`text-status-pending-foreground` + `bg-primary`/`bg-destructive` |
+| src/components/DonePanel.tsx | UX-M25: `bg-green-50/50 dark:bg-green-950/10` → `bg-muted`; UX-M30: added `uppercase` to group header |
+| src/components/SortableBlock.tsx | UX-M26: priority badges → shared `priorityColor()` utility |
+| src/components/DuePanel.tsx | Replaced local `priorityColor()` with shared import |
+| src/components/AgendaResults.tsx | Replaced local `priorityColor()` with shared import |
+
+### Stats
+- 12 files changed, 81 insertions, 43 deletions
+- 3088 frontend tests pass
+- All prek hooks pass
+
+### REVIEW-LATER removals
+- Removed: UX-M22, UX-M23, UX-M24, UX-M25, UX-M26, UX-M30, UX-M38 (7 items)
+- Remaining: 24 open items
+
+---
+
 ## Session 190 — 2026-04-04 — Batch 42: enable M-19..M-24 static analysis strictness rules
 
 ### Summary
