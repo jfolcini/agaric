@@ -81,7 +81,27 @@ export interface BlockquoteNode {
 
 export type InlineNode = TextNode | TagRefNode | BlockLinkNode | HardBreakNode
 
-export type BlockLevelNode = ParagraphNode | HeadingNode | CodeBlockNode | BlockquoteNode
+export interface TableCellNode {
+  readonly type: 'tableCell'
+  readonly content?: readonly ParagraphNode[]
+}
+
+export interface TableHeaderNode {
+  readonly type: 'tableHeader'
+  readonly content?: readonly ParagraphNode[]
+}
+
+export interface TableRowNode {
+  readonly type: 'tableRow'
+  readonly content?: readonly (TableCellNode | TableHeaderNode)[]
+}
+
+export interface TableNode {
+  readonly type: 'table'
+  readonly content?: readonly TableRowNode[]
+}
+
+export type BlockLevelNode = ParagraphNode | HeadingNode | CodeBlockNode | BlockquoteNode | TableNode
 
 export interface DocNode {
   readonly type: 'doc'
@@ -159,6 +179,26 @@ export function codeBlock(code: string, language?: string): CodeBlockNode {
 export function blockquote(...blocks: BlockLevelNode[]): BlockquoteNode {
   if (blocks.length === 0) return { type: 'blockquote' }
   return { type: 'blockquote', content: blocks }
+}
+
+export function table(...rows: TableRowNode[]): TableNode {
+  if (rows.length === 0) return { type: 'table' }
+  return { type: 'table', content: rows }
+}
+
+export function tableRow(...cells: (TableCellNode | TableHeaderNode)[]): TableRowNode {
+  if (cells.length === 0) return { type: 'tableRow' }
+  return { type: 'tableRow', content: cells }
+}
+
+export function tableHeader(...paragraphs: ParagraphNode[]): TableHeaderNode {
+  if (paragraphs.length === 0) return { type: 'tableHeader' }
+  return { type: 'tableHeader', content: paragraphs }
+}
+
+export function tableCell(...paragraphs: ParagraphNode[]): TableCellNode {
+  if (paragraphs.length === 0) return { type: 'tableCell' }
+  return { type: 'tableCell', content: paragraphs }
 }
 
 export function doc(...blocks: BlockLevelNode[]): DocNode {

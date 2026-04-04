@@ -19,6 +19,8 @@ import type {
   InlineNode,
   ParagraphNode,
   PMMark,
+  TableNode,
+  TableRowNode,
   TagRefNode,
   TextNode,
 } from './types'
@@ -285,6 +287,33 @@ function serializeBlockquote(node: BlockquoteNode): string {
     .join('\n')
 }
 
+function serializeTable(node: TableNode): string {
+  if (!node.content || node.content.length === 0) return ''
+  const rows = node.content
+  const serializedRows: string[][] = []
+
+  for (const row of rows) {
+    const cells: string[] = []
+    if (row.content) {
+      for (const cell of row.content) {
+        const text = cell.content && cell.content.length > 0
+          ? serializeParagraph(cell.content[0]).replace(/\|/g, '\\|')
+          : ''
+        cells.push(text)
+      }
+    }
+    serializedRows.push(cells)
+  }
+
+  if (serializedRows.length === 0) return ''
+
+  const header = `| ${serializedRows[0].join(' | ')} |`
+  const separator = `| ${serializedRows[0].map(() => '---').join(' | ')} |`
+  const dataRows = serializedRows.slice(1).map((row) => `| ${row.join(' | ')} |`)
+
+  return [header, separator, ...dataRows].join('\n')
+}
+
 export function serialize(doc: DocNode): string {
   if (!doc.content || doc.content.length === 0) return ''
   return doc.content
@@ -293,6 +322,7 @@ export function serialize(doc: DocNode): string {
       if (node.type === 'heading') return serializeHeading(node)
       if (node.type === 'codeBlock') return serializeCodeBlock(node)
       if (node.type === 'blockquote') return serializeBlockquote(node)
+      if (node.type === 'table') return serializeTable(node)
       console.warn(
         `[serializer] unknown top-level node type: "${(node as { type: string }).type}" — stripped`,
       )
@@ -531,6 +561,40 @@ export function parse(markdown: string): DocNode {
         blocks.push({ type: 'heading', attrs: { level }, content: inlineNodes })
       }
       i++
+      continue
+    }
+
+    // Table: lines starting with |
+    if (line.startsWith('|')) {
+      const tableLines: string[] = []
+      while (i < lines.length && lines[i].startsWith('|')) {
+        tableLines.push(lines[i])
+        i++
+      }
+      const rows: TableRowNode[] = []
+      for (let r = 0; r < tableLines.length; r++) {
+        const tableLine = tableLines[r]
+        if (/^\|[\s\-:|]+\|$/.test(tableLine)) continue
+        const cellTexts = tableLine
+          .replace(/^\|/, '')
+          .replace(/\|$/, '')
+          .split('|')
+          .map((c) => c.trim().replace(/\\\|/g, '|'))
+        const isHeader = r === 0
+        const cells = cellTexts.map((cellText) => {
+          const content = cellText
+            ? [{ type: 'paragraph' as const, content: parseLine(cellText) }]
+            : []
+          if (isHeader) {
+            return { type: 'tableHeader' as const, content }
+          }
+          return { type: 'tableCell' as const, content }
+        })
+        rows.push({ type: 'tableRow', content: cells })
+      }
+      if (rows.length > 0) {
+        blocks.push({ type: 'table', content: rows })
+      }
       continue
     }
 

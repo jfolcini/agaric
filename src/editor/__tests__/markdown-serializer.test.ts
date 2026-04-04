@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { parse, serialize } from '../markdown-serializer'
-import type { InlineNode, ParagraphNode, TextNode } from '../types'
+import type { InlineNode, ParagraphNode, TableNode, TextNode } from '../types'
 import {
   blockLink,
   blockquote,
@@ -15,6 +15,10 @@ import {
   italic,
   paragraph,
   strike,
+  table,
+  tableCell,
+  tableHeader,
+  tableRow,
   tagRef,
   text,
 } from '../types'
@@ -169,7 +173,7 @@ describe('serialize', () => {
 
     it('unknown top-level node stripped with warning', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      const unknown = { type: 'table', content: [] } as unknown as ParagraphNode
+      const unknown = { type: 'customBlock', content: [] } as unknown as ParagraphNode
       expect(serialize(doc(unknown, paragraph(text('ok'))))).toBe('\nok')
       expect(warn).toHaveBeenCalledOnce()
       warn.mockRestore()
@@ -193,6 +197,31 @@ describe('serialize', () => {
 
     it('serializes blockquote with marks', () => {
       expect(serialize(doc(blockquote(paragraph(bold('strong')))))).toBe('> **strong**')
+    })
+  })
+
+  describe('table', () => {
+    it('serializes a simple table with header', () => {
+      expect(serialize(doc(
+        table(
+          tableRow(tableHeader(paragraph(text('Name'))), tableHeader(paragraph(text('Age')))),
+          tableRow(tableCell(paragraph(text('Alice'))), tableCell(paragraph(text('30')))),
+          tableRow(tableCell(paragraph(text('Bob'))), tableCell(paragraph(text('25')))),
+        )
+      ))).toBe('| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |')
+    })
+
+    it('serializes table with marks', () => {
+      expect(serialize(doc(
+        table(
+          tableRow(tableHeader(paragraph(bold('Header')))),
+          tableRow(tableCell(paragraph(text('cell')))),
+        )
+      ))).toBe('| **Header** |\n| --- |\n| cell |')
+    })
+
+    it('serializes empty table', () => {
+      expect(serialize(doc(table()))).toBe('')
     })
   })
 
@@ -535,6 +564,33 @@ describe('parse', () => {
       )
     })
   })
+
+  describe('table', () => {
+    it('parses pipe-delimited table', () => {
+      const input = '| Name | Age |\n| --- | --- |\n| Alice | 30 |'
+      const result = parse(input)
+      expect(result.content).toHaveLength(1)
+      expect(result.content![0].type).toBe('table')
+      const tbl = result.content![0] as TableNode
+      expect(tbl.content).toHaveLength(2)
+    })
+
+    it('parses table with marks', () => {
+      const input = '| **Bold** |\n| --- |\n| normal |'
+      const result = parse(input)
+      const tbl = result.content![0] as TableNode
+      const headerCell = tbl.content![0].content![0]
+      expect(headerCell.type).toBe('tableHeader')
+    })
+
+    it('table followed by paragraph', () => {
+      const input = '| A | B |\n| --- | --- |\n| 1 | 2 |\nNormal text'
+      const result = parse(input)
+      expect(result.content).toHaveLength(2)
+      expect(result.content![0].type).toBe('table')
+      expect(result.content![1].type).toBe('paragraph')
+    })
+  })
 })
 
 // -- round-trip ---------------------------------------------------------------
@@ -573,6 +629,8 @@ describe('round-trip: serialize(parse(s)) === s', () => {
     ['blockquote', '> hello'],
     ['multi-line blockquote', '> line 1\n> line 2'],
     ['blockquote with marks', '> **strong**'],
+    ['simple table', '| A | B |\n| --- | --- |\n| 1 | 2 |'],
+    ['table with marks', '| **bold** | *italic* |\n| --- | --- |\n| a | b |'],
   ]
 
   for (const [name, input] of cases) {
