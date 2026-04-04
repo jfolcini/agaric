@@ -75,9 +75,9 @@ async moveBlock(blockId: string, newParentId: string | null, newPosition: number
 /**
  * Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
  */
-async listBlocks(parentId: string | null, blockType: string | null, tagId: string | null, showDeleted: boolean | null, agendaDate: string | null, agendaSource: string | null, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
+async listBlocks(parentId: string | null, blockType: string | null, tagId: string | null, showDeleted: boolean | null, agendaDate: string | null, agendaDateRange: DateRange | null, agendaSource: string | null, cursor: string | null, limit: number | null) : Promise<Result<PageResponse<BlockRow>, { kind: string; message: string }>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agendaDate, agendaSource, cursor, limit }) };
+    return { status: "ok", data: await TAURI_INVOKE("list_blocks", { parentId, blockType, tagId, showDeleted, agendaDate, agendaDateRange, agendaSource, cursor, limit }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -792,6 +792,10 @@ export type BlockRow = { id: string; block_type: string; content: string | null;
  * Comparison operators for property filters.
  */
 export type CompareOp = "Eq" | "Neq" | "Lt" | "Gt" | "Lte" | "Gte" | "Contains" | "StartsWith"
+/**
+ * A date range for agenda queries. Both fields must be in `YYYY-MM-DD` format.
+ */
+export type DateRange = { start: string; end: string }
 export type DeleteResponse = { block_id: string; deleted_at: string; descendants_affected: number }
 /**
  * A contiguous span of text with a diff tag.

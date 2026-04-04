@@ -139,35 +139,33 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
                 } else if (value === 'This week') {
                   const day = today.getDay()
                   const mondayOffset = day === 0 ? -6 : 1 - day
-                  for (let d = 0; d < 7; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() + mondayOffset + d)
-                    const dateStr = formatDate(date)
-                    const resp = await listBlocks({
-                      agendaDate: dateStr,
-                      agendaSource: 'column:due_date',
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
+                  const weekStart = new Date(today)
+                  weekStart.setDate(today.getDate() + mondayOffset)
+                  const weekEnd = new Date(weekStart)
+                  weekEnd.setDate(weekStart.getDate() + 6)
+                  const resp = await listBlocks({
+                    agendaDateRange: { start: formatDate(weekStart), end: formatDate(weekEnd) },
+                    agendaSource: 'column:due_date',
+                    limit: 500,
+                  })
+                  for (const b of resp.items) {
+                    ids.add(b.id)
+                    allBlocks.set(b.id, b)
                   }
                 } else if (value === 'This month') {
                   const year = today.getFullYear()
                   const month = today.getMonth()
+                  const monthStart = formatDate(new Date(year, month, 1))
                   const daysInMonth = new Date(year, month + 1, 0).getDate()
-                  for (let d = 1; d <= daysInMonth; d++) {
-                    const dateStr = formatDate(new Date(year, month, d))
-                    const resp = await listBlocks({
-                      agendaDate: dateStr,
-                      agendaSource: 'column:due_date',
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
+                  const monthEnd = formatDate(new Date(year, month, daysInMonth))
+                  const resp = await listBlocks({
+                    agendaDateRange: { start: monthStart, end: monthEnd },
+                    agendaSource: 'column:due_date',
+                    limit: 500,
+                  })
+                  for (const b of resp.items) {
+                    ids.add(b.id)
+                    allBlocks.set(b.id, b)
                   }
                 } else if (value === 'Overdue') {
                   // Get all blocks with due_date < today
@@ -184,19 +182,16 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
                   value === 'Next 30 days'
                 ) {
                   const numDays = value === 'Next 7 days' ? 7 : value === 'Next 14 days' ? 14 : 30
-                  for (let d = 0; d < numDays; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() + d)
-                    const dateStr = formatDate(date)
-                    const resp = await listBlocks({
-                      agendaDate: dateStr,
-                      agendaSource: 'column:due_date',
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
+                  const rangeEnd = new Date(today)
+                  rangeEnd.setDate(today.getDate() + numDays - 1)
+                  const resp = await listBlocks({
+                    agendaDateRange: { start: todayStr, end: formatDate(rangeEnd) },
+                    agendaSource: 'column:due_date',
+                    limit: 500,
+                  })
+                  for (const b of resp.items) {
+                    ids.add(b.id)
+                    allBlocks.set(b.id, b)
                   }
                 }
               }
@@ -217,35 +212,33 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
                 } else if (value === 'This week') {
                   const day = today.getDay()
                   const mondayOffset = day === 0 ? -6 : 1 - day
-                  for (let d = 0; d < 7; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() + mondayOffset + d)
-                    const dateStr = formatDate(date)
-                    const resp = await listBlocks({
-                      agendaDate: dateStr,
-                      agendaSource: 'column:scheduled_date',
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
+                  const weekStart = new Date(today)
+                  weekStart.setDate(today.getDate() + mondayOffset)
+                  const weekEnd = new Date(weekStart)
+                  weekEnd.setDate(weekStart.getDate() + 6)
+                  const resp = await listBlocks({
+                    agendaDateRange: { start: formatDate(weekStart), end: formatDate(weekEnd) },
+                    agendaSource: 'column:scheduled_date',
+                    limit: 500,
+                  })
+                  for (const b of resp.items) {
+                    ids.add(b.id)
+                    allBlocks.set(b.id, b)
                   }
                 } else if (value === 'This month') {
                   const year = today.getFullYear()
                   const month = today.getMonth()
+                  const monthStart = formatDate(new Date(year, month, 1))
                   const daysInMonth = new Date(year, month + 1, 0).getDate()
-                  for (let d = 1; d <= daysInMonth; d++) {
-                    const dateStr = formatDate(new Date(year, month, d))
-                    const resp = await listBlocks({
-                      agendaDate: dateStr,
-                      agendaSource: 'column:scheduled_date',
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
+                  const monthEnd = formatDate(new Date(year, month, daysInMonth))
+                  const resp = await listBlocks({
+                    agendaDateRange: { start: monthStart, end: monthEnd },
+                    agendaSource: 'column:scheduled_date',
+                    limit: 500,
+                  })
+                  for (const b of resp.items) {
+                    ids.add(b.id)
+                    allBlocks.set(b.id, b)
                   }
                 } else if (value === 'Overdue') {
                   const resp = await queryByProperty({ key: 'scheduled_date', limit: 500 })
@@ -265,19 +258,16 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
                   value === 'Next 30 days'
                 ) {
                   const numDays = value === 'Next 7 days' ? 7 : value === 'Next 14 days' ? 14 : 30
-                  for (let d = 0; d < numDays; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() + d)
-                    const dateStr = formatDate(date)
-                    const resp = await listBlocks({
-                      agendaDate: dateStr,
-                      agendaSource: 'column:scheduled_date',
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
+                  const rangeEnd = new Date(today)
+                  rangeEnd.setDate(today.getDate() + numDays - 1)
+                  const resp = await listBlocks({
+                    agendaDateRange: { start: todayStr, end: formatDate(rangeEnd) },
+                    agendaSource: 'column:scheduled_date',
+                    limit: 500,
+                  })
+                  for (const b of resp.items) {
+                    ids.add(b.id)
+                    allBlocks.set(b.id, b)
                   }
                 }
               }

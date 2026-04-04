@@ -8,6 +8,7 @@ export type {
   BacklinkSort,
   BlockRow,
   CompareOp,
+  DateRange,
   DeleteResponse,
   DiffSpan,
   DiffTag,
@@ -30,6 +31,7 @@ import type {
   BacklinkQueryResponse,
   BacklinkSort,
   BlockRow,
+  DateRange,
   DeleteResponse,
   DiffSpan,
   GroupedBacklinkResponse,
@@ -99,6 +101,7 @@ export async function listBlocks(params?: {
   tagId?: string
   showDeleted?: boolean
   agendaDate?: string
+  agendaDateRange?: DateRange
   agendaSource?: string
   cursor?: string
   limit?: number
@@ -109,6 +112,7 @@ export async function listBlocks(params?: {
     tagId: params?.tagId ?? null,
     showDeleted: params?.showDeleted ?? null,
     agendaDate: params?.agendaDate ?? null,
+    agendaDateRange: params?.agendaDateRange ?? null,
     agendaSource: params?.agendaSource ?? null,
     cursor: params?.cursor ?? null,
     limit: params?.limit ?? null,

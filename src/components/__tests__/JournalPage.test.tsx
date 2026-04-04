@@ -1465,7 +1465,7 @@ describe('JournalPage', () => {
       })
     })
 
-    it("dueDate 'This week' filter queries all 7 days", async () => {
+    it("dueDate 'This week' filter queries with a date range", async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_blocks') {
           return emptyPage
@@ -1496,22 +1496,23 @@ describe('JournalPage', () => {
             cmd === 'list_blocks' &&
             (args as { agendaSource?: string })?.agendaSource === 'column:due_date',
         )
-        expect(listBlockCalls).toHaveLength(7)
+        // Should be a single range call instead of 7 individual day calls
+        expect(listBlockCalls).toHaveLength(1)
 
-        const dates = listBlockCalls.map(([, args]) => (args as { agendaDate: string }).agendaDate)
-        const uniqueDates = new Set(dates)
-        expect(uniqueDates.size).toBe(7)
+        const callArgs = listBlockCalls[0][1] as {
+          agendaDateRange?: { start: string; end: string }
+        }
+        expect(callArgs.agendaDateRange).toBeDefined()
 
         const today = new Date()
         const day = today.getDay()
         const mondayOffset = day === 0 ? -6 : 1 - day
-        const expectedDates: string[] = []
-        for (let d = 0; d < 7; d++) {
-          const date = new Date(today)
-          date.setDate(today.getDate() + mondayOffset + d)
-          expectedDates.push(formatDate(date))
-        }
-        expect([...uniqueDates].sort()).toEqual(expectedDates.sort())
+        const weekStart = new Date(today)
+        weekStart.setDate(today.getDate() + mondayOffset)
+        const weekEnd = new Date(weekStart)
+        weekEnd.setDate(weekStart.getDate() + 6)
+        expect(callArgs.agendaDateRange!.start).toBe(formatDate(weekStart))
+        expect(callArgs.agendaDateRange!.end).toBe(formatDate(weekEnd))
       })
     })
 

@@ -1,0 +1,92 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, block_type, content, parent_id, position, deleted_at, archived_at,\n                  is_conflict as \"is_conflict: bool\", conflict_type,\n                  todo_state, priority, due_date, scheduled_date\n           FROM blocks\n           WHERE block_type = 'page' AND content = ? AND deleted_at IS NULL\n           LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "block_type",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "parent_id",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "position",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "deleted_at",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "archived_at",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "is_conflict: bool",
+        "ordinal": 7,
+        "type_info": "Integer"
+      },
+      {
+        "name": "conflict_type",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "todo_state",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "priority",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "due_date",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "scheduled_date",
+        "ordinal": 12,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "7228834b395cf265221a78b198257738c55f010f945681ed30f7abe3551a577b"
+}

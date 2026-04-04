@@ -745,7 +745,7 @@ async fn purge_after_cascade_removes_entire_subtree() {
 async fn pagination_on_empty_database_returns_no_items() {
     let (pool, _dir) = test_pool().await;
 
-    let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(50))
+    let resp = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, Some(50))
         .await
         .unwrap();
 
@@ -790,7 +790,7 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
         .await
         .unwrap();
 
-    let live = list_blocks_inner(&pool, None, None, None, None, None, None, None, Some(50))
+    let live = list_blocks_inner(&pool, None, None, None, None, None, None, None, None, None, Some(50))
         .await
         .unwrap();
     assert_eq!(live.items.len(), 3, "should show 3 live blocks");
@@ -801,6 +801,8 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
         None,
         None,
         Some(true),
+        None,
+        None,
         None,
         None,
         None,
@@ -852,6 +854,8 @@ async fn cursor_pagination_walks_all_blocks_without_duplicates() {
             None,
             None,
             None,
+            None,
+            None,
             cursor,
             Some(PAGE_SIZE),
         )
@@ -888,6 +892,8 @@ async fn pagination_with_exact_page_boundary_terminates_correctly() {
 
     let page = list_blocks_inner(
         &pool,
+        None,
+        None,
         None,
         None,
         None,
@@ -965,6 +971,8 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         None,
+        None,
+        None,
         Some(50),
     )
     .await
@@ -980,6 +988,8 @@ async fn list_by_type_filters_to_matching_block_type() {
         None,
         None,
         None,
+        None,
+        None,
         Some(50),
     )
     .await
@@ -990,6 +1000,8 @@ async fn list_by_type_filters_to_matching_block_type() {
         &pool,
         None,
         Some(TYPE_TAG.into()),
+        None,
+        None,
         None,
         None,
         None,
@@ -1023,6 +1035,8 @@ async fn children_listed_in_position_order() {
     let children = list_blocks_inner(
         &pool,
         Some(parent.id.clone()),
+        None,
+        None,
         None,
         None,
         None,
