@@ -2,7 +2,7 @@
  * Tests for FormattingToolbar component.
  *
  * Validates:
- *  - Renders all twenty buttons (Bold, Italic, Code, Strikethrough, Highlight, External link, Internal link, Tag, Code block, Heading, Priority 1/2/3, Date, Due Date, Scheduled Date, TODO, Undo, Redo)
+ *  - Renders all buttons (Bold, Italic, Code, Strikethrough, Highlight, External link, Internal link, Tag, Code block, Heading, Cycle Priority, Date, Due Date, Scheduled Date, TODO, Undo, Redo)
  *  - Active marks get aria-pressed=true + bg-accent
  *  - Undo/Redo disabled state reflects editor.can()
  *  - Clicking buttons calls the correct editor chain commands
@@ -10,6 +10,7 @@
  *  - Separator between formatting and history groups
  *  - External link button toggles LinkEditPopover inside a Popover
  *  - Ctrl+K custom event opens the link popover
+ *  - Cycle priority button shows current priority state
  *  - a11y: role=toolbar, aria-labels, axe audit
  */
 
@@ -180,7 +181,7 @@ describe('FormattingToolbar', () => {
       expect(toolbar).toBeInTheDocument()
     })
 
-    it('renders all twenty-one formatting buttons', () => {
+    it('renders all nineteen formatting buttons', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
 
       expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument()
@@ -194,9 +195,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Blockquote' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Heading level' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Priority 1 (high)' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Priority 2 (medium)' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Priority 3 (low)' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cycle priority' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert date' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Set due date' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Set scheduled date' })).toBeInTheDocument()
@@ -456,36 +455,69 @@ describe('FormattingToolbar', () => {
     })
   })
 
-  // ── Priority and Date buttons ──────────────────────────────────────
+  // ── Priority cycling button ─────────────────────────────────────────
 
-  describe('priority and date buttons', () => {
-    it('priority 1 button dispatches set-priority-1 event', () => {
+  describe('priority cycling button', () => {
+    it('dispatches cycle-priority event on pointerdown', () => {
       const spy = vi.fn()
-      document.addEventListener('set-priority-1', spy)
+      document.addEventListener('cycle-priority', spy)
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Priority 1 (high)' }))
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Cycle priority' }))
       expect(spy).toHaveBeenCalledOnce()
-      document.removeEventListener('set-priority-1', spy)
+      document.removeEventListener('cycle-priority', spy)
     })
 
-    it('priority 2 button dispatches set-priority-2 event', () => {
-      const spy = vi.fn()
-      document.addEventListener('set-priority-2', spy)
+    it('shows "P" with no dot when no priority is set', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Priority 2 (medium)' }))
-      expect(spy).toHaveBeenCalledOnce()
-      document.removeEventListener('set-priority-2', spy)
+      const btn = screen.getByRole('button', { name: 'Cycle priority' })
+      expect(btn.textContent).toBe('P')
+      expect(btn.querySelector('.rounded-full')).toBeNull()
+      expect(btn).toHaveAttribute('aria-pressed', 'false')
     })
 
-    it('priority 3 button dispatches set-priority-3 event', () => {
-      const spy = vi.fn()
-      document.addEventListener('set-priority-3', spy)
-      render(<FormattingToolbar editor={makeEditor()} />)
-      fireEvent.pointerDown(screen.getByRole('button', { name: 'Priority 3 (low)' }))
-      expect(spy).toHaveBeenCalledOnce()
-      document.removeEventListener('set-priority-3', spy)
+    it('shows "P1" with red dot for priority 1', () => {
+      render(<FormattingToolbar editor={makeEditor()} currentPriority="1" />)
+      const btn = screen.getByRole('button', { name: 'Cycle priority' })
+      expect(btn.textContent).toContain('P1')
+      const dot = btn.querySelector('.rounded-full')
+      expect(dot).toBeInTheDocument()
+      expect(dot?.className).toContain('bg-red-500')
+      expect(btn).toHaveAttribute('aria-pressed', 'true')
+      expect(btn.className).toContain('bg-accent')
     })
 
+    it('shows "P2" with yellow dot for priority 2', () => {
+      render(<FormattingToolbar editor={makeEditor()} currentPriority="2" />)
+      const btn = screen.getByRole('button', { name: 'Cycle priority' })
+      expect(btn.textContent).toContain('P2')
+      const dot = btn.querySelector('.rounded-full')
+      expect(dot).toBeInTheDocument()
+      expect(dot?.className).toContain('bg-yellow-500')
+      expect(btn).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    it('shows "P3" with blue dot for priority 3', () => {
+      render(<FormattingToolbar editor={makeEditor()} currentPriority="3" />)
+      const btn = screen.getByRole('button', { name: 'Cycle priority' })
+      expect(btn.textContent).toContain('P3')
+      const dot = btn.querySelector('.rounded-full')
+      expect(dot).toBeInTheDocument()
+      expect(dot?.className).toContain('bg-blue-500')
+      expect(btn).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    it('prevents default on pointerdown to preserve editor focus', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Cycle priority' })
+      const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
+      const prevented = !btn.dispatchEvent(event)
+      expect(prevented).toBe(true)
+    })
+  })
+
+  // ── Date buttons ───────────────────────────────────────────────────
+
+  describe('date buttons', () => {
     it('date button dispatches open-date-picker event', () => {
       const spy = vi.fn()
       document.addEventListener('open-date-picker', spy)
@@ -493,43 +525,6 @@ describe('FormattingToolbar', () => {
       fireEvent.pointerDown(screen.getByRole('button', { name: 'Insert date' }))
       expect(spy).toHaveBeenCalledOnce()
       document.removeEventListener('open-date-picker', spy)
-    })
-
-    it('priority buttons prevent default to preserve editor focus', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const btn = screen.getByRole('button', { name: 'Priority 1 (high)' })
-      const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
-      const prevented = !btn.dispatchEvent(event)
-      expect(prevented).toBe(true)
-    })
-
-    it('priority buttons render P1/P2/P3 with dot indicators', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const p1 = screen.getByRole('button', { name: 'Priority 1 (high)' })
-      const p2 = screen.getByRole('button', { name: 'Priority 2 (medium)' })
-      const p3 = screen.getByRole('button', { name: 'Priority 3 (low)' })
-      // Badge text
-      expect(p1).toHaveTextContent('P1')
-      expect(p2).toHaveTextContent('P2')
-      expect(p3).toHaveTextContent('P3')
-      // Dot indicators with colors
-      const dot1 = p1.querySelector('.rounded-full')
-      const dot2 = p2.querySelector('.rounded-full')
-      const dot3 = p3.querySelector('.rounded-full')
-      expect(dot1?.className).toContain('bg-red-500')
-      expect(dot2?.className).toContain('bg-yellow-500')
-      expect(dot3?.className).toContain('bg-blue-500')
-    })
-
-    it('priority buttons use dot indicators instead of pill badges', () => {
-      render(<FormattingToolbar editor={makeEditor()} />)
-      const p1 = screen.getByRole('button', { name: 'Priority 1 (high)' })
-      // Should contain a small colored dot, not a full colored background span
-      const dot = p1.querySelector('.rounded-full')
-      expect(dot).toBeInTheDocument()
-      expect(dot?.className).toContain('bg-red-500')
-      // Text should still say P1
-      expect(p1.textContent).toContain('P1')
     })
 
     it('date button prevents default to preserve editor focus', () => {
@@ -594,9 +589,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: 'Code block' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Blockquote' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Heading level' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Priority 1 (high)' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Priority 2 (medium)' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Priority 3 (low)' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Cycle priority' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Insert date' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Set due date' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Set scheduled date' })).toBeInTheDocument()
@@ -688,6 +681,13 @@ describe('FormattingToolbar', () => {
       expect(btn).toHaveAttribute('aria-pressed', 'true')
       expect(btn.className).toContain('bg-accent')
       expect(btn.textContent).toContain('2')
+    })
+
+    it('heading button uses icon-xs size matching other toolbar buttons', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: 'Heading level' })
+      // icon-xs size class includes size-6
+      expect(btn.className).toContain('size-6')
     })
 
     it('shows H1-H6 and Paragraph options in popover content', () => {

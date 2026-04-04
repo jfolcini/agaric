@@ -58,6 +58,7 @@ const _mockStore = {
   setFocused: mockSetFocused,
   edit: mockEdit,
   splitBlock: mockSplitBlock,
+  blocks: [] as Array<{ id: string; priority?: string | null }>,
 }
 vi.mock('../../stores/blocks', () => ({
   useBlockStore: (selector?: (s: typeof _mockStore) => unknown) =>
@@ -417,7 +418,7 @@ describe('EditableBlock', () => {
   // ── Blur guard for popovers ───────────────────────────────────────
 
   describe('blur guard', () => {
-    it('does not unmount when a Radix popover is open in the DOM', () => {
+    it('does not unmount when a visible Radix popover is open in the DOM', () => {
       const mockUnmount = vi.fn(() => 'changed')
       const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
 
@@ -430,15 +431,46 @@ describe('EditableBlock', () => {
         />,
       )
 
-      // Simulate a Radix popover being open in the DOM
+      // Simulate a Radix popover being open AND visible in the DOM
       const portal = document.createElement('div')
       portal.setAttribute('data-radix-popper-content-wrapper', '')
+      ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(portal)
 
       const editorWrapper = container.querySelector('.block-editor') as HTMLElement
       fireEvent.blur(editorWrapper, { relatedTarget: null })
 
       expect(mockUnmount).not.toHaveBeenCalled()
+
+      document.body.removeChild(portal)
+    })
+
+    it('unmounts and saves when portal elements exist in DOM but are hidden', () => {
+      const mockUnmount = vi.fn(() => 'changed')
+      const roving = makeRovingEditor({ activeBlockId: 'B1', unmount: mockUnmount })
+
+      const { container } = render(
+        <EditableBlock
+          blockId="B1"
+          content="Hello"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      // Simulate a Radix popover that is in the DOM but hidden
+      const portal = document.createElement('div')
+      portal.setAttribute('data-radix-popper-content-wrapper', '')
+      ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => false
+      document.body.appendChild(portal)
+
+      const editorWrapper = container.querySelector('.block-editor') as HTMLElement
+      fireEvent.blur(editorWrapper, { relatedTarget: null })
+
+      // Should unmount because the portal is not visible
+      expect(mockUnmount).toHaveBeenCalledOnce()
+      expect(mockEdit).toHaveBeenCalledWith('B1', 'changed')
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
 
       document.body.removeChild(portal)
     })
@@ -598,7 +630,7 @@ describe('EditableBlock', () => {
   // ── #581: Save content on blur for newly created blocks ───────────
 
   describe('new block blur save', () => {
-    it('saves new block content on blur even when popup is in DOM', () => {
+    it('saves new block content on blur even when visible popup is in DOM', () => {
       const mockGetMarkdown = vi.fn(() => 'typed text')
       const mockUnmount = vi.fn(() => null)
       const roving = makeRovingEditor({
@@ -612,9 +644,10 @@ describe('EditableBlock', () => {
         <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
       )
 
-      // Simulate a suggestion popup being open in the DOM
+      // Simulate a visible suggestion popup being open in the DOM
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
+      ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(popup)
 
       const editorWrapper = container.querySelector('.block-editor') as HTMLElement
@@ -673,9 +706,10 @@ describe('EditableBlock', () => {
         />,
       )
 
-      // Popup in the DOM — should early return WITHOUT saving
+      // Visible popup in the DOM — should early return WITHOUT saving
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
+      ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(popup)
 
       const editorWrapper = container.querySelector('.block-editor') as HTMLElement
@@ -703,9 +737,10 @@ describe('EditableBlock', () => {
         <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
       )
 
-      // Popup in DOM — triggers early return
+      // Visible popup in DOM — triggers early return
       const popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
+      ;(popup as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
       document.body.appendChild(popup)
 
       const editorWrapper = container.querySelector('.block-editor') as HTMLElement

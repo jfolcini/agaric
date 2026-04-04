@@ -391,8 +391,7 @@ describe('SortableBlock', () => {
     expect(screen.getByTestId('trash-icon')).toBeInTheDocument()
   })
 
-  it('calls onDelete with blockId when delete button is clicked', async () => {
-    const user = userEvent.setup()
+  it('calls onDelete with blockId when delete button is pointer-downed', async () => {
     mockUseSortable.mockReturnValue({
       attributes: {},
       listeners: {},
@@ -415,10 +414,70 @@ describe('SortableBlock', () => {
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    await user.click(deleteBtn)
+    fireEvent.pointerDown(deleteBtn)
 
     expect(onDelete).toHaveBeenCalledOnce()
     expect(onDelete).toHaveBeenCalledWith('BLOCK_42')
+  })
+
+  it('delete button stopPropagation on pointerDown prevents parent activation', () => {
+    mockUseSortable.mockReturnValue({
+      attributes: {},
+      listeners: {},
+      setNodeRef: vi.fn(),
+      transform: null,
+      transition: undefined,
+      isDragging: false,
+    })
+
+    const onDelete = vi.fn()
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={onDelete}
+      />,
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    const event = new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
+    const stopSpy = vi.spyOn(event, 'stopPropagation')
+    deleteBtn.dispatchEvent(event)
+
+    expect(stopSpy).toHaveBeenCalled()
+    expect(onDelete).toHaveBeenCalledWith('BLOCK_1')
+  })
+
+  it('delete button responds to keyboard activation (Enter/Space)', async () => {
+    mockUseSortable.mockReturnValue({
+      attributes: {},
+      listeners: {},
+      setNodeRef: vi.fn(),
+      transform: null,
+      transition: undefined,
+      isDragging: false,
+    })
+
+    const onDelete = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <SortableBlock
+        blockId="BLOCK_KB"
+        content="keyboard test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={onDelete}
+      />,
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    await user.click(deleteBtn)
+
+    expect(onDelete).toHaveBeenCalledWith('BLOCK_KB')
   })
 
   it('does not render delete button when onDelete is not provided', () => {
@@ -1389,6 +1448,50 @@ describe('SortableBlock visibility controls', () => {
 
     const collapseBtn = screen.getByRole('button', { name: /collapse children/i })
     expect(collapseBtn.className).not.toContain('opacity-0')
+  })
+
+  it('drag handle has [@media(pointer:coarse)]:opacity-100 for touch devices', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const handle = screen.getByRole('button', { name: /reorder block/i })
+    expect(handle.className).toContain('[@media(pointer:coarse)]:opacity-100')
+  })
+
+  it('history button has [@media(pointer:coarse)]:opacity-100 for touch devices', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onShowHistory={vi.fn()}
+      />,
+    )
+
+    const historyBtn = screen.getByRole('button', { name: /block history/i })
+    expect(historyBtn.className).toContain('[@media(pointer:coarse)]:opacity-100')
+  })
+
+  it('delete handle has [@media(pointer:coarse)]:opacity-100 for touch devices', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    expect(deleteBtn.className).toContain('[@media(pointer:coarse)]:opacity-100')
   })
 
   it('priority badge is not rendered when no priority is set', () => {

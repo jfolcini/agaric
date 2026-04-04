@@ -1648,13 +1648,20 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     return () => document.removeEventListener('keydown', handleTaskKey)
   }, [focusedBlockId, handleToggleTodo])
 
-  // ── Priority keyboard shortcut event listeners (Mod+Shift+1/2/3) ───
+  // ── Priority cycling event listener (from FormattingToolbar) ─────────
   useEffect(() => {
-    const handlePriorityEvent = async (e: Event) => {
+    const handler = () => {
+      if (focusedBlockId) handleTogglePriority(focusedBlockId)
+    }
+    document.addEventListener('cycle-priority', handler)
+    return () => document.removeEventListener('cycle-priority', handler)
+  }, [focusedBlockId, handleTogglePriority])
+
+  // ── Direct priority set from keyboard shortcuts (Ctrl+Shift+1/2/3) ──
+  useEffect(() => {
+    const handleSetPriority = async (e: Event) => {
       if (!focusedBlockId) return
-      const eventType = e.type
-      const priority =
-        eventType === 'set-priority-1' ? '1' : eventType === 'set-priority-2' ? '2' : '3'
+      const priority = e.type === 'set-priority-1' ? '1' : e.type === 'set-priority-2' ? '2' : '3'
       try {
         await setPriorityCmd(focusedBlockId, priority)
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
@@ -1665,13 +1672,13 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         toast.error(t('blockTree.setPriorityFailed'))
       }
     }
-    document.addEventListener('set-priority-1', handlePriorityEvent)
-    document.addEventListener('set-priority-2', handlePriorityEvent)
-    document.addEventListener('set-priority-3', handlePriorityEvent)
+    document.addEventListener('set-priority-1', handleSetPriority)
+    document.addEventListener('set-priority-2', handleSetPriority)
+    document.addEventListener('set-priority-3', handleSetPriority)
     return () => {
-      document.removeEventListener('set-priority-1', handlePriorityEvent)
-      document.removeEventListener('set-priority-2', handlePriorityEvent)
-      document.removeEventListener('set-priority-3', handlePriorityEvent)
+      document.removeEventListener('set-priority-1', handleSetPriority)
+      document.removeEventListener('set-priority-2', handleSetPriority)
+      document.removeEventListener('set-priority-3', handleSetPriority)
     }
   }, [focusedBlockId, rootParentId, t])
 

@@ -199,6 +199,12 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onToggleCollapse,
         onShowProperties,
       })
+      // When our handler called preventDefault(), also stop propagation so
+      // ProseMirror's keydown handler on the editor DOM doesn't process the
+      // same key (e.g. Enter creating an unwanted paragraph).
+      if (event.defaultPrevented) {
+        event.stopPropagation()
+      }
     },
     [
       editor,
@@ -223,7 +229,13 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     if (!editor) return
 
     const dom = editor.view.dom
-    dom.addEventListener('keydown', handleKeyDown)
-    return () => dom.removeEventListener('keydown', handleKeyDown)
+    // Attach on the parent element with capture:true so our handler fires
+    // BEFORE ProseMirror's keydown handler (which is on dom itself in the
+    // bubble phase). Without this, ProseMirror processes Enter first and
+    // inserts a paragraph before we can intercept it.
+    const container = dom.parentElement
+    if (!container) return
+    container.addEventListener('keydown', handleKeyDown, true)
+    return () => container.removeEventListener('keydown', handleKeyDown, true)
   }, [editor, handleKeyDown])
 }

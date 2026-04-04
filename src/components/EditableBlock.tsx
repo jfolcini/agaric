@@ -65,6 +65,9 @@ function EditableBlockInner({
   const setFocused = useBlockStore((s) => s.setFocused)
   const edit = useBlockStore((s) => s.edit)
   const splitBlock = useBlockStore((s) => s.splitBlock)
+  const currentPriority = useBlockStore(
+    (s) => s.blocks.find((b) => b.id === blockId)?.priority ?? null,
+  )
   const wrapperRef = useRef<HTMLElement>(null)
 
   // Stable refs for values the auto-mount effect needs to READ but should
@@ -143,8 +146,23 @@ function EditableBlockInner({
         }
       }
 
-      // Also check if a suggestion popup, date picker, or popover is currently open in the DOM
-      if (EDITOR_PORTAL_SELECTORS.some((sel) => document.querySelector(sel))) return
+      // Also check if a suggestion popup, date picker, or popover is currently
+      // visible in the DOM. Radix leaves wrapper elements mounted when closed
+      // (with visibility:hidden or opacity:0), so we use checkVisibility() which
+      // detects display:none, visibility:hidden, and opacity:0. Falls back to
+      // offsetParent for older browsers.
+      if (
+        EDITOR_PORTAL_SELECTORS.some((sel) => {
+          const el = document.querySelector(sel) as HTMLElement | null
+          if (!el) return false
+          if (typeof el.checkVisibility === 'function') {
+            return el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+          }
+          // Fallback: offsetParent is null for display:none and hidden ancestors
+          return el.offsetParent !== null
+        })
+      )
+        return
 
       const changed = rovingEditor.unmount()
       if (changed !== null) {
@@ -186,7 +204,13 @@ function EditableBlockInner({
       data-block-id={blockId}
       onBlur={handleBlur}
     >
-      {rovingEditor.editor && <FormattingToolbar editor={rovingEditor.editor} blockId={blockId} />}
+      {rovingEditor.editor && (
+        <FormattingToolbar
+          editor={rovingEditor.editor}
+          blockId={blockId}
+          currentPriority={currentPriority}
+        />
+      )}
       <EditorContent editor={rovingEditor.editor} />
     </section>
   )

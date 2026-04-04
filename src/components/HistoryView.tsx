@@ -501,7 +501,7 @@ export function HistoryView(): React.ReactElement {
                     disabled={isNonReversible}
                     onChange={() => toggleSelection(index)}
                     onClick={(e) => e.stopPropagation()}
-                    className="h-4 w-4 shrink-0 rounded border-border"
+                    className="h-4 w-4 shrink-0 rounded border-border [@media(pointer:coarse)]:h-6 [@media(pointer:coarse)]:w-6"
                     aria-label={t('history.selectOperationLabel', {
                       opType: entry.op_type,
                       seq: entry.seq,
@@ -545,7 +545,7 @@ export function HistoryView(): React.ReactElement {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="diff-toggle-btn shrink-0 h-7 px-2"
+                      className="diff-toggle-btn shrink-0 px-2"
                       onClick={(e) => {
                         e.stopPropagation()
                         handleToggleDiff(entry)

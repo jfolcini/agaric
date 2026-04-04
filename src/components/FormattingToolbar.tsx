@@ -1,7 +1,7 @@
 /**
  * FormattingToolbar — always-visible toolbar rendered above the active editor.
  *
- * Buttons: Bold, Italic, Code, Strikethrough, Highlight | External Link, Code Block, Heading | Priority 1/2/3, Date, Due Date, Scheduled Date, TODO | Undo, Redo.
+ * Buttons: Bold, Italic, Code, Strikethrough, Highlight | External Link, Code Block, Heading | Cycle Priority, Date, Due Date, Scheduled Date, TODO | Undo, Redo.
  * Uses onPointerDown + preventDefault so clicks never steal focus from TipTap.
  * Active marks are highlighted via aria-pressed + bg-accent.
  *
@@ -48,6 +48,8 @@ interface FormattingToolbarProps {
   editor: Editor
   /** Block ID used to associate toolbar with its editor via aria-controls. */
   blockId?: string
+  /** Current priority of the focused block (null, '1', '2', '3'). */
+  currentPriority?: string | null
 }
 
 function Tip({
@@ -67,7 +69,11 @@ function Tip({
   )
 }
 
-export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): React.ReactElement {
+export function FormattingToolbar({
+  editor,
+  blockId,
+  currentPriority,
+}: FormattingToolbarProps): React.ReactElement {
   const { t } = useTranslation()
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
   const [headingPopoverOpen, setHeadingPopoverOpen] = useState(false)
@@ -297,7 +303,7 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
             <PopoverAnchor asChild>
               <Button
                 variant="ghost"
-                size="xs"
+                size="icon-xs"
                 aria-label={t('toolbar.headingLevel')}
                 aria-pressed={state.headingLevel > 0}
                 className={state.headingLevel > 0 ? 'bg-accent text-accent-foreground' : ''}
@@ -354,51 +360,23 @@ export function FormattingToolbar({ editor, blockId }: FormattingToolbarProps): 
 
         <Separator orientation="vertical" className="border-l border-border/40 mx-0.5 h-4" />
 
-        <Tip label={t('toolbar.priority1Tip')}>
+        <Tip label={t('toolbar.cyclePriorityTip')}>
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label={t('toolbar.priority1')}
+            aria-label={t('toolbar.cyclePriority')}
+            aria-pressed={currentPriority != null}
+            className={currentPriority != null ? 'bg-accent text-accent-foreground' : ''}
             onPointerDown={(e) => {
               e.preventDefault()
-              document.dispatchEvent(new CustomEvent('set-priority-1'))
+              document.dispatchEvent(new CustomEvent('cycle-priority'))
             }}
           >
             <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
-              <span className="h-2 w-2 rounded-full bg-red-500" />
-              P1
-            </span>
-          </Button>
-        </Tip>
-        <Tip label={t('toolbar.priority2Tip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.priority2')}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              document.dispatchEvent(new CustomEvent('set-priority-2'))
-            }}
-          >
-            <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
-              <span className="h-2 w-2 rounded-full bg-yellow-500" />
-              P2
-            </span>
-          </Button>
-        </Tip>
-        <Tip label={t('toolbar.priority3Tip')}>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('toolbar.priority3')}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              document.dispatchEvent(new CustomEvent('set-priority-3'))
-            }}
-          >
-            <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
-              <span className="h-2 w-2 rounded-full bg-blue-500" />
-              P3
+              {currentPriority === '1' && <span className="h-2 w-2 rounded-full bg-red-500" />}
+              {currentPriority === '2' && <span className="h-2 w-2 rounded-full bg-yellow-500" />}
+              {currentPriority === '3' && <span className="h-2 w-2 rounded-full bg-blue-500" />}
+              {currentPriority ? `P${currentPriority}` : 'P'}
             </span>
           </Button>
         </Tip>
