@@ -1,5 +1,24 @@
 # Session Log
 
+## Session 175 — 2026-04-04 — Phase 1 batch 28: E2E templates + import/export (TH-3, TH-4)
+
+### Phase 1 (batch 28): E2E test coverage for templates and import/export (TH-3, TH-4)
+
+2 parallel subagents (one per spec file + mock additions).
+
+| File | Change |
+|------|--------|
+| `e2e/templates.spec.ts` | TH-3: 16 new E2E tests — save/remove template status, /template slash command picker, apply template, variable expansion (<% today %>, <% page title %>), journal template toggle. |
+| `e2e/import-export.spec.ts` | TH-4: 12 new E2E tests — export via kebab menu, markdown structure verification, import via file input, filename title fallback, block structure preservation, tag/link tokens, round-trip fidelity. |
+| `tauri-mock.ts` | TH-3: Template seed page (Meeting Notes Template) with 3 variable blocks + template='true' property. TH-4: `import_markdown` mock handler (heading parsing, line-to-block splitting, ImportResult return). |
+| `tauri-mock.test.ts` | TH-3: Updated page count assertion (5 -> 6 pages). |
+
+### Stats
+- E2E: 28 new tests (16 templates + 12 import/export)
+- Mock: 156 existing tests still pass
+- Commits: `c7ae0fc` (TH-3), `ad743cc` (TH-4)
+- REVIEW-LATER: TH-3, TH-4 resolved. 18 -> **16 open items**. TEST-HIGH tier now empty.
+
 ## Session 174 — 2026-04-04 — Phase 1 batch 27: E2E properties + query blocks (TH-1, TH-2)
 
 ### Phase 1 (batch 27): E2E test coverage for properties and query blocks (TH-1, TH-2)
