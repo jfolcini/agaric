@@ -595,7 +595,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                     {/* Priority badge */}
                     {block.priority && (
                       <span
-                        className={`due-panel-priority inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold ${priorityColor(block.priority)}`}
+                        className={`due-panel-priority inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1 ${priorityColor(block.priority)}`}
                       >
                         P{block.priority}
                       </span>

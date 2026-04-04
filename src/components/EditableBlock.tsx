@@ -25,6 +25,7 @@ export const EDITOR_PORTAL_SELECTORS = [
   '[data-radix-popper-content-wrapper]',
   '.rdp',
   '.date-picker-popup',
+  '.property-key-editor',
 ]
 
 interface EditableBlockProps {

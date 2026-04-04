@@ -171,7 +171,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                 variant="ghost"
                 size="icon-xs"
                 aria-label="Delete tag"
-                className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] focus-visible:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
                 onClick={() => setDeleteTarget({ id: tag.id, name: tag.content || 'Unnamed' })}
               >
                 <Trash2 className="h-3.5 w-3.5" />

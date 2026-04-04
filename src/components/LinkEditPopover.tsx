@@ -116,7 +116,7 @@ export function LinkEditPopover({
       <div className="flex items-center gap-2">
         <Button
           size="xs"
-          className="[@media(pointer:coarse)]:h-10"
+          className="[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-[44px]"
           onPointerDown={(e) => e.preventDefault()}
           onClick={handleApply}
         >
@@ -126,7 +126,7 @@ export function LinkEditPopover({
           <Button
             size="xs"
             variant="destructive"
-            className="[@media(pointer:coarse)]:h-10"
+            className="[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-[44px]"
             onPointerDown={(e) => e.preventDefault()}
             onClick={handleRemove}
           >

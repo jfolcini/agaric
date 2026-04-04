@@ -321,14 +321,14 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             >
               <button
                 type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent [@media(pointer:coarse)]:min-h-[44px]"
                 onClick={handleToggleTemplate}
               >
                 {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
               </button>
               <button
                 type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent [@media(pointer:coarse)]:min-h-[44px]"
                 onClick={handleToggleJournalTemplate}
               >
                 {isJournalTemplate
@@ -338,7 +338,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               <hr className="my-1 h-px bg-border border-none" />
               <button
                 type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent [@media(pointer:coarse)]:min-h-[44px]"
                 onClick={handleExport}
               >
                 {t('pageHeader.exportMarkdown')}
@@ -346,7 +346,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               <hr className="my-1 h-px bg-border border-none" />
               <button
                 type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent"
+                className="w-full rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent [@media(pointer:coarse)]:min-h-[44px]"
                 onClick={handleDeletePage}
               >
                 {t('pageHeader.deletePage')}
