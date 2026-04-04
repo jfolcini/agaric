@@ -369,8 +369,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const hasChildrenSet = useMemo(() => {
     const set = new Set<string>()
     for (let i = 0; i < blocks.length - 1; i++) {
-      if (blocks[i + 1]!.depth > blocks[i]!.depth) {
-        set.add(blocks[i]!.id)
+      const curr = blocks[i] as (typeof blocks)[number]
+      const next = blocks[i + 1] as (typeof blocks)[number]
+      if (next.depth > curr.depth) {
+        set.add(curr.id)
       }
     }
     return set
@@ -385,7 +387,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     for (const block of blocks) {
       while (
         skipUntilDepth.length > 0 &&
-        block.depth <= skipUntilDepth[skipUntilDepth.length - 1]!
+        block.depth <= (skipUntilDepth[skipUntilDepth.length - 1] as number)
       ) {
         skipUntilDepth.pop()
       }
@@ -566,8 +568,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         ...locationResults,
       ]
       if (tableMatch) {
-        const rows = Number.parseInt(tableMatch[1]!, 10)
-        const cols = Number.parseInt(tableMatch[2]!, 10)
+        const rows = Number.parseInt(tableMatch[1] as string, 10)
+        const cols = Number.parseInt(tableMatch[2] as string, 10)
         // Replace the default table item with the parameterized one
         results = results.filter((r) => r.id !== 'table')
         results.unshift({
@@ -661,7 +663,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         for (const b of blocks) {
           if (!b.content) continue
           for (const m of b.content.matchAll(ULID_LINK_RE)) {
-            if (!currentCache.has(m[1]!)) uncached.add(m[1]!)
+            if (!currentCache.has(m[1] as string)) uncached.add(m[1] as string)
           }
         }
 
@@ -899,8 +901,8 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
         let cols = 3
         const dimMatch = item.id.match(/^table:(\d+):(\d+)$/)
         if (dimMatch) {
-          rows = Number.parseInt(dimMatch[1]!, 10)
-          cols = Number.parseInt(dimMatch[2]!, 10)
+          rows = Number.parseInt(dimMatch[1] as string, 10)
+          cols = Number.parseInt(dimMatch[2] as string, 10)
         }
         rovingEditor.editor?.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run()
         return
@@ -966,7 +968,9 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           await setProperty({ blockId: focusedBlockId, key: item.id, valueText: '' })
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
           toast.success(
-            t('blockTree.addedPropertyMessage', { name: item.label.split(' — ')[0]!.toLowerCase() }),
+            t('blockTree.addedPropertyMessage', {
+              name: item.label.split(' — ')[0]?.toLowerCase(),
+            }),
           )
         } catch {
           toast.error(t('blockTree.addPropertyFailed'))
@@ -986,7 +990,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
             toast.error(t('blockTree.addPropertyFailed'))
           }
         } else {
-          const value = item.label.split(' — ')[0]!.replace('ASSIGNEE ', '')
+          const value = item.label.split(' — ')[0]?.replace('ASSIGNEE ', '')
           try {
             await setProperty({ blockId: focusedBlockId, key: 'assignee', valueText: value })
             if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
@@ -1010,7 +1014,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
             toast.error(t('blockTree.addPropertyFailed'))
           }
         } else {
-          const value = item.label.split(' — ')[0]!.replace('LOCATION ', '')
+          const value = item.label.split(' — ')[0]?.replace('LOCATION ', '')
           try {
             await setProperty({ blockId: focusedBlockId, key: 'location', valueText: value })
             if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
@@ -1291,7 +1295,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const handleFocusPrev = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx > 0) {
-      const prevBlock = collapsedVisible[idx - 1]!
+      const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
       setFocused(prevBlock.id)
       rovingEditor.mount(prevBlock.id, prevBlock.content ?? '')
       const preview = prevBlock.content?.slice(0, 50) ?? ''
@@ -1302,7 +1306,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const handleFocusNext = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx >= 0 && idx < collapsedVisible.length - 1) {
-      const nextBlock = collapsedVisible[idx + 1]!
+      const nextBlock = collapsedVisible[idx + 1] as (typeof collapsedVisible)[number]
       setFocused(nextBlock.id)
       rovingEditor.mount(nextBlock.id, nextBlock.content ?? '')
       const preview = nextBlock.content?.slice(0, 50) ?? ''
@@ -1322,11 +1326,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     announce('Block deleted')
     // Focus previous block, or next visible at same level, or nothing
     if (idx > 0) {
-      const prevBlock = collapsedVisible[idx - 1]!
+      const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
       setFocused(prevBlock.id)
       rovingEditor.mount(prevBlock.id, prevBlock.content ?? '')
     } else if (idx + 1 < collapsedVisible.length) {
-      const nextBlock = collapsedVisible[idx + 1]!
+      const nextBlock = collapsedVisible[idx + 1] as (typeof collapsedVisible)[number]
       setFocused(nextBlock.id)
       rovingEditor.mount(nextBlock.id, nextBlock.content ?? '')
     } else {
@@ -1388,10 +1392,10 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx <= 0) return // First block — nothing to merge with
 
-    const prevBlock = collapsedVisible[idx - 1]!
+    const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
 
     // Get current block content from the editor
-    const currentContent = rovingEditor.unmount() ?? collapsedVisible[idx]!.content ?? ''
+    const currentContent = rovingEditor.unmount() ?? collapsedVisible[idx]?.content ?? ''
     const prevContent = prevBlock.content ?? ''
 
     // Merge: concatenate previous content + current content
@@ -1434,11 +1438,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       const idx = collapsedVisible.findIndex((b) => b.id === blockId)
       if (idx <= 0) return // First block — nothing to merge with
 
-      const prevBlock = collapsedVisible[idx - 1]!
+      const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
 
       // If the editor is mounted on this block, unmount to capture latest content
       const editorContent = focusedBlockId === blockId ? rovingEditor.unmount() : null
-      const currentContent = editorContent ?? collapsedVisible[idx]!.content ?? ''
+      const currentContent = editorContent ?? collapsedVisible[idx]?.content ?? ''
       const prevContent = prevBlock.content ?? ''
 
       const mergedContent = prevContent + currentContent
@@ -1573,6 +1577,29 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     return () => document.removeEventListener('keydown', handler)
   }, [focusedBlockId, selectedBlockIds.length, selectAll, clearSelected])
 
+  // ── Keyboard shortcut: Escape closes unfocused editor (UX-M8) ──────
+  // The TipTap-level Escape handler (use-block-keyboard.ts) only fires when
+  // the editor DOM has focus.  This document-level handler covers the case
+  // where the user clicked elsewhere on the page and presses Escape — the
+  // editor is still mounted but not focused.
+  useEffect(() => {
+    const handleUnfocusedEscape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      const { focusedBlockId: fid, selectedBlockIds: sel } = useBlockStore.getState()
+      if (!fid) return
+      // Don't interfere when there's an active multi-selection (handled above)
+      if (sel.length > 0) return
+      // Only act when the TipTap editor is NOT the active element
+      const proseMirror = document.querySelector('.ProseMirror')
+      if (proseMirror?.contains(document.activeElement)) return
+      e.preventDefault()
+      rovingEditor.unmount()
+      setFocused(null)
+    }
+    document.addEventListener('keydown', handleUnfocusedEscape)
+    return () => document.removeEventListener('keydown', handleUnfocusedEscape)
+  }, [rovingEditor, setFocused])
+
   // ── Keyboard shortcut for task cycling (Ctrl+Enter / Cmd+Enter) ────
   useEffect(() => {
     const handleTaskKey = (e: KeyboardEvent) => {
@@ -1697,8 +1724,28 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
     return () => document.removeEventListener('keydown', handleHeadingShortcut)
   }, [focusedBlockId, handleSlashCommand])
 
+  // ── Click on whitespace within block tree closes editor (UX-M9) ──
+  const handleContainerMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.target !== e.currentTarget) return
+      const { focusedBlockId: fid } = useBlockStore.getState()
+      if (!fid) return
+      // If the editor DOM still has focus, blur it so EditableBlock's
+      // handleBlur fires the normal save-and-close path.
+      const proseMirror = document.querySelector('.ProseMirror')
+      if (proseMirror?.contains(document.activeElement)) {
+        ;(document.activeElement as HTMLElement)?.blur()
+      } else {
+        // Editor is mounted but already unfocused — force close
+        rovingEditor.unmount()
+        setFocused(null)
+      }
+    },
+    [rovingEditor, setFocused],
+  )
+
   // ── Active item for DragOverlay ────────────────────────────────────
-  const activeBlock = dnd.activeId ? blocks.find((b) => b.id === dnd.activeId) ?? null : null
+  const activeBlock = dnd.activeId ? (blocks.find((b) => b.id === dnd.activeId) ?? null) : null
 
   if (loading) {
     return (
@@ -1777,7 +1824,11 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
           items={dnd.visibleItems.map((b) => b.id)}
           strategy={verticalListSortingStrategy}
         >
-          <div className="block-tree space-y-0.5 [@media(pointer:coarse)]:space-y-1.5">
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: whitespace click to dismiss editor */}
+          <div
+            className="block-tree space-y-0.5 [@media(pointer:coarse)]:space-y-1.5"
+            onMouseDown={handleContainerMouseDown}
+          >
             {dnd.visibleItems.map((block) => {
               const isFocused = focusedBlockId === block.id
               // Show projected depth during drag for the active item's over target

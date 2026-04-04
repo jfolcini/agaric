@@ -53,7 +53,7 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText('Block link picker')).toBeInTheDocument()
     expect(screen.getAllByText('Slash command menu').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('Show keyboard shortcuts')).toBeInTheDocument()
-    expect(screen.getByText('Close dialog / cancel editing')).toBeInTheDocument()
+    expect(screen.getByText('Close overlays, cancel editing, clear selection')).toBeInTheDocument()
     expect(screen.getByText('Toggle code block')).toBeInTheDocument()
     expect(screen.getByText('Move block up')).toBeInTheDocument()
     expect(screen.getByText('Move block down')).toBeInTheDocument()

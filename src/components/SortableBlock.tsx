@@ -216,6 +216,15 @@ function SortableBlockInner({
     }
   }, [blockId])
 
+  // ── Heading level detection for gutter/inline alignment ───────
+  const headingLevel = useMemo(() => {
+    const m = content.match(/^(#{1,6})\s/)
+    return m ? (m[1] as string).length : 0
+  }, [content])
+
+  /** Dynamic top-padding so gutter & inline-controls align with heading text. */
+  const gutterPt = headingLevel === 1 ? 'pt-2' : headingLevel === 2 ? 'pt-1.5' : 'pt-1'
+
   const filteredProperties = useMemo(
     () =>
       (properties ?? []).filter(
@@ -376,7 +385,7 @@ function SortableBlockInner({
         )}
 
         {/* ── Narrow gutter — grip + delete only ─────────────────── */}
-        <div className={cn(GUTTER_WIDTH, 'flex-shrink-0 flex items-start pt-1 gap-1')}>
+        <div className={cn(GUTTER_WIDTH, 'flex-shrink-0 flex items-start gap-1', gutterPt)}>
           {/* Drag handle — far left */}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -429,7 +438,7 @@ function SortableBlockInner({
         </div>
 
         {/* ── Inline controls — chevron, checkbox, priority ─────── */}
-        <div className="inline-controls flex items-start flex-shrink-0 pt-1 gap-1">
+        <div className={cn('inline-controls flex items-start flex-shrink-0 gap-1', gutterPt)}>
           {/* Chevron — only when hasChildren, always visible */}
           {hasChildren ? (
             <Tooltip>
@@ -548,6 +557,7 @@ function SortableBlockInner({
                 'due-date-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none cursor-pointer',
                 dueDateColor(dueDate),
               )}
+              title={t('block.dueDate', { date: formatCompactDate(dueDate) })}
               aria-label={t('block.dueDate', { date: formatCompactDate(dueDate) })}
               onClick={() => {
                 document.dispatchEvent(new CustomEvent('open-due-date-picker'))
@@ -566,6 +576,7 @@ function SortableBlockInner({
                 'scheduled-chip flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none select-none cursor-pointer',
                 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
               )}
+              title={t('block.scheduledDate', { date: formatCompactDate(scheduledDate) })}
               aria-label={t('block.scheduledDate', { date: formatCompactDate(scheduledDate) })}
               onClick={() => {
                 document.dispatchEvent(new CustomEvent('open-scheduled-date-picker'))

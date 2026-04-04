@@ -124,6 +124,24 @@ describe('BlockPropertyDrawer', () => {
     expect(screen.queryByText('Block Properties')).not.toBeInTheDocument()
   })
 
+  it('drawer body section has horizontal padding for consistent spacing', async () => {
+    const props = [makeProp('status', { value_text: 'active' })]
+    setupMock(props, [makeDef('status')])
+
+    render(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('status')).toBeInTheDocument()
+    })
+
+    // The body container wraps property rows; verify it carries px-4 for padding
+    const statusEl = screen.getByText('status')
+    // The body div is the grandparent: body > row > span
+    const bodyDiv = statusEl.closest('.space-y-3')
+    expect(bodyDiv).not.toBeNull()
+    expect(bodyDiv).toHaveClass('px-4')
+  })
+
   it('has no a11y violations when open with properties', async () => {
     const props = [makeProp('status', { value_text: 'active' })]
     setupMock(props, [makeDef('status')])

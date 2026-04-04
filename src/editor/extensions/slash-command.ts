@@ -11,6 +11,7 @@
 import type { Editor } from '@tiptap/core'
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
+import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
 import { Suggestion } from '@tiptap/suggestion'
 import type { PickerItem } from '../SuggestionList'
 import { createSuggestionRenderer } from '../suggestion-renderer'
@@ -47,7 +48,34 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
           editor.chain().focus().deleteRange(range).run()
           extensionOptions.onCommand(props as PickerItem, editor)
         },
-        render: () => createSuggestionRenderer('Slash commands'),
+        render: () => {
+          const base = createSuggestionRenderer('Slash commands')
+          let autoExecTimer: ReturnType<typeof setTimeout> | null = null
+
+          return {
+            onStart: base.onStart,
+            onUpdate(props: SuggestionProps<PickerItem>) {
+              base.onUpdate(props)
+              if (autoExecTimer) clearTimeout(autoExecTimer)
+              const { items, query, command } = props
+              // Auto-execute when exactly 1 match and query is long enough
+              if (items.length === 1 && query.length >= 3) {
+                autoExecTimer = setTimeout(() => {
+                  command(items[0] as PickerItem)
+                }, 200)
+              }
+            },
+            onKeyDown(props: SuggestionKeyDownProps) {
+              // Cancel auto-execute on any keypress (user is still interacting)
+              if (autoExecTimer) clearTimeout(autoExecTimer)
+              return base.onKeyDown(props)
+            },
+            onExit() {
+              if (autoExecTimer) clearTimeout(autoExecTimer)
+              base.onExit()
+            },
+          }
+        },
       }),
     ]
   },

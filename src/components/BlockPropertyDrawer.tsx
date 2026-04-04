@@ -15,9 +15,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { announce } from '../lib/announcer'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { deleteProperty, getProperties, listPropertyDefs, setProperty } from '../lib/tauri'
-import { announce } from '../lib/announcer'
 
 export interface BlockPropertyDrawerProps {
   blockId: string | null
@@ -107,7 +107,7 @@ export function BlockPropertyDrawer({
         <SheetHeader>
           <SheetTitle>{t('property.drawerTitle')}</SheetTitle>
         </SheetHeader>
-        <div className="mt-4 space-y-3">
+        <div className="mt-4 space-y-3 px-4">
           {loading ? (
             <p className="text-sm text-muted-foreground">{t('property.loading')}</p>
           ) : properties.length === 0 ? (

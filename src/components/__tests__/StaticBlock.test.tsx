@@ -665,9 +665,7 @@ describe('StaticBlock', () => {
         handleDeleteAttachment: vi.fn(),
       })
 
-      const { container } = render(
-        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
-      )
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
       const img = container.querySelector('img')
       expect(img).toBeInTheDocument()
@@ -704,9 +702,7 @@ describe('StaticBlock', () => {
 
     it('shows nothing when no attachments', () => {
       // Default mock returns empty attachments
-      const { container } = render(
-        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
-      )
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
       expect(container.querySelector('[data-testid="attachment-section"]')).not.toBeInTheDocument()
     })
@@ -719,9 +715,7 @@ describe('StaticBlock', () => {
         handleDeleteAttachment: vi.fn(),
       })
 
-      const { container } = render(
-        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
-      )
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
       expect(container.querySelector('[data-testid="attachment-section"]')).not.toBeInTheDocument()
     })
@@ -749,9 +743,7 @@ describe('StaticBlock', () => {
         handleDeleteAttachment: vi.fn(),
       })
 
-      const { container } = render(
-        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
-      )
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
       // Image renders as <img>
       const img = container.querySelector('img')
@@ -774,9 +766,7 @@ describe('StaticBlock', () => {
         handleDeleteAttachment: vi.fn(),
       })
 
-      const { container } = render(
-        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
-      )
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
       // Image should not render without Tauri; no attachment section if only images
       expect(container.querySelector('img')).not.toBeInTheDocument()
@@ -818,9 +808,7 @@ describe('StaticBlock', () => {
         handleDeleteAttachment: vi.fn(),
       })
 
-      const { container } = render(
-        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
-      )
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
@@ -835,9 +823,7 @@ describe('StaticBlock', () => {
         handleDeleteAttachment: vi.fn(),
       })
 
-      const { container } = render(
-        <StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />,
-      )
+      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
@@ -897,7 +883,7 @@ describe('StaticBlock', () => {
 
       const chip = screen.getByTestId('block-ref-chip')
       // First line is >60 chars, so it should be truncated to 57 + '...'
-      const firstLine = longContent.split('\n')[0]!
+      const firstLine = longContent.split('\n')[0] as string
       const expected = `${firstLine.slice(0, 57)}...`
       expect(chip.textContent).toBe(expected)
     })
@@ -906,11 +892,7 @@ describe('StaticBlock', () => {
       mockBlockRefDoc(REF_BLOCK_2)
       render(
         <TooltipProvider>
-          <StaticBlock
-            blockId="B1"
-            content={`((${REF_BLOCK_2}))`}
-            onFocus={vi.fn()}
-          />
+          <StaticBlock blockId="B1" content={`((${REF_BLOCK_2}))`} onFocus={vi.fn()} />
         </TooltipProvider>,
       )
 
@@ -959,6 +941,84 @@ describe('StaticBlock', () => {
       const chip = screen.getByTestId('block-ref-chip')
       expect(chip.classList.contains('block-ref-deleted')).toBe(true)
       expect(chip.classList.contains('block-ref-chip')).toBe(true)
+    })
+  })
+
+  // -- Blockquote rendering ---------------------------------------------------
+
+  describe('blockquote rendering', () => {
+    /** Helper: mock parse to return a doc containing a blockquote node. */
+    // biome-ignore lint/suspicious/noExplicitAny: test helper — mock data doesn't need strict typing
+    function mockBlockquoteDoc(content: any[]) {
+      mockedParse.mockReturnValueOnce({
+        type: 'doc',
+        content: [
+          {
+            type: 'blockquote',
+            content,
+          },
+        ],
+      } as ReturnType<typeof parse>)
+    }
+
+    it('renders blockquote with left border and muted text', () => {
+      mockBlockquoteDoc([
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'Quoted text' }],
+        },
+      ])
+
+      const { container } = render(
+        <StaticBlock blockId="B1" content="> Quoted text" onFocus={vi.fn()} />,
+      )
+
+      const bq = container.querySelector('blockquote') as HTMLElement
+      expect(bq).not.toBeNull()
+      expect(bq.classList.contains('border-l-[3px]')).toBe(true)
+      expect(bq.classList.contains('border-border')).toBe(true)
+      expect(bq.classList.contains('pl-4')).toBe(true)
+      expect(bq.classList.contains('text-muted-foreground')).toBe(true)
+      expect(bq.textContent).toContain('Quoted text')
+    })
+
+    it('renders nested content inside blockquote', () => {
+      mockBlockquoteDoc([
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: 'Normal ' },
+            { type: 'text', text: 'bold', marks: [{ type: 'bold' }] },
+            { type: 'text', text: ' text' },
+          ],
+        },
+      ])
+
+      const { container } = render(
+        <StaticBlock blockId="B1" content="> Normal **bold** text" onFocus={vi.fn()} />,
+      )
+
+      const bq = container.querySelector('blockquote') as HTMLElement
+      expect(bq).not.toBeNull()
+      expect(bq.querySelector('p')).not.toBeNull()
+      expect(bq.querySelector('strong')).not.toBeNull()
+      expect(bq.textContent).toContain('Normal bold text')
+    })
+
+    it('blockquote axe a11y audit', async () => {
+      mockBlockquoteDoc([
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'Accessible quote' }],
+        },
+      ])
+
+      const { container } = render(
+        <StaticBlock blockId="B1" content="> Accessible quote" onFocus={vi.fn()} />,
+      )
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
     })
   })
 })

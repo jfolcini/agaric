@@ -240,6 +240,7 @@ describe('listBlocks', () => {
       tagId: null,
       showDeleted: null,
       agendaDate: null,
+      agendaDateRange: null,
       agendaSource: null,
       cursor: null,
       limit: null,
@@ -282,6 +283,7 @@ describe('listBlocks', () => {
       tagId: 'TAG01',
       showDeleted: true,
       agendaDate: '2025-01-15',
+      agendaDateRange: null,
       agendaSource: null,
       cursor: 'cursor123',
       limit: 25,
@@ -294,7 +296,7 @@ describe('listBlocks', () => {
 
     await listBlocks({ blockType: 'page' })
 
-    const args = mockedInvoke.mock.calls[0]![1] as Record<string, unknown>
+    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     // Tauri 2 requires null for Option<T>, not undefined
     expect(args.parentId).toBeNull()
     expect(args.tagId).toBeNull()
@@ -1308,7 +1310,7 @@ describe('queryBacklinksFiltered', () => {
     await queryBacklinksFiltered({ blockId: 'TARGET' })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke.mock.calls[0]![0]).toBe('query_backlinks_filtered')
+    expect((mockedInvoke.mock.calls[0] as unknown[])[0]).toBe('query_backlinks_filtered')
   })
 
   it('passes blockId parameter', async () => {

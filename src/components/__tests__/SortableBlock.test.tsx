@@ -3463,3 +3463,127 @@ describe('SortableBlock ref property picker', () => {
     expect(screen.getByText('No pages found')).toBeInTheDocument()
   })
 })
+
+// =========================================================================
+// UX-M20: Heading alignment — gutter/inline padding adjusts for headings
+// =========================================================================
+
+describe('SortableBlock heading alignment', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('gutter has pt-2 for h1 blocks', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="# Heading"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+    const gutter = container.querySelector(`.w-\\[44px\\]`)
+    expect(gutter?.className).toContain('pt-2')
+    expect(gutter?.className).not.toContain('pt-1')
+
+    const inlineControls = container.querySelector('.inline-controls')
+    expect(inlineControls?.className).toContain('pt-2')
+  })
+
+  it('gutter has pt-1.5 for h2 blocks', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="## Heading"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+    const gutter = container.querySelector(`.w-\\[44px\\]`)
+    expect(gutter?.className).toContain('pt-1.5')
+
+    const inlineControls = container.querySelector('.inline-controls')
+    expect(inlineControls?.className).toContain('pt-1.5')
+  })
+
+  it('gutter retains pt-1 for non-heading blocks', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="normal text"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+    const gutter = container.querySelector(`.w-\\[44px\\]`)
+    expect(gutter?.className).toContain('pt-1')
+    expect(gutter?.className).not.toContain('pt-2')
+    expect(gutter?.className).not.toContain('pt-1.5')
+
+    const inlineControls = container.querySelector('.inline-controls')
+    expect(inlineControls?.className).toContain('pt-1')
+  })
+
+  it('gutter retains pt-1 for h3 blocks', () => {
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="### Heading 3"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+    const gutter = container.querySelector(`.w-\\[44px\\]`)
+    expect(gutter?.className).toContain('pt-1')
+    expect(gutter?.className).not.toContain('pt-2')
+    expect(gutter?.className).not.toContain('pt-1.5')
+  })
+})
+
+// =========================================================================
+// UX-M21: Date pill tooltips — title & aria-label attributes
+// =========================================================================
+
+describe('SortableBlock date pill tooltips', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('due date chip has title and aria-label', () => {
+    const now = new Date()
+    const year = now.getFullYear()
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        dueDate={`${year}-07-04`}
+      />,
+    )
+    const chip = container.querySelector('.due-date-chip')
+    expect(chip).toBeInTheDocument()
+    expect(chip).toHaveAttribute('title', 'Due Jul 4')
+    expect(chip).toHaveAttribute('aria-label', 'Due Jul 4')
+  })
+
+  it('scheduled date chip has title and aria-label', () => {
+    const now = new Date()
+    const year = now.getFullYear()
+    const { container } = render(
+      <SortableBlock
+        blockId="B1"
+        content="hello"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        scheduledDate={`${year}-08-15`}
+      />,
+    )
+    const chip = container.querySelector('.scheduled-chip')
+    expect(chip).toBeInTheDocument()
+    expect(chip).toHaveAttribute('title', 'Scheduled Aug 15')
+    expect(chip).toHaveAttribute('aria-label', 'Scheduled Aug 15')
+  })
+})

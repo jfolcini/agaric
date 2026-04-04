@@ -91,6 +91,7 @@ describe('useBlockTags allTags', () => {
       tagId: null,
       showDeleted: null,
       agendaDate: null,
+      agendaDateRange: null,
       agendaSource: null,
       cursor: null,
       limit: null,
@@ -152,9 +153,7 @@ describe('useBlockTags appliedTagIds', () => {
 
     expect(result.current.appliedTagIds.size).toBe(0)
     // list_tags_for_block should NOT be called when blockId is null
-    const tagCalls = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'list_tags_for_block',
-    )
+    const tagCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_tags_for_block')
     expect(tagCalls).toHaveLength(0)
   })
 
@@ -220,9 +219,7 @@ describe('useBlockTags handleAddTag', () => {
       await result.current.handleAddTag('TAG_1')
     })
 
-    const addTagCalls = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'add_tag',
-    )
+    const addTagCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'add_tag')
     expect(addTagCalls).toHaveLength(0)
   })
 
@@ -250,7 +247,12 @@ describe('useBlockTags handleAddTag', () => {
 
   it('calls onNewAction after successful add when rootParentId is set', async () => {
     const onNewActionSpy = vi.fn()
-    useBlockStore.setState({ blocks: [], rootParentId: 'PAGE_1', focusedBlockId: null, loading: false })
+    useBlockStore.setState({
+      blocks: [],
+      rootParentId: 'PAGE_1',
+      focusedBlockId: null,
+      loading: false,
+    })
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -322,9 +324,7 @@ describe('useBlockTags handleRemoveTag', () => {
       await result.current.handleRemoveTag('TAG_1')
     })
 
-    const removeTagCalls = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'remove_tag',
-    )
+    const removeTagCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'remove_tag')
     expect(removeTagCalls).toHaveLength(0)
   })
 
@@ -353,7 +353,12 @@ describe('useBlockTags handleRemoveTag', () => {
 
   it('calls onNewAction after successful remove when rootParentId is set', async () => {
     const onNewActionSpy = vi.fn()
-    useBlockStore.setState({ blocks: [], rootParentId: 'PAGE_1', focusedBlockId: null, loading: false })
+    useBlockStore.setState({
+      blocks: [],
+      rootParentId: 'PAGE_1',
+      focusedBlockId: null,
+      loading: false,
+    })
     useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -467,9 +472,7 @@ describe('useBlockTags handleCreateTag', () => {
       await result.current.handleCreateTag('   ')
     })
 
-    const createCalls = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'create_block',
-    )
+    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
     expect(createCalls).toHaveLength(0)
   })
 
@@ -500,9 +503,7 @@ describe('useBlockTags handleCreateTag', () => {
     })
 
     // addTag should NOT be called
-    const addTagCalls = mockedInvoke.mock.calls.filter(
-      ([cmd]) => cmd === 'add_tag',
-    )
+    const addTagCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'add_tag')
     expect(addTagCalls).toHaveLength(0)
 
     // allTags should still include the new tag

@@ -52,6 +52,7 @@ describe('PageBrowser', () => {
         tagId: null,
         showDeleted: null,
         agendaDate: null,
+        agendaDateRange: null,
         agendaSource: null,
         cursor: null,
         limit: 50,
@@ -61,7 +62,10 @@ describe('PageBrowser', () => {
 
   it('renders pages when data is returned', async () => {
     const page = {
-      items: [makePage({ id: 'P1', content: 'First page' }), makePage({ id: 'P2', content: 'Second page' })],
+      items: [
+        makePage({ id: 'P1', content: 'First page' }),
+        makePage({ id: 'P2', content: 'Second page' }),
+      ],
       next_cursor: null,
       has_more: false,
     }
@@ -93,9 +97,7 @@ describe('PageBrowser', () => {
 
   it('shows Untitled for pages with null content', async () => {
     const page = {
-      items: [
-        makePage({ id: 'P1', content: null }),
-      ],
+      items: [makePage({ id: 'P1', content: null })],
       next_cursor: null,
       has_more: false,
     }
@@ -136,6 +138,7 @@ describe('PageBrowser', () => {
         tagId: null,
         showDeleted: null,
         agendaDate: null,
+        agendaDateRange: null,
         agendaSource: null,
         cursor: 'cursor_abc',
         limit: 50,
@@ -659,7 +662,10 @@ describe('PageBrowser', () => {
   describe('namespaced pages tree view', () => {
     it('renders flat list when no pages have namespaces', async () => {
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'First page' }), makePage({ id: 'P2', content: 'Second page' })],
+        items: [
+          makePage({ id: 'P1', content: 'First page' }),
+          makePage({ id: 'P2', content: 'Second page' }),
+        ],
         next_cursor: null,
         has_more: false,
       })
@@ -699,7 +705,10 @@ describe('PageBrowser', () => {
     it('namespace folders are collapsible', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'work/project-a' }), makePage({ id: 'P2', content: 'work/project-b' })],
+        items: [
+          makePage({ id: 'P1', content: 'work/project-a' }),
+          makePage({ id: 'P2', content: 'work/project-b' }),
+        ],
         next_cursor: null,
         has_more: false,
       })
@@ -784,7 +793,10 @@ describe('PageBrowser', () => {
 
     it('a11y: + button has proper aria-label with namespace path', async () => {
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'work/dev/task-1' }), makePage({ id: 'P2', content: 'work/dev/task-2' })],
+        items: [
+          makePage({ id: 'P1', content: 'work/dev/task-1' }),
+          makePage({ id: 'P2', content: 'work/dev/task-2' }),
+        ],
         next_cursor: null,
         has_more: false,
       })
@@ -895,7 +907,10 @@ describe('PageBrowser', () => {
     it('clearing search shows all pages again', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Meeting notes' }), makePage({ id: 'P2', content: 'Shopping list' })],
+        items: [
+          makePage({ id: 'P1', content: 'Meeting notes' }),
+          makePage({ id: 'P2', content: 'Shopping list' }),
+        ],
         next_cursor: null,
         has_more: false,
       })

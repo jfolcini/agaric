@@ -10,7 +10,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -400,5 +400,40 @@ describe('PageEditor undo/redo integration', () => {
     // PAGE_A should be cleared, PAGE_B should still exist
     expect(useUndoStore.getState().pages.has('PAGE_A')).toBe(false)
     expect(useUndoStore.getState().pages.has('PAGE_B')).toBe(true)
+  })
+})
+
+describe('PageEditor background mousedown (UX-M9)', () => {
+  it('mousedown on page background closes active editor', () => {
+    useBlockStore.setState({
+      blocks: [makeBlock('B1', 'Hello', 'PAGE_1', 0)],
+      focusedBlockId: 'B1',
+      loading: false,
+    })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // The outer container has class "page-editor"
+    const container = document.querySelector('.page-editor') as HTMLElement
+    fireEvent.mouseDown(container)
+
+    expect(useBlockStore.getState().focusedBlockId).toBeNull()
+  })
+
+  it('mousedown on child element does not close editor', () => {
+    useBlockStore.setState({
+      blocks: [makeBlock('B1', 'Hello', 'PAGE_1', 0)],
+      focusedBlockId: 'B1',
+      loading: false,
+    })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    // Click on a child (e.g. the block-tree mock div)
+    const child = screen.getByTestId('block-tree')
+    fireEvent.mouseDown(child)
+
+    // Should NOT close the editor since target !== currentTarget
+    expect(useBlockStore.getState().focusedBlockId).toBe('B1')
   })
 })

@@ -226,40 +226,41 @@ export function renderRichContent(
           // Forward-looking: block_ref nodes rendered when parser emits ((ULID)) tokens
           const refNode = node as unknown as { attrs: { id: string } }
           const refId = refNode.attrs.id
-          const fullContent =
-            options.resolveBlockTitle?.(refId) ?? `(( ${refId.slice(0, 8)}... ))`
+          const fullContent = options.resolveBlockTitle?.(refId) ?? `(( ${refId.slice(0, 8)}... ))`
           const status = options.resolveBlockStatus?.(refId) ?? 'active'
           // Show first line, truncated to 60 chars, for the chip label
-          const firstLine = fullContent.split('\n')[0]!
-          const chipLabel =
-            firstLine.length > 60 ? `${firstLine.slice(0, 57)}...` : firstLine
+          const firstLine = fullContent.split('\n')[0] ?? fullContent
+          const chipLabel = firstLine.length > 60 ? `${firstLine.slice(0, 57)}...` : firstLine
           elements.push(
             <Tooltip key={`bref-${keyIdx++}`}>
               <TooltipTrigger asChild>
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: role is spread dynamically via interactive option */}
                 <span
                   className={`block-ref-chip cursor-pointer${status === 'deleted' ? ' block-ref-deleted' : ''}`}
                   data-testid="block-ref-chip"
-                  {...(status === 'deleted'
-                    ? { 'aria-label': `${chipLabel} (deleted)` }
-                    : {})}
+                  {...(status === 'deleted' ? { 'aria-label': `${chipLabel} (deleted)` } : {})}
                   onClick={(e) => {
                     if (options.onNavigate) {
                       e.stopPropagation()
                       options.onNavigate(refId)
                     }
                   }}
-                  {...(options.interactive ? { tabIndex: 0, role: 'link' } : {})}
+                  onKeyDown={(e) => {
+                    if ((e.key === 'Enter' || e.key === ' ') && options.onNavigate) {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      options.onNavigate(refId)
+                    }
+                  }}
+                  {...(options.interactive
+                    ? { tabIndex: 0, role: 'link' }
+                    : { role: 'button', tabIndex: 0 })}
                 >
                   {chipLabel}
                 </span>
               </TooltipTrigger>
-              <TooltipContent
-                side="top"
-                className="max-w-xs text-sm whitespace-pre-wrap"
-              >
-                {fullContent.length > 300
-                  ? `${fullContent.slice(0, 297)}...`
-                  : fullContent}
+              <TooltipContent side="top" className="max-w-xs text-sm whitespace-pre-wrap">
+                {fullContent.length > 300 ? `${fullContent.slice(0, 297)}...` : fullContent}
               </TooltipContent>
             </Tooltip>,
           )
@@ -327,6 +328,43 @@ export function renderRichContent(
             dangerouslySetInnerHTML={{ __html: highlighted }}
           />
         </pre>,
+      )
+    } else if (block.type === 'blockquote') {
+      const bqKey = `bq-${keyIdx++}`
+      const bqChildren: React.ReactNode[] = []
+      for (let ci = 0; ci < (block.content?.length ?? 0); ci++) {
+        const child = (block.content as BlockLevelNode[])[ci] as BlockLevelNode
+        const childKey = `${bqKey}-${ci}`
+        if (child.type === 'paragraph' && child.content) {
+          const prevLen = elements.length
+          renderInline(child.content as readonly InlineNode[])
+          const inlined = elements.splice(prevLen)
+          bqChildren.push(<p key={childKey}>{inlined}</p>)
+        } else if (child.type === 'heading') {
+          const HTag = `h${child.attrs.level}` as keyof JSX.IntrinsicElements
+          const hClasses: Record<number, string> = {
+            1: 'text-2xl font-bold',
+            2: 'text-xl font-bold',
+            3: 'text-lg font-semibold',
+            4: 'text-base font-semibold',
+            5: 'text-sm font-semibold',
+            6: 'text-xs font-semibold uppercase tracking-wide',
+          }
+          const hCls = hClasses[child.attrs.level] ?? ''
+          const prevLen = elements.length
+          if (child.content) renderInline(child.content as readonly InlineNode[])
+          const hInlined = elements.splice(prevLen)
+          bqChildren.push(
+            <HTag key={childKey} className={hCls}>
+              {hInlined}
+            </HTag>,
+          )
+        }
+      }
+      elements.push(
+        <blockquote key={bqKey} className="border-l-[3px] border-border pl-4 text-muted-foreground">
+          {bqChildren}
+        </blockquote>,
       )
     } else {
       // paragraph

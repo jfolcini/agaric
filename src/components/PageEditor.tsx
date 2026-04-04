@@ -98,8 +98,24 @@ export function PageEditor({
     }
   }, [blocks, createBelow, setFocused, pageId, t])
 
+  // ── Click on page background whitespace closes active editor (UX-M9) ──
+  const handleBackgroundMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.target !== e.currentTarget) return
+    const { focusedBlockId } = useBlockStore.getState()
+    if (!focusedBlockId) return
+    // If the editor is focused, blur it (triggers normal save-and-close via EditableBlock.handleBlur)
+    const editor = document.querySelector('.ProseMirror')
+    if (editor?.contains(document.activeElement)) {
+      ;(document.activeElement as HTMLElement)?.blur()
+    } else {
+      // Editor is mounted but already unfocused — force close
+      useBlockStore.getState().setFocused(null)
+    }
+  }, [])
+
   return (
-    <div className="page-editor flex flex-col gap-3">
+    // biome-ignore lint/a11y/noStaticElementInteractions: whitespace click to dismiss editor
+    <div className="page-editor flex flex-col gap-3" onMouseDown={handleBackgroundMouseDown}>
       {/* Header: back button + editable title + tag badges */}
       <PageHeader pageId={pageId} title={title} onBack={onBack} />
 

@@ -10,7 +10,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -224,7 +224,6 @@ import { announce } from '../../lib/announcer'
 import { BlockTree, guessMimeType, processCheckboxSyntax } from '../BlockTree'
 
 const mockedInvoke = vi.mocked(invoke)
-
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -862,7 +861,6 @@ describe('BlockTree rendering edge cases', () => {
 // Collapse / expand tests
 // =========================================================================
 
-
 describe('BlockTree collapse/expand', () => {
   beforeEach(() => {
     // Reset invoke so load() fails and doesn't overwrite store blocks
@@ -870,7 +868,10 @@ describe('BlockTree collapse/expand', () => {
   })
 
   it('passes hasChildren=true for blocks with children', async () => {
-    const parentChild = [makeBlock({ id: 'A', content: 'Parent' }), makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' })]
+    const parentChild = [
+      makeBlock({ id: 'A', content: 'Parent' }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' }),
+    ]
 
     useBlockStore.setState({ blocks: parentChild, loading: false, focusedBlockId: null })
 
@@ -899,7 +900,10 @@ describe('BlockTree collapse/expand', () => {
 
   it('hides children when parent is collapsed via toggle button', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock({ id: 'A', content: 'Parent' }), makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'Parent' }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' }),
+    ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
@@ -923,7 +927,10 @@ describe('BlockTree collapse/expand', () => {
 
   it('shows children again when parent is expanded', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock({ id: 'A', content: 'Parent' }), makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'Parent' }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' }),
+    ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
@@ -1128,7 +1135,10 @@ describe('BlockTree task cycling', () => {
   })
 
   it('renders todo toggle button for each block', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'First' }), makeBlock({ id: 'B', content: 'Second' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'First' }),
+      makeBlock({ id: 'B', content: 'Second' }),
+    ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
     mockedInvoke.mockResolvedValue([])
@@ -1329,7 +1339,7 @@ describe('BlockTree slash command wiring', () => {
     const results = await capturedSearchSlashCommands?.('to-do')
 
     expect(results).toHaveLength(1)
-    expect(results?.[0]!.id).toBe('todo')
+    expect((results?.[0] as { id: string }).id).toBe('todo')
   })
 
   it('searchSlashCommands returns empty array when nothing matches', async () => {
@@ -1358,7 +1368,7 @@ describe('BlockTree slash command wiring', () => {
     const results = await capturedSearchSlashCommands?.('DONE')
 
     expect(results?.length).toBeGreaterThanOrEqual(1)
-    expect(results?.[0]!.id).toBe('done')
+    expect((results?.[0] as { id: string }).id).toBe('done')
   })
 
   it('searchSlashCommands returns /link command when query matches "link"', async () => {
@@ -1488,8 +1498,8 @@ describe('BlockTree slash command wiring', () => {
     // The default 'table' item should be replaced
     expect(results?.some((r) => r.id === 'table')).toBe(false)
     // The parameterized item should be first
-    expect(results?.[0]!.id).toBe('table:4:6')
-    expect(results?.[0]!.label).toContain('4\u00d76')
+    expect((results?.[0] as { id: string }).id).toBe('table:4:6')
+    expect((results?.[0] as { label: string }).label).toContain('4\u00d76')
   })
 
   it('searchSlashCommands returns default table for "table" query without dimensions', async () => {
@@ -1519,7 +1529,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('table 2x2')
 
-    expect(results?.[0]!.id).toBe('table:2:2')
+    expect((results?.[0] as { id: string }).id).toBe('table:2:2')
   })
 
   it('onSlashCommand for /table with no dimensions inserts 3x3 table', async () => {
@@ -1573,7 +1583,10 @@ describe('BlockTree slash command wiring', () => {
     })
 
     await act(async () => {
-      capturedOnSlashCommand?.({ id: 'table:10:2', label: 'TABLE 10\u00d72 — Insert 10\u00d72 table' })
+      capturedOnSlashCommand?.({
+        id: 'table:10:2',
+        label: 'TABLE 10\u00d72 — Insert 10\u00d72 table',
+      })
     })
 
     expect(mockInsertTable).toHaveBeenCalledWith({ rows: 10, cols: 2, withHeaderRow: true })
@@ -2092,7 +2105,10 @@ describe('BlockTree priority slash commands', () => {
   })
 
   it('renders priority toggle button for each block', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'First' }), makeBlock({ id: 'B', content: 'Second' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'First' }),
+      makeBlock({ id: 'B', content: 'Second' }),
+    ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: null })
 
@@ -2960,7 +2976,10 @@ describe('BlockTree aria-live announcements', () => {
   // ── #41 — Focus change announcements ──────────────────────────────
 
   it('announces block content when navigating to previous block', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'First block' }), makeBlock({ id: 'B', content: 'Second block' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'First block' }),
+      makeBlock({ id: 'B', content: 'Second block' }),
+    ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
@@ -2980,7 +2999,10 @@ describe('BlockTree aria-live announcements', () => {
   })
 
   it('announces block content when navigating to next block', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'First block' }), makeBlock({ id: 'B', content: 'Second block' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'First block' }),
+      makeBlock({ id: 'B', content: 'Second block' }),
+    ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
@@ -3000,7 +3022,10 @@ describe('BlockTree aria-live announcements', () => {
   })
 
   it('announces "empty block" when navigating to a block with no content', async () => {
-    const tree = [makeBlock({ id: 'A', content: '' }), makeBlock({ id: 'B', content: 'Has content' })]
+    const tree = [
+      makeBlock({ id: 'A', content: '' }),
+      makeBlock({ id: 'B', content: 'Has content' }),
+    ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
@@ -3021,7 +3046,10 @@ describe('BlockTree aria-live announcements', () => {
 
   it('truncates long content to 50 characters in focus announcement', async () => {
     const longContent = 'A'.repeat(80)
-    const tree = [makeBlock({ id: 'A', content: longContent }), makeBlock({ id: 'B', content: 'Short' })]
+    const tree = [
+      makeBlock({ id: 'A', content: longContent }),
+      makeBlock({ id: 'B', content: 'Short' }),
+    ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
@@ -3043,7 +3071,10 @@ describe('BlockTree aria-live announcements', () => {
   // ── #48 — Delete block announcement ───────────────────────────────
 
   it('announces "Block deleted" when a block is deleted', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'First' }), makeBlock({ id: 'B', content: 'Second' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'First' }),
+      makeBlock({ id: 'B', content: 'Second' }),
+    ]
 
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
@@ -3240,7 +3271,10 @@ describe('BlockTree handleDeleteBlock', () => {
   })
 
   it('deleting a block calls delete_block via invoke', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'First' }), makeBlock({ id: 'B', content: 'Second' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'First' }),
+      makeBlock({ id: 'B', content: 'Second' }),
+    ]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3310,7 +3344,10 @@ describe('BlockTree handleDeleteBlock', () => {
   })
 
   it('deleting the first block moves focus to the next block', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'First' }), makeBlock({ id: 'B', content: 'Second' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'First' }),
+      makeBlock({ id: 'B', content: 'Second' }),
+    ]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3342,7 +3379,10 @@ describe('BlockTree handleMergeWithPrev', () => {
   })
 
   it('merge concatenates previous block content with current and removes current', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'Hello ' }), makeBlock({ id: 'B', content: 'World' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'Hello ' }),
+      makeBlock({ id: 'B', content: 'World' }),
+    ]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3411,7 +3451,10 @@ describe('BlockTree handleIndent / handleDedent', () => {
   })
 
   it('indent calls move_block with previous sibling as new parent', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'First' }), makeBlock({ id: 'B', content: 'Second' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'First' }),
+      makeBlock({ id: 'B', content: 'Second' }),
+    ]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3437,7 +3480,10 @@ describe('BlockTree handleIndent / handleDedent', () => {
   })
 
   it('dedent calls move_block with grandparent as new parent', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'Parent' }), makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'Parent' }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child' }),
+    ]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'B' })
 
     mockedInvoke.mockResolvedValue([])
@@ -3939,13 +3985,15 @@ describe('BlockTree /attach slash command', () => {
     // Spy on document.createElement to intercept the file input
     const clickSpy = vi.fn()
     const origCreateElement = document.createElement.bind(document)
-    vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: ElementCreationOptions) => {
-      const el = origCreateElement(tag, options)
-      if (tag === 'input') {
-        vi.spyOn(el as HTMLInputElement, 'click').mockImplementation(clickSpy)
-      }
-      return el
-    })
+    vi.spyOn(document, 'createElement').mockImplementation(
+      (tag: string, options?: ElementCreationOptions) => {
+        const el = origCreateElement(tag, options)
+        if (tag === 'input') {
+          vi.spyOn(el as HTMLInputElement, 'click').mockImplementation(clickSpy)
+        }
+        return el
+      },
+    )
 
     render(<BlockTree />)
 
@@ -3966,19 +4014,29 @@ describe('BlockTree /attach slash command', () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue({ id: 'att-1', block_id: 'A', filename: 'test.pdf', mime_type: 'application/pdf', size_bytes: 1024, fs_path: '/tmp/test.pdf', created_at: '2025-01-01' })
+    mockedInvoke.mockResolvedValue({
+      id: 'att-1',
+      block_id: 'A',
+      filename: 'test.pdf',
+      mime_type: 'application/pdf',
+      size_bytes: 1024,
+      fs_path: '/tmp/test.pdf',
+      created_at: '2025-01-01',
+    })
 
     // Capture the file input so we can simulate file selection
     let capturedInput: HTMLInputElement | null = null
     const origCreateElement = document.createElement.bind(document)
-    vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: ElementCreationOptions) => {
-      const el = origCreateElement(tag, options)
-      if (tag === 'input') {
-        capturedInput = el as HTMLInputElement
-        vi.spyOn(capturedInput, 'click').mockImplementation(() => {})
-      }
-      return el
-    })
+    vi.spyOn(document, 'createElement').mockImplementation(
+      (tag: string, options?: ElementCreationOptions) => {
+        const el = origCreateElement(tag, options)
+        if (tag === 'input') {
+          capturedInput = el as HTMLInputElement
+          vi.spyOn(capturedInput, 'click').mockImplementation(() => {})
+        }
+        return el
+      },
+    )
 
     render(<BlockTree />)
 
@@ -4022,14 +4080,16 @@ describe('BlockTree /attach slash command', () => {
 
     let capturedInput: HTMLInputElement | null = null
     const origCreateElement = document.createElement.bind(document)
-    vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: ElementCreationOptions) => {
-      const el = origCreateElement(tag, options)
-      if (tag === 'input') {
-        capturedInput = el as HTMLInputElement
-        vi.spyOn(capturedInput, 'click').mockImplementation(() => {})
-      }
-      return el
-    })
+    vi.spyOn(document, 'createElement').mockImplementation(
+      (tag: string, options?: ElementCreationOptions) => {
+        const el = origCreateElement(tag, options)
+        if (tag === 'input') {
+          capturedInput = el as HTMLInputElement
+          vi.spyOn(capturedInput, 'click').mockImplementation(() => {})
+        }
+        return el
+      },
+    )
 
     render(<BlockTree />)
 
@@ -4061,18 +4121,28 @@ describe('BlockTree /attach slash command', () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
     useBlockStore.setState({ blocks: tree, loading: false, focusedBlockId: 'A' })
 
-    mockedInvoke.mockResolvedValue({ id: 'att-2', block_id: 'A', filename: 'photo.png', mime_type: 'image/png', size_bytes: 2048, fs_path: '/tmp/photo.png', created_at: '2025-01-01' })
+    mockedInvoke.mockResolvedValue({
+      id: 'att-2',
+      block_id: 'A',
+      filename: 'photo.png',
+      mime_type: 'image/png',
+      size_bytes: 2048,
+      fs_path: '/tmp/photo.png',
+      created_at: '2025-01-01',
+    })
 
     let capturedInput: HTMLInputElement | null = null
     const origCreateElement = document.createElement.bind(document)
-    vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: ElementCreationOptions) => {
-      const el = origCreateElement(tag, options)
-      if (tag === 'input') {
-        capturedInput = el as HTMLInputElement
-        vi.spyOn(capturedInput, 'click').mockImplementation(() => {})
-      }
-      return el
-    })
+    vi.spyOn(document, 'createElement').mockImplementation(
+      (tag: string, options?: ElementCreationOptions) => {
+        const el = origCreateElement(tag, options)
+        if (tag === 'input') {
+          capturedInput = el as HTMLInputElement
+          vi.spyOn(capturedInput, 'click').mockImplementation(() => {})
+        }
+        return el
+      },
+    )
 
     render(<BlockTree />)
 
@@ -4613,7 +4683,7 @@ describe('BlockTree zoom-in', () => {
     // Click the home button (first button inside the nav)
     const homeButton = nav.querySelector('button')
     expect(homeButton).not.toBeNull()
-    await user.click(homeButton!)
+    await user.click(homeButton as HTMLElement)
 
     // All blocks should be visible again
     await waitFor(() => {
@@ -4865,7 +4935,10 @@ describe('BlockTree multi-selection (#657)', () => {
   })
 
   it('Ctrl+Click toggles block selection via onSelect', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', depth: 1, content: 'Beta' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
+    ]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -4951,7 +5024,10 @@ describe('BlockTree batch toolbar (#657)', () => {
   })
 
   it('shows batch toolbar when blocks are selected', async () => {
-    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', depth: 1, content: 'Beta' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
+    ]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -4982,7 +5058,10 @@ describe('BlockTree batch toolbar (#657)', () => {
 
   it('batch delete shows confirmation dialog', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', depth: 1, content: 'Beta' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
+    ]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -5001,7 +5080,10 @@ describe('BlockTree batch toolbar (#657)', () => {
 
   it('batch delete calls deleteBlock for each selected', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', depth: 1, content: 'Beta' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
+    ]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -5037,7 +5119,10 @@ describe('BlockTree batch toolbar (#657)', () => {
 
   it('batch set todo state calls setTodoState for each selected', async () => {
     const user = userEvent.setup()
-    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', depth: 1, content: 'Beta' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
+    ]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -5101,7 +5186,10 @@ describe('BlockTree batch toolbar (#657)', () => {
 
   it('batch buttons disabled during operation', async () => {
     let resolveInvoke!: (v: unknown) => void
-    const tree = [makeBlock({ id: 'A', content: 'Alpha' }), makeBlock({ id: 'B', depth: 1, content: 'Beta' })]
+    const tree = [
+      makeBlock({ id: 'A', content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
+    ]
     useBlockStore.setState({
       blocks: tree,
       loading: false,
@@ -5150,5 +5238,128 @@ describe('BlockTree batch toolbar (#657)', () => {
       due_date: null,
       scheduled_date: null,
     })
+  })
+})
+
+// =========================================================================
+// UX-M8 — Escape closes unfocused editor
+// =========================================================================
+
+describe('BlockTree unfocused-Escape handler (UX-M8)', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('Escape on unfocused editor closes editor and saves content', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: 'A',
+      selectedBlockIds: [],
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    // No .ProseMirror in the DOM → editor is "unfocused"
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(useBlockStore.getState().focusedBlockId).toBeNull()
+  })
+
+  it('Escape on focused editor is handled by use-block-keyboard (no double-fire)', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: 'A',
+      selectedBlockIds: [],
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    // Create a fake .ProseMirror element that "contains" the active element
+    const fakePM = document.createElement('div')
+    fakePM.classList.add('ProseMirror')
+    const fakeInput = document.createElement('input')
+    fakePM.appendChild(fakeInput)
+    document.body.appendChild(fakePM)
+    fakeInput.focus()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    // The document-level handler should NOT have cleared focusedBlockId
+    // because the editor DOM still has focus (use-block-keyboard handles it).
+    expect(useBlockStore.getState().focusedBlockId).toBe('A')
+
+    // Cleanup
+    document.body.removeChild(fakePM)
+  })
+
+  it('Escape does nothing when no editor is mounted', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: null,
+      selectedBlockIds: [],
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(useBlockStore.getState().focusedBlockId).toBeNull()
+  })
+})
+
+// =========================================================================
+// UX-M9 — Container mousedown closes editor
+// =========================================================================
+
+describe('BlockTree container mousedown (UX-M9)', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+  })
+
+  it('mousedown on whitespace within block tree closes active editor', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: 'A',
+      selectedBlockIds: [],
+    })
+
+    render(<BlockTree />)
+    await screen.findByTestId('sortable-block-A')
+
+    // The .block-tree div is the container with the onMouseDown handler.
+    // Clicking it directly (target === currentTarget) triggers the handler.
+    const container = document.querySelector('.block-tree') as HTMLElement
+    fireEvent.mouseDown(container)
+
+    expect(useBlockStore.getState().focusedBlockId).toBeNull()
+  })
+
+  it('mousedown on child element does not close editor', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
+    useBlockStore.setState({
+      blocks: tree,
+      loading: false,
+      focusedBlockId: 'A',
+      selectedBlockIds: [],
+    })
+
+    render(<BlockTree />)
+    const block = await screen.findByTestId('sortable-block-A')
+
+    // Clicking on a child element (block) should NOT close the editor
+    fireEvent.mouseDown(block)
+
+    expect(useBlockStore.getState().focusedBlockId).toBe('A')
   })
 })
