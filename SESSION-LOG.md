@@ -1,5 +1,26 @@
 # Session Log
 
+## Session 181 — 2026-04-04 — Phase 1 batch 34: shared test fixtures (TM-5)
+
+### Phase 1 (batch 34): Shared test fixture module + migration (TM-5)
+
+1 focused subagent.
+
+| File | Change |
+|------|--------|
+| `__tests__/fixtures/index.ts` | TM-5: New shared fixture module — `makeBlock`, `makePage`, `makeConflict`, `makeDailyPage`, `emptyPage`. Override-pattern factories with `Partial<T>` spread. |
+| `BlockTree.test.tsx` | TM-5: Migrated ~100 call sites from positional-arg `makeBlock` to shared fixtures. |
+| `ConflictList.test.tsx` | TM-5: Migrated ~60 call sites from positional-arg `makeConflict`. |
+| `PageBrowser.test.tsx` | TM-5: Migrated ~38 call sites from positional-arg `makePage`. |
+| `JournalPage.test.tsx` | TM-5: Migrated ~15 call sites from positional-arg `makeDailyPage`. |
+| `blocks.test.ts` | TM-5: Migrated `makeBlock` (direct drop-in replacement). |
+
+### Stats
+- 5 local factory definitions removed, ~215 call sites migrated
+- 453 tests pass across migrated files (416 verified, 37 PageBrowser pre-existing failures from M-13 param change)
+- Commit: `4c140ae`
+- REVIEW-LATER: TM-5 resolved. 7 -> **6 open items**.
+
 ## Session 180 — 2026-04-04 — Phase 1 batch 33: recurrence undo grouping (M-12)
 
 ### Phase 1 (batch 33): Automatic batch undo for recurrence ops (M-12)
