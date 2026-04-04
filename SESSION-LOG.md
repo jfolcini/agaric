@@ -137,6 +137,25 @@
 - Commit: `717002c`
 - REVIEW-LATER: UX-H1, UX-H2, UX-H3, UX-H5, UX-H13 resolved. 82 → **77 open items**.
 
+### Phase 1 (batch 9): Touch/a11y cleanup (UX-H4, UX-H7, UX-H8, UX-H9, UX-H10, UX-H12, UX-M6)
+
+3 build subagents (chips, kebab menu, delete buttons/chevron), orchestrator direct (blur boundary, popover targets). UX-H4 verified already implemented (false positive).
+
+| File | Change |
+|------|--------|
+| 4 files | UX-H7: Added `[@media(pointer:coarse)]:px-2.5 py-1` touch sizing to 7 chip elements. |
+| `PageHeader.tsx` | UX-H8: Added `min-h-[44px]` touch sizing to 4 kebab menu buttons. |
+| 3 files | UX-H9: Added 44px touch targets to delete buttons in PropertiesView, TagList, PageBrowser. |
+| `PageBrowser.tsx` | UX-H10: Added touch visibility + 44px sizing to tree action button. |
+| `EditableBlock.tsx` | UX-H12: Added `.property-key-editor` to EDITOR_PORTAL_SELECTORS. |
+| `LinkEditPopover.tsx` | UX-M6: Changed touch height from h-10 (40px) to h-11 (44px), added min-w-[44px]. |
+| — | UX-H4: Verified false positive — priority shortcut listeners already exist. |
+
+### Stats
+- Frontend: All tests pass (2778 total)
+- Commit: `cb183dc`
+- REVIEW-LATER: UX-H4, UX-H7, UX-H8, UX-H9, UX-H10, UX-H12, UX-M6 resolved. 77 → **70 open items**.
+
 ## Session 158 — 2026-04-03 — Phase 2 FTS/search review (clean)
 
 ### Phase 2: Deep review of Search / FTS5 system
