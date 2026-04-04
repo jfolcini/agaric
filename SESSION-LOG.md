@@ -1,5 +1,54 @@
 # Session Log
 
+## Session 182 — 2026-04-04 — Phase 1 batch 35: data-testid + i18n (TM-2, UX-H6)
+
+### Phase 1 (batch 35): E2E data-testid migration + i18n string extraction (TM-2, UX-H6)
+
+6 parallel build subagents + 4 review subagents. Orchestrator pre-populated i18n.ts keys and applied review fixes.
+
+| File | Change |
+|------|--------|
+| `i18n.ts` | UX-H6: Added ~270 new translation keys in 15 namespaces (backlink, conflict, pairing, tagFilter, history, trash, device, duePanel, qrScanner, pageProperty, sourceFilter, search, status, undo, blockTree). i18next `_one`/`_other` pluralization for error counts and peer labels. |
+| `i18n.test.ts` | UX-H6: Updated key convention regex to allow `_one`/`_other` pluralization suffixes. |
+| `BacklinkFilterBuilder.tsx` | UX-H6: Replaced ~60 hard-coded strings (toasts, ARIA labels, options, placeholders, sort/filter controls) with t() calls. Renamed loop var `t` → `tag` to avoid shadowing. |
+| `TagFilterPanel.tsx` | UX-H6: Replaced ~19 hard-coded strings with t() calls. |
+| `SourcePageFilter.tsx` | UX-H6: Replaced 5 hard-coded strings with t() calls. |
+| `ConflictList.tsx` | UX-H6+TM-2: Replaced ~25 hard-coded strings. Added 6 data-testid (conflict-item, conflict-keep-btn, conflict-discard-btn, conflict-discard-confirm, conflict-discard-yes, conflict-discard-no). |
+| `TrashView.tsx` | UX-H6+TM-2: Replaced ~10 hard-coded strings. Added 6 data-testid (trash-item, trash-restore-btn, trash-purge-btn, trash-purge-confirm, trash-purge-yes, trash-purge-no). |
+| `HistoryView.tsx` | UX-H6+TM-2: Replaced ~11 hard-coded strings. Added data-testid="history-type-badge". |
+| `PairingDialog.tsx` | UX-H6: Replaced ~22 hard-coded strings with t() calls. |
+| `DeviceManagement.tsx` | UX-H6: Replaced ~20 hard-coded strings with t() calls. |
+| `QrScanner.tsx` | UX-H6: Replaced 5 hard-coded strings with t() calls. |
+| `StatusPanel.tsx` | UX-H6+TM-2: Replaced ~25 hard-coded strings. Refactored tooltip constants to use t(). Added 4 data-testid (sync-panel-title, sync-panel-not-configured, import-panel-title, import-result). |
+| `PagePropertyTable.tsx` | UX-H6: Replaced ~31 hard-coded strings with t() calls. |
+| `SearchPanel.tsx` | UX-H6+TM-2: Replaced ~12 hard-coded strings. Added data-testid="search-results". |
+| `DuePanel.tsx` | UX-H6+TM-2: Replaced ~11 hard-coded strings. Added 3 data-testid (due-panel, due-panel-filters, due-panel-item). |
+| `useUndoShortcuts.ts` | UX-H6: Replaced 4 hard-coded strings with t() calls. |
+| `BlockTree.tsx` | UX-H6: Replaced ~29 hard-coded strings with t() calls. |
+| `SortableBlock.tsx` | TM-2: Added 9 data-testid (sortable-block, drag-handle, collapse-toggle, task-marker, task-checkbox-done/doing/todo/empty, priority-badge). |
+| `StaticBlock.tsx` | TM-2: Added 4 data-testid (block-static ×2, external-link, tag-ref-chip, block-link-chip). |
+| `EditableBlock.tsx` | TM-2: Added data-testid="block-editor". |
+| `FormattingToolbar.tsx` | TM-2: Added data-testid="formatting-toolbar". |
+| `SuggestionList.tsx` | TM-2: Added 2 data-testid (suggestion-list, suggestion-item). |
+| `QueryResult.tsx` | TM-2: Added 2 data-testid (query-result, query-result-item). |
+| `PropertyChip.tsx` | TM-2: Added data-testid="property-chip". |
+| `BlockDatePicker.tsx` | TM-2: Added data-testid="date-picker-popup". |
+| `BlockDndOverlay.tsx` | TM-2: Added data-testid="sortable-block-overlay". |
+| `tag-ref.ts` | TM-2: Added data-testid="tag-ref-chip" in renderHTML and NodeView. |
+| `block-link.ts` | TM-2: Added data-testid="block-link-chip" in renderHTML and NodeView. |
+| `suggestion-renderer.ts` | TM-2: Added data-testid="suggestion-popup". |
+| `AgendaFilterBuilder.tsx` | TM-2: Added 2 data-testid (agenda-filter-builder, agenda-sort-group-controls). |
+| `AgendaView.tsx` | TM-2: Added data-testid="agenda-view". |
+| 18 e2e spec files | TM-2: Migrated 411 CSS class selectors to `[data-testid="..."]` across all e2e specs. |
+
+### Stats
+- 51 files changed, 1631 insertions, 998 deletions
+- ~270 new i18n keys, ~250 hard-coded strings replaced with t() calls
+- 22 component elements gained data-testid attributes, 411 e2e selectors migrated
+- 2951 tests pass (8 pre-existing failures unchanged)
+- Commit: `7c39282`
+- REVIEW-LATER: TM-2 + UX-H6 resolved. 6 -> **4 open items**.
+
 ## Session 181 — 2026-04-04 — Phase 1 batch 34: shared test fixtures (TM-5)
 
 ### Phase 1 (batch 34): Shared test fixture module + migration (TM-5)
