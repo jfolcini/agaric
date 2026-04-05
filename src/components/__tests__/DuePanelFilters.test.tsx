@@ -1,0 +1,154 @@
+/**
+ * Tests for DuePanelFilters component.
+ *
+ * Validates:
+ *  - Renders all filter pills (All, Due, Scheduled, Properties)
+ *  - Shows correct aria-pressed state for selected filter
+ *  - Calls onSourceFilterChange with correct value
+ *  - Renders hide-before-scheduled toggle
+ *  - Toggle calls onToggleHideBeforeScheduled
+ *  - Toggle aria-pressed reflects state
+ *  - a11y audit passes (axe)
+ */
+
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
+
+import { DuePanelFilters } from '../DuePanelFilters'
+
+describe('DuePanelFilters', () => {
+  const defaultProps = {
+    sourceFilter: null as string | null,
+    onSourceFilterChange: vi.fn(),
+    hideBeforeScheduled: false,
+    onToggleHideBeforeScheduled: vi.fn(),
+  }
+
+  it('renders all four filter pills', () => {
+    render(<DuePanelFilters {...defaultProps} />)
+
+    expect(screen.getByRole('button', { name: 'All' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Due' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Scheduled' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Properties' })).toBeInTheDocument()
+  })
+
+  it('shows "All" as aria-pressed when sourceFilter is null', () => {
+    render(<DuePanelFilters {...defaultProps} sourceFilter={null} />)
+
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Due' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Scheduled' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(screen.getByRole('button', { name: 'Properties' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+  })
+
+  it('shows "Due" as aria-pressed when sourceFilter is column:due_date', () => {
+    render(<DuePanelFilters {...defaultProps} sourceFilter="column:due_date" />)
+
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Due' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('calls onSourceFilterChange with null when "All" is clicked', async () => {
+    const user = userEvent.setup()
+    const onFilterChange = vi.fn()
+
+    render(
+      <DuePanelFilters
+        {...defaultProps}
+        sourceFilter="column:due_date"
+        onSourceFilterChange={onFilterChange}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'All' }))
+    expect(onFilterChange).toHaveBeenCalledWith(null)
+  })
+
+  it('calls onSourceFilterChange with column:due_date when "Due" is clicked', async () => {
+    const user = userEvent.setup()
+    const onFilterChange = vi.fn()
+
+    render(<DuePanelFilters {...defaultProps} onSourceFilterChange={onFilterChange} />)
+
+    await user.click(screen.getByRole('button', { name: 'Due' }))
+    expect(onFilterChange).toHaveBeenCalledWith('column:due_date')
+  })
+
+  it('calls onSourceFilterChange with column:scheduled_date when "Scheduled" is clicked', async () => {
+    const user = userEvent.setup()
+    const onFilterChange = vi.fn()
+
+    render(<DuePanelFilters {...defaultProps} onSourceFilterChange={onFilterChange} />)
+
+    await user.click(screen.getByRole('button', { name: 'Scheduled' }))
+    expect(onFilterChange).toHaveBeenCalledWith('column:scheduled_date')
+  })
+
+  it('calls onSourceFilterChange with property: when "Properties" is clicked', async () => {
+    const user = userEvent.setup()
+    const onFilterChange = vi.fn()
+
+    render(<DuePanelFilters {...defaultProps} onSourceFilterChange={onFilterChange} />)
+
+    await user.click(screen.getByRole('button', { name: 'Properties' }))
+    expect(onFilterChange).toHaveBeenCalledWith('property:')
+  })
+
+  it('renders hide-before-scheduled toggle with correct label when OFF', () => {
+    render(<DuePanelFilters {...defaultProps} hideBeforeScheduled={false} />)
+
+    const toggle = screen.getByRole('button', { name: /Scheduled: show all/i })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('renders hide-before-scheduled toggle with correct label when ON', () => {
+    render(<DuePanelFilters {...defaultProps} hideBeforeScheduled={true} />)
+
+    const toggle = screen.getByRole('button', { name: /Scheduled: hide future/i })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('calls onToggleHideBeforeScheduled when toggle is clicked', async () => {
+    const user = userEvent.setup()
+    const onToggle = vi.fn()
+
+    render(<DuePanelFilters {...defaultProps} onToggleHideBeforeScheduled={onToggle} />)
+
+    const toggle = screen.getByRole('button', { name: /Scheduled: show all/i })
+    await user.click(toggle)
+    expect(onToggle).toHaveBeenCalledTimes(1)
+  })
+
+  it('a11y: no violations with default state', async () => {
+    const { container } = render(<DuePanelFilters {...defaultProps} />)
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('a11y: no violations with active filter', async () => {
+    const { container } = render(
+      <DuePanelFilters
+        {...defaultProps}
+        sourceFilter="column:due_date"
+        hideBeforeScheduled={true}
+      />,
+    )
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+})

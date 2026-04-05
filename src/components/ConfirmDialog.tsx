@@ -63,6 +63,7 @@ export function ConfirmDialog({
             )}
             onClick={onAction}
             disabled={loading}
+            autoFocus
           >
             {loading && <Spinner />}
             {actionLabel}

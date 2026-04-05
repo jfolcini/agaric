@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   type BlockKeyboardCallbacks,
+  type DeleteBlockOpts,
   type EditorLike,
   handleBlockKeyDown,
 } from '../use-block-keyboard'
@@ -26,15 +27,22 @@ function makeEditor(
   }
 }
 
-function makeCallbacks(): BlockKeyboardCallbacks & { _calls: Record<string, number> } {
+function makeCallbacks(overrides: { isLastBlock?: () => boolean } = {}): BlockKeyboardCallbacks & {
+  _calls: Record<string, number>
+  _deleteBlockArgs: DeleteBlockOpts[]
+} {
   const _calls: Record<string, number> = {}
+  const _deleteBlockArgs: DeleteBlockOpts[] = []
   const track = (name: string) => () => {
     _calls[name] = (_calls[name] ?? 0) + 1
   }
   return {
     onFocusPrev: track('onFocusPrev'),
     onFocusNext: track('onFocusNext'),
-    onDeleteBlock: track('onDeleteBlock'),
+    onDeleteBlock: (opts: DeleteBlockOpts) => {
+      _calls.onDeleteBlock = (_calls.onDeleteBlock ?? 0) + 1
+      _deleteBlockArgs.push(opts)
+    },
     onIndent: track('onIndent'),
     onDedent: track('onDedent'),
     onFlush: () => {
@@ -48,7 +56,9 @@ function makeCallbacks(): BlockKeyboardCallbacks & { _calls: Record<string, numb
     onMoveDown: track('onMoveDown'),
     onToggleTodo: track('onToggleTodo'),
     onToggleCollapse: track('onToggleCollapse'),
+    isLastBlock: overrides.isLastBlock,
     _calls,
+    _deleteBlockArgs,
   }
 }
 
@@ -217,7 +227,7 @@ describe('handleBlockKeyDown', () => {
   })
 
   describe('Backspace on empty', () => {
-    it('Backspace on empty block calls onDeleteBlock', () => {
+    it('Backspace on empty block calls onDeleteBlock with cursorPlacement end', () => {
       const editor = makeEditor({ isEmpty: true, from: 1, to: 1, docSize: 2 })
       const cbs = makeCallbacks()
       const event = makeEvent('Backspace')
@@ -226,6 +236,7 @@ describe('handleBlockKeyDown', () => {
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
       expect(cbs._calls.onDeleteBlock).toBe(1)
+      expect(cbs._deleteBlockArgs[0]).toEqual({ cursorPlacement: 'end' })
     })
 
     it('Backspace on non-empty block at middle does nothing', () => {
@@ -248,6 +259,41 @@ describe('handleBlockKeyDown', () => {
       handleBlockKeyDown(event, editor, cbs)
 
       expect(cbs._calls.onFlush).toBeUndefined()
+    })
+
+    it('Backspace on sole remaining block is a no-op (last-block guard)', () => {
+      const editor = makeEditor({ isEmpty: true, from: 1, to: 1, docSize: 2 })
+      const cbs = makeCallbacks({ isLastBlock: () => true })
+      const event = makeEvent('Backspace')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onDeleteBlock).toBeUndefined()
+      expect(cbs._deleteBlockArgs).toHaveLength(0)
+    })
+
+    it('Backspace on empty block when isLastBlock returns false proceeds with deletion', () => {
+      const editor = makeEditor({ isEmpty: true, from: 1, to: 1, docSize: 2 })
+      const cbs = makeCallbacks({ isLastBlock: () => false })
+      const event = makeEvent('Backspace')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls.onDeleteBlock).toBe(1)
+      expect(cbs._deleteBlockArgs[0]).toEqual({ cursorPlacement: 'end' })
+    })
+
+    it('Backspace on empty block when isLastBlock is not provided proceeds with deletion', () => {
+      const editor = makeEditor({ isEmpty: true, from: 1, to: 1, docSize: 2 })
+      const cbs = makeCallbacks()
+      const event = makeEvent('Backspace')
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(cbs._calls.onDeleteBlock).toBe(1)
+      expect(cbs._deleteBlockArgs[0]).toEqual({ cursorPlacement: 'end' })
     })
   })
 
@@ -364,7 +410,7 @@ describe('handleBlockKeyDown', () => {
       expect(cbs._calls.onMergeWithPrev).toBe(1)
     })
 
-    it('Backspace on empty block still calls onDeleteBlock (no regression)', () => {
+    it('Backspace on empty block still calls onDeleteBlock with cursorPlacement end (no regression)', () => {
       const editor = makeEditor({ isEmpty: true, from: 1, to: 1, docSize: 2 })
       const cbs = makeCallbacks()
       const event = makeEvent('Backspace')
@@ -373,6 +419,7 @@ describe('handleBlockKeyDown', () => {
 
       expect(event.preventDefault).toHaveBeenCalledOnce()
       expect(cbs._calls.onDeleteBlock).toBe(1)
+      expect(cbs._deleteBlockArgs[0]).toEqual({ cursorPlacement: 'end' })
       expect(cbs._calls.onMergeWithPrev).toBeUndefined()
     })
 

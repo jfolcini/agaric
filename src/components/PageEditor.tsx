@@ -5,16 +5,15 @@
  * Loads children of the given pageId via BlockTree's parentId prop.
  */
 
-import { Plus } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { useBlockStore } from '../stores/blocks'
 import { useNavigationStore } from '../stores/navigation'
 import { useUndoStore } from '../stores/undo'
+import { AddBlockButton } from './AddBlockButton'
 import { BlockTree } from './BlockTree'
 import { LinkedReferences } from './LinkedReferences'
 import { PageHeader } from './PageHeader'
@@ -131,15 +130,7 @@ export function PageEditor({
 
       {/* Add block button — always directly beneath the last block */}
       <div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-muted-foreground"
-          onClick={handleAddBlock}
-        >
-          <Plus className="h-4 w-4" />
-          {t('action.addBlock')}
-        </Button>
+        <AddBlockButton onClick={handleAddBlock} />
       </div>
     </div>
   )

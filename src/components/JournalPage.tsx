@@ -184,7 +184,7 @@ export function JournalPage({
 
   /** Add a new block under a specific day's page, creating the page if needed. */
   const handleAddBlock = useCallback(
-    async (dateStr: string, autoFocus = false) => {
+    async (dateStr: string) => {
       try {
         let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null
         const isNewPage = !pageId
@@ -207,7 +207,7 @@ export function JournalPage({
               pageTitle: dateStr,
             })
             await load(pageId)
-            if (autoFocus && ids.length > 0) {
+            if (ids.length > 0) {
               useBlockStore.setState({ focusedBlockId: ids[0] ?? null })
             }
           } else {
@@ -217,9 +217,7 @@ export function JournalPage({
               parentId: pageId,
             })
             await load(pageId)
-            if (autoFocus && block.id) {
-              useBlockStore.setState({ focusedBlockId: block.id })
-            }
+            useBlockStore.setState({ focusedBlockId: block.id })
           }
         } else {
           const block = await createBlock({
@@ -228,9 +226,7 @@ export function JournalPage({
             parentId: pageId,
           })
           await load(pageId)
-          if (autoFocus && block.id) {
-            useBlockStore.setState({ focusedBlockId: block.id })
-          }
+          useBlockStore.setState({ focusedBlockId: block.id })
         }
       } catch {
         toast.error(t('journal.addBlockFailed'))
@@ -249,7 +245,7 @@ export function JournalPage({
     if (autoCreatedRef.current === dateStr) return
     if (createdPages.has(dateStr) || pageMap.has(dateStr)) return
     autoCreatedRef.current = dateStr
-    handleAddBlock(dateStr, true)
+    handleAddBlock(dateStr)
   }, [loading, mode, currentDate, pageMap, createdPages, handleAddBlock])
 
   // Keyboard shortcut for new block in daily mode
@@ -263,7 +259,7 @@ export function JournalPage({
         return
       if (e.key === 'Enter' || e.key === 'n') {
         e.preventDefault()
-        handleAddBlock(dateStr, true)
+        handleAddBlock(dateStr)
       }
     }
     document.addEventListener('keydown', handleKeyDown)
@@ -614,7 +610,10 @@ export function JournalControls(): React.ReactElement {
   }
 
   return (
-    <div className="flex flex-1 items-center gap-2 flex-wrap">
+    <div
+      className="sticky top-0 z-30 bg-background border-b border-border flex flex-1 items-center gap-2 flex-wrap py-2"
+      data-testid="journal-header"
+    >
       {/* Mode switcher */}
       <div
         className="flex items-center gap-0.5"

@@ -3,14 +3,16 @@
  *
  * Controlled component: parent owns `filters` and `sort` state.
  * Renders active filters as removable pills and provides an "Add filter" flow.
+ *
+ * Filter pills are rendered by `FilterPillRow`; sort controls by
+ * `FilterSortControls`. Both were extracted for testability (#651-R4).
  */
 
-import { ArrowUpDown, Filter, Plus, X } from 'lucide-react'
+import { Filter, Plus } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -21,6 +23,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { BacklinkFilter, BacklinkSort, CompareOp, SortDir } from '../lib/tauri'
+import { FilterPillRow } from './FilterPillRow'
+import { FilterSortControls } from './FilterSortControls'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,66 +82,6 @@ function getFilterKey(filter: BacklinkFilter): string {
       return `HasTagPrefix:${filter.prefix}`
     default:
       return JSON.stringify(filter)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Human-readable filter summary
-// ---------------------------------------------------------------------------
-
-function filterSummary(filter: BacklinkFilter, tagResolver?: (id: string) => string): string {
-  switch (filter.type) {
-    case 'BlockType':
-      return `type = ${filter.block_type}`
-    case 'PropertyText':
-      if (filter.key === 'todo') return `status ${opLabel(filter.op)} ${filter.value}`
-      if (filter.key === 'priority') return `priority ${opLabel(filter.op)} ${filter.value}`
-      return `${filter.key} ${opLabel(filter.op)} ${filter.value}`
-    case 'PropertyNum':
-      return `${filter.key} ${opLabel(filter.op)} ${filter.value}`
-    case 'PropertyDate':
-      return `${filter.key} ${opLabel(filter.op)} ${filter.value}`
-    case 'PropertyIsSet':
-      return `${filter.key} is set`
-    case 'PropertyIsEmpty':
-      return `${filter.key} is empty`
-    case 'Contains':
-      return `contains "${filter.query}"`
-    case 'CreatedInRange': {
-      const parts: string[] = []
-      if (filter.after) parts.push(`after ${filter.after}`)
-      if (filter.before) parts.push(`before ${filter.before}`)
-      return `created ${parts.join(' ')}`
-    }
-    case 'HasTag':
-      return tagResolver
-        ? `has tag ${tagResolver(filter.tag_id)}`
-        : `has tag ${filter.tag_id.slice(0, 8)}...`
-    case 'HasTagPrefix':
-      return `tag prefix "${filter.prefix}"`
-    default:
-      return 'filter'
-  }
-}
-
-function opLabel(op: CompareOp): string {
-  switch (op) {
-    case 'Eq':
-      return '='
-    case 'Neq':
-      return '!='
-    case 'Lt':
-      return '<'
-    case 'Gt':
-      return '>'
-    case 'Lte':
-      return '<='
-    case 'Gte':
-      return '>='
-    case 'Contains':
-      return 'contains'
-    case 'StartsWith':
-      return 'starts with'
   }
 }
 
@@ -658,40 +602,7 @@ export function BacklinkFilterBuilder({
       <div className="flex flex-wrap items-center gap-1.5">
         <Filter className="h-3.5 w-3.5 text-muted-foreground" />
 
-        {filters.length > 0 && (
-          <ul aria-label={t('backlink.appliedFiltersLabel')} className="contents list-none m-0 p-0">
-            {filters.map((filter, index) => (
-              <li
-                // biome-ignore lint/suspicious/noArrayIndexKey: getFilterKey can produce duplicates for structurally different filters with same key
-                key={index}
-                className="contents"
-              >
-                <Badge
-                  variant="secondary"
-                  className="filter-pill shrink-0 gap-1 text-xs"
-                  role="group"
-                  aria-label={`Filter: ${filterSummary(filter, tagResolver)}`}
-                >
-                  {filterSummary(filter, tagResolver)}
-                  <button
-                    type="button"
-                    className="ml-0.5 inline-flex items-center justify-center rounded-full p-1 hover:bg-muted active:bg-muted active:scale-95 focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-w-[44px] touch-target"
-                    onClick={() => handleRemoveFilter(index)}
-                    onKeyDown={(e: React.KeyboardEvent) => {
-                      if (e.key === 'Delete' || e.key === 'Backspace') {
-                        e.preventDefault()
-                        handleRemoveFilter(index)
-                      }
-                    }}
-                    aria-label={`Remove filter ${filterSummary(filter, tagResolver)}`}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </Badge>
-              </li>
-            ))}
-          </ul>
-        )}
+        <FilterPillRow filters={filters} onRemove={handleRemoveFilter} tagResolver={tagResolver} />
 
         <Button
           ref={addFilterButtonRef}
@@ -718,42 +629,12 @@ export function BacklinkFilterBuilder({
         )}
 
         {/* Sort control */}
-        <span className="ml-auto flex items-center gap-1">
-          <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-          <Select
-            value={sort ? (sort.type === 'Created' ? 'Created' : sort.key) : '__none__'}
-            onValueChange={(val) => handleSortTypeChange(val === '__none__' ? '' : val)}
-          >
-            <SelectTrigger size="sm" aria-label={t('backlink.sortByLabel')} className="px-1.5">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">{t('backlink.defaultOrderOption')}</SelectItem>
-              <SelectItem value="Created">{t('backlink.createdOption')}</SelectItem>
-              {propertyKeys.map((k) => (
-                <SelectItem key={k} value={k}>
-                  {k}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="h-7 px-1 text-xs"
-            onClick={handleSortDirToggle}
-            disabled={!sort}
-            aria-label={
-              sort
-                ? t('backlink.toggleSortLabel', {
-                    direction: sort.dir === 'Asc' ? 'ascending' : 'descending',
-                  })
-                : t('backlink.toggleSortDefault')
-            }
-          >
-            {sort?.dir === 'Asc' ? t('backlink.ascSort') : t('backlink.descSort')}
-          </Button>
-        </span>
+        <FilterSortControls
+          sort={sort}
+          propertyKeys={propertyKeys}
+          onSortTypeChange={handleSortTypeChange}
+          onSortDirToggle={handleSortDirToggle}
+        />
       </div>
 
       {/* Add filter row */}

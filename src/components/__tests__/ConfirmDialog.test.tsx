@@ -130,6 +130,56 @@ describe('ConfirmDialog', () => {
     expect(content).toBeTruthy()
   })
 
+  it('focuses the action button on open', () => {
+    render(<ConfirmDialog {...defaultProps} />)
+
+    const actionBtn = screen.getByRole('button', { name: /Confirm/ })
+    expect(actionBtn).toHaveFocus()
+  })
+
+  it('Enter key triggers the action when dialog is open', async () => {
+    const user = userEvent.setup()
+    const onAction = vi.fn()
+
+    render(<ConfirmDialog {...defaultProps} onAction={onAction} />)
+
+    // Action button is auto-focused, so pressing Enter should trigger it
+    await user.keyboard('{Enter}')
+
+    expect(onAction).toHaveBeenCalledTimes(1)
+  })
+
+  it('Escape key closes the dialog', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+
+    render(<ConfirmDialog {...defaultProps} onOpenChange={onOpenChange} />)
+
+    await user.keyboard('{Escape}')
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('Tab cycles between Cancel and Action buttons', async () => {
+    const user = userEvent.setup()
+
+    render(<ConfirmDialog {...defaultProps} />)
+
+    const actionBtn = screen.getByRole('button', { name: /Confirm/ })
+    const cancelBtn = screen.getByRole('button', { name: /Cancel/ })
+
+    // Action button starts with focus (autoFocus)
+    expect(actionBtn).toHaveFocus()
+
+    // Tab should move focus to Cancel button (focus trap cycles)
+    await user.tab()
+    expect(cancelBtn).toHaveFocus()
+
+    // Tab again should cycle back to Action button
+    await user.tab()
+    expect(actionBtn).toHaveFocus()
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(<ConfirmDialog {...defaultProps} />)
 

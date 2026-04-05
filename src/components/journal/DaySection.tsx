@@ -14,6 +14,7 @@ import type { DayEntry } from '../../lib/date-utils'
 import { formatDate } from '../../lib/date-utils'
 import type { JournalMode } from '../../stores/journal'
 import { useJournalStore } from '../../stores/journal'
+import { AddBlockButton } from '../AddBlockButton'
 import { BlockTree } from '../BlockTree'
 import { DonePanel } from '../DonePanel'
 import { DuePanel } from '../DuePanel'
@@ -208,15 +209,7 @@ export function DaySection({
       {/* "Add block" button — only shown when there IS content (otherwise the empty state has the CTA) */}
       {entry.pageId && (
         <div className="mt-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground"
-            onClick={() => onAddBlock(entry.dateStr)}
-          >
-            <Plus className="h-4 w-4" />
-            {t('action.addBlock')}
-          </Button>
+          <AddBlockButton onClick={() => onAddBlock(entry.dateStr)} />
         </div>
       )}
     </section>

@@ -501,6 +501,28 @@ describe('JournalPage', () => {
     })
   })
 
+  // ── Sticky header ────────────────────────────────────────────────────
+
+  describe('sticky header', () => {
+    it('journal header has sticky positioning', async () => {
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      const header = screen.getByTestId('journal-header')
+      expect(header).toBeInTheDocument()
+      expect(header.className).toContain('sticky')
+      expect(header.className).toContain('top-0')
+      expect(header.className).toContain('z-30')
+      expect(header.className).toContain('bg-background')
+      expect(header.className).toContain('border-b')
+    })
+  })
+
   // ── Add block (shared across modes) ─────────────────────────────────
 
   describe('add block', () => {
@@ -621,6 +643,47 @@ describe('JournalPage', () => {
           cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
       )
       expect(createPageCalls).toHaveLength(0)
+    })
+
+    it('focuses the new block after add-block in journal view', async () => {
+      const user = userEvent.setup()
+      const todayStr = formatDate(new Date())
+      const dailyPage = makeDailyPage({ id: 'DP1', content: todayStr })
+
+      mockedInvoke.mockResolvedValue({
+        items: [dailyPage],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('block-tree')).toHaveLength(1)
+      })
+
+      mockedInvoke
+        .mockResolvedValueOnce({
+          id: 'NEW_BLOCK',
+          block_type: 'content',
+          content: '',
+          parent_id: 'DP1',
+          position: 1,
+        })
+        .mockResolvedValueOnce({
+          items: [],
+          next_cursor: null,
+          has_more: false,
+        })
+
+      const sections = screen.getAllByRole('region')
+      const todaySection = sections[0] as HTMLElement
+      const addBtn = within(todaySection).getByRole('button', { name: /add.*block/i })
+      await user.click(addBtn)
+
+      await waitFor(() => {
+        expect(useBlockStore.getState().focusedBlockId).toBe('NEW_BLOCK')
+      })
     })
   })
 

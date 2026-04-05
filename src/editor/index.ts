@@ -19,7 +19,12 @@ export { TagRef } from './extensions/tag-ref'
 export { parse, serialize } from './markdown-serializer'
 export type { PickerItem } from './SuggestionList'
 export { SuggestionList } from './SuggestionList'
-export type { BlockKeyboardCallbacks, EditorLike, EditorState } from './use-block-keyboard'
+export type {
+  BlockKeyboardCallbacks,
+  DeleteBlockOpts,
+  EditorLike,
+  EditorState,
+} from './use-block-keyboard'
 export { handleBlockKeyDown, useBlockKeyboard } from './use-block-keyboard'
 export type { RovingEditorHandle, RovingEditorOptions } from './use-roving-editor'
 export { useRovingEditor } from './use-roving-editor'

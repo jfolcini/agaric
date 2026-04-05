@@ -38,6 +38,7 @@ export function useListKeyboardNavigation(
   const [focusedIndex, setFocusedIndex] = useState(0)
 
   // Reset focusedIndex to 0 when itemCount changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset on itemCount change
   useEffect(() => {
     setFocusedIndex(0)
   }, [itemCount])

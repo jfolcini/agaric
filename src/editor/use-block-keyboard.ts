@@ -9,13 +9,18 @@
 import type { Editor } from '@tiptap/core'
 import { useCallback, useEffect } from 'react'
 
+export interface DeleteBlockOpts {
+  /** Where to place the cursor in the target block after deletion. */
+  cursorPlacement: 'end'
+}
+
 export interface BlockKeyboardCallbacks {
   /** Focus the previous block. Called with cursor-to-end hint. */
   onFocusPrev: () => void
   /** Focus the next block. Called with cursor-to-start hint. */
   onFocusNext: () => void
-  /** Delete the current block (empty + backspace). */
-  onDeleteBlock: () => void
+  /** Delete the current block (empty + backspace). Receives cursor placement hint. */
+  onDeleteBlock: (opts: DeleteBlockOpts) => void
   /** Indent the current block (Tab). */
   onIndent: () => void
   /** Dedent the current block (Shift+Tab). */
@@ -38,6 +43,11 @@ export interface BlockKeyboardCallbacks {
   onToggleCollapse?: (() => void) | undefined
   /** Show block properties drawer (Ctrl/Cmd+Shift+P). */
   onShowProperties?: (() => void) | undefined
+  /**
+   * Whether the current block is the sole remaining block on the page.
+   * When true, Backspace on an empty block is a no-op (prevents empty page).
+   */
+  isLastBlock?: (() => boolean) | undefined
 }
 
 /** Minimal editor shape needed by the key handler (for testability). */
@@ -147,10 +157,11 @@ export function handleBlockKeyDown(
     return
   }
 
-  // Backspace on empty block → delete block
+  // Backspace on empty block → delete block (unless sole remaining block)
   if (key === 'Backspace' && isEmpty) {
     event.preventDefault()
-    callbacks.onDeleteBlock()
+    if (callbacks.isLastBlock?.()) return
+    callbacks.onDeleteBlock({ cursorPlacement: 'end' })
     return
   }
 
@@ -178,6 +189,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     onToggleTodo,
     onToggleCollapse,
     onShowProperties,
+    isLastBlock,
   } = callbacks
 
   const handleKeyDown = useCallback(
@@ -198,6 +210,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         onToggleTodo,
         onToggleCollapse,
         onShowProperties,
+        isLastBlock,
       })
       // When our handler called preventDefault(), also stop propagation so
       // ProseMirror's keydown handler on the editor DOM doesn't process the
@@ -222,6 +235,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       onToggleTodo,
       onToggleCollapse,
       onShowProperties,
+      isLastBlock,
     ],
   )
 
