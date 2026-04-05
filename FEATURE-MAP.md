@@ -48,7 +48,7 @@ The default view — one page per day, created automatically.
 ### Properties
 
 - Browse, create, and manage property definitions
-- 4 value types: text, number, date, select
+- 5 value types: text, number, date, select, ref (block reference)
 - Search/filter property keys
 - Edit select-type options inline
 

@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 206 — 2026-04-05 — Batch 60: H-6, UX-H5, UX-H6, F-15/F-16 closed
+
+### Summary
+Resolved 3 items (H-6, UX-H5, UX-H6) and closed 2 already-implemented items (F-15, F-16). Enabled ref property type creation from UI, fixed block content vertical alignment, and standardized row spacing across panels. 10 files changed, +202/-49 lines. REVIEW-LATER.md reduced from 18 to 13 items.
+
+### Batch 60
+
+**Commit:** 25b547d
+
+| Area | Change |
+|------|--------|
+| migration 0019 (new) | H-6: Recreate `property_definitions` table with 'ref' added to value_type CHECK constraint. |
+| commands.rs | H-6: Add 'ref' to `create_property_def_inner` validation. Add `"ref" => value_ref.is_some()` match arm in `set_property_in_tx` type checking. Remove stale comment about ref fallback. 3 new tests. |
+| PagePropertyTable.tsx + i18n.ts | H-6: Add "ref" option to property type dropdown with i18n key. 1 new test. |
+| SortableBlock.tsx | UX-H5: Change `items-start` → `items-center` on main container, gutter, and inline-controls. Remove heading-level-dependent `gutterPt` padding (unnecessary with center alignment). |
+| AgendaResults.tsx | UX-H6: List items `space-y-2` → `space-y-1` (consistent with DuePanel/DonePanel). |
+| LinkedReferences.tsx + UnlinkedReferences.tsx | UX-H6: Item padding `py-2 px-1` → `py-1.5 px-2` (consistent with other panels). |
+| F-15 + F-16 (closed) | Already implemented correctly — `created_at` set on null→TODO, `completed_at` on TODO/DOING→DONE. 3 existing tests confirm. |
+
+**Review:** 2 review subagents (backend + frontend). Both PASS.
+
+**Stats:** 10 files changed (1 new: migration). 3304/3304 frontend tests pass. 44/44 property Rust tests pass. All pre-commit hooks pass.
+
 ## Session 205 — 2026-04-05 — Batch 59: UX polish (UX-H10, UX-H11, UX-H12)
 
 ### Summary
