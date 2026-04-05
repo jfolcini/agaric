@@ -179,10 +179,11 @@ describe('PagePropertyTable rendering', () => {
     // Never-resolving promise to simulate loading
     mockedInvoke.mockImplementation(() => new Promise(() => {}))
 
-    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+    const { container } = render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
       expect(screen.getByTestId('property-loading')).toBeInTheDocument()
+      expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
     })
   })
 

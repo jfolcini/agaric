@@ -209,7 +209,11 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
 
       {expanded && (
         <div className="mt-1 space-y-1.5 pl-2">
-          {loading && <LoadingSkeleton count={2} height="h-6" data-testid="property-loading" />}
+          {loading && (
+            <div aria-busy="true">
+              <LoadingSkeleton count={2} height="h-6" data-testid="property-loading" />
+            </div>
+          )}
 
           {!loading &&
             properties.map((prop) => {

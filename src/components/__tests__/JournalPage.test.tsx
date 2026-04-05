@@ -764,6 +764,7 @@ describe('JournalPage', () => {
     expect(screen.getByTestId('loading-skeleton')).toBeInTheDocument()
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
     expect(skeletons.length).toBe(3)
+    expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
   })
 
   // ── Error handling ──────────────────────────────────────────────────

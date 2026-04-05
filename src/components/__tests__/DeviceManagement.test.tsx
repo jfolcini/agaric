@@ -261,6 +261,15 @@ describe('DeviceManagement', () => {
     expect(await screen.findByText('Failed to load device info')).toBeInTheDocument()
   })
 
+  it('shows loading skeleton with aria-busy during initial load', () => {
+    mockedInvoke.mockReturnValue(new Promise(() => {}))
+
+    const { container } = render(<DeviceManagement />)
+
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeInTheDocument()
+    expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
+  })
+
   it('shows reset count badge for peers with resets', async () => {
     mockInvokeByCommand({
       get_device_id: mockDeviceId,

@@ -11,28 +11,21 @@
  * Follows StatusPanel.tsx layout patterns.
  */
 
-import { Copy, Globe, Pencil, RefreshCw, Smartphone, Unplug, X } from 'lucide-react'
+import { Copy, Globe, RefreshCw, Smartphone, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
-import { formatLastSynced, truncateId } from '@/lib/format'
+import { truncateId } from '@/lib/format'
+import { useSyncWithTimeout } from '../hooks/useSyncWithTimeout'
 import type { PeerRefRow } from '../lib/tauri'
-import {
-  cancelSync,
-  deletePeerRef,
-  getDeviceId,
-  listPeerRefs,
-  setPeerAddress,
-  startSync,
-  updatePeerName,
-} from '../lib/tauri'
+import { deletePeerRef, getDeviceId, listPeerRefs, startSync, updatePeerName } from '../lib/tauri'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { PairingDialog } from './PairingDialog'
+import { PeerListItem } from './PeerListItem'
 import { RenameDialog } from './RenameDialog'
 import { UnpairConfirmDialog } from './UnpairConfirmDialog'
 
@@ -49,6 +42,7 @@ export function DeviceManagement(): React.ReactElement {
   const [renamingPeerId, setRenamingPeerId] = useState<string | null>(null)
   const [renamePeerId, setRenamePeerId] = useState<string | null>(null)
   const [, setTick] = useState(0)
+  const { execute: executeSyncWithTimeout } = useSyncWithTimeout()
 
   // #437: Auto-clear stale errors after 10 seconds
   useEffect(() => {
@@ -101,12 +95,10 @@ export function DeviceManagement(): React.ReactElement {
   const handleSyncNow = useCallback(
     async (peerId: string) => {
       setSyncingPeerId(peerId)
-      let timeoutId: ReturnType<typeof setTimeout> | undefined
       try {
-        const timeout = new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error('Sync timed out')), 60000)
+        await executeSyncWithTimeout(async () => {
+          await startSync(peerId)
         })
-        await Promise.race([startSync(peerId), timeout])
         await loadData()
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Sync failed'
@@ -116,15 +108,10 @@ export function DeviceManagement(): React.ReactElement {
             : message
         console.error('Sync failed:', err)
         setError(displayMessage)
-        if (message === 'Sync timed out') {
-          await cancelSync()
-        }
-      } finally {
-        clearTimeout(timeoutId)
       }
       setSyncingPeerId(null)
     },
-    [loadData],
+    [executeSyncWithTimeout, loadData],
   )
 
   const handleSyncAll = useCallback(async () => {
@@ -133,21 +120,13 @@ export function DeviceManagement(): React.ReactElement {
     const failures: string[] = []
     for (const peer of peers) {
       setSyncingPeerId(peer.peer_id)
-      let timeoutId: ReturnType<typeof setTimeout> | undefined
       try {
-        const syncTimeout = new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error('Sync timed out')), 60000)
+        await executeSyncWithTimeout(async () => {
+          await startSync(peer.peer_id)
         })
-        await Promise.race([startSync(peer.peer_id), syncTimeout])
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Sync failed'
         console.error(`Sync failed for ${peer.peer_id}:`, err)
         failures.push(peer.device_name || truncateId(peer.peer_id))
-        if (message === 'Sync timed out') {
-          await cancelSync()
-        }
-      } finally {
-        clearTimeout(timeoutId)
       }
       setSyncingPeerId(null)
     }
@@ -157,7 +136,7 @@ export function DeviceManagement(): React.ReactElement {
       setError(failureMessage)
     }
     setSyncingAll(false)
-  }, [peers, loadData])
+  }, [peers, executeSyncWithTimeout, loadData])
 
   const handlePairingClose = useCallback(
     (open: boolean) => {
@@ -195,7 +174,9 @@ export function DeviceManagement(): React.ReactElement {
         </CardHeader>
         <CardContent>
           {loading && !deviceId && (
-            <LoadingSkeleton count={2} height="h-10" className="device-management-loading" />
+            <div aria-busy="true">
+              <LoadingSkeleton count={2} height="h-10" className="device-management-loading" />
+            </div>
           )}
 
           {error && (
@@ -285,107 +266,17 @@ export function DeviceManagement(): React.ReactElement {
                 ) : (
                   <div className="space-y-2">
                     {peers.map((peer) => (
-                      <div
+                      <PeerListItem
                         key={peer.peer_id}
-                        className="device-peer-item flex items-center justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <div className="min-w-0">
-                            <p className="device-peer-name text-sm font-medium truncate">
-                              {peer.device_name || truncateId(peer.peer_id)}
-                            </p>
-                            {peer.device_name && (
-                              <p className="device-peer-id text-xs font-mono text-muted-foreground truncate">
-                                {truncateId(peer.peer_id)}
-                              </p>
-                            )}
-                            <p className="text-xs text-muted-foreground">
-                              Last: {formatLastSynced(peer.synced_at)}
-                            </p>
-                            {peer.reset_count > 0 && (
-                              <Badge variant="outline" className="mt-0.5 text-xs">
-                                {peer.reset_count} reset{peer.reset_count !== 1 ? 's' : ''}
-                              </Badge>
-                            )}
-                            <div className="peer-address flex items-center gap-1 mt-0.5">
-                              <Globe className="h-3 w-3 shrink-0 text-muted-foreground" />
-                              <span className="text-xs text-muted-foreground truncate">
-                                {peer.last_address ?? t('device.noAddress')}
-                              </span>
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                className="peer-address-edit"
-                                onClick={() => {
-                                  const addr = prompt(
-                                    'Enter peer address (host:port):',
-                                    peer.last_address ?? '',
-                                  )
-                                  if (addr) {
-                                    setPeerAddress(peer.peer_id, addr)
-                                      .then(() => {
-                                        toast.success(t('status.addressUpdated'))
-                                        loadData()
-                                      })
-                                      .catch(() => toast.error(t('status.addressInvalid')))
-                                  }
-                                }}
-                                aria-label={t('device.editAddressLabel', {
-                                  name: peer.device_name || truncateId(peer.peer_id),
-                                })}
-                              >
-                                <Pencil className="h-3 w-3" />
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="device-rename-btn touch-target"
-                            onClick={() => setRenamePeerId(peer.peer_id)}
-                            disabled={renamingPeerId === peer.peer_id}
-                            aria-label={t('device.renameDeviceLabel', {
-                              name: peer.device_name || truncateId(peer.peer_id),
-                            })}
-                          >
-                            {renamingPeerId === peer.peer_id ? (
-                              <Spinner />
-                            ) : (
-                              <Pencil className="h-3.5 w-3.5" />
-                            )}
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="device-sync-btn touch-target"
-                            onClick={() => handleSyncNow(peer.peer_id)}
-                            disabled={syncingPeerId === peer.peer_id || syncingAll}
-                            aria-label={t('device.syncNowLabel', { id: truncateId(peer.peer_id) })}
-                          >
-                            {syncingPeerId === peer.peer_id ? (
-                              <Spinner />
-                            ) : (
-                              <RefreshCw className="h-3.5 w-3.5" />
-                            )}
-                            {t('device.syncNowButton')}
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            className="device-unpair-btn touch-target"
-                            onClick={() => setUnpairPeerId(peer.peer_id)}
-                            aria-label={t('device.unpairDeviceLabel', {
-                              id: truncateId(peer.peer_id),
-                            })}
-                          >
-                            <Unplug className="h-3.5 w-3.5" />
-                            {t('device.unpairButton')}
-                          </Button>
-                        </div>
-                      </div>
+                        peer={peer}
+                        syncingPeerId={syncingPeerId}
+                        syncingAll={syncingAll}
+                        renamingPeerId={renamingPeerId}
+                        onSyncNow={handleSyncNow}
+                        onUnpair={(peerId) => setUnpairPeerId(peerId)}
+                        onRename={(peerId) => setRenamePeerId(peerId)}
+                        onAddressUpdated={loadData}
+                      />
                     ))}
                   </div>
                 )}

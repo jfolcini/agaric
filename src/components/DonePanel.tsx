@@ -11,7 +11,7 @@ import { CheckCircle2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Spinner } from '@/components/ui/spinner'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BlockRow } from '../lib/tauri'
@@ -197,8 +197,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
               aria-busy="true"
               role="status"
             >
-              <Spinner data-testid="loader-spinner" />
-              <span className="text-sm text-muted-foreground">{t('donePanel.loading')}</span>
+              <LoadingSkeleton count={3} height="h-10" />
             </div>
           )}
 

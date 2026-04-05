@@ -399,7 +399,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       )}
 
       {loading && pages.length === 0 && (
-        <LoadingSkeleton count={3} height="h-10" className="page-browser-loading" />
+        <div aria-busy="true">
+          <LoadingSkeleton count={3} height="h-10" className="page-browser-loading" />
+        </div>
       )}
 
       {!loading && pages.length === 0 && (

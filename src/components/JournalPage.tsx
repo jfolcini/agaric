@@ -275,7 +275,11 @@ export function JournalPage({
   return (
     <div className="space-y-4">
       {/* Loading indicator on initial fetch */}
-      {loading && <LoadingSkeleton count={3} height="h-10" data-testid="loading-skeleton" />}
+      {loading && (
+        <div aria-busy="true">
+          <LoadingSkeleton count={3} height="h-10" data-testid="loading-skeleton" />
+        </div>
+      )}
 
       {/* View content */}
       {!loading && mode === 'daily' && (

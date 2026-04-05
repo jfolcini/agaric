@@ -5,7 +5,7 @@
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import type { AgendaGroupBy, AgendaSortBy } from '../../lib/agenda-sort'
-import { formatDate } from '../../lib/date-utils'
+import { formatDate, getDateRangeForFilter } from '../../lib/date-utils'
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, listBlocks, queryByProperty } from '../../lib/tauri'
 import type { AgendaFilter } from '../AgendaFilterBuilder'
@@ -122,53 +122,10 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
                 }
               }
             } else if (filter.dimension === 'dueDate') {
-              // Map filter values to actual dates
               const today = new Date()
               const todayStr = formatDate(today)
               for (const value of filter.values) {
-                if (value === 'Today') {
-                  const resp = await listBlocks({
-                    agendaDate: todayStr,
-                    agendaSource: 'column:due_date',
-                    limit: 500,
-                  })
-                  for (const b of resp.items) {
-                    ids.add(b.id)
-                    allBlocks.set(b.id, b)
-                  }
-                } else if (value === 'This week') {
-                  const day = today.getDay()
-                  const mondayOffset = day === 0 ? -6 : 1 - day
-                  const weekStart = new Date(today)
-                  weekStart.setDate(today.getDate() + mondayOffset)
-                  const weekEnd = new Date(weekStart)
-                  weekEnd.setDate(weekStart.getDate() + 6)
-                  const resp = await listBlocks({
-                    agendaDateRange: { start: formatDate(weekStart), end: formatDate(weekEnd) },
-                    agendaSource: 'column:due_date',
-                    limit: 500,
-                  })
-                  for (const b of resp.items) {
-                    ids.add(b.id)
-                    allBlocks.set(b.id, b)
-                  }
-                } else if (value === 'This month') {
-                  const year = today.getFullYear()
-                  const month = today.getMonth()
-                  const monthStart = formatDate(new Date(year, month, 1))
-                  const daysInMonth = new Date(year, month + 1, 0).getDate()
-                  const monthEnd = formatDate(new Date(year, month, daysInMonth))
-                  const resp = await listBlocks({
-                    agendaDateRange: { start: monthStart, end: monthEnd },
-                    agendaSource: 'column:due_date',
-                    limit: 500,
-                  })
-                  for (const b of resp.items) {
-                    ids.add(b.id)
-                    allBlocks.set(b.id, b)
-                  }
-                } else if (value === 'Overdue') {
-                  // Get all blocks with due_date < today
+                if (value === 'Overdue') {
                   const resp = await queryByProperty({ key: 'due_date', limit: 500 })
                   for (const b of resp.items) {
                     if (b.due_date && b.due_date < todayStr && b.todo_state !== 'DONE') {
@@ -176,19 +133,36 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
                       allBlocks.set(b.id, b)
                     }
                   }
-                } else if (
-                  value === 'Next 7 days' ||
-                  value === 'Next 14 days' ||
-                  value === 'Next 30 days'
-                ) {
-                  const numDays = value === 'Next 7 days' ? 7 : value === 'Next 14 days' ? 14 : 30
-                  const rangeEnd = new Date(today)
-                  rangeEnd.setDate(today.getDate() + numDays - 1)
-                  const resp = await listBlocks({
-                    agendaDateRange: { start: todayStr, end: formatDate(rangeEnd) },
-                    agendaSource: 'column:due_date',
-                    limit: 500,
-                  })
+                } else {
+                  const preset =
+                    value === 'Today'
+                      ? 'today'
+                      : value === 'This week'
+                        ? 'this-week'
+                        : value === 'This month'
+                          ? 'this-month'
+                          : value === 'Next 7 days'
+                            ? 'next-7-days'
+                            : value === 'Next 14 days'
+                              ? 'next-14-days'
+                              : value === 'Next 30 days'
+                                ? 'next-30-days'
+                                : null
+                  if (!preset) continue
+                  const range = getDateRangeForFilter(preset, today)
+                  if (!range) continue
+                  const resp =
+                    range.start === range.end
+                      ? await listBlocks({
+                          agendaDate: range.start,
+                          agendaSource: 'column:due_date',
+                          limit: 500,
+                        })
+                      : await listBlocks({
+                          agendaDateRange: range,
+                          agendaSource: 'column:due_date',
+                          limit: 500,
+                        })
                   for (const b of resp.items) {
                     ids.add(b.id)
                     allBlocks.set(b.id, b)
@@ -199,48 +173,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
               const today = new Date()
               const todayStr = formatDate(today)
               for (const value of filter.values) {
-                if (value === 'Today') {
-                  const resp = await listBlocks({
-                    agendaDate: todayStr,
-                    agendaSource: 'column:scheduled_date',
-                    limit: 500,
-                  })
-                  for (const b of resp.items) {
-                    ids.add(b.id)
-                    allBlocks.set(b.id, b)
-                  }
-                } else if (value === 'This week') {
-                  const day = today.getDay()
-                  const mondayOffset = day === 0 ? -6 : 1 - day
-                  const weekStart = new Date(today)
-                  weekStart.setDate(today.getDate() + mondayOffset)
-                  const weekEnd = new Date(weekStart)
-                  weekEnd.setDate(weekStart.getDate() + 6)
-                  const resp = await listBlocks({
-                    agendaDateRange: { start: formatDate(weekStart), end: formatDate(weekEnd) },
-                    agendaSource: 'column:scheduled_date',
-                    limit: 500,
-                  })
-                  for (const b of resp.items) {
-                    ids.add(b.id)
-                    allBlocks.set(b.id, b)
-                  }
-                } else if (value === 'This month') {
-                  const year = today.getFullYear()
-                  const month = today.getMonth()
-                  const monthStart = formatDate(new Date(year, month, 1))
-                  const daysInMonth = new Date(year, month + 1, 0).getDate()
-                  const monthEnd = formatDate(new Date(year, month, daysInMonth))
-                  const resp = await listBlocks({
-                    agendaDateRange: { start: monthStart, end: monthEnd },
-                    agendaSource: 'column:scheduled_date',
-                    limit: 500,
-                  })
-                  for (const b of resp.items) {
-                    ids.add(b.id)
-                    allBlocks.set(b.id, b)
-                  }
-                } else if (value === 'Overdue') {
+                if (value === 'Overdue') {
                   const resp = await queryByProperty({ key: 'scheduled_date', limit: 500 })
                   for (const b of resp.items) {
                     if (
@@ -252,19 +185,36 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
                       allBlocks.set(b.id, b)
                     }
                   }
-                } else if (
-                  value === 'Next 7 days' ||
-                  value === 'Next 14 days' ||
-                  value === 'Next 30 days'
-                ) {
-                  const numDays = value === 'Next 7 days' ? 7 : value === 'Next 14 days' ? 14 : 30
-                  const rangeEnd = new Date(today)
-                  rangeEnd.setDate(today.getDate() + numDays - 1)
-                  const resp = await listBlocks({
-                    agendaDateRange: { start: todayStr, end: formatDate(rangeEnd) },
-                    agendaSource: 'column:scheduled_date',
-                    limit: 500,
-                  })
+                } else {
+                  const preset =
+                    value === 'Today'
+                      ? 'today'
+                      : value === 'This week'
+                        ? 'this-week'
+                        : value === 'This month'
+                          ? 'this-month'
+                          : value === 'Next 7 days'
+                            ? 'next-7-days'
+                            : value === 'Next 14 days'
+                              ? 'next-14-days'
+                              : value === 'Next 30 days'
+                                ? 'next-30-days'
+                                : null
+                  if (!preset) continue
+                  const range = getDateRangeForFilter(preset, today)
+                  if (!range) continue
+                  const resp =
+                    range.start === range.end
+                      ? await listBlocks({
+                          agendaDate: range.start,
+                          agendaSource: 'column:scheduled_date',
+                          limit: 500,
+                        })
+                      : await listBlocks({
+                          agendaDateRange: range,
+                          agendaSource: 'column:scheduled_date',
+                          limit: 500,
+                        })
                   for (const b of resp.items) {
                     ids.add(b.id)
                     allBlocks.set(b.id, b)
@@ -274,160 +224,68 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
             } else if (filter.dimension === 'completedDate') {
               // completed_at is a custom property — use queryByProperty with valueDate per day
               const today = new Date()
-              const todayStr = formatDate(today)
               for (const value of filter.values) {
-                if (value === 'Today') {
+                const preset =
+                  value === 'Today'
+                    ? 'today'
+                    : value === 'This week'
+                      ? 'this-week'
+                      : value === 'This month'
+                        ? 'this-month'
+                        : value === 'Last 7 days'
+                          ? 'last-7-days'
+                          : value === 'Last 30 days'
+                            ? 'last-30-days'
+                            : null
+                if (!preset) continue
+                const range = getDateRangeForFilter(preset, today)
+                if (!range) continue
+                const start = new Date(`${range.start}T00:00:00`)
+                const end = new Date(`${range.end}T00:00:00`)
+                for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+                  const dateStr = formatDate(d)
                   const resp = await queryByProperty({
                     key: 'completed_at',
-                    valueDate: todayStr,
+                    valueDate: dateStr,
                     limit: 500,
                   })
                   for (const b of resp.items) {
                     ids.add(b.id)
                     allBlocks.set(b.id, b)
-                  }
-                } else if (value === 'This week') {
-                  const day = today.getDay()
-                  const mondayOffset = day === 0 ? -6 : 1 - day
-                  for (let d = 0; d < 7; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() + mondayOffset + d)
-                    const dateStr = formatDate(date)
-                    const resp = await queryByProperty({
-                      key: 'completed_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'This month') {
-                  const year = today.getFullYear()
-                  const month = today.getMonth()
-                  const daysInMonth = new Date(year, month + 1, 0).getDate()
-                  for (let d = 1; d <= daysInMonth; d++) {
-                    const dateStr = formatDate(new Date(year, month, d))
-                    const resp = await queryByProperty({
-                      key: 'completed_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'Last 7 days') {
-                  for (let d = 0; d < 7; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() - d)
-                    const dateStr = formatDate(date)
-                    const resp = await queryByProperty({
-                      key: 'completed_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'Last 30 days') {
-                  for (let d = 0; d < 30; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() - d)
-                    const dateStr = formatDate(date)
-                    const resp = await queryByProperty({
-                      key: 'completed_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
                   }
                 }
               }
             } else if (filter.dimension === 'createdDate') {
               // created_at is a custom property — same pattern as completedDate
               const today = new Date()
-              const todayStr = formatDate(today)
               for (const value of filter.values) {
-                if (value === 'Today') {
+                const preset =
+                  value === 'Today'
+                    ? 'today'
+                    : value === 'This week'
+                      ? 'this-week'
+                      : value === 'This month'
+                        ? 'this-month'
+                        : value === 'Last 7 days'
+                          ? 'last-7-days'
+                          : value === 'Last 30 days'
+                            ? 'last-30-days'
+                            : null
+                if (!preset) continue
+                const range = getDateRangeForFilter(preset, today)
+                if (!range) continue
+                const start = new Date(`${range.start}T00:00:00`)
+                const end = new Date(`${range.end}T00:00:00`)
+                for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+                  const dateStr = formatDate(d)
                   const resp = await queryByProperty({
                     key: 'created_at',
-                    valueDate: todayStr,
+                    valueDate: dateStr,
                     limit: 500,
                   })
                   for (const b of resp.items) {
                     ids.add(b.id)
                     allBlocks.set(b.id, b)
-                  }
-                } else if (value === 'This week') {
-                  const day = today.getDay()
-                  const mondayOffset = day === 0 ? -6 : 1 - day
-                  for (let d = 0; d < 7; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() + mondayOffset + d)
-                    const dateStr = formatDate(date)
-                    const resp = await queryByProperty({
-                      key: 'created_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'This month') {
-                  const year = today.getFullYear()
-                  const month = today.getMonth()
-                  const daysInMonth = new Date(year, month + 1, 0).getDate()
-                  for (let d = 1; d <= daysInMonth; d++) {
-                    const dateStr = formatDate(new Date(year, month, d))
-                    const resp = await queryByProperty({
-                      key: 'created_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'Last 7 days') {
-                  for (let d = 0; d < 7; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() - d)
-                    const dateStr = formatDate(date)
-                    const resp = await queryByProperty({
-                      key: 'created_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
-                  }
-                } else if (value === 'Last 30 days') {
-                  for (let d = 0; d < 30; d++) {
-                    const date = new Date(today)
-                    date.setDate(today.getDate() - d)
-                    const dateStr = formatDate(date)
-                    const resp = await queryByProperty({
-                      key: 'created_at',
-                      valueDate: dateStr,
-                      limit: 500,
-                    })
-                    for (const b of resp.items) {
-                      ids.add(b.id)
-                      allBlocks.set(b.id, b)
-                    }
                   }
                 }
               }

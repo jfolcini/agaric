@@ -1,3 +1,5 @@
+import { formatDate } from './date-utils'
+
 const MONTH_NAMES: Record<string, number> = {
   jan: 1,
   january: 1,
@@ -32,10 +34,6 @@ const DAY_NAMES: Record<string, number> = {
   thursday: 4,
   friday: 5,
   saturday: 6,
-}
-
-function formatDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 function isValidDate(year: number, month: number, day: number): boolean {

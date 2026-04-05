@@ -49,6 +49,96 @@ export function formatWeekRange(d: Date): string {
   return `${startStr} - ${endStr}`
 }
 
+/** Short month names for compact date display. */
+const MONTH_SHORT = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+]
+
+/**
+ * Format a YYYY-MM-DD date string compactly.
+ * Same year → "Apr 15", different year → "Apr 15, 2025".
+ */
+export function formatCompactDate(dateStr: string): string {
+  const parts = dateStr.split('-')
+  if (parts.length !== 3) return dateStr
+  const [y, m, d] = parts.map(Number)
+  if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return dateStr
+  const month = MONTH_SHORT[(m ?? 1) - 1] ?? 'Jan'
+  const day = d ?? 1
+  const now = new Date()
+  if (y === now.getFullYear()) return `${month} ${day}`
+  return `${month} ${day}, ${y}`
+}
+
+/** Compute a { start, end } date range for common filter presets. Returns null for 'overdue'. */
+export function getDateRangeForFilter(
+  preset: string,
+  today: Date,
+): { start: string; end: string } | null {
+  const todayStr = formatDate(today)
+
+  if (preset === 'today') {
+    return { start: todayStr, end: todayStr }
+  }
+
+  if (preset === 'this-week') {
+    const day = today.getDay()
+    const mondayOffset = day === 0 ? -6 : 1 - day
+    const weekStart = new Date(today)
+    weekStart.setDate(today.getDate() + mondayOffset)
+    const weekEnd = new Date(weekStart)
+    weekEnd.setDate(weekStart.getDate() + 6)
+    return { start: formatDate(weekStart), end: formatDate(weekEnd) }
+  }
+
+  if (preset === 'this-month') {
+    const year = today.getFullYear()
+    const month = today.getMonth()
+    return {
+      start: formatDate(new Date(year, month, 1)),
+      end: formatDate(new Date(year, month + 1, 0)),
+    }
+  }
+
+  const nextMatch = preset.match(/^next-(\d+)-days$/)
+  if (nextMatch) {
+    const numDays = Number.parseInt(nextMatch[1] as string, 10)
+    const rangeEnd = new Date(today)
+    rangeEnd.setDate(today.getDate() + numDays - 1)
+    return { start: todayStr, end: formatDate(rangeEnd) }
+  }
+
+  const lastMatch = preset.match(/^last-(\d+)-days$/)
+  if (lastMatch) {
+    const numDays = Number.parseInt(lastMatch[1] as string, 10)
+    const rangeStart = new Date(today)
+    rangeStart.setDate(today.getDate() - (numDays - 1))
+    return { start: formatDate(rangeStart), end: todayStr }
+  }
+
+  if (preset === 'overdue') {
+    return null
+  }
+
+  return null
+}
+
+/** Return today's date as a YYYY-MM-DD string. */
+export function getTodayString(): string {
+  return formatDate(new Date())
+}
+
 export interface DayEntry {
   date: Date
   dateStr: string

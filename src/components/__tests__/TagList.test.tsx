@@ -94,6 +94,7 @@ describe('TagList', () => {
 
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
     expect(skeletons.length).toBe(3)
+    expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
   })
 
   it('creates a tag via the form', async () => {

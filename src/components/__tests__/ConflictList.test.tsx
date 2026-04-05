@@ -117,6 +117,15 @@ describe('ConflictList', () => {
     })
   })
 
+  it('shows loading skeleton with aria-busy during initial load', () => {
+    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+
+    const { container } = render(<ConflictList />)
+
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeInTheDocument()
+    expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
+  })
+
   it('renders empty state when no conflicts', async () => {
     mockInvokeByCommand({ get_conflicts: emptyPage })
 

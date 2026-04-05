@@ -8,28 +8,22 @@
 
 import { Link2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useBacklinkResolution } from '../hooks/useBacklinkResolution'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
-import {
-  batchResolve,
-  listBacklinksGrouped,
-  listPropertyKeys,
-  listTagsByPrefix,
-} from '../lib/tauri'
+import { listBacklinksGrouped, listPropertyKeys, listTagsByPrefix } from '../lib/tauri'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
-import { CollapsibleGroupList } from './CollapsibleGroupList'
+import { BacklinkGroupRenderer } from './BacklinkGroupRenderer'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { SourcePageFilter } from './SourcePageFilter'
-import { renderRichContent } from './StaticBlock'
 
 export interface LinkedReferencesProps {
   pageId: string
@@ -56,11 +50,9 @@ export function LinkedReferences({
   const [propertyKeys, setPropertyKeys] = useState<string[]>([])
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
-  // Resolve cache for [[ULID]] and #[ULID] tokens
-  const [resolveVersion, setResolveVersion] = useState(0)
-  const resolveCache = useRef<Map<string, { title: string; deleted: boolean; cachedAt: number }>>(
-    new Map(),
-  )
+  // Resolve [[ULID]] and #[ULID] tokens in block content
+  const { resolveBlockTitle, resolveBlockStatus, resolveTagName, clearCache } =
+    useBacklinkResolution(groups)
 
   // Fetch grouped backlinks
   const fetchGroups = useCallback(
@@ -155,9 +147,9 @@ export function LinkedReferences({
     setNextCursor(null)
     setHasMore(false)
     setTotalCount(0)
-    resolveCache.current.clear()
+    clearCache()
     fetchGroups()
-  }, [fetchGroups])
+  }, [fetchGroups, clearCache])
 
   // Reset filter state when navigating to a different page
   // Uses functional updaters to avoid no-op state updates on initial mount
@@ -170,109 +162,6 @@ export function LinkedReferences({
     setSourcePageExcluded((prev) => (prev.length > 0 ? [] : prev))
     setShowAdvancedFilters(false)
   }, [pageId])
-
-  // Resolve [[ULID]] and #[ULID] tokens in block content
-  useEffect(() => {
-    const allBlocks = groups.flatMap((g) => g.blocks)
-    if (allBlocks.length === 0) return
-
-    const ULID_RE = /\[\[([0-9A-Z]{26})\]\]/g
-    const TAG_RE = /#\[([0-9A-Z]{26})\]/g
-    const idsToResolve = new Set<string>()
-
-    for (const block of allBlocks) {
-      if (!block.content) continue
-      for (const m of block.content.matchAll(ULID_RE)) idsToResolve.add(m[1] as string)
-      for (const m of block.content.matchAll(TAG_RE)) idsToResolve.add(m[1] as string)
-    }
-
-    // Remove already-cached IDs (skip expired entries so they get re-fetched)
-    const TTL_MS = 5 * 60 * 1000
-    for (const id of idsToResolve) {
-      const cached = resolveCache.current.get(id)
-      if (cached && Date.now() - cached.cachedAt <= TTL_MS) {
-        idsToResolve.delete(id)
-      }
-    }
-
-    if (idsToResolve.size === 0) {
-      setResolveVersion((v) => v + 1)
-      return
-    }
-
-    let cancelled = false
-
-    batchResolve([...idsToResolve])
-      .then((resolved) => {
-        if (cancelled) return
-        const now = Date.now()
-        for (const [key, entry] of resolveCache.current) {
-          if (now - entry.cachedAt > TTL_MS) {
-            resolveCache.current.delete(key)
-          }
-        }
-        const MAX_CACHE_SIZE = 1000
-        if (resolveCache.current.size + idsToResolve.size > MAX_CACHE_SIZE) {
-          const overflow = resolveCache.current.size + idsToResolve.size - MAX_CACHE_SIZE
-          const keys = resolveCache.current.keys()
-          for (let i = 0; i < overflow; i++) {
-            const next = keys.next()
-            if (next.done) break
-            resolveCache.current.delete(next.value)
-          }
-        }
-        for (const r of resolved) {
-          resolveCache.current.set(r.id, {
-            title:
-              r.title?.slice(0, 60) ||
-              (r.block_type === 'tag' ? `#${r.id.slice(0, 8)}...` : `[[${r.id.slice(0, 8)}...]]`),
-            deleted: r.deleted,
-            cachedAt: Date.now(),
-          })
-        }
-        for (const id of idsToResolve) {
-          if (!resolveCache.current.has(id)) {
-            resolveCache.current.set(id, {
-              title: `[[${id.slice(0, 8)}...]]`,
-              deleted: true,
-              cachedAt: Date.now(),
-            })
-          }
-        }
-        setResolveVersion((v) => v + 1)
-      })
-      .catch(() => {
-        if (!cancelled) setResolveVersion((v) => v + 1)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [groups])
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
-  const resolveBlockTitle = useCallback(
-    (id: string): string => {
-      return resolveCache.current.get(id)?.title ?? `[[${id.slice(0, 8)}...]]`
-    },
-    [resolveVersion],
-  )
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
-  const resolveBlockStatus = useCallback(
-    (id: string): 'active' | 'deleted' => {
-      return resolveCache.current.get(id)?.deleted ? 'deleted' : 'active'
-    },
-    [resolveVersion],
-  )
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
-  const resolveTagName = useCallback(
-    (id: string): string => {
-      return resolveCache.current.get(id)?.title ?? `#${id.slice(0, 8)}...`
-    },
-    [resolveVersion],
-  )
 
   const toggleExpanded = useCallback(() => {
     setExpanded((prev) => !prev)
@@ -385,44 +274,16 @@ export function LinkedReferences({
             </div>
           )}
 
-          <CollapsibleGroupList
+          <BacklinkGroupRenderer
             groups={groups}
             expandedGroups={groupExpanded}
             onToggleGroup={toggleGroup}
-            untitledLabel={t('references.untitled')}
-            groupClassName="linked-references-group"
-            headerClassName="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 transition-colors"
-            listClassName="linked-references-blocks ml-4 mt-1 space-y-1"
-            listAriaLabel={(title) => t('references.backlinksFrom', { title })}
-            {...(onNavigateToPage && {
-              onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
-            })}
-            renderBlock={(block, _group) => (
-              <li
-                key={block.id}
-                className="linked-reference-item flex flex-wrap items-center gap-3 border-b py-1.5 px-2 last:border-b-0 cursor-pointer hover:bg-muted/50"
-                // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
-                tabIndex={0}
-                onClick={() => handleBlockClick(block)}
-                onKeyDown={(e) => handleBlockKeyDown(e, block)}
-              >
-                <Badge variant="secondary" className="linked-reference-item-type shrink-0">
-                  {block.block_type}
-                </Badge>
-                <span className="linked-reference-item-text text-sm flex-1 truncate">
-                  {block.content
-                    ? renderRichContent(block.content, {
-                        resolveBlockTitle,
-                        resolveTagName,
-                        resolveBlockStatus,
-                      })
-                    : t('references.empty')}
-                </span>
-                <span className="linked-reference-item-id text-xs text-muted-foreground font-mono">
-                  {block.id.slice(0, 8)}...
-                </span>
-              </li>
-            )}
+            onNavigateToPage={onNavigateToPage}
+            handleBlockClick={handleBlockClick}
+            handleBlockKeyDown={handleBlockKeyDown}
+            resolveBlockTitle={resolveBlockTitle}
+            resolveBlockStatus={resolveBlockStatus}
+            resolveTagName={resolveTagName}
           />
 
           <LoadMoreButton

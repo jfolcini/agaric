@@ -12,7 +12,8 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Spinner } from '@/components/ui/spinner'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
+import { formatDate, getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
@@ -38,11 +39,6 @@ function priorityKey(p: string | null): number {
   if (p === '2') return 2
   if (p === '3') return 3
   return 4
-}
-
-/** Format a Date to YYYY-MM-DD using local timezone. */
-function formatLocalDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.ReactElement | null {
@@ -87,10 +83,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
     })
   }, [])
 
-  const todayStr = useMemo(() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  }, [])
+  const todayStr = useMemo(() => getTodayString(), [])
   const isToday = date === todayStr
 
   // Fetch overdue blocks when showing today
@@ -153,11 +146,11 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
         // Filter: due_date is between tomorrow and today + warningDays
         const tomorrow = new Date()
         tomorrow.setDate(tomorrow.getDate() + 1)
-        const tomorrowStr = formatLocalDate(tomorrow)
+        const tomorrowStr = formatDate(tomorrow)
 
         const endDate = new Date()
         endDate.setDate(endDate.getDate() + warningDays)
-        const endStr = formatLocalDate(endDate)
+        const endStr = formatDate(endDate)
 
         const upcoming = resp.items.filter(
           (b) =>
@@ -484,8 +477,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
               aria-busy="true"
               role="status"
             >
-              <Spinner data-testid="loader-spinner" />
-              <span className="text-sm text-muted-foreground">{t('duePanel.loading')}</span>
+              <LoadingSkeleton count={3} height="h-10" />
             </div>
           )}
 

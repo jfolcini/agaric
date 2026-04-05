@@ -122,7 +122,11 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         </Button>
       </form>
 
-      {loading && <LoadingSkeleton count={3} height="h-10" />}
+      {loading && (
+        <div aria-busy="true">
+          <LoadingSkeleton count={3} height="h-10" />
+        </div>
+      )}
 
       {!loading && tags.length === 0 && <EmptyState icon={Tag} message={t('tagList.empty')} />}
 

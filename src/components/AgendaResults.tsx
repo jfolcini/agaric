@@ -12,8 +12,9 @@
 import { CheckCircle2, Circle, Clock } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
+import { formatCompactDate, getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import {
@@ -55,39 +56,9 @@ export interface AgendaResultsProps {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-/** Short month names for compact date display. */
-const MONTH_SHORT = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-]
-
-/** Format a YYYY-MM-DD date string compactly. Same year -> "Apr 15", different year -> "Apr 15, 2025". */
-function formatCompactDate(dateStr: string): string {
-  const parts = dateStr.split('-')
-  if (parts.length !== 3) return dateStr
-  const [y, m, d] = parts.map(Number)
-  if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return dateStr
-  const month = MONTH_SHORT[(m ?? 1) - 1] ?? 'Jan'
-  const day = d ?? 1
-  const now = new Date()
-  if (y === now.getFullYear()) return `${month} ${day}`
-  return `${month} ${day}, ${y}`
-}
-
 /** Determine the color class for a due date chip based on whether it's overdue, today, or future. */
 function dueDateColor(dateStr: string): string {
-  const now = new Date()
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const todayStr = getTodayString()
   if (dateStr < todayStr) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
   if (dateStr === todayStr)
     return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
@@ -153,8 +124,7 @@ export function AgendaResults({
         aria-busy="true"
         role="status"
       >
-        <Spinner size="lg" data-testid="loader-spinner" />
-        <span className="text-sm text-muted-foreground">{t('agenda.loadingTasks')}</span>
+        <LoadingSkeleton count={3} height="h-10" />
       </div>
     )
   }

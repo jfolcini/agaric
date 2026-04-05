@@ -186,16 +186,17 @@ describe('DuePanel', () => {
     expect(items[3]).toHaveTextContent('no priority')
   })
 
-  // 5. Shows loading spinner during fetch
-  it('shows loading spinner during fetch', async () => {
+  // 5. Shows loading skeleton during initial load
+  it('shows loading skeleton during initial load', async () => {
     // Never-resolving promise to keep loading state
     mockedListBlocks.mockImplementation(() => new Promise(() => {}))
 
-    render(<DuePanel date="2025-06-15" />)
+    const { container } = render(<DuePanel date="2025-06-15" />)
 
-    // The component shows a spinner while loading with no blocks
+    // The component shows a skeleton while loading with no blocks
     await waitFor(() => {
-      expect(screen.getByTestId('loader-spinner')).toBeInTheDocument()
+      expect(container.querySelector('[data-slot="skeleton"]')).toBeInTheDocument()
+      expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
     })
   })
 

@@ -36,7 +36,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { LoadingSkeleton } from './LoadingSkeleton'
 import { formatTimestamp, truncateId, ulidToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
@@ -53,6 +52,7 @@ import {
 } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
+import { LoadingSkeleton } from './LoadingSkeleton'
 import { renderRichContent } from './StaticBlock'
 
 /**
@@ -472,7 +472,9 @@ export function ConflictList(): React.ReactElement {
   return (
     <div className="conflict-list space-y-4">
       {loading && blocks.length === 0 && (
-        <LoadingSkeleton count={2} height="h-14" className="conflict-list-loading" />
+        <div aria-busy="true">
+          <LoadingSkeleton count={2} height="h-14" className="conflict-list-loading" />
+        </div>
       )}
 
       {!loading && blocks.length === 0 && (
@@ -528,16 +530,15 @@ export function ConflictList(): React.ReactElement {
         </div>
       )}
 
-      <div className="conflict-items space-y-2" role="list">
+      <ul className="conflict-items space-y-2 list-none p-0">
         {blocks.map((block) => {
           const original = block.parent_id ? originals.get(block.parent_id) : undefined
           const conflictType = inferConflictType(block, original)
           const isExpanded = expandedIds.has(block.id)
           return (
-            <div
+            <li
               key={block.id}
               className="conflict-item flex items-start justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-accent/50"
-              role="listitem"
               data-testid="conflict-item"
             >
               <label
@@ -638,10 +639,10 @@ export function ConflictList(): React.ReactElement {
                   {t('conflict.discardLabel')}
                 </Button>
               </div>
-            </div>
+            </li>
           )
         })}
-      </div>
+      </ul>
 
       {hasMore && (
         <Button

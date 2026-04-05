@@ -204,15 +204,16 @@ describe('DonePanel', () => {
     expect(items[2]).toHaveTextContent('first created')
   })
 
-  // 5. Shows loading spinner during fetch
-  it('shows loading spinner during fetch', async () => {
+  // 5. Shows loading skeleton during initial load
+  it('shows loading skeleton during initial load', async () => {
     // Never-resolving promise to keep loading state
     mockedQueryByProperty.mockImplementation(() => new Promise(() => {}))
 
-    render(<DonePanel date="2025-06-15" />)
+    const { container } = render(<DonePanel date="2025-06-15" />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('loader-spinner')).toBeInTheDocument()
+      expect(container.querySelector('[data-slot="skeleton"]')).toBeInTheDocument()
+      expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
     })
   })
 

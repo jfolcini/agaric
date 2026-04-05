@@ -93,6 +93,7 @@ describe('PageBrowser', () => {
 
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
     expect(skeletons.length).toBe(3)
+    expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
   })
 
   it('shows Untitled for pages with null content', async () => {

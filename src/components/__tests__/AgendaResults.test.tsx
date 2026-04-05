@@ -233,12 +233,12 @@ describe('AgendaResults', () => {
     expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument()
   })
 
-  // 7c. Loading spinner on initial load
-  it('shows loading spinner during initial load', () => {
-    render(<AgendaResults {...defaultProps({ blocks: [], loading: true })} />)
+  // 7c. Loading skeleton on initial load
+  it('shows loading skeleton during initial load', () => {
+    const { container } = render(<AgendaResults {...defaultProps({ blocks: [], loading: true })} />)
 
-    expect(screen.getByTestId('loader-spinner')).toBeInTheDocument()
-    expect(screen.getByText('Loading tasks...')).toBeInTheDocument()
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeInTheDocument()
+    expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
   })
 
   // 7d. Screen reader announces result count
