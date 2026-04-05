@@ -1,6 +1,7 @@
-import { AlertCircle, Loader2 } from 'lucide-react'
+import { AlertCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useBootStore } from '../stores/boot'
 
 export function BootGate({ children }: { children: React.ReactNode }) {
@@ -22,7 +23,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
         aria-live="polite"
         className="flex h-screen flex-col items-center justify-center gap-3 transition-opacity duration-200"
       >
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden="true" />
+        <Spinner size="xl" className="text-muted-foreground" aria-hidden="true" />
         <p className="text-sm text-muted-foreground">Starting Agaric&hellip;</p>
       </div>
     )
@@ -35,7 +36,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
         aria-live="polite"
         className="flex h-screen flex-col items-center justify-center gap-2 transition-opacity duration-200"
       >
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden="true" />
+        <Spinner size="xl" className="text-muted-foreground" aria-hidden="true" />
         <p className="text-sm text-muted-foreground">Recovering&hellip;</p>
       </div>
     )
@@ -59,7 +60,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
             }}
             disabled={retrying}
           >
-            {retrying ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Retry'}
+            {retrying ? <Spinner /> : 'Retry'}
           </Button>
         </div>
       </div>

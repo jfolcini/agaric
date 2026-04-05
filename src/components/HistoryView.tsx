@@ -6,7 +6,7 @@
  * and batch revert with confirmation dialog.
  */
 
-import { ChevronDown, ChevronRight, Clock, Loader2, Lock, RotateCcw } from 'lucide-react'
+import { ChevronDown, ChevronRight, Clock, Lock, RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -493,7 +494,7 @@ export function HistoryView(): React.ReactElement {
                       }}
                     >
                       {loadingDiffs.has(key) ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <Spinner size="sm" />
                       ) : expandedKeys.has(key) ? (
                         <ChevronDown className="h-3.5 w-3.5" />
                       ) : (

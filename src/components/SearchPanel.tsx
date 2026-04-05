@@ -8,14 +8,16 @@
  *  - CJK limitation notice (p3-t6)
  */
 
-import { Loader2, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { CardButton } from '@/components/ui/card-button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
@@ -184,9 +186,7 @@ export function SearchPanel(): React.ReactElement {
         <Button type="submit" variant="outline" disabled={!query.trim()}>
           Search
         </Button>
-        {(typing || searchLoading) && (
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-        )}
+        {(typing || searchLoading) && <Spinner className="text-muted-foreground" />}
       </form>
 
       {hasCJK(query) && (
@@ -210,13 +210,9 @@ export function SearchPanel(): React.ReactElement {
           <ul className="space-y-1 list-none m-0 p-0">
             {recentPages.map((page) => (
               <li key={page.id}>
-                <button
-                  type="button"
-                  className="w-full cursor-pointer rounded-lg border bg-card p-4 text-left text-sm hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  onClick={() => handleRecentClick(page)}
-                >
+                <CardButton className="text-sm" onClick={() => handleRecentClick(page)}>
                   {page.title}
-                </button>
+                </CardButton>
               </li>
             ))}
           </ul>

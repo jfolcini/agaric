@@ -7,10 +7,11 @@
  * "Load more" button.
  */
 
-import { CheckCircle2, Loader2 } from 'lucide-react'
+import { CheckCircle2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Spinner } from '@/components/ui/spinner'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BlockRow } from '../lib/tauri'
@@ -196,7 +197,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
               aria-busy="true"
               role="status"
             >
-              <Loader2 className="h-4 w-4 animate-spin" data-testid="loader-spinner" />
+              <Spinner data-testid="loader-spinner" />
               <span className="text-sm text-muted-foreground">{t('donePanel.loading')}</span>
             </div>
           )}

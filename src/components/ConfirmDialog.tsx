@@ -5,7 +5,6 @@
  * pattern used across 8+ components.
  */
 
-import { Loader2 } from 'lucide-react'
 import type React from 'react'
 import {
   AlertDialog,
@@ -18,6 +17,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { buttonVariants } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 
 interface ConfirmDialogProps {
@@ -64,7 +64,7 @@ export function ConfirmDialog({
             onClick={onAction}
             disabled={loading}
           >
-            {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+            {loading && <Spinner />}
             {actionLabel}
           </AlertDialogAction>
         </AlertDialogFooter>

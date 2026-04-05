@@ -6,12 +6,13 @@
  * converts the first plain-text mention into a [[pageId]] link.
  */
 
-import { Link2, Loader2 } from 'lucide-react'
+import { Link2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkGroup } from '../lib/tauri'
@@ -183,7 +184,7 @@ export function UnlinkedReferences({
               aria-busy="true"
               role="status"
             >
-              <Loader2 className="h-4 w-4 animate-spin" /> {t('unlinkedRefs.loading')}
+              <Spinner /> {t('unlinkedRefs.loading')}
             </div>
           )}
 

@@ -24,6 +24,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -282,9 +283,9 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                 )}
                 {creatingDef && (
                   <div className="space-y-2">
-                    <label htmlFor="new-def-type" className="text-xs text-muted-foreground">
+                    <Label size="xs" htmlFor="new-def-type">
                       {t('pageProperty.valueTypeLabel')}
-                    </label>
+                    </Label>
                     <Select value={newDefType} onValueChange={setNewDefType}>
                       <SelectTrigger
                         id="new-def-type"

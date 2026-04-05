@@ -9,13 +9,13 @@
  * fetching, filtering, and passing down blocks.
  */
 
-import { CheckCircle2, Circle, Clock, Loader2 } from 'lucide-react'
+import { CheckCircle2, Circle, Clock } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
-import type { NavigateToPageFn } from '../lib/block-events'
 import {
   type AgendaSortBy,
   groupByDate,
@@ -23,6 +23,7 @@ import {
   groupByState,
   sortAgendaBlocksBy,
 } from '../lib/agenda-sort'
+import type { NavigateToPageFn } from '../lib/block-events'
 import { priorityColor } from '../lib/priority-color'
 import type { BlockRow } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
@@ -152,7 +153,7 @@ export function AgendaResults({
         aria-busy="true"
         role="status"
       >
-        <Loader2 className="h-5 w-5 animate-spin" data-testid="loader-spinner" />
+        <Spinner size="lg" data-testid="loader-spinner" />
         <span className="text-sm text-muted-foreground">{t('agenda.loadingTasks')}</span>
       </div>
     )

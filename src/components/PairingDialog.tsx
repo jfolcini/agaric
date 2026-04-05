@@ -9,7 +9,7 @@
  * Props: open (boolean), onOpenChange (callback), triggerRef (optional).
  */
 
-import { Camera, Loader2, Smartphone } from 'lucide-react'
+import { Camera, Smartphone } from 'lucide-react'
 import type React from 'react'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -20,6 +20,7 @@ import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
+import { Spinner } from '@/components/ui/spinner'
 import { formatLastSynced } from '@/lib/format'
 import type { PeerRefRow } from '../lib/tauri'
 import {
@@ -328,7 +329,7 @@ export function PairingDialog({
             {/* Loading state */}
             {loading && (
               <div className="pairing-loading flex items-center justify-center py-8">
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                <Spinner className="text-muted-foreground" />
                 <span className="ml-2 text-sm text-muted-foreground">
                   {t('pairing.startingMessage')}
                 </span>
@@ -451,7 +452,7 @@ export function PairingDialog({
                     <Suspense
                       fallback={
                         <div className="flex items-center justify-center py-8">
-                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          <Spinner className="text-muted-foreground" />
                           <span className="ml-2 text-sm text-muted-foreground">
                             {t('pairing.loadingScannerMessage')}
                           </span>
@@ -481,7 +482,7 @@ export function PairingDialog({
                     disabled={pairLoading || words.some((w) => w === '') || isExpired}
                     className="pairing-pair-btn touch-target"
                   >
-                    {pairLoading && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
+                    {pairLoading && <Spinner className="mr-1" />}
                     {t('pairing.pairButton')}
                   </Button>
                 </div>

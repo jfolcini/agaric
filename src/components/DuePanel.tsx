@@ -7,11 +7,12 @@
  * "Load more" button.
  */
 
-import { CheckCircle2, Loader2 } from 'lucide-react'
+import { CheckCircle2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
@@ -483,7 +484,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
               aria-busy="true"
               role="status"
             >
-              <Loader2 className="h-4 w-4 animate-spin" data-testid="loader-spinner" />
+              <Spinner data-testid="loader-spinner" />
               <span className="text-sm text-muted-foreground">{t('duePanel.loading')}</span>
             </div>
           )}

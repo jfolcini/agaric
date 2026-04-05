@@ -15,6 +15,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ListItem } from '@/components/ui/list-item'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
@@ -128,10 +129,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       {tags.length > 0 && (
         <ul className="space-y-2">
           {tags.map((tag) => (
-            <li
-              key={tag.id}
-              className="group flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-accent/50"
-            >
+            <ListItem key={tag.id}>
               <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
               <button
                 type="button"
@@ -156,7 +154,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
-            </li>
+            </ListItem>
           ))}
         </ul>
       )}

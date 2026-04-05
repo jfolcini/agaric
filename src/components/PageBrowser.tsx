@@ -6,7 +6,7 @@
  * Includes delete with confirmation dialog and toast error feedback.
  */
 
-import { ChevronRight, Download, FileText, Loader2, Plus, Search, Trash2 } from 'lucide-react'
+import { ChevronRight, Download, FileText, Plus, Search, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -15,6 +15,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { downloadBlob, exportGraphAsZip } from '../lib/export-graph'
@@ -375,7 +376,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           className="flex-1"
         />
         <Button type="submit" variant="outline" disabled={isCreating || !newPageName.trim()}>
-          {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          {isCreating ? <Spinner /> : <Plus className="h-4 w-4" />}
           {t('pageBrowser.newPage')}
         </Button>
       </form>
@@ -413,11 +414,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
               onClick={handleCreatePage}
               disabled={isCreating}
             >
-              {isCreating ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Plus className="h-4 w-4" />
-              )}
+              {isCreating ? <Spinner /> : <Plus className="h-4 w-4" />}
               {t('pageBrowser.createFirst')}
             </Button>
           }

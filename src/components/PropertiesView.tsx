@@ -14,6 +14,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ListItem } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
@@ -321,10 +322,7 @@ export function PropertiesView(): React.ReactElement {
       {!loading && filteredDefs.length > 0 && (
         <ul className="space-y-2">
           {filteredDefs.map((def) => (
-            <li
-              key={def.key}
-              className="group flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-accent/50"
-            >
+            <ListItem key={def.key}>
               <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
               <Badge variant="secondary">{def.value_type}</Badge>
               {def.value_type === 'select' && (
@@ -369,7 +367,7 @@ export function PropertiesView(): React.ReactElement {
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
-            </li>
+            </ListItem>
           ))}
         </ul>
       )}

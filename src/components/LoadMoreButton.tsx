@@ -6,8 +6,8 @@
  * UnlinkedReferences, AgendaResults, PageBrowser, DonePanel, DuePanel.
  */
 
-import { Loader2 } from 'lucide-react'
 import type React from 'react'
+import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { Button } from './ui/button'
 
@@ -54,7 +54,7 @@ export function LoadMoreButton({
     >
       {loading ? (
         <>
-          <Loader2 className="h-4 w-4 animate-spin" data-testid="loader-spinner" /> {loadingLabel}
+          <Spinner data-testid="loader-spinner" /> {loadingLabel}
         </>
       ) : (
         label

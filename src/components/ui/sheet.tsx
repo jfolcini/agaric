@@ -1,10 +1,11 @@
 'use client'
 
-import { XIcon } from 'lucide-react'
 import { Dialog as SheetPrimitive } from 'radix-ui'
 import type * as React from 'react'
 
 import { cn } from '@/lib/utils'
+
+import { CloseButtonIcon, closeButtonClassName } from './close-button'
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
@@ -69,9 +70,10 @@ function SheetContent({
       >
         {children}
         {showCloseButton && (
-          <SheetPrimitive.Close className="absolute top-4 right-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary p-1 [@media(pointer:coarse)]:p-2 [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center">
-            <XIcon className="size-4" />
-            <span className="sr-only">Close</span>
+          <SheetPrimitive.Close
+            className={cn(closeButtonClassName, 'data-[state=open]:bg-secondary')}
+          >
+            <CloseButtonIcon />
           </SheetPrimitive.Close>
         )}
       </SheetPrimitive.Content>

@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
@@ -252,9 +253,9 @@ function PropertyValuePicker({
 
   return (
     <div className="flex flex-col gap-2">
-      <label htmlFor="prop-filter-key" className="text-xs font-medium">
+      <Label size="xs" muted={false} htmlFor="prop-filter-key">
         {t('agendaFilter.propertyKey')}
-      </label>
+      </Label>
       <Select
         value={propertyKey || '__none__'}
         onValueChange={(val) => setPropertyKey(val === '__none__' ? '' : val)}
@@ -271,9 +272,9 @@ function PropertyValuePicker({
           ))}
         </SelectContent>
       </Select>
-      <label htmlFor="prop-filter-value" className="text-xs font-medium">
+      <Label size="xs" muted={false} htmlFor="prop-filter-value">
         {t('agendaFilter.propertyValue')}
-      </label>
+      </Label>
       <Input
         id="prop-filter-value"
         className="h-7 text-xs"

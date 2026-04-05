@@ -11,7 +11,7 @@
  * Follows StatusPanel.tsx layout patterns.
  */
 
-import { Copy, Globe, Loader2, Pencil, RefreshCw, Smartphone, Unplug, X } from 'lucide-react'
+import { Copy, Globe, Pencil, RefreshCw, Smartphone, Unplug, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -19,6 +19,7 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Spinner } from '@/components/ui/spinner'
 import { formatLastSynced, truncateId } from '@/lib/format'
 import type { PeerRefRow } from '../lib/tauri'
 import {
@@ -272,11 +273,7 @@ export function DeviceManagement(): React.ReactElement {
                     disabled={syncingAll || syncingPeerId !== null}
                     aria-label={t('device.syncAllLabel')}
                   >
-                    {syncingAll ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    )}
+                    {syncingAll ? <Spinner /> : <RefreshCw className="h-3.5 w-3.5" />}
                     {t('device.syncAllButton')}
                   </Button>
                 )}
@@ -355,7 +352,7 @@ export function DeviceManagement(): React.ReactElement {
                             })}
                           >
                             {renamingPeerId === peer.peer_id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <Spinner />
                             ) : (
                               <Pencil className="h-3.5 w-3.5" />
                             )}
@@ -369,7 +366,7 @@ export function DeviceManagement(): React.ReactElement {
                             aria-label={t('device.syncNowLabel', { id: truncateId(peer.peer_id) })}
                           >
                             {syncingPeerId === peer.peer_id ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <Spinner />
                             ) : (
                               <RefreshCw className="h-3.5 w-3.5" />
                             )}

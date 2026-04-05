@@ -13,6 +13,7 @@ import type React from 'react'
 import { useCallback, useState } from 'react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { Label } from './ui/label'
 
 export interface LinkEditPopoverProps {
   editor: Editor
@@ -91,9 +92,9 @@ export function LinkEditPopover({
 
   return (
     <div className="flex flex-col gap-2" data-testid="link-edit-popover">
-      <label htmlFor="link-url-input" className="text-xs font-medium text-muted-foreground">
+      <Label size="xs" htmlFor="link-url-input">
         URL
-      </label>
+      </Label>
       <Input
         id="link-url-input"
         type="url"
