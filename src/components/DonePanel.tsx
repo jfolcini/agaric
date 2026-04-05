@@ -224,7 +224,7 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
                     onKeyDown={(e) => handleBlockKeyDown(e, block)}
                   >
                     {/* Check icon (green) */}
-                    <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-green-600" />
+                    <CheckCircle2 className="done-panel-check h-4 w-4 shrink-0 text-status-done-foreground" />
 
                     {/* Block content */}
                     <span className="done-panel-item-text text-sm min-w-0 flex-1 truncate">

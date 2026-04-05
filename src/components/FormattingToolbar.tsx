@@ -428,9 +428,15 @@ export function FormattingToolbar({
             }}
           >
             <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
-              {currentPriority === '1' && <span className="h-2 w-2 rounded-full bg-red-500" />}
-              {currentPriority === '2' && <span className="h-2 w-2 rounded-full bg-yellow-500" />}
-              {currentPriority === '3' && <span className="h-2 w-2 rounded-full bg-blue-500" />}
+              {currentPriority === '1' && (
+                <span className="h-2 w-2 rounded-full bg-priority-urgent" />
+              )}
+              {currentPriority === '2' && (
+                <span className="h-2 w-2 rounded-full bg-priority-high" />
+              )}
+              {currentPriority === '3' && (
+                <span className="h-2 w-2 rounded-full bg-priority-normal" />
+              )}
               {currentPriority ? `P${currentPriority}` : 'P'}
             </span>
           </Button>

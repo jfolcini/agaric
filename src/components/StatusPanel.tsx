@@ -24,9 +24,8 @@ import { useSyncStore } from '../stores/sync'
 import { DeviceManagement } from './DeviceManagement'
 
 function queueHealthClasses(depth: number): string {
-  if (depth === 0)
-    return 'border-emerald-200 text-emerald-600 dark:border-emerald-800 dark:text-emerald-400'
-  if (depth > 10) return 'border-amber-200 text-amber-600 dark:border-amber-800 dark:text-amber-400'
+  if (depth === 0) return 'border-status-done text-status-done-foreground'
+  if (depth > 10) return 'border-status-pending text-status-pending-foreground'
   return ''
 }
 
@@ -71,11 +70,11 @@ function syncStateLabel(state: string): string {
 function syncStateDotClasses(state: string): string {
   switch (state) {
     case 'idle':
-      return 'bg-emerald-500'
+      return 'bg-status-done-foreground'
     case 'syncing':
     case 'discovering':
     case 'pairing':
-      return 'bg-amber-500'
+      return 'bg-status-pending-foreground'
     case 'error':
       return 'bg-destructive'
     case 'offline':
@@ -235,7 +234,7 @@ export function StatusPanel(): React.ReactElement {
                 </dl>
 
                 {hasErrors && (
-                  <div className="status-panel-errors mt-4 flex flex-col gap-1 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-destructive dark:border-red-900 dark:bg-red-950">
+                  <div className="status-panel-errors mt-4 flex flex-col gap-1 rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
                     <div className="flex items-start gap-2">
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                       <p>
@@ -374,13 +373,15 @@ export function StatusPanel(): React.ReactElement {
             </div>
             {importResult && (
               <div className="import-result mt-3 text-xs space-y-1" data-testid="import-result">
-                <p className="text-emerald-600">
+                <p className="text-status-done-foreground">
                   Imported &ldquo;{importResult.page_title}&rdquo;: {importResult.blocks_created}{' '}
                   blocks
                   {importResult.properties_set > 0 && `, ${importResult.properties_set} properties`}
                 </p>
                 {importResult.warnings.length > 0 && (
-                  <p className="text-amber-600">{importResult.warnings.length} warning(s)</p>
+                  <p className="text-status-pending-foreground">
+                    {importResult.warnings.length} warning(s)
+                  </p>
                 )}
               </div>
             )}

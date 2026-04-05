@@ -11,6 +11,7 @@
 import { Check, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { BatchActionToolbar } from '@/components/BatchActionToolbar'
 import { Button } from '@/components/ui/button'
 
 export interface ConflictBatchToolbarProps {
@@ -30,8 +31,7 @@ export function ConflictBatchToolbar({
 }: ConflictBatchToolbarProps): React.ReactElement {
   const { t } = useTranslation()
   return (
-    <div className="conflict-batch-toolbar flex items-center gap-2 rounded-lg border bg-muted/50 p-2 mb-2">
-      <span className="text-sm font-medium">{selectedCount} selected</span>
+    <BatchActionToolbar selectedCount={selectedCount} className="conflict-batch-toolbar mb-2">
       <Button variant="ghost" size="sm" onClick={onToggleSelectAll}>
         {selectedCount === totalCount
           ? t('conflict.deselectAllButton')
@@ -46,6 +46,6 @@ export function ConflictBatchToolbar({
         <X className="h-3.5 w-3.5 mr-1" />
         {t('conflict.discardAllButton')}
       </Button>
-    </div>
+    </BatchActionToolbar>
   )
 }

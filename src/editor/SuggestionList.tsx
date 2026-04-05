@@ -93,7 +93,7 @@ export const SuggestionList = forwardRef<SuggestionListRef, SuggestionListProps>
             key={item.id}
             id={`suggestion-${item.id}`}
             className={cn(
-              'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 touch-target focus-visible:outline-2 focus-visible:outline-ring',
+              'suggestion-item flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 touch-target focus-outline',
               index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
               item.isCreate && 'border-t border-border',
             )}

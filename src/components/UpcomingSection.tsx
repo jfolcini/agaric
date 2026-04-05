@@ -31,7 +31,7 @@ export function UpcomingSection({
 
   return (
     <div className="upcoming-section mb-3">
-      <h4 className="text-xs font-semibold text-amber-600 dark:text-amber-400 mb-1.5 flex items-center gap-1">
+      <h4 className="text-xs font-semibold text-status-pending-foreground mb-1.5 flex items-center gap-1">
         <span>{t('duePanel.upcomingTitle')}</span>
         <span className="text-muted-foreground font-normal">({blocks.length})</span>
       </h4>
@@ -43,7 +43,7 @@ export function UpcomingSection({
             return (
               <li
                 key={`upcoming-${block.id}`}
-                className="flex items-center gap-2 rounded-md border border-amber-200/30 bg-amber-50/30 dark:border-amber-800/30 dark:bg-amber-950/20 px-2 py-1.5 text-sm cursor-pointer hover:bg-amber-50/50 dark:hover:bg-amber-950/30 transition-colors"
+                className="flex items-center gap-2 rounded-md border border-status-pending/30 bg-status-pending/30 px-2 py-1.5 text-sm cursor-pointer hover:bg-status-pending/50 transition-colors"
                 // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
                 tabIndex={0}
                 onClick={() => {
@@ -58,14 +58,14 @@ export function UpcomingSection({
                 }}
               >
                 {block.todo_state && (
-                  <span className="shrink-0 rounded px-1 py-0.5 text-xs font-bold leading-none bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
+                  <span className="shrink-0 rounded px-1 py-0.5 text-xs font-bold leading-none bg-status-pending text-status-pending-foreground">
                     {block.todo_state}
                   </span>
                 )}
                 <span className="min-w-0 flex-1 truncate">
                   {truncateContent(block.content, 120, t('duePanel.emptyContent'))}
                 </span>
-                <span className="shrink-0 text-xs text-amber-600/60 dark:text-amber-400/60">
+                <span className="shrink-0 text-xs text-status-pending-foreground/60">
                   {block.due_date}
                 </span>
               </li>

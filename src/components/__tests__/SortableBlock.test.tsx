@@ -1801,7 +1801,7 @@ describe('SortableBlock a11y enhancements', () => {
     expect(collapseBtn).toHaveAttribute('aria-expanded', 'false')
   })
 
-  it('drag handle has focus-visible:ring-2 class', () => {
+  it('drag handle has focus-ring class', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1812,10 +1812,10 @@ describe('SortableBlock a11y enhancements', () => {
     )
 
     const handle = screen.getByRole('button', { name: /reorder block/i })
-    expect(handle.className).toContain('focus-visible:ring-2')
+    expect(handle.className).toContain('focus-ring')
   })
 
-  it('delete button has focus-visible:ring-2 class', () => {
+  it('delete button has focus-ring class', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1827,7 +1827,7 @@ describe('SortableBlock a11y enhancements', () => {
     )
 
     const deleteBtn = screen.getByRole('button', { name: /delete block/i })
-    expect(deleteBtn.className).toContain('focus-visible:ring-2')
+    expect(deleteBtn.className).toContain('focus-ring')
   })
 
   it('chevron has focus-visible:ring-2 class', () => {
@@ -2368,8 +2368,8 @@ describe('SortableBlock due date chip', () => {
     )
 
     const chip = container.querySelector('.due-date-chip')
-    expect(chip?.className).toContain('bg-red-100')
-    expect(chip?.className).toContain('text-red-700')
+    expect(chip?.className).toContain('bg-destructive/10')
+    expect(chip?.className).toContain('text-destructive')
   })
 
   it('applies muted styling for future dates', () => {
@@ -2445,8 +2445,8 @@ describe('SortableBlock due date chip', () => {
     )
 
     const chip = container.querySelector('.due-date-chip')
-    expect(chip?.className).toContain('bg-amber-100')
-    expect(chip?.className).toContain('text-amber-700')
+    expect(chip?.className).toContain('bg-status-pending')
+    expect(chip?.className).toContain('text-status-pending-foreground')
   })
 
   it('renders all three indicators simultaneously', () => {

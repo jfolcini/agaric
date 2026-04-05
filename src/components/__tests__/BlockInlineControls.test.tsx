@@ -139,13 +139,13 @@ describe('formatCompactDate', () => {
 
 describe('dueDateColor', () => {
   it('returns red classes for overdue dates', () => {
-    expect(dueDateColor('2000-01-01')).toContain('bg-red-100')
+    expect(dueDateColor('2000-01-01')).toContain('text-destructive')
   })
 
   it('returns amber classes for today', () => {
     const now = new Date()
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    expect(dueDateColor(today)).toContain('bg-amber-100')
+    expect(dueDateColor(today)).toContain('text-status-pending-foreground')
   })
 
   it('returns muted classes for future dates', () => {

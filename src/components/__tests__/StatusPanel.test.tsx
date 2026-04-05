@@ -369,10 +369,10 @@ describe('StatusPanel', () => {
 
       await screen.findByText('Foreground Queue')
       const metricCards = container.querySelectorAll('.status-metric')
-      expect(metricCards[0]?.className).toContain('border-emerald-200')
-      expect(metricCards[0]?.className).toContain('text-emerald-600')
-      expect(metricCards[1]?.className).toContain('border-emerald-200')
-      expect(metricCards[1]?.className).toContain('text-emerald-600')
+      expect(metricCards[0]?.className).toContain('border-status-done')
+      expect(metricCards[0]?.className).toContain('text-status-done-foreground')
+      expect(metricCards[1]?.className).toContain('border-status-done')
+      expect(metricCards[1]?.className).toContain('text-status-done-foreground')
     })
 
     it('applies no health accent for queue depth 1-10', async () => {
@@ -383,10 +383,10 @@ describe('StatusPanel', () => {
 
       await screen.findByText('Foreground Queue')
       const metricCards = container.querySelectorAll('.status-metric')
-      expect(metricCards[0]?.className).not.toContain('border-emerald')
-      expect(metricCards[0]?.className).not.toContain('border-amber')
-      expect(metricCards[1]?.className).not.toContain('border-emerald')
-      expect(metricCards[1]?.className).not.toContain('border-amber')
+      expect(metricCards[0]?.className).not.toContain('border-status-done')
+      expect(metricCards[0]?.className).not.toContain('border-status-pending')
+      expect(metricCards[1]?.className).not.toContain('border-status-done')
+      expect(metricCards[1]?.className).not.toContain('border-status-pending')
     })
 
     it('applies amber accent when queue depth exceeds 10', async () => {
@@ -407,10 +407,10 @@ describe('StatusPanel', () => {
 
       await screen.findByText('Foreground Queue')
       const metricCards = container.querySelectorAll('.status-metric')
-      expect(metricCards[0]?.className).toContain('border-amber-200')
-      expect(metricCards[0]?.className).toContain('text-amber-600')
-      expect(metricCards[1]?.className).toContain('border-amber-200')
-      expect(metricCards[1]?.className).toContain('text-amber-600')
+      expect(metricCards[0]?.className).toContain('border-status-pending')
+      expect(metricCards[0]?.className).toContain('text-status-pending-foreground')
+      expect(metricCards[1]?.className).toContain('border-status-pending')
+      expect(metricCards[1]?.className).toContain('text-status-pending-foreground')
     })
   })
 

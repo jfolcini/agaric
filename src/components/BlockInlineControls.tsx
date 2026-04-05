@@ -40,9 +40,8 @@ export function formatCompactDate(dateStr: string): string {
 export function dueDateColor(dateStr: string): string {
   const now = new Date()
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-  if (dateStr < todayStr) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-  if (dateStr === todayStr)
-    return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+  if (dateStr < todayStr) return 'bg-destructive/10 text-destructive'
+  if (dateStr === todayStr) return 'bg-status-pending text-status-pending-foreground'
   return 'bg-muted text-muted-foreground'
 }
 

@@ -3,14 +3,14 @@
  *
  * Follows the HistorySheet pattern: a Sheet component controlled from BlockTree
  * state. Displays property rows with inline editing, deletion, and an
- * AddPropertySection for adding new properties from existing definitions.
+ * AddPropertyPopover for adding new properties from existing definitions.
  *
  * Built-in block fields (due_date, scheduled_date) are shown as read-only
  * summary rows at the top, sourced from the block store for reactivity.
  */
 
 import type { LucideIcon } from 'lucide-react'
-import { CalendarCheck2, CalendarClock, Plus, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -18,20 +18,12 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { handleDeleteProperty, handleSaveProperty } from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { announce } from '../lib/announcer'
 import type { PropertyDefinition, PropertyRow as PropertyRowData } from '../lib/tauri'
 import {
-  deleteProperty,
   getProperties,
   listPropertyDefs,
   setDueDate as setDueDateCmd,
@@ -39,6 +31,8 @@ import {
   setScheduledDate as setScheduledDateCmd,
 } from '../lib/tauri'
 import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
+import { AddPropertyPopover } from './AddPropertyPopover'
+import { BuiltinDateFields } from './BuiltinDateFields'
 
 const BUILTIN_PROPERTY_KEYS = new Set([
   'todo_state',
@@ -100,23 +94,13 @@ export function BlockPropertyDrawer({
     async (key: string, value: string, type: string) => {
       if (!blockId) return
       try {
-        const params: Parameters<typeof setProperty>[0] = { blockId, key }
-        if (type === 'number') {
-          const num = Number(value)
-          if (Number.isNaN(num)) {
-            toast.error(t('property.invalidNumber'))
-            return
-          }
-          params.valueNum = num
-        } else if (type === 'date') {
-          params.valueDate = value || null
-        } else {
-          params.valueText = value || null
+        const ok = await handleSaveProperty(blockId, key, value, type, (props) =>
+          setProperties(props),
+        )
+        if (!ok) {
+          toast.error(t('property.invalidNumber'))
+          return
         }
-        await setProperty(params)
-        // Refresh
-        const props = await getProperties(blockId)
-        setProperties(Array.isArray(props) ? props : [])
         announce('Property saved')
       } catch {
         toast.error(t('property.saveFailed'))
@@ -130,8 +114,9 @@ export function BlockPropertyDrawer({
     async (key: string) => {
       if (!blockId) return
       try {
-        await deleteProperty(blockId, key)
-        setProperties((prev) => prev.filter((p) => p.key !== key))
+        await handleDeleteProperty(blockId, key, () => {
+          setProperties((prev) => prev.filter((p) => p.key !== key))
+        })
         announce('Property deleted')
       } catch {
         toast.error(t('property.deleteFailed'))
@@ -192,6 +177,25 @@ export function BlockPropertyDrawer({
 
   const hasBuiltinDates = dueDate !== null || scheduledDate !== null
 
+  // Add property from definition
+  const handleAddFromDef = useCallback(
+    async (def: PropertyDefinition) => {
+      if (!blockId) return
+      try {
+        await setProperty({ blockId, key: def.key, valueText: '' })
+        const updated = await getProperties(blockId)
+        setProperties(Array.isArray(updated) ? updated : [])
+      } catch {
+        toast.error(t('property.saveFailed'))
+      }
+    },
+    [blockId, t],
+  )
+
+  // Definitions available for the add-property popover
+  const existingKeys = new Set(properties.map((p) => p.key))
+  const availableDefs = definitions.filter((d) => !existingKeys.has(d.key))
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-80">
@@ -200,36 +204,14 @@ export function BlockPropertyDrawer({
         </SheetHeader>
         <div className="mt-4 space-y-3 px-4">
           {/* Built-in date fields from the blocks table (H-12) */}
-          {!loading && hasBuiltinDates && (
-            <>
-              {dueDate !== null && (
-                <PropertyRow
-                  key={`due-${dueDate}`}
-                  icon={CalendarCheck2}
-                  label={t('property.dueDate')}
-                  value={dueDate}
-                  inputType="date"
-                  ariaLabel={t('property.valueLabel', { key: t('property.dueDate') })}
-                  onSave={(v) => handleSaveBuiltinDate('due_date', v)}
-                  onRemove={() => handleClearBuiltinDate('due_date')}
-                  removeAriaLabel={t('property.clearDueDate')}
-                />
-              )}
-              {scheduledDate !== null && (
-                <PropertyRow
-                  key={`sched-${scheduledDate}`}
-                  icon={CalendarClock}
-                  label={t('property.scheduledDate')}
-                  value={scheduledDate}
-                  inputType="date"
-                  ariaLabel={t('property.valueLabel', { key: t('property.scheduledDate') })}
-                  onSave={(v) => handleSaveBuiltinDate('scheduled_date', v)}
-                  onRemove={() => handleClearBuiltinDate('scheduled_date')}
-                  removeAriaLabel={t('property.clearScheduledDate')}
-                />
-              )}
-              {properties.length > 0 && <div className="border-t border-border/40" />}
-            </>
+          {!loading && (
+            <BuiltinDateFields
+              dueDate={dueDate}
+              scheduledDate={scheduledDate}
+              hasCustomProperties={properties.length > 0}
+              onSaveDate={handleSaveBuiltinDate}
+              onClearDate={handleClearBuiltinDate}
+            />
           )}
 
           {loading ? (
@@ -261,18 +243,7 @@ export function BlockPropertyDrawer({
             })
           )}
           {/* Add property from definitions */}
-          {!loading && (
-            <AddPropertySection
-              blockId={blockId}
-              definitions={definitions}
-              existingKeys={new Set(properties.map((p) => p.key))}
-              onAdded={async () => {
-                if (!blockId) return
-                const props = await getProperties(blockId)
-                setProperties(Array.isArray(props) ? props : [])
-              }}
-            />
-          )}
+          {!loading && <AddPropertyPopover definitions={availableDefs} onAdd={handleAddFromDef} />}
         </div>
       </SheetContent>
     </Sheet>
@@ -346,115 +317,5 @@ export function PropertyRow({
         </Button>
       )}
     </div>
-  )
-}
-
-// ── AddPropertySection ──────────────────────────────────────────────────
-
-interface AddPropertySectionProps {
-  blockId: string | null
-  definitions: PropertyDefinition[]
-  existingKeys: Set<string>
-  onAdded: () => void | Promise<void>
-}
-
-function AddPropertySection({
-  blockId,
-  definitions,
-  existingKeys,
-  onAdded,
-}: AddPropertySectionProps): React.ReactElement {
-  const { t } = useTranslation()
-  const [popoverOpen, setPopoverOpen] = useState(false)
-  const [newValue, setNewValue] = useState('')
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
-
-  const availableDefs = definitions.filter((d) => !existingKeys.has(d.key))
-
-  const handleAdd = useCallback(async () => {
-    if (!blockId || !selectedKey) return
-    try {
-      const def = definitions.find((d) => d.key === selectedKey)
-      const type = def?.value_type ?? 'text'
-      const params: Parameters<typeof setProperty>[0] = { blockId, key: selectedKey }
-      if (type === 'number') {
-        const num = Number(newValue)
-        if (Number.isNaN(num)) {
-          toast.error(t('property.invalidNumber'))
-          return
-        }
-        params.valueNum = num
-      } else if (type === 'date') {
-        params.valueDate = newValue || null
-      } else {
-        params.valueText = newValue || null
-      }
-      await setProperty(params)
-      setNewValue('')
-      setSelectedKey(null)
-      setPopoverOpen(false)
-      await onAdded()
-    } catch {
-      toast.error(t('property.saveFailed'))
-    }
-  }, [blockId, selectedKey, newValue, definitions, onAdded, t])
-
-  return (
-    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start gap-1 text-muted-foreground"
-        >
-          <Plus size={14} />
-          {t('property.addProperty')}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-64 p-3">
-        <div className="space-y-2">
-          <Select
-            value={selectedKey || ''}
-            onValueChange={setSelectedKey}
-            disabled={availableDefs.length === 0}
-          >
-            <SelectTrigger size="sm" aria-label={t('block.editProperty')}>
-              <SelectValue
-                placeholder={
-                  availableDefs.length === 0
-                    ? t('property.noProperties')
-                    : t('property.selectProperty')
-                }
-              />
-            </SelectTrigger>
-            <SelectContent>
-              {availableDefs.map((def) => (
-                <SelectItem key={def.key} value={def.key}>
-                  {formatPropertyName(def.key)}{' '}
-                  <span className="text-xs text-muted-foreground">({def.value_type})</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {selectedKey && (
-            <div className="flex items-center gap-1">
-              <Input
-                className="flex-1 h-7 text-xs"
-                placeholder={formatPropertyName(selectedKey)}
-                aria-label={t('property.valueLabel', { key: selectedKey })}
-                value={newValue}
-                onChange={(e) => setNewValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleAdd()
-                }}
-              />
-              <Button size="sm" className="h-7" onClick={handleAdd}>
-                {t('action.save')}
-              </Button>
-            </div>
-          )}
-        </div>
-      </PopoverContent>
-    </Popover>
   )
 }

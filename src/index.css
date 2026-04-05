@@ -442,6 +442,19 @@
   }
 }
 
+/* ── Focus ring utilities (UX-6) ───────────────────────────────────── */
+@utility focus-ring {
+  &:focus-visible {
+    @apply ring-2 ring-ring ring-offset-1;
+  }
+}
+
+@utility focus-outline {
+  &:focus-visible {
+    @apply outline-2 outline-ring;
+  }
+}
+
 /* ── Touch-target utility ──────────────────────────────────────────── */
 @utility touch-target {
   @media (pointer: coarse) {

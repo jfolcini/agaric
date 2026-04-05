@@ -22,17 +22,14 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
             return (
               <del
                 key={key}
-                className="bg-red-500/15 text-red-700 dark:text-red-400 no-underline line-through"
+                className="bg-destructive/15 text-destructive no-underline line-through"
               >
                 {span.value}
               </del>
             )
           case 'Insert':
             return (
-              <ins
-                key={key}
-                className="bg-green-500/15 text-green-700 dark:text-green-400 no-underline"
-              >
+              <ins key={key} className="bg-status-done text-status-done-foreground no-underline">
                 {span.value}
               </ins>
             )

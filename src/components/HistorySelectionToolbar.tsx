@@ -11,7 +11,7 @@
 import { RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Badge } from '@/components/ui/badge'
+import { BatchActionToolbar } from '@/components/BatchActionToolbar'
 import { Button } from '@/components/ui/button'
 
 // ---------------------------------------------------------------------------
@@ -38,10 +38,10 @@ export function HistorySelectionToolbar({
   const { t } = useTranslation()
 
   return (
-    <div className="history-selection-toolbar flex items-center gap-3 rounded-lg border bg-muted/50 p-3">
-      <Badge variant="secondary">
-        {selectedCount} {t('history.selectedBadge')}
-      </Badge>
+    <BatchActionToolbar
+      selectedCount={selectedCount}
+      className="history-selection-toolbar gap-3 p-3"
+    >
       <Button variant="default" size="sm" onClick={onRevertClick} disabled={reverting}>
         <RotateCcw className="h-3.5 w-3.5" />
         {reverting ? t('history.revertingButton') : t('history.revertSelectedButton')}
@@ -52,6 +52,6 @@ export function HistorySelectionToolbar({
       <span className="text-xs text-muted-foreground ml-auto hidden sm:inline">
         {t('history.keyboardHint')}
       </span>
-    </div>
+    </BatchActionToolbar>
   )
 }

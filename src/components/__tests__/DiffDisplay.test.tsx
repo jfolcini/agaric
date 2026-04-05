@@ -36,7 +36,7 @@ describe('DiffDisplay', () => {
     const del = container.querySelector('del')
     expect(del).not.toBeNull()
     expect(del).toHaveTextContent('removed text')
-    expect(del).toHaveClass('bg-red-500/15', 'text-red-700')
+    expect(del).toHaveClass('bg-destructive/15', 'text-destructive')
   })
 
   it('renders Insert span with ins element', () => {
@@ -47,7 +47,7 @@ describe('DiffDisplay', () => {
     const ins = container.querySelector('ins')
     expect(ins).not.toBeNull()
     expect(ins).toHaveTextContent('added text')
-    expect(ins).toHaveClass('bg-green-500/15', 'text-green-700')
+    expect(ins).toHaveClass('bg-status-done', 'text-status-done-foreground')
   })
 
   it('renders Equal span as plain text', () => {

@@ -24,7 +24,6 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -34,16 +33,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { handleDeleteProperty, handleSaveProperty } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import {
   createPropertyDef,
-  deleteProperty,
   getProperties,
   listPropertyDefs,
   setProperty,
   updatePropertyDefOptions,
 } from '../lib/tauri'
+import { AddPropertyPopover } from './AddPropertyPopover'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { LoadingSkeleton } from './LoadingSkeleton'
 
@@ -63,9 +63,6 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   const [properties, setProperties] = useState<PropertyRow[]>([])
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
   const [showAddPopover, setShowAddPopover] = useState(false)
-  const [defSearch, setDefSearch] = useState('')
-  const [creatingDef, setCreatingDef] = useState(false)
-  const [newDefType, setNewDefType] = useState('text')
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   // Load properties and definitions in parallel
@@ -99,27 +96,16 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     [definitions],
   )
 
-  const handleSaveProperty = useCallback(
+  const doSaveProperty = useCallback(
     async (key: string, def: PropertyDefinition | undefined, rawValue: string) => {
       try {
         const valueType = def?.value_type ?? 'text'
-        if (valueType === 'number') {
-          const num = Number(rawValue)
-          if (rawValue.trim() && !Number.isNaN(num)) {
-            await setProperty({ blockId: pageId, key, valueNum: num })
-          } else if (rawValue.trim()) {
-            toast.error(t('property.invalidNumber'))
-            return
-          } else {
-            await setProperty({ blockId: pageId, key, valueText: '' })
-          }
-        } else if (valueType === 'date') {
-          await setProperty({ blockId: pageId, key, valueDate: rawValue || null })
-        } else {
-          await setProperty({ blockId: pageId, key, valueText: rawValue })
+        const ok = await handleSaveProperty(pageId, key, rawValue, valueType, (props) =>
+          setProperties(props),
+        )
+        if (!ok) {
+          toast.error(t('property.invalidNumber'))
         }
-        const updated = await getProperties(pageId)
-        setProperties(updated)
       } catch {
         toast.error(t('pageProperty.saveFailed'))
       }
@@ -127,11 +113,12 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     [pageId, t],
   )
 
-  const handleDeleteProperty = useCallback(
+  const doDeleteProperty = useCallback(
     async (key: string) => {
       try {
-        await deleteProperty(pageId, key)
-        setProperties((prev) => prev.filter((p) => p.key !== key))
+        await handleDeleteProperty(pageId, key, () => {
+          setProperties((prev) => prev.filter((p) => p.key !== key))
+        })
       } catch {
         toast.error(t('pageProperty.deleteFailed'))
       }
@@ -141,10 +128,10 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
 
   const handleConfirmDelete = useCallback(() => {
     if (deleteTarget) {
-      handleDeleteProperty(deleteTarget)
+      doDeleteProperty(deleteTarget)
       setDeleteTarget(null)
     }
-  }, [deleteTarget, handleDeleteProperty])
+  }, [deleteTarget, doDeleteProperty])
 
   const handleAddFromDef = useCallback(
     async (def: PropertyDefinition) => {
@@ -152,8 +139,6 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         await setProperty({ blockId: pageId, key: def.key, valueText: '' })
         const updated = await getProperties(pageId)
         setProperties(updated)
-        setShowAddPopover(false)
-        setDefSearch('')
       } catch {
         toast.error(t('pageProperty.addFailed'))
       }
@@ -161,33 +146,25 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     [pageId, t],
   )
 
-  const handleCreateDef = useCallback(async () => {
-    const key = defSearch.trim()
-    if (!key) return
-    try {
-      const newDef = await createPropertyDef({ key, valueType: newDefType })
-      setDefinitions((prev) => [...prev, newDef])
-      await setProperty({ blockId: pageId, key: newDef.key, valueText: '' })
-      const updated = await getProperties(pageId)
-      setProperties(updated)
-      setShowAddPopover(false)
-      setDefSearch('')
-      setCreatingDef(false)
-      setNewDefType('text')
-    } catch (err: any) {
-      toast.error(err.message ?? t('property.createDefFailed'))
-    }
-  }, [defSearch, newDefType, pageId, t])
-
-  const filteredDefs = definitions.filter(
-    (d) =>
-      !properties.some((p) => p.key === d.key) &&
-      !TASK_ONLY_PROPERTIES.has(d.key) &&
-      (!defSearch || d.key.toLowerCase().includes(defSearch.toLowerCase())),
+  const handleCreateDef = useCallback(
+    async (key: string, valueType: string) => {
+      try {
+        const newDef = await createPropertyDef({ key, valueType })
+        setDefinitions((prev) => [...prev, newDef])
+        await setProperty({ blockId: pageId, key: newDef.key, valueText: '' })
+        const updated = await getProperties(pageId)
+        setProperties(updated)
+      } catch (err: any) {
+        toast.error(err.message ?? t('property.createDefFailed'))
+      }
+    },
+    [pageId, t],
   )
 
-  const searchMatchesExistingDef = definitions.some(
-    (d) => d.key.toLowerCase() === defSearch.trim().toLowerCase(),
+  // Definitions available for the add-property popover:
+  // exclude already-set keys and task-only properties.
+  const availableDefs = definitions.filter(
+    (d) => !properties.some((p) => p.key === d.key) && !TASK_ONLY_PROPERTIES.has(d.key),
   )
 
   const propertyCount = properties.length
@@ -223,7 +200,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                   key={prop.key}
                   prop={prop}
                   def={def}
-                  onSave={(rawValue) => handleSaveProperty(prop.key, def, rawValue)}
+                  onSave={(rawValue) => doSaveProperty(prop.key, def, rawValue)}
                   onDelete={() => setDeleteTarget(prop.key)}
                   onDefUpdated={(updatedDef) => {
                     setDefinitions((prev) =>
@@ -235,84 +212,14 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
             })}
 
           {!loading && (
-            <Popover open={showAddPopover} onOpenChange={setShowAddPopover}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  className="gap-1 text-muted-foreground"
-                  aria-label={t('pageProperty.addPropertyLabel')}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  {t('pageProperty.addPropertyButton')}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                className="w-64 space-y-2 p-3 max-w-[calc(100vw-2rem)]"
-                aria-label={t('pageProperty.pickerLabel')}
-              >
-                <Input
-                  placeholder={t('pageProperty.searchPlaceholder')}
-                  value={defSearch}
-                  onChange={(e) => {
-                    setDefSearch(e.target.value)
-                    setCreatingDef(false)
-                  }}
-                  aria-label={t('pageProperty.searchLabel')}
-                />
-                <ScrollArea className="max-h-40">
-                  {filteredDefs.map((def) => (
-                    <button
-                      key={def.key}
-                      type="button"
-                      className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-accent"
-                      onClick={() => handleAddFromDef(def)}
-                    >
-                      <span className="flex-1">{formatPropertyName(def.key)}</span>
-                      <Badge variant="outline" className="font-mono text-xs">
-                        {def.value_type}
-                      </Badge>
-                    </button>
-                  ))}
-                </ScrollArea>
-                {defSearch.trim() && !searchMatchesExistingDef && !creatingDef && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full text-muted-foreground"
-                    onClick={() => setCreatingDef(true)}
-                  >
-                    {t('pageProperty.createButton', { name: defSearch.trim() })}
-                  </Button>
-                )}
-                {creatingDef && (
-                  <div className="space-y-2">
-                    <Label size="xs" htmlFor="new-def-type">
-                      {t('pageProperty.valueTypeLabel')}
-                    </Label>
-                    <Select value={newDefType} onValueChange={setNewDefType}>
-                      <SelectTrigger
-                        id="new-def-type"
-                        className="w-full"
-                        aria-label={t('pageProperty.valueTypeLabel')}
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="text">{t('pageProperty.textType')}</SelectItem>
-                        <SelectItem value="number">{t('pageProperty.numberType')}</SelectItem>
-                        <SelectItem value="date">{t('pageProperty.dateType')}</SelectItem>
-                        <SelectItem value="select">{t('pageProperty.selectType')}</SelectItem>
-                        <SelectItem value="ref">{t('pageProperty.refType')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Button size="sm" className="w-full" onClick={handleCreateDef}>
-                      {t('pageProperty.createDefinitionButton')}
-                    </Button>
-                  </div>
-                )}
-              </PopoverContent>
-            </Popover>
+            <AddPropertyPopover
+              definitions={availableDefs}
+              onAdd={handleAddFromDef}
+              supportCreateDef
+              onCreateDef={handleCreateDef}
+              open={showAddPopover}
+              onOpenChange={setShowAddPopover}
+            />
           )}
         </div>
       )}

@@ -100,7 +100,7 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
       result.push({
         label: key,
         blocks: groups.get(key) ?? [],
-        className: key === 'Overdue' ? 'text-red-600 dark:text-red-400' : undefined,
+        className: key === 'Overdue' ? 'text-destructive' : undefined,
       })
       groups.delete(key)
     }
@@ -157,9 +157,9 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
   }
 
   const CLASS_MAP: Record<string, string> = {
-    P1: 'text-red-600 dark:text-red-400',
-    P2: 'text-yellow-600 dark:text-yellow-400',
-    P3: 'text-blue-600 dark:text-blue-400',
+    P1: 'text-destructive',
+    P2: 'text-status-pending-foreground',
+    P3: 'text-status-active-foreground',
     'No priority': 'text-muted-foreground',
   }
 
@@ -209,9 +209,9 @@ export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
   }
 
   const CLASS_MAP: Record<string, string> = {
-    DOING: 'text-amber-600 dark:text-amber-400',
-    TODO: 'text-blue-600 dark:text-blue-400',
-    DONE: 'text-green-600 dark:text-green-400',
+    DOING: 'text-status-pending-foreground',
+    TODO: 'text-status-active-foreground',
+    DONE: 'text-status-done-foreground',
     'No state': 'text-muted-foreground',
   }
 
