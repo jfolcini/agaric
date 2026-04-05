@@ -270,7 +270,7 @@ describe('PageEditor', () => {
         blockType: 'content',
         content: '',
         parentId: 'PAGE_1',
-        position: 0,
+        position: null,
       })
     })
   })
@@ -471,7 +471,7 @@ describe('PageEditor BlockTree auto-creation prop', () => {
         blockType: 'content',
         content: '',
         parentId: 'PAGE_1',
-        position: 0,
+        position: null,
       })
     })
 

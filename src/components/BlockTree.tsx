@@ -450,7 +450,7 @@ export function BlockTree({
     if (autoCreatedForRef.current === rootParentId) return
     autoCreatedForRef.current = rootParentId
 
-    createBlock({ blockType: 'content', content: '', parentId: rootParentId, position: 0 })
+    createBlock({ blockType: 'content', content: '', parentId: rootParentId })
       .then((result) => {
         // Only apply if we're still on the same page
         if (pageStore.getState().rootParentId !== rootParentId) return

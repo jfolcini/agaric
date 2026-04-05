@@ -269,7 +269,7 @@ function SortableBlockInner({
         )}
 
         {/* ── Narrow gutter — grip + delete only ─────────────────── */}
-        <div className={cn(GUTTER_WIDTH, 'flex-shrink-0 flex items-center gap-1')}>
+        <div className={cn(GUTTER_WIDTH, 'relative z-10 flex-shrink-0 flex items-center gap-1')}>
           {/* Drag handle — far left */}
           <Tooltip>
             <TooltipTrigger asChild>

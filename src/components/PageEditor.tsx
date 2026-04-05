@@ -110,7 +110,6 @@ function PageEditorInner({
           blockType: 'content',
           content: '',
           parentId: pageId,
-          position: 0,
         })
         // Reload blocks via the store to pick up the new block
         await pageStore.getState().load()

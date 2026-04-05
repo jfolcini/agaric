@@ -23,6 +23,13 @@ vi.mock('@floating-ui/dom', () => ({
   offset: vi.fn(() => ({})),
 }))
 
+// Mock requestAnimationFrame to execute synchronously so updatePosition
+// doesn't leak callbacks across tests.
+vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+  cb(0)
+  return 0
+})
+
 describe('createSuggestionRenderer', () => {
   it('returns an object with the four lifecycle methods', () => {
     const renderer = createSuggestionRenderer()
@@ -81,6 +88,34 @@ describe('positioning', () => {
     for (const el of document.querySelectorAll('.suggestion-popup')) {
       el.remove()
     }
+  })
+
+  it('starts popup off-screen to avoid flash at (0,0)', () => {
+    const renderer = createSuggestionRenderer()
+    const mockRect = { left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }
+
+    renderer.onStart({
+      items: [],
+      command: vi.fn(),
+      clientRect: () => mockRect as DOMRect,
+      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      editor: {} as any,
+      query: '',
+      range: { from: 0, to: 1 },
+      text: '/',
+      decorationNode: null,
+      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+    } as any)
+
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    expect(popup).toBeTruthy()
+    // Before positioning settles, popup should be off-screen
+    expect(popup.style.position).toBe('fixed')
+    expect(popup.style.left).toBe('-9999px')
+    expect(popup.style.top).toBe('-9999px')
+    expect(popup.style.zIndex).toBe('50')
+
+    renderer.onExit()
   })
 
   it('positions popup using computePosition result', async () => {
@@ -292,10 +327,11 @@ describe('positioning', () => {
       } as any)
     }).not.toThrow()
 
-    // Popup is created but no positioning styles are applied (early return)
+    // Popup is created but stays at off-screen position (updatePosition early return)
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
     expect(popup).toBeTruthy()
-    expect(popup.style.position).toBe('')
+    expect(popup.style.position).toBe('fixed')
+    expect(popup.style.left).toBe('-9999px')
 
     renderer.onExit()
   })
@@ -332,9 +368,9 @@ describe('positioning', () => {
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
     expect(popup).toBeTruthy()
     // Should use coordsAtPos result (150), NOT clientRect left/right (50/70)
-    expect(coordsAtPos).toHaveBeenCalledWith(16)
 
     await vi.waitFor(() => {
+      expect(coordsAtPos).toHaveBeenCalledWith(16)
       expect(popup.style.left).toBe('150px')
       expect(popup.style.top).toBe('104px')
     })
@@ -436,10 +472,11 @@ describe('positioning', () => {
       } as any)
     }).not.toThrow()
 
-    // Popup is created but no positioning styles are applied (early return)
+    // Popup is created but stays at off-screen position (updatePosition early return)
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
     expect(popup).toBeTruthy()
-    expect(popup.style.position).toBe('')
+    expect(popup.style.position).toBe('fixed')
+    expect(popup.style.left).toBe('-9999px')
 
     renderer.onExit()
   })

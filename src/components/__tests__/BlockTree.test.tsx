@@ -3640,7 +3640,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
         blockId: 'B',
         newParentId: 'A',
-        newPosition: 0,
+        newPosition: 1,
       })
     })
   })
@@ -5608,7 +5608,7 @@ describe('H-9: auto-create first block on empty page', () => {
         blockType: 'content',
         content: '',
         parentId: 'PAGE_1',
-        position: 0,
+        position: null,
       })
     })
   })
@@ -5769,7 +5769,7 @@ describe('H-9: auto-create first block on empty page', () => {
         blockType: 'content',
         content: '',
         parentId: 'PAGE_1',
-        position: 0,
+        position: null,
       })
     })
   })
@@ -5792,7 +5792,7 @@ describe('H-9: auto-create first block on empty page', () => {
         blockType: 'content',
         content: '',
         parentId: 'PAGE_1',
-        position: 0,
+        position: null,
       })
     })
 

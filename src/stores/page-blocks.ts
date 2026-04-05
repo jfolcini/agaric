@@ -342,7 +342,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       if (!prevSibling) return
 
       try {
-        await moveBlock(blockId, prevSibling.id, 0)
+        await moveBlock(blockId, prevSibling.id, 1)
 
         const descendantIds = getDragDescendants(blocks, blockId)
         const movedSet = new Set([blockId, ...descendantIds])
@@ -352,7 +352,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           .map((b) => ({
             ...b,
             depth: b.depth + 1,
-            ...(b.id === blockId ? { parent_id: prevSibling?.id, position: 0 } : {}),
+            ...(b.id === blockId ? { parent_id: prevSibling?.id, position: 1 } : {}),
           }))
 
         const remaining = blocks.filter((b) => !movedSet.has(b.id))

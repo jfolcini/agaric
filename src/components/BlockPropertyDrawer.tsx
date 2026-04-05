@@ -18,6 +18,7 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { handleDeleteProperty, handleSaveProperty } from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
@@ -202,49 +203,55 @@ export function BlockPropertyDrawer({
         <SheetHeader>
           <SheetTitle>{t('property.drawerTitle')}</SheetTitle>
         </SheetHeader>
-        <div className="mt-4 space-y-3 px-4">
-          {/* Built-in date fields from the blocks table (H-12) */}
-          {!loading && (
-            <BuiltinDateFields
-              dueDate={dueDate}
-              scheduledDate={scheduledDate}
-              hasCustomProperties={properties.length > 0}
-              onSaveDate={handleSaveBuiltinDate}
-              onClearDate={handleClearBuiltinDate}
-            />
-          )}
+        <ScrollArea className="flex-1 overflow-hidden">
+          <div className="mt-4 space-y-3 px-4 pb-4">
+            {/* Built-in date fields from the blocks table (H-12) */}
+            {!loading && (
+              <BuiltinDateFields
+                dueDate={dueDate}
+                scheduledDate={scheduledDate}
+                hasCustomProperties={properties.length > 0}
+                onSaveDate={handleSaveBuiltinDate}
+                onClearDate={handleClearBuiltinDate}
+              />
+            )}
 
-          {loading ? (
-            <p className="text-sm text-muted-foreground">{t('property.loading')}</p>
-          ) : properties.length === 0 && !hasBuiltinDates ? (
-            <p className="text-sm text-muted-foreground">{t('property.noProperties')}</p>
-          ) : (
-            properties.map((prop) => {
-              const Icon = BUILTIN_PROPERTY_ICONS[prop.key]
-              const label = Icon ? formatPropertyName(prop.key) : prop.key
-              return (
-                <PropertyRow
-                  key={prop.key}
-                  icon={Icon}
-                  label={label}
-                  value={
-                    prop.value_text ??
-                    prop.value_date ??
-                    (prop.value_num != null ? String(prop.value_num) : '')
-                  }
-                  ariaLabel={t('property.valueLabel', { key: prop.key })}
-                  onSave={(v) => handleSave(prop.key, v, getType(prop.key))}
-                  onRemove={
-                    !BUILTIN_PROPERTY_KEYS.has(prop.key) ? () => handleDelete(prop.key) : undefined
-                  }
-                  removeAriaLabel={t('property.delete')}
-                />
-              )
-            })
-          )}
-          {/* Add property from definitions */}
-          {!loading && <AddPropertyPopover definitions={availableDefs} onAdd={handleAddFromDef} />}
-        </div>
+            {loading ? (
+              <p className="text-sm text-muted-foreground">{t('property.loading')}</p>
+            ) : properties.length === 0 && !hasBuiltinDates ? (
+              <p className="text-sm text-muted-foreground">{t('property.noProperties')}</p>
+            ) : (
+              properties.map((prop) => {
+                const Icon = BUILTIN_PROPERTY_ICONS[prop.key]
+                const label = Icon ? formatPropertyName(prop.key) : prop.key
+                return (
+                  <PropertyRow
+                    key={prop.key}
+                    icon={Icon}
+                    label={label}
+                    value={
+                      prop.value_text ??
+                      prop.value_date ??
+                      (prop.value_num != null ? String(prop.value_num) : '')
+                    }
+                    ariaLabel={t('property.valueLabel', { key: prop.key })}
+                    onSave={(v) => handleSave(prop.key, v, getType(prop.key))}
+                    onRemove={
+                      !BUILTIN_PROPERTY_KEYS.has(prop.key)
+                        ? () => handleDelete(prop.key)
+                        : undefined
+                    }
+                    removeAriaLabel={t('property.delete')}
+                  />
+                )
+              })
+            )}
+            {/* Add property from definitions */}
+            {!loading && (
+              <AddPropertyPopover definitions={availableDefs} onAdd={handleAddFromDef} />
+            )}
+          </div>
+        </ScrollArea>
       </SheetContent>
     </Sheet>
   )

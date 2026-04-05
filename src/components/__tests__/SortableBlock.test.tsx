@@ -638,6 +638,24 @@ describe('SortableBlock gutter button pointer-events', () => {
     expect(historyBtn.className).toContain('pointer-events-none')
     expect(historyBtn.className).toContain('group-hover:pointer-events-auto')
   })
+
+  it('gutter div has relative z-10 so overflowing buttons paint above siblings', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_Z"
+        content="z-index test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+        onShowHistory={vi.fn()}
+      />,
+    )
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    const gutterDiv = dragHandle.parentElement as HTMLElement
+    expect(gutterDiv.className).toContain('relative')
+    expect(gutterDiv.className).toContain('z-10')
+  })
 })
 
 describe('SortableBlock collapse/expand chevron', () => {

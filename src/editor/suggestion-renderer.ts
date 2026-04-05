@@ -22,6 +22,9 @@ async function updatePosition(
 ): Promise<void> {
   if (!el) return
 
+  // Wait for the editor view to flush its DOM update so coordsAtPos returns fresh values
+  await new Promise((resolve) => requestAnimationFrame(resolve))
+
   // Try cursor position first (more accurate — follows the end of typed text)
   let rect: DOMRect | null = null
   try {
@@ -87,6 +90,13 @@ export function createSuggestionRenderer(label?: string) {
       popup = document.createElement('div')
       popup.classList.add('suggestion-popup')
       popup.dataset.testid = 'suggestion-popup'
+      // Start off-screen to avoid flash at (0,0) before positioning settles
+      Object.assign(popup.style, {
+        position: 'fixed',
+        left: '-9999px',
+        top: '-9999px',
+        zIndex: '50',
+      })
       document.body.appendChild(popup)
       popup.appendChild(renderer.element)
       void updatePosition(popup, props)

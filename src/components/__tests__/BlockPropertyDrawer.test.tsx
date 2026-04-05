@@ -216,6 +216,27 @@ describe('BlockPropertyDrawer', () => {
     expect(bodyDiv).toHaveClass('px-4')
   })
 
+  it('wraps content in a ScrollArea for overflow scrolling', async () => {
+    const props = [makeProp('status', { value_text: 'active' })]
+    setupMock(props, [makeDef('status')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open={true} onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('status')).toBeInTheDocument()
+    })
+
+    // ScrollArea renders with data-slot="scroll-area"
+    const scrollArea = document.querySelector('[data-slot="scroll-area"]')
+    expect(scrollArea).toBeInTheDocument()
+
+    // The content div should be inside the scroll area
+    const statusEl = screen.getByText('status')
+    const bodyDiv = statusEl.closest('.space-y-3')
+    expect(bodyDiv).not.toBeNull()
+    expect(scrollArea?.contains(bodyDiv)).toBe(true)
+  })
+
   it('has no a11y violations when open with properties', async () => {
     const props = [makeProp('status', { value_text: 'active' })]
     setupMock(props, [makeDef('status')])

@@ -578,12 +578,12 @@ describe('PageBlockStore', () => {
 
       const moved = store.getState().blocks.find((b) => b.id === 'B')
       expect(moved?.parent_id).toBe('A')
-      expect(moved?.position).toBe(0)
+      expect(moved?.position).toBe(1)
       expect(moved?.depth).toBe(1)
       expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
         blockId: 'B',
         newParentId: 'A',
-        newPosition: 0,
+        newPosition: 1,
       })
     })
 
