@@ -138,8 +138,10 @@ Markdown-based WYSIWYG editing:
 
 - Type `@` to open tag picker with fuzzy search (create-new option auto-selected on Enter when no exact match)
 - Type `[[` to open page/block link picker with fuzzy search (create-new option)
+- Type `[[text]]` (with closing brackets) to auto-resolve: exact-match page links directly, no match creates a new page
 - Type `((` to open block reference picker with FTS search (reference existing blocks)
 - Tags and links render as clickable chips with resolved names
+- **Backspace after a chip** re-expands it into trigger text (`[[title` or `@name`) so the suggestion picker reopens for editing
 - All suggestion pickers and context menus use `@floating-ui/dom` for viewport-aware positioning
 - Block references render as violet chips showing first line of content, with hover tooltip for full preview
 - Click a block reference to navigate to the referenced block's page

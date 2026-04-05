@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 219 — 2026-04-05 — Batch 71: H-11, H-13, H-14
+
+### Summary
+Resolved 3 HIGH editor bugs. H-11: EditableBlock auto-mount effect flushes previous editor before mounting new block (fixes "Add block" not focusing). H-13: BlockLinkPicker input rule converts `[[text]]` into block_link nodes (auto-resolve or create page). H-14: block-link and tag-ref Backspace handlers re-expand chips into trigger text for suggestion re-editing. 8 files changed, 16 new tests (3445 total). REVIEW-LATER.md reduced from 27 to 24 items (HIGH tier cleared).
+
+### Batch 71
+
+**Commit:** e5373e9
+
+| Area | Change |
+|------|--------|
+| EditableBlock.tsx | H-11: Auto-mount effect flushes previous editor (unmount + save/split) before mounting new block on external focus change. |
+| block-link-picker.ts | H-13: addInputRules() with `/\[\[([^\]]+)\]\]$/` regex. Async handler: exact-match → link, no match → onCreate, error → plain text fallback. |
+| block-link.ts | H-14: addKeyboardShortcuts() Backspace handler. Deletes block_link chip, re-inserts `[[title` text to reopen suggestion picker. |
+| tag-ref.ts | H-14: addKeyboardShortcuts() Backspace handler. Deletes tag_ref chip, re-inserts `@name` text to reopen suggestion picker. |
+| EditableBlock.test.tsx | 4 tests: auto-mount flush (save, split on newlines, no previous block, unchanged content). |
+| block-link-picker.test.ts | 8 tests: input rule regex matching + extension configuration. |
+| block-link.test.ts | 2 tests: keyboard shortcut registration + resolveTitle option. |
+| tag-ref.test.ts | 2 tests: keyboard shortcut registration + resolveName option. |
+
+### REVIEW-LATER changes
+- **Removed:** H-11 (Add block doesn't focus editor), H-13 (`[[page]]` syntax not parsed), H-14 (cursor into chips doesn't reopen suggestions)
+- **Added:** R-10 through R-17 (8 component decomposition items from session 218 inventory)
+- **Net:** 27 → 24 items (HIGH tier: 3 → 0)
+
 ## Session 218 — 2026-04-05 — Batch 70: UX-7, UX-10
 
 ### Summary
