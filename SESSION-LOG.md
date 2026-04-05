@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 227 — 2026-04-05 — Batch 79: B-2/B-3/B-4/B-5 bug fixes
+
+### Summary
+Fixed 4 frontend bugs plus the original first-block-creation bug. B-2: Suggestion popup (slash commands, all pickers) flashed at screen left on first trigger — added requestAnimationFrame wait + off-screen initial styles in suggestion-renderer.ts. B-3: Delete gutter button unclickable — gutter overflowed 44px with 3 buttons, delete painted behind BlockInlineControls — added relative z-10 to gutter div. B-4: Properties drawer overflowed without scrolling — wrapped content in ScrollArea. B-5: Indent passed position: 0 to moveBlock (1-based validation rejected it) — changed to 1. Also fixed position: 0 in BlockTree auto-create first block (H-9) and PageEditor handleAddBlock. 13 files changed, 4 new tests (4362 total). REVIEW-LATER.md: 5→1 item (B-2/B-3/B-4/B-5 resolved, only F-14 remains).
+
+### Batch 79
+
+**Commit:** 3a68d0d
+
+| Area | Change |
+|------|--------|
+| suggestion-renderer.ts | B-2: Added `requestAnimationFrame` wait in `updatePosition()` + off-screen initial popup styles (`left: -9999px`). |
+| suggestion-renderer.test.ts | B-2: Added RAF mock, off-screen test, updated 2 null-rect tests. |
+| SortableBlock.tsx | B-3: Added `relative z-10` to gutter div so overflow paints above siblings. |
+| SortableBlock.test.tsx | B-3: Regression test verifying z-10 class on gutter div. |
+| BlockPropertyDrawer.tsx | B-4: Wrapped content in `ScrollArea` with `flex-1 overflow-hidden`. |
+| BlockPropertyDrawer.test.tsx | B-4: Test verifying ScrollArea presence and content containment. |
+| page-blocks.ts | B-5: `moveBlock(blockId, prevSibling.id, 0)` → `1`; optimistic `position: 0` → `1`. |
+| page-blocks.test.ts | B-5: Updated indent assertions to expect `newPosition: 1`. |
+| BlockTree.tsx | H-9 auto-create: Removed `position: 0` from `createBlock` call. |
+| BlockTree.test.tsx | Updated 3 auto-create test assertions (`position: 0` → `null`), 1 indent assertion. |
+| PageEditor.tsx | Removed `position: 0` from handleAddBlock empty-page case. |
+| PageEditor.test.tsx | Updated 2 test assertions (`position: 0` → `null`). |
+| REVIEW-LATER.md | Removed B-2/B-3/B-4/B-5 (resolved). |
+
 ## Session 226 — 2026-04-05 — Batch 78: R-11 final, UX-9, UX-18, B-1
 
 ### Summary
