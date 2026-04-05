@@ -52,24 +52,27 @@ export function TemplatesView(): React.ReactElement {
         })),
       )
     } catch {
-      toast.error('Failed to load templates')
+      toast.error(t('slash.templateLoadFailed'))
     }
     setLoading(false)
-  }, [])
+  }, [t])
 
   useEffect(() => {
     loadTemplates()
   }, [loadTemplates])
 
-  const handleRemoveTemplate = useCallback(async (id: string, name: string) => {
-    try {
-      await deleteProperty(id, 'template')
-      setTemplates((prev) => prev.filter((tpl) => tpl.id !== id))
-      toast.success(`Removed template status from ${name}`)
-    } catch {
-      toast.error('Failed to remove template status')
-    }
-  }, [])
+  const handleRemoveTemplate = useCallback(
+    async (id: string, name: string) => {
+      try {
+        await deleteProperty(id, 'template')
+        setTemplates((prev) => prev.filter((tpl) => tpl.id !== id))
+        toast.success(t('templates.templateRemoved', { name }))
+      } catch {
+        toast.error(t('templates.removeTemplateFailed'))
+      }
+    },
+    [t],
+  )
 
   const handleNavigate = useCallback((id: string, content: string) => {
     useNavigationStore.getState().navigateToPage(id, content)

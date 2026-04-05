@@ -12,6 +12,7 @@
 
 import { Trash2, X } from 'lucide-react'
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,6 +44,7 @@ export function BlockContextMenu({
   onSetBatchDeleteConfirm,
   onClearSelection,
 }: BlockContextMenuProps): React.ReactElement | null {
+  const { t } = useTranslation()
   if (selectedBlockIds.length === 0) return null
 
   return (
@@ -86,7 +88,7 @@ export function BlockContextMenu({
           variant="ghost"
           size="sm"
           onClick={() => onClearSelection()}
-          aria-label="Clear selection"
+          aria-label={t('history.clearSelectionButton')}
         >
           <X className="h-3.5 w-3.5" />
         </Button>

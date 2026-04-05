@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import i18n from '../lib/i18n'
 import { listPeerRefs, startSync } from '../lib/tauri'
 import { useSyncStore } from '../stores/sync'
 
@@ -64,14 +65,14 @@ export function useSyncTrigger() {
           // All peers succeeded — reset to base
           intervalRef.current = BASE_INTERVAL_MS
           setState('idle')
-          toast.success('Sync complete')
+          toast.success(i18n.t('device.syncComplete'))
         }
       }
     } catch {
       hadFailure = true
       if (mountedRef.current) {
         setState('error', 'Sync failed')
-        toast.error('Sync failed')
+        toast.error(i18n.t('device.syncFailed'))
         intervalRef.current = Math.min(intervalRef.current * 2, MAX_INTERVAL_MS)
       }
     } finally {

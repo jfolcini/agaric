@@ -17,6 +17,7 @@ import type { BlockRow } from '../lib/tauri'
 import { batchResolve, queryByProperty } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
+import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { PageLink } from './PageLink'
 
@@ -163,9 +164,13 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
     return groups
   })()
 
-  // Empty state: hidden entirely
+  // Empty state: show EmptyState component
   if (!loading && totalCount === 0 && blocks.length === 0) {
-    return null
+    return (
+      <section className="done-panel" aria-label={t('donePanel.completedItems')}>
+        <EmptyState icon={CheckCircle2} message={t('donePanel.empty')} compact />
+      </section>
+    )
   }
 
   const headerLabel =

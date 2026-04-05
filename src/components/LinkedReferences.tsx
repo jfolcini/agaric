@@ -6,6 +6,7 @@
  * Uses cursor-based pagination with "Load more" button.
  */
 
+import { Link2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -13,6 +14,8 @@ import { toast } from 'sonner'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useBlockNavigation } from '../hooks/useBlockNavigation'
+import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '../lib/tauri'
 import {
   batchResolve,
@@ -20,11 +23,10 @@ import {
   listPropertyKeys,
   listTagsByPrefix,
 } from '../lib/tauri'
-import { useBlockNavigation } from '../hooks/useBlockNavigation'
-import type { NavigateToPageFn } from '../lib/block-events'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
+import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { SourcePageFilter } from './SourcePageFilter'
 import { renderRichContent } from './StaticBlock'
@@ -302,9 +304,13 @@ export function LinkedReferences({
     }
   }, [nextCursor, fetchGroups])
 
-  // Empty state: hidden entirely
+  // Empty state: show EmptyState component
   if (!loading && totalCount === 0 && groups.length === 0) {
-    return null
+    return (
+      <section className="linked-references" aria-label={t('references.panelLabel')}>
+        <EmptyState icon={Link2} message={t('references.noReferences')} compact />
+      </section>
+    )
   }
 
   // Derive sourcePages from groups for SourcePageFilter
@@ -318,7 +324,7 @@ export function LinkedReferences({
     totalCount === 1 ? t('references.headerOne') : t('references.header', { count: totalCount })
 
   return (
-    <section className="linked-references" aria-label="References">
+    <section className="linked-references" aria-label={t('references.panelLabel')}>
       {/* Main header -- collapsible */}
       <CollapsiblePanelHeader
         collapsed={!expanded}

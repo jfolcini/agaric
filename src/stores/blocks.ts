@@ -12,6 +12,7 @@
 import { toast } from 'sonner'
 import { create } from 'zustand'
 import { parse, serialize } from '../editor/markdown-serializer'
+import i18n from '../lib/i18n'
 import type { BlockRow, PageResponse } from '../lib/tauri'
 import { createBlock, deleteBlock, editBlock, listBlocks, moveBlock } from '../lib/tauri'
 import { buildFlatTree, type FlatBlock, getDragDescendants } from '../lib/tree-utils'
@@ -143,7 +144,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     } catch {
       if (get().rootParentId !== newRoot) return
       set({ loading: false })
-      toast.error('Failed to load blocks')
+      toast.error(i18n.t('error.loadBlocksFailed'))
     }
   },
 
@@ -241,7 +242,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       notifyUndoNewAction(rootParentId)
       return result.id
     } catch {
-      toast.error('Failed to create block')
+      toast.error(i18n.t('error.createBlockFailed'))
       return null
     }
   },
@@ -255,7 +256,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       await editBlock(blockId, content)
       notifyUndoNewAction(rootParentId)
     } catch {
-      toast.error('Failed to save changes')
+      toast.error(i18n.t('error.saveFailed'))
     }
   },
 
@@ -272,7 +273,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       }))
       notifyUndoNewAction(rootParentId)
     } catch {
-      toast.error('Failed to delete block')
+      toast.error(i18n.t('error.deleteBlockFailed'))
     }
   },
 
@@ -367,7 +368,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       set({ blocks: newBlocks })
       notifyUndoNewAction(rootParentId)
     } catch {
-      toast.error('Failed to reorder block')
+      toast.error(i18n.t('error.reorderBlockFailed'))
     }
   },
 
@@ -381,7 +382,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       await get().load(rootParentId ?? undefined)
       notifyUndoNewAction(rootParentId)
     } catch {
-      toast.error('Failed to move block')
+      toast.error(i18n.t('error.moveBlockFailed'))
     }
   },
 
@@ -441,7 +442,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       set({ blocks: remaining })
       notifyUndoNewAction(rootParentId)
     } catch {
-      toast.error('Failed to indent block')
+      toast.error(i18n.t('error.indentBlockFailed'))
     }
   },
 
@@ -487,7 +488,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       set({ blocks: remaining })
       notifyUndoNewAction(rootParentId)
     } catch {
-      toast.error('Failed to dedent block')
+      toast.error(i18n.t('error.dedentBlockFailed'))
     }
   },
 
@@ -513,7 +514,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       await get().load(rootParentId ?? undefined)
       notifyUndoNewAction(rootParentId)
     } catch {
-      toast.error('Failed to move block up')
+      toast.error(i18n.t('error.moveBlockUpFailed'))
     }
   },
 
@@ -539,7 +540,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       await get().load(rootParentId ?? undefined)
       notifyUndoNewAction(rootParentId)
     } catch {
-      toast.error('Failed to move block down')
+      toast.error(i18n.t('error.moveBlockDownFailed'))
     }
   },
 }))

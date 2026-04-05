@@ -866,6 +866,94 @@ const resources = {
       'blockTree.noBlocks': 'No blocks yet. Click + Add block below to start writing.',
       'blockTree.emptyPage': 'Creating first block\u2026',
       'blockTree.createFirstBlockFailed': 'Failed to create first block',
+
+      // Error toasts (stores/hooks)
+      'error.loadBlocksFailed': 'Failed to load blocks',
+      'error.deleteBlockFailed': 'Failed to delete block',
+      'error.reorderBlockFailed': 'Failed to reorder block',
+      'error.moveBlockFailed': 'Failed to move block',
+      'error.indentBlockFailed': 'Failed to indent block',
+      'error.dedentBlockFailed': 'Failed to dedent block',
+      'error.moveBlockUpFailed': 'Failed to move block up',
+      'error.moveBlockDownFailed': 'Failed to move block down',
+      'error.createPageFailed': 'Failed to create page',
+
+      // Attachment toasts
+      'attachments.loadFailed': 'Failed to load attachments',
+      'attachments.addFailed': 'Failed to add attachment',
+      'attachments.deleteFailed': 'Failed to delete attachment',
+
+      // Tag toasts
+      'tags.addFailed': 'Failed to add tag',
+      'tags.deleteFailed': 'Failed to delete tag',
+      'tags.createFailed': 'Failed to create tag',
+
+      // Sync toasts + aria-labels
+      'device.syncComplete': 'Sync complete',
+      'device.syncFailed': 'Sync failed',
+      'device.deviceNameLabel': 'Device name',
+
+      // History toasts + aria-labels
+      'history.loadFailed': 'Failed to load history',
+      'history.revertFailed': 'Failed to revert operations',
+      'history.revertedSuccessfully': 'Reverted successfully',
+      'history.revertPanelFailed': 'Failed to revert',
+      'history.loadDiffFailed': 'Failed to load diff',
+      'history.filterByTypeLabel': 'Filter by operation type',
+      'history.entriesLabel': 'History entries',
+      'history.nonReversibleLabel': 'Non-reversible',
+
+      // Trash toasts
+      'trash.blockRestored': 'Block restored',
+      'trash.restoreFailed': 'Failed to restore block',
+      'trash.blockPurged': 'Block permanently deleted',
+      'trash.purgeFailed': 'Failed to purge block',
+
+      // Block tree toasts + aria-labels
+      'blockTree.setDueDateFailed': 'Failed to set due date',
+      'blockTree.repeatUntilMessage': 'Repeat until {{date}}',
+      'blockTree.setRepeatEndDateFailed': 'Failed to set repeat end date',
+      'blockTree.setScheduledDateFailed': 'Failed to set scheduled date',
+      'blockTree.setPropertyFailed': 'Failed to set property',
+      'blockTree.loadingLabel': 'Loading blocks',
+
+      // Property toasts + aria-labels
+      'property.renameFailed': 'Failed to rename property',
+      'property.editKeyLabel': 'Edit property {{key}}',
+
+      // Templates toasts
+      'templates.removeTemplateFailed': 'Failed to remove template status',
+      'templates.templateRemoved': 'Removed template status from {{name}}',
+
+      // Journal aria-labels
+      'journal.datePickerLabel': 'Date picker',
+      'journal.viewModeLabel': 'Journal view mode',
+      'journal.typeDateLabel': 'Type a date',
+      'journal.monthlyViewButtonLabel': 'Go to monthly view',
+      'journal.goToWeek': 'Go to week {{weekNum}}',
+
+      // References aria-labels + empty state (UX-13)
+      'references.panelLabel': 'References',
+      'references.noReferences': 'No references to this page yet.',
+
+      // Unlinked references aria-labels
+      'unlinkedRefs.panelLabel': 'Unlinked references',
+
+      // Backlink aria-labels
+      'backlink.filtersLabel': 'Backlink filters',
+      'backlink.appliedFiltersLabel': 'Applied filters',
+
+      // Other aria-labels
+      'propertiesView.optionsJsonLabel': 'Options JSON',
+      'conflict.unresolvedLabel': 'Has unresolved conflicts',
+      'pageHeader.breadcrumbLabel': 'Page breadcrumb',
+      'pdfViewer.previousPageLabel': 'Previous page',
+      'pdfViewer.nextPageLabel': 'Next page',
+      'block.editLabel': 'Edit block',
+      'tagList.deleteTagLabel': 'Delete tag',
+
+      // Done panel empty state (UX-13)
+      'donePanel.empty': 'No completed items yet.',
     },
   },
 }

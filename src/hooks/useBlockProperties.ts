@@ -14,6 +14,7 @@
 import { useCallback } from 'react'
 import { toast } from 'sonner'
 import { announce } from '../lib/announcer'
+import i18n from '../lib/i18n'
 import { setPriority as setPriorityCmd, setTodoState as setTodoStateCmd } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { useUndoStore } from '../stores/undo'
@@ -77,7 +78,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
       useBlockStore.setState((s) => ({
         blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, todo_state: current } : b)),
       }))
-      toast.error('Failed to update task state')
+      toast.error(i18n.t('blockTree.setTaskStateFailed'))
       return
     }
 
@@ -105,7 +106,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
       useBlockStore.setState((s) => ({
         blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, priority: current } : b)),
       }))
-      toast.error('Failed to update priority')
+      toast.error(i18n.t('blockTree.setPriorityFailed'))
       return
     }
 

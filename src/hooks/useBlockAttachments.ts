@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
+import i18n from '../lib/i18n'
 import type { AttachmentRow } from '../lib/tauri'
 import { addAttachment, deleteAttachment, listAttachments } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
@@ -31,7 +32,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
     setLoading(true)
     listAttachments(blockId)
       .then(setAttachments)
-      .catch(() => toast.error('Failed to load attachments'))
+      .catch(() => toast.error(i18n.t('attachments.loadFailed')))
       .finally(() => setLoading(false))
   }, [blockId])
 
@@ -44,7 +45,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAttachments((prev) => [...prev, row])
       } catch {
-        toast.error('Failed to add attachment')
+        toast.error(i18n.t('attachments.addFailed'))
       }
     },
     [blockId],
@@ -59,7 +60,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
       } catch {
-        toast.error('Failed to delete attachment')
+        toast.error(i18n.t('attachments.deleteFailed'))
       }
     },
     [blockId],

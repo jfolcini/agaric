@@ -323,6 +323,7 @@ function JournalCalendarDropdown({
   onSelectMonth,
   onClose,
 }: JournalCalendarDropdownProps): React.ReactElement {
+  const { t } = useTranslation()
   const calRef = useRef<HTMLDivElement>(null)
   const [flipAbove, setFlipAbove] = useState(false)
   const [shiftLeft, setShiftLeft] = useState(0)
@@ -387,7 +388,7 @@ function JournalCalendarDropdown({
       <div
         ref={calRef}
         role="dialog"
-        aria-label="Date picker"
+        aria-label={t('journal.datePickerLabel')}
         className={`absolute right-0 z-50 rounded-md border bg-popover p-2 shadow-md ${
           flipAbove ? 'bottom-full mb-1' : 'top-full mt-1'
         }`}
@@ -611,7 +612,11 @@ export function JournalControls(): React.ReactElement {
   return (
     <div className="flex flex-1 items-center gap-2 flex-wrap">
       {/* Mode switcher */}
-      <div className="flex items-center gap-0.5" role="tablist" aria-label="Journal view mode">
+      <div
+        className="flex items-center gap-0.5"
+        role="tablist"
+        aria-label={t('journal.viewModeLabel')}
+      >
         {(['daily', 'weekly', 'monthly', 'agenda'] as const).map((m) => {
           const tabLabels: Record<string, string> = {
             daily: t('journal.dayTab'),

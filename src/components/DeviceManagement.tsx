@@ -328,12 +328,10 @@ export function DeviceManagement(): React.ReactElement {
                                   if (addr) {
                                     setPeerAddress(peer.peer_id, addr)
                                       .then(() => {
-                                        toast.success('Address updated')
+                                        toast.success(t('status.addressUpdated'))
                                         loadData()
                                       })
-                                      .catch(() =>
-                                        toast.error('Invalid address format (expected host:port)'),
-                                      )
+                                      .catch(() => toast.error(t('status.addressInvalid')))
                                   }
                                 }}
                                 aria-label={t('device.editAddressLabel', {

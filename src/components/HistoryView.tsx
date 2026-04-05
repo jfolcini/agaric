@@ -141,12 +141,15 @@ export function HistoryView(): React.ReactElement {
   }, [entries.length])
 
   // ── List keyboard navigation (ArrowUp/Down, j/k) ────────────────
-  const { focusedIndex, setFocusedIndex, handleKeyDown: navHandleKeyDown } =
-    useListKeyboardNavigation({
-      itemCount: entries.length,
-      wrap: false,
-      vim: true,
-    })
+  const {
+    focusedIndex,
+    setFocusedIndex,
+    handleKeyDown: navHandleKeyDown,
+  } = useListKeyboardNavigation({
+    itemCount: entries.length,
+    wrap: false,
+    vim: true,
+  })
 
   // Reset selection when filter changes (entries are replaced by the hook)
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset UI state when filter changes
@@ -233,11 +236,11 @@ export function HistoryView(): React.ReactElement {
       setEntries([])
       await reload()
     } catch {
-      toast.error('Failed to revert operations')
+      toast.error(t('history.revertFailed'))
     }
     setReverting(false)
     setConfirmRevert(false)
-  }, [selected, entries, reload, setEntries])
+  }, [selected, entries, reload, setEntries, t])
 
   // ── Keyboard navigation ──────────────────────────────────────────
 
@@ -310,7 +313,7 @@ export function HistoryView(): React.ReactElement {
       }
       setFocusedIndex(index)
     },
-    [rangeSelect, toggleSelection],
+    [rangeSelect, toggleSelection, setFocusedIndex],
   )
 
   // ── Render ───────────────────────────────────────────────────────
@@ -329,7 +332,7 @@ export function HistoryView(): React.ReactElement {
           <SelectTrigger
             id="op-type-filter"
             className="h-8 rounded-md border border-input bg-background px-2 text-sm"
-            aria-label="Filter by operation type"
+            aria-label={t('history.filterByTypeLabel')}
           >
             <SelectValue />
           </SelectTrigger>
@@ -401,7 +404,7 @@ export function HistoryView(): React.ReactElement {
           ref={listRef}
           className="history-list space-y-2 p-0 m-0"
           role="listbox"
-          aria-label="History entries"
+          aria-label={t('history.entriesLabel')}
           aria-multiselectable="true"
         >
           {entries.map((entry, index) => {
@@ -507,7 +510,7 @@ export function HistoryView(): React.ReactElement {
                         <TooltipTrigger asChild>
                           <Lock
                             className="h-4 w-4 shrink-0 text-muted-foreground"
-                            aria-label="Non-reversible"
+                            aria-label={t('history.nonReversibleLabel')}
                           />
                         </TooltipTrigger>
                         <TooltipContent>

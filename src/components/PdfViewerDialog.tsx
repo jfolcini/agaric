@@ -13,6 +13,7 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog'
 
@@ -32,6 +33,7 @@ export function PdfViewerDialog({
   fileUrl,
   filename,
 }: PdfViewerDialogProps): React.ReactElement {
+  const { t } = useTranslation()
   const [numPages, setNumPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
   const [loading, setLoading] = useState(false)
@@ -218,7 +220,7 @@ export function PdfViewerDialog({
               size="icon-sm"
               onClick={goToPrev}
               disabled={currentPage <= 1}
-              aria-label="Previous page"
+              aria-label={t('pdfViewer.previousPageLabel')}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -230,7 +232,7 @@ export function PdfViewerDialog({
               size="icon-sm"
               onClick={goToNext}
               disabled={currentPage >= numPages}
-              aria-label="Next page"
+              aria-label={t('pdfViewer.nextPageLabel')}
             >
               <ChevronRight className="h-4 w-4" />
             </Button>

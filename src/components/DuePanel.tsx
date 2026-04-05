@@ -7,19 +7,20 @@
  * "Load more" button.
  */
 
-import { Loader2 } from 'lucide-react'
+import { CheckCircle2, Loader2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import type { NavigateToPageFn } from '../lib/block-events'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
+import type { NavigateToPageFn } from '../lib/block-events'
 import { priorityColor } from '../lib/priority-color'
 import type { BlockRow, ProjectedAgendaEntry } from '../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
+import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { PageLink } from './PageLink'
 
@@ -394,7 +395,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
   ) {
     return (
       <section className="due-panel" aria-label={t('duePanel.duePanelLabel')}>
-        <p className="text-sm text-muted-foreground px-4 py-8 text-center">{t('duePanel.empty')}</p>
+        <EmptyState icon={CheckCircle2} message={t('duePanel.empty')} compact />
       </section>
     )
   }

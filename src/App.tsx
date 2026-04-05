@@ -225,12 +225,12 @@ function App() {
             useNavigationStore.getState().navigateToPage(resp.id, 'Untitled')
             announce('New page created')
           })
-          .catch(() => toast.error('Failed to create page'))
+          .catch(() => toast.error(t('error.createPageFailed')))
       }
     }
     window.addEventListener('keydown', handleGlobalShortcuts)
     return () => window.removeEventListener('keydown', handleGlobalShortcuts)
-  }, [])
+  }, [t])
 
   const handleNewPage = useCallback(async () => {
     try {
@@ -239,9 +239,9 @@ function App() {
       navigateToPage(resp.id, 'Untitled')
       announce('New page created')
     } catch {
-      toast.error('Failed to create page')
+      toast.error(t('error.createPageFailed'))
     }
-  }, [navigateToPage])
+  }, [navigateToPage, t])
 
   const handlePageSelect = useCallback(
     (pageId: string, title?: string, blockId?: string) => {
@@ -284,7 +284,7 @@ function App() {
                             <span
                               role="status"
                               className="ml-auto h-2 w-2 rounded-full bg-destructive"
-                              aria-label="Has unresolved conflicts"
+                              aria-label={t('conflict.unresolvedLabel')}
                             />
                           )}
                           {item.id === 'status' && (

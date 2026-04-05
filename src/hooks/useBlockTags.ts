@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
+import i18n from '../lib/i18n'
 import type { BlockRow } from '../lib/tauri'
 import { addTag, createBlock, listBlocks, listTagsForBlock, removeTag } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
@@ -38,7 +39,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         setAllTags(resp.items.map((t: BlockRow) => ({ id: t.id, name: t.content ?? '' })))
       })
       .catch(() => {
-        toast.error('Failed to load tags')
+        toast.error(i18n.t('tags.loadFailed'))
       })
   }, [])
 
@@ -53,7 +54,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
           setLoading(false)
         })
         .catch(() => {
-          toast.error('Failed to load tags')
+          toast.error(i18n.t('tags.loadFailed'))
           setLoading(false)
         })
     } else {
@@ -70,7 +71,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAppliedTagIds((prev) => new Set([...prev, tagId]))
       } catch {
-        toast.error('Failed to add tag')
+        toast.error(i18n.t('tags.addFailed'))
       }
     },
     [blockId],
@@ -89,7 +90,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
           return next
         })
       } catch {
-        toast.error('Failed to delete tag')
+        toast.error(i18n.t('tags.deleteFailed'))
       }
     },
     [blockId],
@@ -111,7 +112,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
           setAppliedTagIds((prev) => new Set([...prev, resp.id]))
         }
       } catch {
-        toast.error('Failed to create tag')
+        toast.error(i18n.t('tags.createFailed'))
       }
     },
     [blockId],

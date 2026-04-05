@@ -12,10 +12,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import type { BacklinkGroup } from '../lib/tauri'
-import { editBlock, listUnlinkedReferences } from '../lib/tauri'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../lib/block-events'
+import type { BacklinkGroup } from '../lib/tauri'
+import { editBlock, listUnlinkedReferences } from '../lib/tauri'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { EmptyState } from './EmptyState'
@@ -164,7 +164,7 @@ export function UnlinkedReferences({
         : t('unlinkedRefs.header', { count: totalCount })
 
   return (
-    <section className="unlinked-references" aria-label="Unlinked references">
+    <section className="unlinked-references" aria-label={t('unlinkedRefs.panelLabel')}>
       {/* Main header — collapsible, collapsed by default */}
       <CollapsiblePanelHeader
         collapsed={collapsed}

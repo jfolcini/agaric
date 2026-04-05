@@ -1213,7 +1213,7 @@ export function BlockTree({
             ),
           }))
         } catch {
-          toast.error('Failed to set due date')
+          toast.error(t('blockTree.setDueDateFailed'))
         }
         return
       }
@@ -1223,9 +1223,9 @@ export function BlockTree({
         try {
           await setProperty({ blockId: focusedBlockId, key: 'repeat-until', valueDate: dateStr })
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          toast.success(`Repeat until ${dateStr}`)
+          toast.success(t('blockTree.repeatUntilMessage', { date: dateStr }))
         } catch {
-          toast.error('Failed to set repeat end date')
+          toast.error(t('blockTree.setRepeatEndDateFailed'))
         }
         return
       }
@@ -1243,7 +1243,7 @@ export function BlockTree({
           }))
           announce(`Scheduled date set to ${dateStr}`)
         } catch {
-          toast.error('Failed to set scheduled date')
+          toast.error(t('blockTree.setScheduledDateFailed'))
         }
         return
       }
@@ -1328,10 +1328,10 @@ export function BlockTree({
     (item: PickerItem) => {
       if (!focusedBlockId) return
       setProperty({ blockId: focusedBlockId, key: item.label, valueText: '' }).catch(() =>
-        toast.error('Failed to set property'),
+        toast.error(t('blockTree.setPropertyFailed')),
       )
     },
-    [focusedBlockId],
+    [focusedBlockId, t],
   )
 
   handlePropertySelectRef.current = handlePropertySelect
@@ -1802,7 +1802,7 @@ export function BlockTree({
         className="block-tree-loading space-y-3 p-2"
         role="status"
         aria-busy="true"
-        aria-label="Loading blocks"
+        aria-label={t('blockTree.loadingLabel')}
       >
         <Skeleton className="h-6 w-full rounded" />
         <Skeleton className="h-6 w-5/6 rounded" />

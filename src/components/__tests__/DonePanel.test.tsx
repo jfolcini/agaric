@@ -135,7 +135,7 @@ describe('DonePanel', () => {
     expect(await screen.findByText('1 Completed')).toBeInTheDocument()
   })
 
-  // 2. Returns null / does not render when no items
+  // 2. Renders empty state when no items
   it('does not render when no items', async () => {
     mockedQueryByProperty.mockResolvedValue(emptyResponse)
 
@@ -145,7 +145,8 @@ describe('DonePanel', () => {
       expect(mockedQueryByProperty).toHaveBeenCalled()
     })
 
-    expect(container.querySelector('.done-panel')).not.toBeInTheDocument()
+    expect(container.querySelector('.done-panel')).toBeInTheDocument()
+    expect(screen.getByText('No completed items yet.')).toBeInTheDocument()
   })
 
   // 3. Groups by source page with page titles

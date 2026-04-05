@@ -6,6 +6,7 @@
 
 import type React from 'react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Input } from '@/components/ui/input'
 
@@ -24,6 +25,7 @@ export function RenameDialog({
   currentName,
   className,
 }: RenameDialogProps): React.ReactElement {
+  const { t } = useTranslation()
   const [name, setName] = useState(currentName)
 
   // Reset when dialog opens with new name
@@ -54,7 +56,7 @@ export function RenameDialog({
           if (e.key === 'Enter') handleSave()
         }}
         placeholder="Device name"
-        aria-label="Device name"
+        aria-label={t('device.deviceNameLabel')}
         autoFocus
       />
     </ConfirmDialog>

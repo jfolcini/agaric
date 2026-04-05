@@ -11,6 +11,7 @@
 
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { parseDate } from '../../lib/parse-date'
 import { Calendar } from '../ui/calendar'
 
@@ -21,6 +22,7 @@ export function BlockDatePicker({
   onSelect: (day: Date | undefined) => void
   onClose: () => void
 }): React.ReactElement {
+  const { t } = useTranslation()
   const dialogRef = useRef<HTMLDivElement>(null)
   const [dateTextInput, setDateTextInput] = useState('')
   const [dateTextPreview, setDateTextPreview] = useState<string | null>(null)
@@ -81,7 +83,7 @@ export function BlockDatePicker({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Date picker"
+        aria-label={t('journal.datePickerLabel')}
         className="date-picker-popup fixed z-50 rounded-md border bg-popover p-2 shadow-lg left-1/2 top-1/3 -translate-x-1/2 max-w-[calc(100vw-2rem)] max-sm:left-2 max-sm:right-2 max-sm:translate-x-0 max-sm:max-h-[70vh] max-sm:overflow-y-auto"
         data-testid="date-picker-popup"
       >
@@ -105,7 +107,7 @@ export function BlockDatePicker({
                   setDateTextPreview(null)
                 }
               }}
-              aria-label="Type a date"
+              aria-label={t('journal.typeDateLabel')}
             />
           </div>
           {dateTextInput && (

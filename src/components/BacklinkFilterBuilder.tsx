@@ -646,7 +646,7 @@ export function BacklinkFilterBuilder({
   return (
     <fieldset
       className="backlink-filter-builder space-y-2 border-0 p-0 m-0"
-      aria-label="Backlink filters"
+      aria-label={t('backlink.filtersLabel')}
     >
       <legend className="sr-only">Backlink filters</legend>
 
@@ -659,7 +659,7 @@ export function BacklinkFilterBuilder({
         <Filter className="h-3.5 w-3.5 text-muted-foreground" />
 
         {filters.length > 0 && (
-          <ul aria-label="Applied filters" className="contents list-none m-0 p-0">
+          <ul aria-label={t('backlink.appliedFiltersLabel')} className="contents list-none m-0 p-0">
             {filters.map((filter, index) => (
               <li
                 // biome-ignore lint/suspicious/noArrayIndexKey: getFilterKey can produce duplicates for structurally different filters with same key

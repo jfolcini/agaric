@@ -8,6 +8,7 @@
 import { ChevronDown, ChevronRight, Clock, Loader2, RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
@@ -27,6 +28,7 @@ interface HistoryPanelProps {
 }
 
 export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement {
+  const { t } = useTranslation()
   const [entries, setEntries] = useState<HistoryEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -55,11 +57,11 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         setNextCursor(resp.next_cursor)
         setHasMore(resp.has_more)
       } catch {
-        toast.error('Failed to load history')
+        toast.error(t('history.loadFailed'))
       }
       setLoading(false)
     },
-    [blockId],
+    [blockId, t],
   )
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset and reload when blockId changes
@@ -83,13 +85,13 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         if (parsed.to_text != null) {
           await editBlock(blockId, parsed.to_text)
         }
-        toast.success('Reverted successfully')
+        toast.success(t('history.revertedSuccessfully'))
       } catch {
-        toast.error('Failed to revert')
+        toast.error(t('history.revertPanelFailed'))
       }
       setRestoringSeq(null)
     },
-    [blockId],
+    [blockId, t],
   )
 
   if (!blockId) {

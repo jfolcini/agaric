@@ -14,6 +14,7 @@ import { common, createLowlight } from 'lowlight'
 import { File, FileText, Image as ImageIcon } from 'lucide-react'
 import type React from 'react'
 import { memo, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { parse } from '../editor/markdown-serializer'
 import type { BlockLevelNode, DocNode, InlineNode } from '../editor/types'
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
@@ -388,6 +389,7 @@ function StaticBlockInner({
   isSelected,
   onSelect,
 }: StaticBlockProps): React.ReactElement {
+  const { t } = useTranslation()
   // Keep callback refs so the expensive useMemo only re-runs when `content` changes.
   // Callbacks don't affect the rendered output — they only affect click behaviour —
   // so they can safely live in refs that are read at call-time.
@@ -455,7 +457,7 @@ function StaticBlockInner({
         )}
         data-testid="block-static"
         data-block-id={blockId}
-        aria-label="Edit block"
+        aria-label={t('block.editLabel')}
         onClick={(e) => {
           if ((e.ctrlKey || e.metaKey) && onSelect) {
             e.preventDefault()

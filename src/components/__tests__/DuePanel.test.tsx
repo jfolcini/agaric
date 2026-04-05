@@ -31,6 +31,7 @@ vi.mock('../../lib/tauri', () => ({
 vi.mock('lucide-react', () => ({
   ChevronRight: (props: Record<string, unknown>) => <svg data-testid="chevron-right" {...props} />,
   ChevronDown: (props: Record<string, unknown>) => <svg data-testid="chevron-down" {...props} />,
+  CheckCircle2: (props: Record<string, unknown>) => <svg data-testid="check-circle" {...props} />,
   Loader2: (props: Record<string, unknown>) => <svg data-testid="loader-spinner" {...props} />,
 }))
 

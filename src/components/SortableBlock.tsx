@@ -706,7 +706,7 @@ function SortableBlockInner({
                       try {
                         await setProperty({ blockId, key: editingProp.key, valueText: opt })
                       } catch {
-                        toast.error('Failed to save property')
+                        toast.error(t('property.saveFailed'))
                       }
                       setEditingProp(null)
                     }}
@@ -792,7 +792,7 @@ function SortableBlockInner({
                         valueText: newValue || null,
                       })
                     } catch {
-                      toast.error('Failed to save property')
+                      toast.error(t('property.saveFailed'))
                     }
                   }
                   setEditingProp(null)
@@ -829,7 +829,7 @@ function SortableBlockInner({
                       valueText: null,
                     })
                   } catch {
-                    toast.error('Failed to rename property')
+                    toast.error(t('property.renameFailed'))
                   }
                 }
                 setEditingKey(null)

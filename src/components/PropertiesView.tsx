@@ -350,7 +350,7 @@ export function PropertiesView(): React.ReactElement {
                         value={editOptionsValue}
                         onChange={(e) => setEditOptionsValue(e.target.value)}
                         placeholder="Options JSON"
-                        aria-label="Options JSON"
+                        aria-label={t('propertiesView.optionsJsonLabel')}
                       />
                       <Button size="sm" onClick={() => handleSaveOptions(def.key)}>
                         {t('action.save')}

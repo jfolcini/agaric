@@ -431,7 +431,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           return (
             <nav
               className="flex items-center gap-1 text-xs text-muted-foreground px-1 mt-1"
-              aria-label="Page breadcrumb"
+              aria-label={t('pageHeader.breadcrumbLabel')}
             >
               {segments.slice(0, -1).map((segment, i) => {
                 const ancestorPath = segments.slice(0, i + 1).join('/')

@@ -15,6 +15,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/use-mobile'
+import i18n from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
 const SIDEBAR_COOKIE_NAME = 'sidebar_state'
@@ -460,11 +461,11 @@ function SidebarRail({ className, ...props }: React.ComponentProps<'button'>) {
     <button
       data-sidebar="rail"
       data-slot="sidebar-rail"
-      aria-label="Toggle Sidebar"
+      aria-label={i18n.t('sidebar.toggleSidebar')}
       tabIndex={-1}
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
-      title="Toggle Sidebar"
+      title={i18n.t('sidebar.toggleSidebar')}
       className={cn(
         'absolute inset-y-0 z-20 hidden w-4 [@media(pointer:coarse)]:w-8 -translate-x-1/2 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex',
         'in-data-[side=left]:cursor-col-resize in-data-[side=right]:cursor-col-resize',

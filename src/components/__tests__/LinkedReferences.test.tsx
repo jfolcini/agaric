@@ -139,7 +139,7 @@ beforeEach(() => {
 })
 
 describe('LinkedReferences', () => {
-  // 1. renders nothing when no backlinks
+  // 1. renders empty state when no backlinks
   it('renders nothing when no backlinks', async () => {
     mockInvokeWith(emptyGrouped)
 
@@ -150,8 +150,9 @@ describe('LinkedReferences', () => {
     })
 
     await waitFor(() => {
-      expect(container.querySelector('.linked-references')).not.toBeInTheDocument()
+      expect(container.querySelector('.linked-references')).toBeInTheDocument()
     })
+    expect(screen.getByText('No references to this page yet.')).toBeInTheDocument()
   })
 
   // 2. renders header with correct count

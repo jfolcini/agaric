@@ -48,12 +48,12 @@ export function TrashView(): React.ReactElement {
         if (block.block_type === 'page' || block.block_type === 'tag') {
           useResolveStore.getState().set(block.id, block.content ?? 'Untitled', false)
         }
-        toast.success('Block restored')
+        toast.success(t('trash.blockRestored'))
       } catch {
-        toast.error('Failed to restore block')
+        toast.error(t('trash.restoreFailed'))
       }
     },
-    [setBlocks],
+    [setBlocks, t],
   )
 
   const handlePurge = useCallback(
@@ -62,12 +62,12 @@ export function TrashView(): React.ReactElement {
         await purgeBlock(blockId)
         setBlocks((prev) => prev.filter((b) => b.id !== blockId))
         setConfirmPurgeId(null)
-        toast.success('Block permanently deleted')
+        toast.success(t('trash.blockPurged'))
       } catch {
-        toast.error('Failed to purge block')
+        toast.error(t('trash.purgeFailed'))
       }
     },
-    [setBlocks],
+    [setBlocks, t],
   )
 
   return (

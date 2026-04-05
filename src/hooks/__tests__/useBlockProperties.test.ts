@@ -308,7 +308,7 @@ describe('useBlockProperties handleToggleTodo toast and announcer', () => {
       await result.current.handleToggleTodo('BLOCK_1')
     })
 
-    expect(mockedToastError).toHaveBeenCalledWith('Failed to update task state')
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to set task state')
   })
 
   it('announces new state via announcer on successful toggle', async () => {
@@ -362,7 +362,7 @@ describe('useBlockProperties handleTogglePriority toast and announcer', () => {
       await result.current.handleTogglePriority('BLOCK_1')
     })
 
-    expect(mockedToastError).toHaveBeenCalledWith('Failed to update priority')
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to set priority')
   })
 
   it('does not call toast error on successful toggle', async () => {

@@ -1,4 +1,5 @@
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { cn } from '@/lib/utils'
 
@@ -17,6 +18,7 @@ export function PropertyChip({
   onClick,
   onKeyClick,
 }: PropertyChipProps): React.ReactElement {
+  const { t } = useTranslation()
   const Icon = BUILTIN_PROPERTY_ICONS[propKey]
   const displayName = formatPropertyName(propKey)
 
@@ -31,6 +33,7 @@ export function PropertyChip({
         e.stopPropagation()
         onKeyClick()
       }}
+      aria-label={t('property.editKeyLabel', { key: displayName })}
     >
       {Icon && <Icon size={10} className="shrink-0" />}
       {displayName}:
