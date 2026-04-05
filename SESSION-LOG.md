@@ -1,5 +1,51 @@
 # Session Log
 
+## Session 220 — 2026-04-05 — Batch 72: UX-2, UX-14, R-15, R-16, R-17
+
+### Summary
+Resolved 5 items (1 UX-HIGH, 1 UX-MED, 3 REFACTOR). UX-2: Consolidated date utilities into `date-utils.ts` — removed duplicate `formatDate` from `parse-date.ts`, `formatLocalDate` from DuePanel, `formatCompactDate` from AgendaResults; extracted `getDateRangeForFilter` from AgendaView (~115 lines removed). UX-14: Standardized loading patterns — replaced Spinner with LoadingSkeleton for initial loads in 3 components, added `aria-busy` to 6 loading containers. R-15: Decomposed LinkedReferences (442→307 lines) — extracted `useBacklinkResolution` hook and `BacklinkGroupRenderer`. R-16: Decomposed DeviceManagement (436→335 lines) — extracted `useSyncWithTimeout` hook and `PeerListItem`. R-17: Decomposed PropertiesView (389→24 lines) — extracted `TaskStatesSection`, `DeadlineWarningSection`, `PropertyDefinitionsList`. 38 files changed, 83 new tests (3528 total). REVIEW-LATER.md reduced from 24 to 19 items (UX-HIGH tier cleared).
+
+### Batch 72
+
+**Commit:** 7a01ffa
+
+| Area | Change |
+|------|--------|
+| lib/date-utils.ts | UX-2: Added `formatCompactDate`, `getDateRangeForFilter`, `getTodayString`. |
+| lib/parse-date.ts | UX-2: Removed private `formatDate`, imports from `date-utils`. |
+| DuePanel.tsx | UX-2: Replaced `formatLocalDate` with shared `formatDate`/`getTodayString`. UX-14: Spinner→LoadingSkeleton for initial load. |
+| AgendaResults.tsx | UX-2: Removed `MONTH_SHORT`/`formatCompactDate`, uses shared versions. UX-14: Spinner→LoadingSkeleton for initial load. |
+| AgendaView.tsx | UX-2: Refactored 4 date dimension blocks to use `getDateRangeForFilter` (~115 lines removed). |
+| DonePanel.tsx | UX-14: Spinner→LoadingSkeleton for initial load. |
+| ConflictList.tsx | UX-14: Added `aria-busy` wrapper, semantic `<ul>`/`<li>` elements. |
+| DeviceManagement.tsx | UX-14: Added `aria-busy` wrapper. R-16: Extracted sync timeout logic and peer rendering. |
+| JournalPage.tsx | UX-14: Added `aria-busy` wrapper. |
+| PageBrowser.tsx | UX-14: Added `aria-busy` wrapper. |
+| PagePropertyTable.tsx | UX-14: Added `aria-busy` wrapper. |
+| TagList.tsx | UX-14: Added `aria-busy` wrapper. |
+| hooks/useBacklinkResolution.ts | R-15: New hook — TTL cache for ULID/tag resolution, batch resolve (147 lines). |
+| BacklinkGroupRenderer.tsx | R-15: New component — collapsible backlink group with block items (86 lines). |
+| LinkedReferences.tsx | R-15: Simplified from 442→307 lines, uses extracted hook and renderer. |
+| hooks/useSyncWithTimeout.ts | R-16: New hook — Promise.race timeout pattern with cancelSync (45 lines). |
+| PeerListItem.tsx | R-16: New component — peer card with sync/rename/unpair actions (150 lines). |
+| TaskStatesSection.tsx | R-17: New component — task state cycle editor (88 lines). |
+| DeadlineWarningSection.tsx | R-17: New component — deadline warning days setting (51 lines). |
+| PropertyDefinitionsList.tsx | R-17: New component — property definitions CRUD with search (270 lines). |
+| PropertiesView.tsx | R-17: Simplified from 389→24 lines, delegates to 3 extracted components. |
+| lib/__tests__/date-utils.test.ts | 18 tests for formatCompactDate, getDateRangeForFilter, getTodayString. |
+| hooks/__tests__/useBacklinkResolution.test.ts | 12 tests for TTL cache, batch resolve, error handling. |
+| BacklinkGroupRenderer.test.tsx | 13 tests for rendering, collapse/expand, a11y. |
+| hooks/__tests__/useSyncWithTimeout.test.ts | 7 tests for timeout, cancellation, error handling. |
+| PeerListItem.test.tsx | 7 tests for rendering, sync action, rename, unpair. |
+| TaskStatesSection.test.tsx | 9 tests for rendering, add/remove/reorder states, a11y. |
+| DeadlineWarningSection.test.tsx | 6 tests for rendering, input validation, a11y. |
+| PropertyDefinitionsList.test.tsx | 9 tests for rendering, search, delete, edit, a11y. |
+| 10 existing test files | Updated with LoadingSkeleton/aria-busy assertions for UX-14. |
+
+### REVIEW-LATER changes
+- **Removed:** UX-2 (date utilities consolidation), UX-14 (loading pattern consistency), R-15 (LinkedReferences decomposition), R-16 (DeviceManagement decomposition), R-17 (PropertiesView decomposition)
+- **Net:** 24 → 19 items (UX-HIGH: 1 → 0, UX-MED: 5 → 4, REFACTOR: 17 → 14)
+
 ## Session 219 — 2026-04-05 — Batch 71: H-11, H-13, H-14
 
 ### Summary
