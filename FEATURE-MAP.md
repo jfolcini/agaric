@@ -34,7 +34,7 @@ The default view — one page per day, created automatically.
 ### Pages
 
 - Browse all pages with inline text filter
-- Namespaced pages (e.g., `work/meetings/standup`) render as collapsible tree hierarchy
+- Namespaced pages (e.g., `work/meetings/standup`) render as collapsible tree hierarchy; hybrid nodes (pages that are also namespaces) show both navigation and expand/collapse
 - Create pages under a namespace with the `+` button on folders
 - Breadcrumb navigation for namespaced titles
 - Create new page (Ctrl+N), delete with confirmation
@@ -139,6 +139,7 @@ Markdown-based WYSIWYG editing:
 - Type `[[` to open page/block link picker with fuzzy search (create-new option)
 - Type `((` to open block reference picker with FTS search (reference existing blocks)
 - Tags and links render as clickable chips with resolved names
+- All suggestion pickers and context menus use `@floating-ui/dom` for viewport-aware positioning
 - Block references render as violet chips showing first line of content, with hover tooltip for full preview
 - Click a block reference to navigate to the referenced block's page
 - Renaming a tag or page propagates everywhere automatically
