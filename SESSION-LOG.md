@@ -1,5 +1,43 @@
 # Session Log
 
+## Session 217 — 2026-04-05 — Batch 69: UX-3, UX-5, UX-13
+
+### Summary
+Resolved 3 UX items. Replaced ~55 hardcoded toast messages and ~20 hardcoded aria-labels with i18n `t()` calls across 36 files. Added missing ARIA label on PropertyChip inner button. Replaced plain text / null empty states with `<EmptyState>` component in DuePanel, DonePanel, and LinkedReferences. Added ~90 new translation keys to i18n.ts. REVIEW-LATER.md reduced from 22 to 21 items (note: previous summary undercounted UX-MED items).
+
+### Batch 69
+
+**Commit:** c6f9c8e
+
+| Area | Change |
+|------|--------|
+| i18n.ts | UX-3: Added ~90 new translation keys covering error toasts, attachment toasts, tag toasts, sync toasts, history toasts, trash toasts, blockTree toasts, property labels, template toasts, journal aria-labels, references labels, backlink labels, and misc aria-labels. |
+| stores/blocks.ts | UX-3: Replaced 10 hardcoded toast calls with `i18n.t()`. |
+| hooks/useBlockAttachments.ts | UX-3: Replaced 3 hardcoded toast calls with `i18n.t()`. |
+| hooks/useBlockProperties.ts | UX-3: Replaced 2 hardcoded toast calls with `i18n.t()`. |
+| hooks/useBlockTags.ts | UX-3: Replaced 5 hardcoded toast calls with `i18n.t()`. |
+| hooks/useSyncTrigger.ts | UX-3: Replaced 2 hardcoded toast calls with `i18n.t()`. |
+| hooks/useHistoryDiffToggle.ts | UX-3: Replaced 1 hardcoded toast call with `i18n.t()`. |
+| HistoryView.tsx, HistoryPanel.tsx | UX-3: Replaced hardcoded toast messages and aria-labels with `t()` calls. |
+| TrashView.tsx | UX-3: Replaced hardcoded toast messages with `t()` calls. |
+| TemplatesView.tsx | UX-3: Replaced hardcoded toast and template literal messages with `t()` calls. |
+| BlockTree.tsx, SortableBlock.tsx | UX-3: Replaced hardcoded toast calls with `t()` calls. |
+| App.tsx | UX-3: Replaced hardcoded error toast with `t()` call. |
+| DeviceManagement.tsx | UX-3: Replaced hardcoded toast calls with `t()` calls. |
+| JournalPage.tsx, PageHeader.tsx | UX-3: Replaced hardcoded aria-labels with `t()` calls. |
+| BacklinkFilterBuilder.tsx | UX-3: Replaced hardcoded aria-label with `t()` call. |
+| PdfViewerDialog.tsx, RenameDialog.tsx | UX-3: Replaced hardcoded toast calls with `t()` calls. |
+| PropertiesView.tsx, TagList.tsx | UX-3: Replaced hardcoded aria-labels with `t()` calls. |
+| StaticBlock.tsx | UX-3: Replaced hardcoded aria-label with `t()` call. |
+| BlockDatePicker.tsx, BlockContextMenu.tsx | UX-3: Replaced hardcoded aria-labels with `t()` calls. |
+| ui/sidebar.tsx, ui/calendar.tsx | UX-3: Replaced hardcoded aria-labels with `i18n.t()` calls (non-React context). |
+| PropertyChip.tsx | UX-5: Added missing `aria-label` on inner key button. |
+| DonePanel.tsx | UX-13: Replaced `return null` empty state with `<EmptyState>` component. |
+| DuePanel.tsx | UX-13: Replaced plain text empty state with `<EmptyState>` component. |
+| LinkedReferences.tsx | UX-13: Replaced `return null` empty state with `<EmptyState>` component. |
+| DonePanel.test.tsx, DuePanel.test.tsx, LinkedReferences.test.tsx | Updated test assertions for new EmptyState rendering. |
+| useBlockProperties.test.ts | Updated assertion strings for i18n toast messages. |
+
 ## Session 216 — 2026-04-05 — Batch 68: H-12, H-15, H-16, H-17, H-18
 
 ### Summary
