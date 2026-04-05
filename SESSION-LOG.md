@@ -1,5 +1,30 @@
 # Session Log
 
+## Session 226 — 2026-04-05 — Batch 78: R-11 final, UX-9, UX-18, B-1
+
+### Summary
+Resolved final 4 actionable items: R-11 final (PropertyRowEditor extraction, PagePropertyTable 450→236 lines), UX-9 remaining (BlockListItem shared by 3 components, ListViewState migrated 6 files, SearchableListPopover addressed by prior AddPropertyPopover extraction), UX-18 (CSS opacity fade transitions + scroll position restoration via useScrollRestore hook), B-1 (vitest typecheck enabled). 20 files changed, 72 new tests (4359 total). REVIEW-LATER.md reduced from 5 to 1 item (only F-14 attachment sync remains, requiring architectural discussion).
+
+### Batch 78
+
+**Commit:** c560bf0
+
+| Area | Change |
+|------|--------|
+| PropertyRowEditor.tsx | R-11: **New** — extracted from PagePropertyTable (524 lines). 21 new tests. |
+| PagePropertyTable.tsx | R-11: Reduced 450→236 lines. Uses PropertyRowEditor. |
+| BlockListItem.tsx | UX-9: **New** — shared block item component (67 lines). 22 new tests. |
+| DuePanel.tsx | UX-9: Uses BlockListItem. |
+| DonePanel.tsx | UX-9: Uses BlockListItem. |
+| AgendaResults.tsx | UX-9: Uses BlockListItem. |
+| ListViewState.tsx | UX-9: **New** — loading/empty/loaded branching (42 lines). 21 new tests. |
+| TagList.tsx, TrashView.tsx, TemplatesView.tsx | UX-9: Migrated to ListViewState. |
+| DeviceManagement.tsx, PropertyDefinitionsList.tsx, AttachmentList.tsx | UX-9: Migrated to ListViewState. |
+| App.tsx | UX-18: View transition fade (opacity, 150ms) + scroll restore. |
+| useScrollRestore.ts | UX-18: **New** — scroll position per-view hook (48 lines). 6 new tests. |
+| viewTransition.test.tsx | UX-18: 2 transition tests. |
+| vitest.config.ts | B-1: Added `typecheck: { enabled: true, tsconfig: './tsconfig.app.json' }`. |
+
 ## Session 225 — 2026-04-05 — Batch 77: UX-6, UX-8, R-11, UX-9 partial
 
 ### Summary
