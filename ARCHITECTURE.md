@@ -763,6 +763,29 @@ by source page, cursor-paginated, rendered alongside the agenda in daily view.
 **Export:** `export_page_markdown` command produces a Markdown file with resolved `#[ULID]` → tag
 names, `[[ULID]]` → page titles, and YAML frontmatter for page properties.
 
+### View transitions and scroll restoration
+
+View switches use a CSS opacity fade (150ms ease-out) implemented via a keyed wrapper `div`
+in `App.tsx`. When `viewKey` changes, `fadeVisible` is set to `false` synchronously during
+render, then restored to `true` via `requestAnimationFrame` — this produces a clean fade-in
+without a flash. The `prefers-reduced-motion` media query in `index.css` automatically
+disables the transition for users who prefer reduced motion.
+
+Scroll positions are saved per-view by the `useScrollRestore` hook. It attaches a passive
+`scroll` listener to the main content container, stores positions in a `Map<viewKey, number>`,
+and restores via `rAF` on view change. Position `0` is used for first-visit views.
+
+### CSS utility classes
+
+`index.css` provides shared Tailwind `@utility` classes:
+- `focus-ring` — `ring-2 ring-ring ring-offset-1` on `:focus-visible`
+- `focus-outline` — `outline-2 outline-ring` on `:focus-visible`
+- `touch-target` — `min-height: 44px` on `@media (pointer: coarse)`
+
+Semantic color tokens (`--status-done`, `--status-pending`, `--priority-urgent`, etc.) are
+defined in the `@theme inline` block with oklch values for both light and dark themes. All
+status/priority colors use these tokens — no hardcoded Tailwind colors for semantic meanings.
+
 ### Drag and drop
 
 @dnd-kit with tree-aware projection:
@@ -776,7 +799,7 @@ names, `[[ULID]]` → page titles, and YAML frontmatter for page properties.
 `src/lib/tauri.ts` provides 67 type-safe wrappers over auto-generated `bindings.ts`. Handles
 Tauri 2's requirement for explicit `null` (not `undefined`) on `Option<T>` parameters.
 
-### Extracted hooks (30 in src/hooks/)
+### Extracted hooks (31 in src/hooks/)
 
 BlockTree's concerns are decomposed into focused hooks. Additional hooks extracted from
 component decompositions provide reusable logic across multiple views.
@@ -797,6 +820,7 @@ component decompositions provide reusable logic across multiple views.
 | `useRovingEditor` | TipTap instance management (mount/unmount/serialize) |
 | `useUndoShortcuts` | Global Ctrl+Z / Ctrl+Y (outside editor contentEditable) |
 | `useViewportObserver` | IntersectionObserver for off-screen block placeholders |
+| `useScrollRestore` | Save/restore scroll position per view (passive listener, rAF restore) |
 | `useIsMobile` | Responsive breakpoint detection for mobile layout (\<768px) |
 | `usePaginatedQuery` | Cursor-based pagination with stale response detection and auto-refetch |
 | `usePollingQuery` | Fixed-interval polling with optional refetch-on-focus |
@@ -820,17 +844,17 @@ PageBrowser, TrashView, ConflictList, BacklinksPanel, HistoryView, StatusPanel, 
 `useHasConflicts`. The caller stabilises `queryFn` with `useCallback`; when its identity
 changes the hook re-fetches page 1 (paginated) or restarts polling.
 
-### Component inventory (99 domain + 21 shadcn/ui + 1 editor = 121 total)
+### Component inventory (102 domain + 21 shadcn/ui + 1 editor = 124 total)
 
 **Page-level**: PageEditor, PageHeader (with PageTitleEditor, PageAliasSection, PageTagSection, PageHeaderMenu), PageBrowser (with PageTreeItem), JournalPage, SearchPanel, TagList, TagFilterPanel, TrashView, ConflictList, HistoryView, StatusPanel, PropertiesView (with PropertyDefinitionsList, TaskStatesSection, DeadlineWarningSection), TemplatesView
 
 **Journal views**: journal/DailyView, journal/WeeklyView, journal/MonthlyView, journal/AgendaView, journal/DaySection, journal/JournalCalendarDropdown
 
-**Block rendering**: BlockTree, SortableBlock (with BlockInlineControls), EditableBlock (with BlockPropertyEditor), StaticBlock, FormattingToolbar, block-tree/BlockContextMenu, block-tree/BlockDatePicker, block-tree/BlockDndOverlay, BatchActionToolbar, AddBlockButton
+**Block rendering**: BlockTree, SortableBlock (with BlockInlineControls), EditableBlock (with BlockPropertyEditor), StaticBlock, FormattingToolbar, block-tree/BlockContextMenu, block-tree/BlockDatePicker, block-tree/BlockDndOverlay, BatchActionToolbar, AddBlockButton, BlockListItem
 
 **References**: LinkedReferences (with BacklinkGroupRenderer), UnlinkedReferences, BacklinkFilterBuilder (with FilterPillRow, FilterSortControls), SourcePageFilter, LinkEditPopover, QueryResult (with QueryResultList, QueryResultTable)
 
-**Properties**: PagePropertyTable, BlockPropertyDrawer, PropertyChip, PropertyValuePicker (with ChoiceValuePicker, TextValuePicker), AddPropertyPopover, BuiltinDateFields, DiffDisplay
+**Properties**: PagePropertyTable (with PropertyRowEditor), BlockPropertyDrawer, PropertyChip, PropertyValuePicker (with ChoiceValuePicker, TextValuePicker), AddPropertyPopover, BuiltinDateFields, DiffDisplay
 
 **Agenda**: AgendaResults, AgendaFilterBuilder (with AgendaSortGroupControls), DonePanel, DuePanel (with OverdueSection, UpcomingSection, DuePanelFilters)
 
@@ -840,7 +864,7 @@ changes the hook re-fetches page 1 (paginated) or restarts polling.
 
 **Sync**: DeviceManagement (with PeerListItem), PairingDialog (with PairingQrDisplay, PairingEntryForm, PairingPeersList), QrScanner, UnpairConfirmDialog
 
-**Shell/UI**: BootGate, ErrorBoundary, KeyboardShortcuts, RenameDialog, EmptyState, ConfirmDialog, LoadMoreButton, LoadingSkeleton, CollapsiblePanelHeader, CollapsibleGroupList, ResultCard, PageLink, HighlightMatch, PdfViewerDialog, AttachmentList
+**Shell/UI**: BootGate, ErrorBoundary, KeyboardShortcuts, RenameDialog, EmptyState, ConfirmDialog, LoadMoreButton, LoadingSkeleton, ListViewState, CollapsiblePanelHeader, CollapsibleGroupList, ResultCard, PageLink, HighlightMatch, PdfViewerDialog, AttachmentList
 
 **Editor**: SuggestionList
 
