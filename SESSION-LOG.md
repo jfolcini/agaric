@@ -1,5 +1,33 @@
 # Session Log
 
+## Session 209 — 2026-04-05 — Batch 63: F-17, F-18, F-20
+
+### Summary
+Resolved 3 feature items (F-17, F-18, F-20). Added "Properties" filter to DuePanel with per-source breakdown header, multi-source colored pills in weekly/monthly views (new batch-by-source Rust command), and global date controls (today button + date picker) in all views. 21 files changed, +826/-68 lines. REVIEW-LATER.md reduced from 8 to 5 items.
+
+### Batch 63
+
+**Commit:** 1c185b8
+
+| Area | Change |
+|------|--------|
+| DuePanel.tsx + i18n.ts | F-17: 4th "Properties" filter button. Client-side filtering: fetches ALL agenda items then filters to blocks where neither due_date nor scheduled_date matches viewed date. Header shows per-source breakdown (e.g., "2 Due · 1 Scheduled · 1 Properties"). 4 new tests + 1 updated. |
+| commands.rs + lib.rs | F-18: New `count_agenda_batch_by_source_inner` + `count_agenda_batch_by_source` command. Registered in invoke_handler and specta builder. 3 Rust tests. |
+| date-property-colors.ts (new) | F-18: `getSourceColor()` / `getSourceLabel()` for agenda sources (due=orange, scheduled=blue, properties=purple). 7 tests. |
+| useBatchCounts.ts | F-18: Calls new by-source endpoint, returns both totals and per-source breakdown. 6 tests. |
+| DaySection.tsx | F-18: Multi-colored source pills replacing single orange badge. |
+| WeeklyView.tsx + MonthlyView.tsx | F-18: Pass `agendaCountsBySource` to DaySection. |
+| tauri.ts + tauri-mock.ts | F-18: New `countAgendaBatchBySource` wrapper + mock handler. 1 tauri wrapper test. |
+| JournalPage.tsx | F-20: New `GlobalDateControls` component (exported alongside existing JournalControls). Today button + date picker. |
+| App.tsx | F-20: Non-journal views show `<GlobalDateControls />` right-aligned in header. Clicking Today/calendar navigates to journal view then to selected date. |
+| GlobalDateControls.test.tsx (new) | F-20: 7 tests for rendering, today navigation, date picker, cross-view navigation. |
+| App.test.tsx | F-20: 4 new tests for GlobalDateControls in non-journal views. |
+| bindings.ts | Regenerated for new `count_agenda_batch_by_source` command. |
+
+**Review:** 3 review subagents (one per feature). F-17: PASS. F-18: PASS. F-20: PASS (minor comment header fix applied).
+
+**Stats:** 21 files changed (3 new). 3350/3350 frontend tests pass. 1595/1595 Rust tests pass. All 15 pre-commit hooks pass.
+
 ## Session 208 — 2026-04-05 — Batch 62: H-9, H-4, UX-H2
 
 ### Summary

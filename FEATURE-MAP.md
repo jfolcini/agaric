@@ -15,11 +15,12 @@ The default view — one page per day, created automatically.
 | Mode | Description |
 |------|-------------|
 | **Daily** | Single day with prev/next navigation and "today" button |
-| **Weekly** | Mon–Sun grid, each day as a collapsible section |
-| **Monthly** | Calendar grid with content indicators; click a day to switch to daily |
+| **Weekly** | Mon–Sun grid, each day as a collapsible section with per-source colored pills |
+| **Monthly** | Calendar grid with per-source colored pills; click a day to switch to daily |
 | **Agenda** | Tasks grouped by date (Overdue / Today / Tomorrow / future) with configurable sort and group controls |
 
 - Floating calendar picker for jumping to any date
+- **Global date controls**: Today button and date picker available in all views (non-journal views navigate to journal first)
 - Days with content are highlighted
 - Template support: auto-populates structure on new journal pages
 - Keyboard: Alt+Left/Right (prev/next period), Alt+T (go to today)
@@ -289,6 +290,10 @@ Repeating tasks show virtual future occurrences within the viewed date range (di
 
 Shows tasks completed on the current day, grouped by source page.
 
+### Due Panel
+
+Shows tasks with due/scheduled dates for the current day. Filter bar with 4 buttons: All, Due, Scheduled, Properties. Per-source breakdown in header when multiple source types exist (e.g., "2 Due · 1 Scheduled · 1 Properties").
+
 ---
 
 ## 7. Tags & Links
@@ -360,6 +365,10 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 ### Shared Hooks
 - **useBlockNavigation** (`src/hooks/useBlockNavigation.ts`): Returns `{ handleBlockClick, handleBlockKeyDown }` for block click + keyboard (Enter/Space) navigation. Used by AgendaResults, DonePanel, DuePanel.
 - **usePaginatedQuery** (`src/hooks/usePaginatedQuery.ts`): Cursor-based pagination hook with `items`, `hasMore`, `loading`, `loadMore`, `reset` state. Supports `enabled` option for conditional fetching (preserves items when disabled, refetches on re-enable). Used by LinkedReferences, UnlinkedReferences, SearchPanel, TagFilterPanel, and others.
+- **useBatchCounts** (`src/hooks/useBatchCounts.ts`): Fetches agenda + backlink counts for date ranges. Returns both total counts and per-source breakdown (due/scheduled/properties). Used by WeeklyView, MonthlyView.
+
+### Shared Utilities
+- **date-property-colors** (`src/lib/date-property-colors.ts`): `getSourceColor(source)` returns light/dark mode Tailwind classes for agenda sources (due=orange, scheduled=blue, properties=purple). `getSourceLabel(source)` returns display labels. Used by DaySection colored pills.
 
 ### CSS Utilities
 - **`.touch-target-44`** (`src/index.css`): Utility class for `@media(pointer:coarse)` min-height 44px touch targets. Used across 19+ components.
