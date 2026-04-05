@@ -297,15 +297,6 @@ function SortableBlockInner({
     }
   }, [blockId])
 
-  // ── Heading level detection for gutter/inline alignment ───────
-  const headingLevel = useMemo(() => {
-    const m = content.match(/^(#{1,6})\s/)
-    return m ? (m[1] as string).length : 0
-  }, [content])
-
-  /** Dynamic top-padding so gutter & inline-controls align with heading text. */
-  const gutterPt = headingLevel === 1 ? 'pt-2' : headingLevel === 2 ? 'pt-1.5' : 'pt-1'
-
   const filteredProperties = useMemo(
     () =>
       (properties ?? []).filter(
@@ -449,7 +440,7 @@ function SortableBlockInner({
         data-block-id={blockId}
         data-testid="sortable-block"
         className={cn(
-          'sortable-block group relative flex items-start gap-1',
+          'sortable-block group relative flex items-center gap-1',
           isFocused && 'block-active',
         )}
         onTouchStart={handleTouchStart}
@@ -466,7 +457,7 @@ function SortableBlockInner({
         )}
 
         {/* ── Narrow gutter — grip + delete only ─────────────────── */}
-        <div className={cn(GUTTER_WIDTH, 'flex-shrink-0 flex items-start gap-1', gutterPt)}>
+        <div className={cn(GUTTER_WIDTH, 'flex-shrink-0 flex items-center gap-1')}>
           {/* Drag handle — far left */}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -528,7 +519,7 @@ function SortableBlockInner({
         </div>
 
         {/* ── Inline controls — chevron, checkbox, priority ─────── */}
-        <div className={cn('inline-controls flex items-start flex-shrink-0 gap-1', gutterPt)}>
+        <div className={cn('inline-controls flex items-center flex-shrink-0 gap-1')}>
           {/* Chevron — only when hasChildren, always visible */}
           {hasChildren ? (
             <Tooltip>

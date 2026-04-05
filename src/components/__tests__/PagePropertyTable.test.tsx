@@ -451,6 +451,41 @@ describe('PagePropertyTable add property flow', () => {
       })
     })
   })
+  it('shows ref option in the property type dropdown', async () => {
+    const user = userEvent.setup()
+    const props: PropertyRow[] = []
+    const defs: PropertyDefinition[] = []
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_properties') return [...props]
+      if (cmd === 'list_property_defs') return [...defs]
+      if (cmd === 'list_blocks') return { items: [], next_cursor: null, has_more: false }
+      if (cmd === 'list_tags_for_block') return []
+      return null
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
+    })
+
+    await user.type(screen.getByLabelText('Search definitions'), 'myref')
+
+    await waitFor(() => {
+      expect(screen.getByText(/Create "myref"/)).toBeInTheDocument()
+    })
+    await user.click(screen.getByText(/Create "myref"/))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Value type')).toBeInTheDocument()
+    })
+
+    const select = screen.getByLabelText('Value type') as HTMLSelectElement
+    const opts = Array.from(select.options).map((o) => o.value)
+    expect(opts).toContain('ref')
+  })
+
   it('displays formatted property names in the add-property popover', async () => {
     setupMock([], [makeDef('created_at', 'date'), makeDef('my_custom_prop', 'text')])
 

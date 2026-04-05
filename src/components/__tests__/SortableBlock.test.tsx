@@ -1006,7 +1006,7 @@ describe('SortableBlock task marker', () => {
 })
 
 describe('gutter alignment', () => {
-  it('gutter container has pt-1 for first-line alignment', () => {
+  it('gutter container uses items-center for vertical alignment', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     const { container } = render(
       <SortableBlock
@@ -1019,10 +1019,10 @@ describe('gutter alignment', () => {
     )
     const gutter = container.querySelector('.w-\\[44px\\]')
     expect(gutter).toBeInTheDocument()
-    expect(gutter?.className).toContain('pt-1')
+    expect(gutter?.className).toContain('items-center')
   })
 
-  it('inline-controls container has pt-1 for first-line alignment', () => {
+  it('inline-controls container uses items-center for vertical alignment', () => {
     mockUseSortable.mockReturnValue(makeSortable())
     const { container } = render(
       <SortableBlock
@@ -1033,7 +1033,7 @@ describe('gutter alignment', () => {
       />,
     )
     const inlineControls = container.querySelector('.inline-controls')
-    expect(inlineControls?.className).toContain('pt-1')
+    expect(inlineControls?.className).toContain('items-center')
   })
 
   it('drag handle has p-0.5 for alignment', () => {
@@ -1671,7 +1671,7 @@ describe('SortableBlock inline controls', () => {
     expect(inlineControls?.className).toContain('gap-1')
   })
 
-  it('alignment handled by container pt-1 instead of per-element mt-1', () => {
+  it('alignment handled by items-center instead of per-element mt-1', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1696,9 +1696,9 @@ describe('SortableBlock inline controls', () => {
     expect(checkbox?.className).not.toContain('mt-1')
     expect(badge?.className).not.toContain('mt-1')
 
-    // Containers have pt-1 instead
+    // Containers use items-center instead
     const inlineControls = container.querySelector('.inline-controls')
-    expect(inlineControls?.className).toContain('pt-1')
+    expect(inlineControls?.className).toContain('items-center')
   })
 })
 
@@ -2985,7 +2985,7 @@ describe('SortableBlock vertical alignment', () => {
     expect(row?.className).toContain('gap-1')
   })
 
-  it('gutter and inline-controls both use pt-1 for consistent top offset', () => {
+  it('gutter and inline-controls both use items-center for vertical alignment', () => {
     const { container } = render(
       <SortableBlock
         blockId="B1"
@@ -3001,11 +3001,11 @@ describe('SortableBlock vertical alignment', () => {
 
     // Find gutter via w-[44px] class selector
     const gutter = container.querySelector('.w-\\[44px\\]')
-    expect(gutter?.className).toContain('pt-1')
+    expect(gutter?.className).toContain('items-center')
 
-    // inline-controls has pt-1
+    // inline-controls has items-center
     const inlineControls = container.querySelector('.inline-controls')
-    expect(inlineControls?.className).toContain('pt-1')
+    expect(inlineControls?.className).toContain('items-center')
   })
 
   it('no element inside gutter or inline-controls uses mt-1', () => {
@@ -3116,8 +3116,7 @@ describe('SortableBlock vertical alignment', () => {
     // inline-controls has correct structure
     const inlineControls = container.querySelector('.inline-controls')
     expect(inlineControls?.className).toContain('flex')
-    expect(inlineControls?.className).toContain('items-start')
-    expect(inlineControls?.className).toContain('pt-1')
+    expect(inlineControls?.className).toContain('items-center')
     expect(inlineControls?.className).toContain('gap-1')
   })
 
@@ -3577,7 +3576,7 @@ describe('SortableBlock heading alignment', () => {
     mockUseSortable.mockReturnValue(makeSortable())
   })
 
-  it('gutter has pt-2 for h1 blocks', () => {
+  it('gutter uses items-center for h1 blocks', () => {
     const { container } = render(
       <SortableBlock
         blockId="B1"
@@ -3587,14 +3586,13 @@ describe('SortableBlock heading alignment', () => {
       />,
     )
     const gutter = container.querySelector(`.w-\\[44px\\]`)
-    expect(gutter?.className).toContain('pt-2')
-    expect(gutter?.className).not.toContain('pt-1')
+    expect(gutter?.className).toContain('items-center')
 
     const inlineControls = container.querySelector('.inline-controls')
-    expect(inlineControls?.className).toContain('pt-2')
+    expect(inlineControls?.className).toContain('items-center')
   })
 
-  it('gutter has pt-1.5 for h2 blocks', () => {
+  it('gutter uses items-center for h2 blocks', () => {
     const { container } = render(
       <SortableBlock
         blockId="B1"
@@ -3604,13 +3602,13 @@ describe('SortableBlock heading alignment', () => {
       />,
     )
     const gutter = container.querySelector(`.w-\\[44px\\]`)
-    expect(gutter?.className).toContain('pt-1.5')
+    expect(gutter?.className).toContain('items-center')
 
     const inlineControls = container.querySelector('.inline-controls')
-    expect(inlineControls?.className).toContain('pt-1.5')
+    expect(inlineControls?.className).toContain('items-center')
   })
 
-  it('gutter retains pt-1 for non-heading blocks', () => {
+  it('gutter uses items-center for non-heading blocks', () => {
     const { container } = render(
       <SortableBlock
         blockId="B1"
@@ -3620,15 +3618,13 @@ describe('SortableBlock heading alignment', () => {
       />,
     )
     const gutter = container.querySelector(`.w-\\[44px\\]`)
-    expect(gutter?.className).toContain('pt-1')
-    expect(gutter?.className).not.toContain('pt-2')
-    expect(gutter?.className).not.toContain('pt-1.5')
+    expect(gutter?.className).toContain('items-center')
 
     const inlineControls = container.querySelector('.inline-controls')
-    expect(inlineControls?.className).toContain('pt-1')
+    expect(inlineControls?.className).toContain('items-center')
   })
 
-  it('gutter retains pt-1 for h3 blocks', () => {
+  it('gutter uses items-center for h3 blocks', () => {
     const { container } = render(
       <SortableBlock
         blockId="B1"
@@ -3638,9 +3634,7 @@ describe('SortableBlock heading alignment', () => {
       />,
     )
     const gutter = container.querySelector(`.w-\\[44px\\]`)
-    expect(gutter?.className).toContain('pt-1')
-    expect(gutter?.className).not.toContain('pt-2')
-    expect(gutter?.className).not.toContain('pt-1.5')
+    expect(gutter?.className).toContain('items-center')
   })
 })
 

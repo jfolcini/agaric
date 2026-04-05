@@ -757,6 +757,7 @@ const resources = {
       'pageProperty.numberType': 'number',
       'pageProperty.dateType': 'date',
       'pageProperty.selectType': 'select',
+      'pageProperty.refType': 'ref',
       'pageProperty.createDefinitionButton': 'Create definition',
       'pageProperty.updateOptionsFailed': 'Failed to update options',
       'pageProperty.valueLabel': '{{key}} value',

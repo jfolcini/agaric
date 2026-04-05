@@ -198,7 +198,7 @@ export function UnlinkedReferences({
             renderBlock={(block, group) => (
               <li
                 key={block.id}
-                className="unlinked-reference-item flex items-center gap-3 border-b py-2 px-1 last:border-b-0"
+                className="unlinked-reference-item flex items-center gap-3 border-b py-1.5 px-2 last:border-b-0"
               >
                 <button
                   type="button"

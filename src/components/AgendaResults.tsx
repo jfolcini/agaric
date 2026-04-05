@@ -290,7 +290,7 @@ export function AgendaResults({
           )
         })
       ) : (
-        <ul className="agenda-results-list space-y-2" aria-label={t('agenda.agendaResults')}>
+        <ul className="agenda-results-list space-y-1" aria-label={t('agenda.agendaResults')}>
           {sortedBlocks.map((block) => renderItem(block))}
         </ul>
       )}

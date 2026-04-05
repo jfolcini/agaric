@@ -407,7 +407,7 @@ export function LinkedReferences({
             renderBlock={(block, group) => (
               <li
                 key={block.id}
-                className="linked-reference-item flex flex-wrap items-center gap-3 border-b py-2 px-1 last:border-b-0 cursor-pointer hover:bg-muted/50"
+                className="linked-reference-item flex flex-wrap items-center gap-3 border-b py-1.5 px-2 last:border-b-0 cursor-pointer hover:bg-muted/50"
                 // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
                 tabIndex={0}
                 onClick={() => handleBlockClick(block, group.page_id, group.page_title)}

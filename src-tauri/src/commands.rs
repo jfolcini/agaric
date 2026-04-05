@@ -1640,10 +1640,8 @@ pub(crate) async fn set_property_in_tx(
 
         if let Some(expected_type) = def_type {
             let type_matches = match expected_type.as_str() {
-                // Also accept value_ref for 'text' definitions — there is no
-                // 'ref' value_type in the CHECK constraint, so ref-typed
-                // properties use 'text' as a fallback in property_definitions.
                 "text" | "select" => value_text.is_some() || value_ref.is_some(),
+                "ref" => value_ref.is_some(),
                 "number" => value_num.is_some(),
                 "date" => value_date.is_some(),
                 _ => true,
@@ -2167,9 +2165,12 @@ pub async fn create_property_def_inner(
         ));
     }
     // Validate value_type
-    if !matches!(value_type.as_str(), "text" | "number" | "date" | "select") {
+    if !matches!(
+        value_type.as_str(),
+        "text" | "number" | "date" | "select" | "ref"
+    ) {
         return Err(AppError::Validation(format!(
-            "invalid value_type '{value_type}': must be text, number, date, or select"
+            "invalid value_type '{value_type}': must be text, number, date, select, or ref"
         )));
     }
     // Validate options: required for select, forbidden for others
@@ -11974,6 +11975,121 @@ mod tests {
 
         let block = result.unwrap();
         assert_eq!(block.due_date, Some("2025-01-15".into()));
+
+        mat.shutdown();
+    }
+
+    // ======================================================================
+    // ref value_type — property definitions & set_property (#H-6)
+    // ======================================================================
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_property_def_ref_type_succeeds() {
+        let (pool, _dir) = test_pool().await;
+
+        let def = create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(def.key, "reviewer");
+        assert_eq!(def.value_type, "ref");
+        assert!(def.options.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn create_property_def_ref_type_rejects_options() {
+        let (pool, _dir) = test_pool().await;
+
+        let result = create_property_def_inner(
+            &pool,
+            "reviewer".into(),
+            "ref".into(),
+            Some(r#"["a","b"]"#.into()),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("options are only allowed for select")),
+            "ref with options should return Validation error, got: {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_property_ref_type_enforces_value_ref() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Create a ref-type definition
+        create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
+            .await
+            .unwrap();
+
+        // Create a block
+        let block = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "ref type test".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        // Setting value_text on a ref-type property should fail
+        let result = set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "reviewer".into(),
+            Some("wrong".into()),
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("expects type")),
+            "ref def with value_text should fail type check, got: {result:?}"
+        );
+
+        // Setting value_ref should succeed
+        let target = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "page".into(),
+            "target page".into(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        mat.flush_background().await.unwrap();
+
+        let result = set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.clone(),
+            "reviewer".into(),
+            None,
+            None,
+            None,
+            Some(target.id.clone()),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "ref def with value_ref should succeed, got: {result:?}"
+        );
 
         mat.shutdown();
     }

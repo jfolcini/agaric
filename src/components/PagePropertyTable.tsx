@@ -294,6 +294,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                       <option value="number">{t('pageProperty.numberType')}</option>
                       <option value="date">{t('pageProperty.dateType')}</option>
                       <option value="select">{t('pageProperty.selectType')}</option>
+                      <option value="ref">{t('pageProperty.refType')}</option>
                     </select>
                     <Button size="sm" className="w-full" onClick={handleCreateDef}>
                       {t('pageProperty.createDefinitionButton')}
