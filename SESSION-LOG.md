@@ -1,5 +1,41 @@
 # Session Log
 
+## Session 223 — 2026-04-05 — Batch 75: R-18 (per-page block store)
+
+### Summary
+Resolved R-18 — the largest single refactor in the project. Split the global `useBlockStore` Zustand singleton into a per-page `PageBlockStore` (via React context) and a slimmed global focus/selection store. This fixes the multi-BlockTree conflict in weekly/monthly journal views where the last `load()` call won for all instances. Created `src/stores/page-blocks.ts` with `createPageBlockStore` factory, `PageBlockStoreProvider`, `usePageBlockStore`/`usePageBlockStoreApi` hooks, and `pageBlockRegistry` for global access. Migrated 16 production files and 14 test files. Fixed reviewer-identified stale `storeRef` bug in provider when `pageId` changes. 32 files changed, 3906 tests pass (153 files). REVIEW-LATER.md reduced from 12 to 11 items (REFACTOR: 7→6).
+
+### Batch 75
+
+**Commit:** 3030d5a
+
+| Area | Change |
+|------|--------|
+| stores/page-blocks.ts | **New** — per-page Zustand store factory, React context provider, registry, hooks. 536 lines. |
+| stores/blocks.ts | Slimmed from 546→108 lines — focus/selection only. `rangeSelect`/`selectAll` now take `visibleIds` param. Added `pendingFocusId`, `consumePendingFocus`. |
+| BlockTree.tsx | Split subscription into per-page + global. 14 `setState` calls migrated. `load()` no longer takes parentId. |
+| PageEditor.tsx | Split into outer (provider) + inner component. `load()` via per-page store. |
+| EditableBlock.tsx | `edit`/`splitBlock`/blocks from per-page store, `setFocused` from global. |
+| PageHeader.tsx | `load()` via `usePageBlockStoreApi()`. |
+| BlockPropertyDrawer.tsx | All blocks access via per-page store context. |
+| JournalPage.tsx | `load()` via `pageBlockRegistry`. |
+| DaySection.tsx | Wrapped `<BlockTree>` in `<PageBlockStoreProvider>`. |
+| useBlockProperties.ts | All `rootParentId`/`blocks`/`setState` via per-page store. |
+| useBlockAttachments.ts | `rootParentId` via per-page store. |
+| useBlockTags.ts | `rootParentId` via per-page store. |
+| useUndoShortcuts.ts | `load()` via `pageBlockRegistry`. |
+| useSyncEvents.ts | Reload ALL mounted stores via registry iteration. |
+| stores/\_\_tests\_\_/page-blocks.test.ts | **New** — 66 tests for all PAGE_DATA actions. |
+| stores/\_\_tests\_\_/blocks.test.ts | Rewritten — 12 tests for focus/selection only. |
+| BlockTree.test.tsx | 202 tests — provider wrapping, ~180 render calls migrated. |
+| PageHeader.test.tsx | 51 tests — provider wrapping. |
+| AttachmentList.test.tsx | 12 tests — provider wrapping. |
+| PageEditor.test.tsx | Provider + registry patterns. |
+| + 8 other test files | Hook/component test migrations. |
+| ARCHITECTURE.md | Store table updated, per-page store pattern documented. |
+| FEATURE-MAP.md | Per-Page Block Store section added. |
+| src/\_\_tests\_\_/AGENTS.md | Store testing docs updated for per-page pattern. |
+
 ## Session 222 — 2026-04-05 — Batch 74: UX-19, UX-20, UX-21, UX-22, R-4, R-6
 
 ### Summary
