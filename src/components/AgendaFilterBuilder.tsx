@@ -7,40 +7,37 @@
  * input.  Chips are editable via click (opens an inline popover).
  */
 
-import type { LucideIcon } from 'lucide-react'
-import { ArrowUpDown, Filter, Layers, Plus, X } from 'lucide-react'
+import { Filter, Plus, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
-import type { AgendaGroupBy, AgendaSortBy } from '../lib/agenda-sort'
-import i18n from '../lib/i18n'
-import { listPropertyKeys } from '../lib/tauri'
+import {
+  type AgendaFilterDimension,
+  ALL_DIMENSIONS,
+  DIMENSION_OPTIONS,
+  dimensionLabel,
+} from '../lib/filter-dimension-metadata'
+import { ChoiceValuePicker } from './ChoiceValuePicker'
+import { PropertyValuePicker } from './PropertyValuePicker'
+import { TextValuePicker } from './TextValuePicker'
+
+// Re-export all previously public symbols for backward compat
+export type { AgendaFilterDimension } from '../lib/filter-dimension-metadata'
+export {
+  ALL_DIMENSIONS,
+  DIMENSION_OPTIONS,
+  dimensionLabel,
+  getTaskStates,
+} from '../lib/filter-dimension-metadata'
+export type { AgendaSortGroupControlsProps } from './AgendaSortGroupControls'
+export { AgendaSortGroupControls } from './AgendaSortGroupControls'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export type AgendaFilterDimension =
-  | 'status'
-  | 'priority'
-  | 'dueDate'
-  | 'scheduledDate'
-  | 'completedDate'
-  | 'createdDate'
-  | 'tag'
-  | 'property'
 
 export interface AgendaFilter {
   dimension: AgendaFilterDimension
@@ -53,81 +50,6 @@ export interface AgendaFilterBuilderProps {
 }
 
 // ---------------------------------------------------------------------------
-// Dimension metadata
-// ---------------------------------------------------------------------------
-
-/** Read custom task states from localStorage, filtering out nulls. */
-export function getTaskStates(): string[] {
-  try {
-    const stored = localStorage.getItem('task_cycle')
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      if (Array.isArray(parsed)) {
-        return parsed.filter((s): s is string => typeof s === 'string' && s.length > 0)
-      }
-    }
-  } catch {}
-  return ['TODO', 'DOING', 'DONE']
-}
-
-const DIMENSION_OPTIONS: Record<
-  AgendaFilterDimension,
-  { labelKey: string; choices: string[] | null | (() => string[]) }
-> = {
-  status: { labelKey: 'agendaFilter.status', choices: getTaskStates },
-  priority: { labelKey: 'agendaFilter.priority', choices: ['1', '2', '3'] },
-  dueDate: {
-    labelKey: 'agendaFilter.dueDate',
-    choices: [
-      'Today',
-      'This week',
-      'This month',
-      'Overdue',
-      'Next 7 days',
-      'Next 14 days',
-      'Next 30 days',
-    ],
-  },
-  scheduledDate: {
-    labelKey: 'agendaFilter.scheduledDate',
-    choices: [
-      'Today',
-      'This week',
-      'This month',
-      'Overdue',
-      'Next 7 days',
-      'Next 14 days',
-      'Next 30 days',
-    ],
-  },
-  completedDate: {
-    labelKey: 'agendaFilter.completedDate',
-    choices: ['Today', 'This week', 'This month', 'Last 7 days', 'Last 30 days'],
-  },
-  createdDate: {
-    labelKey: 'agendaFilter.createdDate',
-    choices: ['Today', 'This week', 'This month', 'Last 7 days', 'Last 30 days'],
-  },
-  tag: { labelKey: 'agendaFilter.tag', choices: null }, // free-text
-  property: { labelKey: 'agendaFilter.property', choices: null }, // dynamic — two-step picker
-}
-
-const ALL_DIMENSIONS: AgendaFilterDimension[] = [
-  'status',
-  'priority',
-  'dueDate',
-  'scheduledDate',
-  'completedDate',
-  'createdDate',
-  'tag',
-  'property',
-]
-
-export function dimensionLabel(dim: AgendaFilterDimension): string {
-  return i18n.t(DIMENSION_OPTIONS[dim].labelKey)
-}
-
-// ---------------------------------------------------------------------------
 // ValuePicker -- checkboxes for fixed choices, text input for tag
 // ---------------------------------------------------------------------------
 
@@ -135,155 +57,6 @@ interface ValuePickerProps {
   dimension: AgendaFilterDimension
   selected: string[]
   onChange: (values: string[]) => void
-}
-
-function ChoiceValuePicker({
-  choices,
-  label,
-  selected,
-  onChange,
-}: {
-  choices: string[]
-  label: string
-  selected: string[]
-  onChange: (values: string[]) => void
-}): React.ReactElement {
-  return (
-    <fieldset
-      className="flex flex-col gap-1 border-0 p-0 m-0"
-      aria-label={i18n.t('agendaFilter.optionsLabel', { label })}
-    >
-      <legend className="sr-only">{i18n.t('agendaFilter.optionsLabel', { label })}</legend>
-      {choices.map((choice) => {
-        const checked = selected.includes(choice)
-        return (
-          <label
-            key={choice}
-            className="flex items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-accent cursor-pointer"
-          >
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={() => {
-                if (checked) {
-                  onChange(selected.filter((v) => v !== choice))
-                } else {
-                  onChange([...selected, choice])
-                }
-              }}
-              className="accent-primary"
-            />
-            {choice}
-          </label>
-        )
-      })}
-    </fieldset>
-  )
-}
-
-function TextValuePicker({
-  selected,
-  onChange,
-}: {
-  selected: string[]
-  onChange: (values: string[]) => void
-}): React.ReactElement {
-  const { t } = useTranslation()
-  const [text, setText] = useState(selected[0] ?? '')
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Input
-        className="h-7 text-xs"
-        placeholder={t('agendaFilter.tagPlaceholder')}
-        value={text}
-        onChange={(e) => {
-          setText(e.target.value)
-          if (e.target.value.trim()) {
-            onChange([e.target.value.trim()])
-          } else {
-            onChange([])
-          }
-        }}
-        aria-label={t('agendaFilter.tagName')}
-      />
-    </div>
-  )
-}
-
-function PropertyValuePicker({
-  selected,
-  onChange,
-}: {
-  selected: string[]
-  onChange: (values: string[]) => void
-}): React.ReactElement {
-  const { t } = useTranslation()
-  const [propertyKeys, setPropertyKeys] = useState<string[]>([])
-  const [propertyKey, setPropertyKey] = useState(() => {
-    if (selected.length > 0) {
-      const first = selected[0] as string
-      const colonIdx = first.indexOf(':')
-      return colonIdx > 0 ? first.slice(0, colonIdx) : first
-    }
-    return ''
-  })
-  const [propertyValue, setPropertyValue] = useState(() => {
-    if (selected.length > 0) {
-      const first = selected[0] as string
-      const colonIdx = first.indexOf(':')
-      return colonIdx > 0 ? first.slice(colonIdx + 1) : ''
-    }
-    return ''
-  })
-
-  useEffect(() => {
-    listPropertyKeys()
-      .then(setPropertyKeys)
-      .catch(() => setPropertyKeys([]))
-  }, [])
-
-  useEffect(() => {
-    if (propertyKey) {
-      const filterValue = propertyValue ? `${propertyKey}:${propertyValue}` : propertyKey
-      onChange([filterValue])
-    } else {
-      onChange([])
-    }
-  }, [propertyKey, propertyValue, onChange]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  return (
-    <div className="flex flex-col gap-2">
-      <Label size="xs" muted={false} htmlFor="prop-filter-key">
-        {t('agendaFilter.propertyKey')}
-      </Label>
-      <Select
-        value={propertyKey || '__none__'}
-        onValueChange={(val) => setPropertyKey(val === '__none__' ? '' : val)}
-      >
-        <SelectTrigger id="prop-filter-key" size="sm" className="block w-full">
-          <SelectValue placeholder={t('agendaFilter.selectProperty')} />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__none__">{t('agendaFilter.selectProperty')}</SelectItem>
-          {propertyKeys.map((k) => (
-            <SelectItem key={k} value={k}>
-              {k}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Label size="xs" muted={false} htmlFor="prop-filter-value">
-        {t('agendaFilter.propertyValue')}
-      </Label>
-      <Input
-        id="prop-filter-value"
-        className="h-7 text-xs"
-        placeholder={t('agendaFilter.propertyValuePlaceholder')}
-        value={propertyValue}
-        onChange={(e) => setPropertyValue(e.target.value)}
-      />
-    </div>
-  )
 }
 
 function ValuePicker({ dimension, selected, onChange }: ValuePickerProps): React.ReactElement {
@@ -555,133 +328,5 @@ export function AgendaFilterBuilder({
         )}
       </div>
     </fieldset>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// AgendaSortGroupControls — sort/group toolbar dropdowns
-// ---------------------------------------------------------------------------
-
-const GROUP_OPTIONS: { value: AgendaGroupBy; labelKey: string }[] = [
-  { value: 'date', labelKey: 'agenda.groupDate' },
-  { value: 'priority', labelKey: 'agenda.groupPriority' },
-  { value: 'state', labelKey: 'agenda.groupState' },
-  { value: 'none', labelKey: 'agenda.groupNone' },
-]
-
-const SORT_OPTIONS: { value: AgendaSortBy; labelKey: string }[] = [
-  { value: 'date', labelKey: 'agenda.sortDate' },
-  { value: 'priority', labelKey: 'agenda.sortPriority' },
-  { value: 'state', labelKey: 'agenda.sortState' },
-]
-
-// ---------------------------------------------------------------------------
-// DropdownSelector — reusable popover-based dropdown (file-internal)
-// ---------------------------------------------------------------------------
-
-interface DropdownSelectorProps<T extends string> {
-  icon: LucideIcon
-  label: string // i18n key
-  currentValue: T
-  currentLabel: string | undefined // pre-resolved label, or undefined to fall back to raw value
-  options: ReadonlyArray<{ value: T; labelKey: string }>
-  onChange: (value: T) => void
-}
-
-function DropdownSelector<T extends string>({
-  icon: Icon,
-  label,
-  currentValue,
-  currentLabel,
-  options,
-  onChange,
-}: DropdownSelectorProps<T>) {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            'inline-flex items-center gap-1 rounded-full bg-muted',
-            'px-2.5 py-1 text-xs hover:bg-accent cursor-pointer',
-          )}
-          aria-label={t(label)}
-        >
-          <Icon size={12} aria-hidden="true" />
-          <span className="font-medium">{t(label)}:</span>
-          <span>{currentLabel ?? currentValue}</span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-40 p-1 max-w-[calc(100vw-2rem)]">
-        <ul className="flex flex-col gap-0.5 list-none m-0 p-0" aria-label={t(label)}>
-          {options.map((opt) => (
-            <li key={opt.value}>
-              <button
-                type="button"
-                className={cn(
-                  'w-full rounded px-2 py-1.5 text-left text-xs hover:bg-accent cursor-pointer',
-                  opt.value === currentValue && 'bg-accent font-medium',
-                )}
-                onClick={() => {
-                  onChange(opt.value)
-                  setOpen(false)
-                }}
-                aria-current={opt.value === currentValue ? 'true' : undefined}
-              >
-                {t(opt.labelKey)}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-export interface AgendaSortGroupControlsProps {
-  groupBy: AgendaGroupBy
-  onGroupByChange: (value: AgendaGroupBy) => void
-  sortBy: AgendaSortBy
-  onSortByChange: (value: AgendaSortBy) => void
-}
-
-export function AgendaSortGroupControls({
-  groupBy,
-  onGroupByChange,
-  sortBy,
-  onSortByChange,
-}: AgendaSortGroupControlsProps): React.ReactElement {
-  const { t } = useTranslation()
-
-  const groupLabel = GROUP_OPTIONS.find((o) => o.value === groupBy)
-  const sortLabel = SORT_OPTIONS.find((o) => o.value === sortBy)
-
-  return (
-    <div
-      className="agenda-sort-group-controls flex items-center gap-1.5"
-      data-testid="agenda-sort-group-controls"
-      role="toolbar"
-      aria-label={`${t('agenda.sortBy')} / ${t('agenda.groupBy')}`}
-    >
-      <DropdownSelector
-        icon={Layers}
-        label="agenda.groupBy"
-        currentValue={groupBy}
-        currentLabel={groupLabel ? t(groupLabel.labelKey) : undefined}
-        options={GROUP_OPTIONS}
-        onChange={onGroupByChange}
-      />
-      <DropdownSelector
-        icon={ArrowUpDown}
-        label="agenda.sortBy"
-        currentValue={sortBy}
-        currentLabel={sortLabel ? t(sortLabel.labelKey) : undefined}
-        options={SORT_OPTIONS}
-        onChange={onSortByChange}
-      />
-    </div>
   )
 }

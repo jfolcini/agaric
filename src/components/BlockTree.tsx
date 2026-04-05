@@ -20,38 +20,33 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useShallow } from 'zustand/react/shallow'
-import { parse, serialize } from '../editor/markdown-serializer'
+import { parse } from '../editor/markdown-serializer'
 import type { PickerItem } from '../editor/SuggestionList'
-import type { DocNode } from '../editor/types'
-import { pmEndOfFirstBlock } from '../editor/types'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { useRovingEditor } from '../editor/use-roving-editor'
+import { useBlockDatePicker } from '../hooks/useBlockDatePicker'
 import { useBlockDnD } from '../hooks/useBlockDnD'
+import { useBlockKeyboardHandlers } from '../hooks/useBlockKeyboardHandlers'
+import { useBlockMultiSelect } from '../hooks/useBlockMultiSelect'
 import { useBlockProperties } from '../hooks/useBlockProperties'
 import { useBlockResolve } from '../hooks/useBlockResolve'
+import {
+  searchPropertyKeys,
+  searchSlashCommands,
+  useBlockSlashCommands,
+} from '../hooks/useBlockSlashCommands'
 import { useViewportObserver } from '../hooks/useViewportObserver'
-import { announce } from '../lib/announcer'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { BLOCK_EVENTS, onBlockEvent } from '../lib/block-events'
-import { formatRepeatLabel } from '../lib/repeat-utils'
 import {
-  addAttachment,
   batchResolve,
   createBlock,
-  deleteBlock,
-  deleteProperty,
-  editBlock,
   getBatchProperties,
   getBlock,
-  listBlocks,
-  listPropertyKeys,
-  setDueDate as setDueDateCmd,
   setPriority as setPriorityCmd,
   setProperty,
-  setScheduledDate as setScheduledDateCmd,
   setTodoState as setTodoStateCmd,
 } from '../lib/tauri'
-import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '../lib/template-utils'
 import { getDragDescendants } from '../lib/tree-utils'
 import { cn } from '../lib/utils'
 import { useBlockStore } from '../stores/blocks'
@@ -250,19 +245,6 @@ export function BlockTree({
   // ── Zoom state ─────────────────────────────────────────────────────
   const [zoomedBlockId, setZoomedBlockId] = useState<string | null>(null)
 
-  // ── Date picker for /DATE and /DUE commands ────────────────────────
-  const [datePickerOpen, setDatePickerOpen] = useState(false)
-  const [datePickerMode, setDatePickerMode] = useState<
-    'date' | 'due' | 'schedule' | 'repeat-until'
-  >('date')
-  const datePickerCursorPos = useRef<number | undefined>(undefined)
-
-  // ── Template picker for /TEMPLATE command ──────────────────────────
-  const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
-  const [templatePages, setTemplatePages] = useState<
-    Array<{ id: string; content: string; preview: string | null }>
-  >([])
-
   // ── Enter-creates-block refs ───────────────────────────────────────
   const justCreatedBlockIds = useRef(new Set<string>())
   const prevFocusedRef = useRef<string | null>(null)
@@ -276,84 +258,6 @@ export function BlockTree({
   const [blockProperties, setBlockProperties] = useState<
     Record<string, Array<{ key: string; value: string }>>
   >({})
-
-  // ── Batch operations state ─────────────────────────────────────────
-  const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
-  const [batchInProgress, setBatchInProgress] = useState(false)
-
-  const handleBatchSetTodo = useCallback(
-    async (state: string | null) => {
-      if (batchInProgress) return
-      setBatchInProgress(true)
-      try {
-        const ids = [...selectedBlockIds]
-        const idSet = new Set(ids)
-        // Single optimistic update for all blocks
-        pageStore.setState((s) => ({
-          blocks: s.blocks.map((b) => (idSet.has(b.id) ? { ...b, todo_state: state } : b)),
-        }))
-        let successCount = 0
-        let failCount = 0
-        for (const id of ids) {
-          try {
-            await setTodoStateCmd(id, state)
-            successCount++
-          } catch {
-            failCount++
-          }
-        }
-        if (successCount > 0 && rootParentId) {
-          useUndoStore.getState().onNewAction(rootParentId)
-        }
-        clearSelected()
-        if (failCount > 0) {
-          toast.error(t('blockTree.updateFailedMessage', { failCount, totalCount: ids.length }))
-        } else {
-          toast.success(t('blockTree.setStateMessage', { successCount, state: state ?? 'none' }))
-        }
-      } finally {
-        setBatchInProgress(false)
-      }
-    },
-    [selectedBlockIds, clearSelected, batchInProgress, rootParentId, t, pageStore],
-  )
-
-  const handleBatchDelete = useCallback(async () => {
-    if (batchInProgress) return
-    setBatchInProgress(true)
-    try {
-      const ids = [...selectedBlockIds]
-      // Filter out blocks whose parent is also in the selection (parent deletion cascades)
-      const idsSet = new Set(ids)
-      const toDelete = ids.filter((id) => {
-        const block = pageStore.getState().blocks.find((b) => b.id === id)
-        if (block?.parent_id && idsSet.has(block.parent_id)) return false
-        return true
-      })
-      let successCount = 0
-      let failCount = 0
-      for (const id of toDelete) {
-        try {
-          await deleteBlock(id)
-          pageStore.setState((s) => ({
-            blocks: s.blocks.filter((b) => b.id !== id),
-          }))
-          successCount++
-        } catch {
-          failCount++
-        }
-      }
-      clearSelected()
-      setBatchDeleteConfirm(false)
-      if (failCount > 0) {
-        toast.error(t('blockTree.deleteFailedMessage', { failCount, totalCount: toDelete.length }))
-      } else {
-        toast.success(t('blockTree.deletedMessage', { count: successCount }))
-      }
-    } finally {
-      setBatchInProgress(false)
-    }
-  }, [selectedBlockIds, clearSelected, batchInProgress, t, pageStore])
 
   const handleShowHistory = useCallback((blockId: string) => {
     setHistoryBlockId(blockId)
@@ -434,181 +338,6 @@ export function BlockTree({
     return trail
   }, [zoomedBlockId, blocks])
 
-  // ── Slash command definitions ──────────────────────────────────────
-  const SLASH_COMMANDS: PickerItem[] = useMemo(
-    () => [
-      { id: 'todo', label: 'TODO — Mark as to-do' },
-      { id: 'doing', label: 'DOING — Mark as in progress' },
-      { id: 'done', label: 'DONE — Mark as complete' },
-      { id: 'date', label: 'DATE — Link to a date page' },
-      { id: 'due', label: 'DUE — Set due date on block' },
-      { id: 'schedule', label: 'SCHEDULED — Set scheduled date on block' },
-      { id: 'link', label: 'LINK — Insert page link' },
-      { id: 'tag', label: 'TAG — Insert tag reference' },
-      { id: 'code', label: 'CODE — Insert code block' },
-      { id: 'effort', label: 'EFFORT — Set effort estimate (15m/30m/1h/2h/4h/1d)' },
-      { id: 'assignee', label: 'ASSIGNEE — Set assignee' },
-      { id: 'location', label: 'LOCATION — Set location' },
-      { id: 'repeat', label: 'REPEAT — Set recurrence (daily/weekly/monthly/+Nd)' },
-      { id: 'template', label: 'TEMPLATE — Insert block template' },
-      { id: 'quote', label: 'QUOTE — Insert blockquote' },
-      { id: 'table', label: 'TABLE — Insert table (e.g. /table 4x6)' },
-      { id: 'query', label: 'QUERY — Insert embedded query block' },
-      { id: 'attach', label: 'ATTACH — Attach file to block' },
-    ],
-    [],
-  )
-
-  /** Priority commands — shown only when query matches (progressive disclosure). */
-  const PRIORITY_COMMANDS: PickerItem[] = useMemo(
-    () => [
-      { id: 'priority-high', label: 'PRIORITY 1 — Set high priority' },
-      { id: 'priority-medium', label: 'PRIORITY 2 — Set medium priority' },
-      { id: 'priority-low', label: 'PRIORITY 3 — Set low priority' },
-    ],
-    [],
-  )
-
-  /** Heading commands — shown only when query matches (progressive disclosure). */
-  const HEADING_COMMANDS: PickerItem[] = useMemo(
-    () => [
-      { id: 'h1', label: 'Heading 1 — Large heading' },
-      { id: 'h2', label: 'Heading 2 — Medium heading' },
-      { id: 'h3', label: 'Heading 3 — Small heading' },
-      { id: 'h4', label: 'Heading 4' },
-      { id: 'h5', label: 'Heading 5' },
-      { id: 'h6', label: 'Heading 6' },
-    ],
-    [],
-  )
-
-  /** Repeat commands — shown only when query matches (progressive disclosure). */
-  const REPEAT_COMMANDS: PickerItem[] = useMemo(
-    () => [
-      // Standard mode (shift from due date)
-      { id: 'repeat-daily', label: 'REPEAT DAILY — Every day' },
-      { id: 'repeat-weekly', label: 'REPEAT WEEKLY — Every week' },
-      { id: 'repeat-monthly', label: 'REPEAT MONTHLY — Every month' },
-      { id: 'repeat-yearly', label: 'REPEAT YEARLY — Every year' },
-      // From-completion mode (.+ prefix)
-      { id: 'repeat-.+daily', label: 'REPEAT DAILY (from completion) — Days from when done' },
-      { id: 'repeat-.+weekly', label: 'REPEAT WEEKLY (from completion) — Weeks from when done' },
-      { id: 'repeat-.+monthly', label: 'REPEAT MONTHLY (from completion) — Months from when done' },
-      // Catch-up mode (++ prefix)
-      { id: 'repeat-++daily', label: 'REPEAT DAILY (catch-up) — Advance to next future date' },
-      { id: 'repeat-++weekly', label: 'REPEAT WEEKLY (catch-up) — Advance to next future date' },
-      { id: 'repeat-++monthly', label: 'REPEAT MONTHLY (catch-up) — Advance to next future date' },
-      // Remove
-      { id: 'repeat-remove', label: 'REPEAT REMOVE — Clear recurrence' },
-    ],
-    [],
-  )
-
-  /** Effort commands — shown only when query matches (progressive disclosure). */
-  const EFFORT_COMMANDS: PickerItem[] = useMemo(
-    () => [
-      { id: 'effort-15m', label: 'EFFORT 15m — 15 minutes' },
-      { id: 'effort-30m', label: 'EFFORT 30m — 30 minutes' },
-      { id: 'effort-1h', label: 'EFFORT 1h — 1 hour' },
-      { id: 'effort-2h', label: 'EFFORT 2h — 2 hours' },
-      { id: 'effort-4h', label: 'EFFORT 4h — 4 hours' },
-      { id: 'effort-1d', label: 'EFFORT 1d — 1 day' },
-    ],
-    [],
-  )
-
-  /** Assignee commands — shown only when query matches (progressive disclosure). */
-  const ASSIGNEE_COMMANDS: PickerItem[] = useMemo(
-    () => [
-      { id: 'assignee-me', label: 'ASSIGNEE Me — Assign to me' },
-      { id: 'assignee-custom', label: 'ASSIGNEE Custom... — Enter custom assignee' },
-    ],
-    [],
-  )
-
-  /** Location commands — shown only when query matches (progressive disclosure). */
-  const LOCATION_COMMANDS: PickerItem[] = useMemo(
-    () => [
-      { id: 'location-office', label: 'LOCATION Office — Office' },
-      { id: 'location-home', label: 'LOCATION Home — Home' },
-      { id: 'location-remote', label: 'LOCATION Remote — Remote' },
-      { id: 'location-custom', label: 'LOCATION Custom... — Enter custom location' },
-    ],
-    [],
-  )
-
-  /** Repeat end-condition commands — shown when query matches "repeat". */
-  const REPEAT_END_COMMANDS: PickerItem[] = useMemo(
-    () => [
-      { id: 'repeat-until', label: 'REPEAT UNTIL — Stop repeating after a date' },
-      { id: 'repeat-limit-5', label: 'REPEAT LIMIT 5 — Stop after 5 occurrences' },
-      { id: 'repeat-limit-10', label: 'REPEAT LIMIT 10 — Stop after 10 occurrences' },
-      { id: 'repeat-limit-20', label: 'REPEAT LIMIT 20 — Stop after 20 occurrences' },
-      { id: 'repeat-limit-remove', label: 'REPEAT LIMIT REMOVE — Clear end condition' },
-    ],
-    [],
-  )
-
-  const searchSlashCommands = useCallback(
-    (query: string): PickerItem[] => {
-      const q = query.toLowerCase()
-      const baseResults = SLASH_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-      if (!q) return baseResults
-      const priorityResults = PRIORITY_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-      const headingResults = HEADING_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-      const repeatResults = REPEAT_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-      const repeatEndResults = REPEAT_END_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-      const effortResults = EFFORT_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-      const assigneeResults = ASSIGNEE_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-      const locationResults = LOCATION_COMMANDS.filter((c) => c.label.toLowerCase().includes(q))
-
-      // Detect /table NxM pattern — inject a parameterized table item
-      const tableMatch = q.match(/^table\s+(\d+)\s*x\s*(\d+)$/i)
-      let results = [
-        ...baseResults,
-        ...priorityResults,
-        ...headingResults,
-        ...repeatResults,
-        ...repeatEndResults,
-        ...effortResults,
-        ...assigneeResults,
-        ...locationResults,
-      ]
-      if (tableMatch) {
-        const rows = Number.parseInt(tableMatch[1] as string, 10)
-        const cols = Number.parseInt(tableMatch[2] as string, 10)
-        // Replace the default table item with the parameterized one
-        results = results.filter((r) => r.id !== 'table')
-        results.unshift({
-          id: `table:${rows}:${cols}`,
-          label: `TABLE ${rows}\u00d7${cols} — Insert ${rows}\u00d7${cols} table`,
-        })
-      }
-      return results
-    },
-    [
-      SLASH_COMMANDS,
-      PRIORITY_COMMANDS,
-      HEADING_COMMANDS,
-      REPEAT_COMMANDS,
-      REPEAT_END_COMMANDS,
-      EFFORT_COMMANDS,
-      ASSIGNEE_COMMANDS,
-      LOCATION_COMMANDS,
-    ],
-  )
-
-  const searchPropertyKeys = useCallback(async (query: string): Promise<PickerItem[]> => {
-    try {
-      const keys = await listPropertyKeys()
-      const q = query.toLowerCase()
-      const filtered = q ? keys.filter((k) => k.toLowerCase().includes(q)) : keys
-      return filtered.map((k) => ({ id: k, label: k }))
-    } catch {
-      return []
-    }
-  }, [])
-
   // ── Roving editor ──────────────────────────────────────────────────
   // handleNavigate and handleSlashCommand are defined below but referenced
   // via ref to avoid circular dependency with rovingEditor.
@@ -650,6 +379,58 @@ export function BlockTree({
   })
 
   const viewport = useViewportObserver()
+
+  // ── Date picker hook ───────────────────────────────────────────────
+  const {
+    datePickerOpen,
+    datePickerCursorPos,
+    setDatePickerOpen,
+    setDatePickerMode,
+    handleDatePick,
+  } = useBlockDatePicker({
+    focusedBlockId,
+    rootParentId,
+    pageStore,
+    rovingEditor,
+    pagesListRef: resolve.pagesListRef,
+    t,
+  })
+
+  // ── Slash commands hook ────────────────────────────────────────────
+  const {
+    handleSlashCommand,
+    handleTemplateSelect,
+    handleCheckboxSyntax,
+    templatePickerOpen,
+    setTemplatePickerOpen,
+    templatePages,
+  } = useBlockSlashCommands({
+    focusedBlockId,
+    rootParentId,
+    pageStore,
+    rovingEditor,
+    datePickerCursorPos,
+    setDatePickerMode,
+    setDatePickerOpen,
+    blocks,
+    load,
+    t,
+  })
+
+  // ── Multi-select hook ──────────────────────────────────────────────
+  const {
+    batchDeleteConfirm,
+    batchInProgress,
+    setBatchDeleteConfirm,
+    handleBatchSetTodo,
+    handleBatchDelete,
+  } = useBlockMultiSelect({
+    selectedBlockIds,
+    clearSelected,
+    rootParentId,
+    pageStore,
+    t,
+  })
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: parentId triggers reload when page changes
   useEffect(() => {
@@ -873,453 +654,8 @@ export function BlockTree({
   // Keep the ref in sync with the latest handleNavigate
   handleNavigateRef.current = handleNavigate
 
-  // ── Slash command handler ──────────────────────────────────────────
-  // biome-ignore lint/correctness/useExhaustiveDependencies: cursor position read at call time, not a reactive dependency
-  const handleSlashCommand = useCallback(
-    async (item: PickerItem) => {
-      if (!focusedBlockId) return
-
-      if (item.id === 'todo' || item.id === 'doing' || item.id === 'done') {
-        const state = item.id.toUpperCase()
-        try {
-          await setTodoStateCmd(focusedBlockId, state)
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          pageStore.setState((s) => ({
-            blocks: s.blocks.map((b) =>
-              b.id === focusedBlockId ? { ...b, todo_state: state } : b,
-            ),
-          }))
-        } catch {
-          toast.error(t('blockTree.setTaskStateFailed'))
-        }
-      }
-
-      if (item.id === 'date') {
-        // Save cursor position before opening the date picker — the editor
-        // will lose focus when the user clicks the calendar.
-        datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
-        setDatePickerMode('date')
-        setDatePickerOpen(true)
-      }
-
-      if (item.id === 'due') {
-        datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
-        setDatePickerMode('due')
-        setDatePickerOpen(true)
-      }
-
-      if (item.id === 'schedule') {
-        datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
-        setDatePickerMode('schedule')
-        setDatePickerOpen(true)
-        return
-      }
-
-      if (item.id === 'link') {
-        rovingEditor.editor?.chain().focus().insertContent('[[').run()
-        return
-      }
-
-      if (item.id === 'tag') {
-        rovingEditor.editor?.chain().focus().insertContent('@').run()
-        return
-      }
-
-      if (item.id === 'code') {
-        rovingEditor.editor?.chain().focus().toggleCodeBlock().run()
-        return
-      }
-
-      if (item.id === 'quote') {
-        rovingEditor.editor?.chain().focus().toggleBlockquote().run()
-        return
-      }
-
-      if (item.id === 'table' || item.id.startsWith('table:')) {
-        let rows = 3
-        let cols = 3
-        const dimMatch = item.id.match(/^table:(\d+):(\d+)$/)
-        if (dimMatch) {
-          rows = Number.parseInt(dimMatch[1] as string, 10)
-          cols = Number.parseInt(dimMatch[2] as string, 10)
-        }
-        rovingEditor.editor?.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run()
-        return
-      }
-
-      if (item.id === 'query') {
-        rovingEditor.editor?.chain().focus().insertContent('{{query type:tag expr:}}').run()
-        return
-      }
-
-      if (
-        item.id === 'priority-high' ||
-        item.id === 'priority-medium' ||
-        item.id === 'priority-low'
-      ) {
-        const priority =
-          item.id === 'priority-high' ? '1' : item.id === 'priority-medium' ? '2' : '3'
-        try {
-          await setPriorityCmd(focusedBlockId, priority)
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          pageStore.setState((s) => ({
-            blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, priority } : b)),
-          }))
-        } catch {
-          toast.error(t('blockTree.setPriorityFailed'))
-        }
-      }
-
-      const headingMatch = item.id.match(/^h([1-6])$/)
-      if (headingMatch) {
-        const level = Number(headingMatch[1])
-        // Read current content from the editor (which has the slash text already removed)
-        let currentContent = ''
-        if (rovingEditor.editor) {
-          const json = rovingEditor.editor.getJSON() as DocNode
-          currentContent = serialize(json)
-        } else {
-          const block = pageStore.getState().blocks.find((b) => b.id === focusedBlockId)
-          currentContent = block?.content ?? ''
-        }
-        // Strip existing heading prefix (if any)
-        const headingRegex = /^#{1,6}\s/
-        const stripped = currentContent.replace(headingRegex, '')
-        const newContent = `${'#'.repeat(level)} ${stripped}`
-        try {
-          await editBlock(focusedBlockId, newContent)
-          // Reload the block in the store
-          pageStore.setState((state) => ({
-            blocks: state.blocks.map((b) =>
-              b.id === focusedBlockId ? { ...b, content: newContent } : b,
-            ),
-          }))
-          // Re-mount editor so the heading renders immediately
-          rovingEditor.mount(focusedBlockId, newContent)
-        } catch {
-          toast.error(t('blockTree.setHeadingFailed'))
-        }
-      }
-
-      if (item.id === 'assignee' || item.id === 'location') {
-        if (!focusedBlockId) return
-        try {
-          await setProperty({ blockId: focusedBlockId, key: item.id, valueText: '' })
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          toast.success(
-            t('blockTree.addedPropertyMessage', {
-              name: item.label.split(' — ')[0]?.toLowerCase(),
-            }),
-          )
-        } catch {
-          toast.error(t('blockTree.addPropertyFailed'))
-        }
-        return
-      }
-
-      if (item.id.startsWith('assignee-')) {
-        if (!focusedBlockId) return
-        const preset = item.id.replace('assignee-', '')
-        if (preset === 'custom') {
-          try {
-            await setProperty({ blockId: focusedBlockId, key: 'assignee', valueText: '' })
-            if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            toast.success(t('blockTree.addedAssigneeProperty'))
-          } catch {
-            toast.error(t('blockTree.addPropertyFailed'))
-          }
-        } else {
-          const value = item.label.split(' — ')[0]?.replace('ASSIGNEE ', '')
-          try {
-            await setProperty({
-              blockId: focusedBlockId,
-              key: 'assignee',
-              ...(value != null && { valueText: value }),
-            })
-            if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            toast.success(t('blockTree.setAssigneeMessage', { value }))
-          } catch {
-            toast.error(t('blockTree.setAssigneeFailed'))
-          }
-        }
-        return
-      }
-
-      if (item.id.startsWith('location-')) {
-        if (!focusedBlockId) return
-        const preset = item.id.replace('location-', '')
-        if (preset === 'custom') {
-          try {
-            await setProperty({ blockId: focusedBlockId, key: 'location', valueText: '' })
-            if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            toast.success(t('blockTree.addedLocationProperty'))
-          } catch {
-            toast.error(t('blockTree.addPropertyFailed'))
-          }
-        } else {
-          const value = item.label.split(' — ')[0]?.replace('LOCATION ', '')
-          try {
-            await setProperty({ blockId: focusedBlockId, key: 'location', valueText: value })
-            if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            toast.success(t('blockTree.setLocationMessage', { value }))
-          } catch {
-            toast.error(t('blockTree.setLocationFailed'))
-          }
-        }
-        return
-      }
-
-      if (item.id.startsWith('effort-')) {
-        if (!focusedBlockId) return
-        const value = item.id.replace('effort-', '')
-        try {
-          await setProperty({ blockId: focusedBlockId, key: 'effort', valueText: value })
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          toast.success(t('slash.effortSet', { value }))
-        } catch {
-          toast.error(t('slash.effortFailed'))
-        }
-        return
-      }
-
-      // Repeat end-condition: until date
-      if (item.id === 'repeat-until') {
-        if (!focusedBlockId) return
-        datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos
-        setDatePickerMode('repeat-until')
-        setDatePickerOpen(true)
-        return
-      }
-
-      // Repeat end-condition: limit
-      if (item.id.startsWith('repeat-limit-')) {
-        if (!focusedBlockId) return
-        const sub = item.id.replace('repeat-limit-', '')
-        if (sub === 'remove') {
-          try {
-            await deleteProperty(focusedBlockId, 'repeat-count')
-            await deleteProperty(focusedBlockId, 'repeat-until')
-            toast.success(t('blockTree.repeatEndConditionRemoved'))
-          } catch {
-            toast.error(t('blockTree.removeEndConditionFailed'))
-          }
-          return
-        }
-        const count = Number.parseInt(sub, 10)
-        if (!Number.isNaN(count)) {
-          try {
-            await setProperty({ blockId: focusedBlockId, key: 'repeat-count', valueNum: count })
-            if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            toast.success(t('blockTree.repeatLimitedMessage', { count }))
-          } catch {
-            toast.error(t('blockTree.setRepeatLimitFailed'))
-          }
-        }
-        return
-      }
-
-      if (item.id.startsWith('repeat-')) {
-        if (!focusedBlockId) return
-        const value = item.id.replace('repeat-', '')
-        if (value === 'remove') {
-          try {
-            await deleteProperty(focusedBlockId, 'repeat')
-            toast.success(t('slash.repeatRemoved'))
-          } catch {
-            toast.error(t('slash.repeatRemoveFailed'))
-          }
-          return
-        }
-        try {
-          await setProperty({ blockId: focusedBlockId, key: 'repeat', valueText: value })
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          toast.success(t('slash.repeatSet', { value: formatRepeatLabel(value) }))
-        } catch {
-          toast.error(t('slash.repeatFailed'))
-        }
-        return
-      }
-
-      if (item.id === 'template') {
-        try {
-          const pages = await loadTemplatePagesWithPreview()
-          if (pages.length === 0) {
-            toast.error(t('slash.noTemplates'))
-            return
-          }
-          setTemplatePages(pages)
-          setTemplatePickerOpen(true)
-        } catch {
-          toast.error(t('slash.templateLoadFailed'))
-        }
-        return
-      }
-
-      if (item.id === 'attach') {
-        const input = document.createElement('input')
-        input.type = 'file'
-        input.onchange = async () => {
-          const file = input.files?.[0]
-          if (!file) return
-          const filename = file.name
-          const sizeBytes = file.size
-          const mimeType = file.type || guessMimeType(filename)
-          // In Tauri webview, File objects expose a .path property with the real FS path
-          const fsPath = (file as File & { path?: string }).path
-          if (!fsPath) {
-            toast.error(t('blockTree.filePathReadFailed'))
-            return
-          }
-          try {
-            await addAttachment({
-              blockId: focusedBlockId,
-              filename,
-              mimeType,
-              sizeBytes,
-              fsPath,
-            })
-            toast.success(t('blockTree.attachedFileMessage', { filename }))
-          } catch {
-            toast.error(t('blockTree.attachFileFailed'))
-          }
-        }
-        input.click()
-        return
-      }
-    },
-    [focusedBlockId],
-  )
-
-  /** Handle date selection from the /DATE picker. Finds or creates the date page and inserts a block link. */
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolve.pagesListRef is a stable ref, not a reactive dependency
-  const handleDatePick = useCallback(
-    async (d: Date) => {
-      setDatePickerOpen(false)
-      const dd = String(d.getDate()).padStart(2, '0')
-      const mm = String(d.getMonth() + 1).padStart(2, '0')
-      const yyyy = d.getFullYear()
-      const dateStr = `${yyyy}-${mm}-${dd}`
-
-      if (datePickerMode === 'due') {
-        // /DUE mode — set due_date on the focused block
-        if (!focusedBlockId) return
-        try {
-          await setDueDateCmd(focusedBlockId, dateStr)
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          pageStore.setState((s) => ({
-            blocks: s.blocks.map((b) =>
-              b.id === focusedBlockId ? { ...b, due_date: dateStr } : b,
-            ),
-          }))
-        } catch {
-          toast.error(t('blockTree.setDueDateFailed'))
-        }
-        return
-      }
-
-      if (datePickerMode === 'repeat-until') {
-        if (!focusedBlockId) return
-        try {
-          await setProperty({ blockId: focusedBlockId, key: 'repeat-until', valueDate: dateStr })
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          toast.success(t('blockTree.repeatUntilMessage', { date: dateStr }))
-        } catch {
-          toast.error(t('blockTree.setRepeatEndDateFailed'))
-        }
-        return
-      }
-
-      if (datePickerMode === 'schedule') {
-        // /SCHEDULE mode — set scheduled_date on the focused block
-        if (!focusedBlockId) return
-        try {
-          await setScheduledDateCmd(focusedBlockId, dateStr)
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-          pageStore.setState((s) => ({
-            blocks: s.blocks.map((b) =>
-              b.id === focusedBlockId ? { ...b, scheduled_date: dateStr } : b,
-            ),
-          }))
-          announce(`Scheduled date set to ${dateStr}`)
-        } catch {
-          toast.error(t('blockTree.setScheduledDateFailed'))
-        }
-        return
-      }
-
-      // /DATE mode — insert block link to a date page
-      // Also check for the legacy DD/MM/YYYY format to avoid duplicates
-      const legacyStr = `${dd}/${mm}/${yyyy}`
-
-      // Find existing date page (check both formats) or create
-      const resp = await listBlocks({ blockType: 'page', limit: 500 })
-      let datePageId = resp.items.find((b) => b.content === dateStr || b.content === legacyStr)?.id
-      if (!datePageId) {
-        const newPage = await createBlock({ blockType: 'page', content: dateStr })
-        datePageId = newPage.id
-        // Update resolve cache so the link chip shows the date immediately
-        useResolveStore.getState().set(newPage.id, dateStr, false)
-        resolve.pagesListRef.current = [
-          ...resolve.pagesListRef.current,
-          { id: newPage.id, title: dateStr },
-        ]
-      }
-
-      // Restore focus and insert the block link at cursor position
-      if (rovingEditor.editor && datePageId) {
-        const editor = rovingEditor.editor
-        const id = datePageId
-        // Re-focus the editor — the blur guard kept it mounted
-        editor.commands.focus()
-        // Insert on next frame to ensure focus is settled
-        requestAnimationFrame(() => {
-          editor.chain().focus().insertBlockLink(id).run()
-        })
-      }
-    },
-    [rovingEditor, datePickerMode, focusedBlockId],
-  )
-
-  /** Handle template selection from the picker. */
-  const handleTemplateSelect = useCallback(
-    async (templatePageId: string) => {
-      setTemplatePickerOpen(false)
-      if (!focusedBlockId) return
-      const block = blocks.find((b) => b.id === focusedBlockId)
-      if (!block) return
-      try {
-        const parentId = block.parent_id ?? rootParentId
-        if (!parentId) return
-        const pageTitle = useResolveStore.getState().cache.get(rootParentId ?? '')?.title ?? ''
-        const ids = await insertTemplateBlocks(templatePageId, parentId, { pageTitle })
-        if (ids.length > 0) {
-          await load()
-          toast.success(t('slash.templateInserted'))
-        }
-      } catch {
-        toast.error(t('slash.templateInsertFailed'))
-      }
-    },
-    [focusedBlockId, blocks, rootParentId, load, t],
-  )
-
   // Keep the slash command ref in sync
   handleSlashCommandRef.current = handleSlashCommand
-
-  const handleCheckboxSyntax = useCallback(
-    (state: 'TODO' | 'DONE') => {
-      if (!focusedBlockId) return
-      setTodoStateCmd(focusedBlockId, state)
-        .then(() => {
-          if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-        })
-        .catch(() => toast.error(t('blockTree.setTaskStateFailed')))
-      pageStore.setState((s) => ({
-        blocks: s.blocks.map((b) => (b.id === focusedBlockId ? { ...b, todo_state: state } : b)),
-      }))
-    },
-    [focusedBlockId, rootParentId, t, pageStore],
-  )
 
   handleCheckboxRef.current = handleCheckboxSyntax
 
@@ -1335,188 +671,37 @@ export function BlockTree({
 
   handlePropertySelectRef.current = handlePropertySelect
 
-  const handleFocusPrev = useCallback(() => {
-    const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
-    if (idx > 0) {
-      const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
-      setFocused(prevBlock.id)
-      rovingEditor.mount(prevBlock.id, prevBlock.content ?? '')
-      const preview = prevBlock.content?.slice(0, 50) ?? ''
-      announce(`Editing block: ${preview || 'empty block'}`)
-    }
-  }, [collapsedVisible, focusedBlockId, setFocused, rovingEditor])
-
-  const handleFocusNext = useCallback(() => {
-    const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
-    if (idx >= 0 && idx < collapsedVisible.length - 1) {
-      const nextBlock = collapsedVisible[idx + 1] as (typeof collapsedVisible)[number]
-      setFocused(nextBlock.id)
-      rovingEditor.mount(nextBlock.id, nextBlock.content ?? '')
-      const preview = nextBlock.content?.slice(0, 50) ?? ''
-      announce(`Editing block: ${preview || 'empty block'}`)
-    }
-  }, [collapsedVisible, focusedBlockId, setFocused, rovingEditor])
-
-  const handleDeleteBlock = useCallback(() => {
-    if (!focusedBlockId) return
-    if (collapsedVisible.length <= 1) {
-      toast.error(t('blockTree.cannotDeleteLastBlock'))
-      return
-    }
-    const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
-    rovingEditor.unmount()
-    remove(focusedBlockId)
-    announce('Block deleted')
-    // Focus previous block, or next visible at same level, or nothing
-    if (idx > 0) {
-      const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
-      setFocused(prevBlock.id)
-      rovingEditor.mount(prevBlock.id, prevBlock.content ?? '')
-    } else if (idx + 1 < collapsedVisible.length) {
-      const nextBlock = collapsedVisible[idx + 1] as (typeof collapsedVisible)[number]
-      setFocused(nextBlock.id)
-      rovingEditor.mount(nextBlock.id, nextBlock.content ?? '')
-    } else {
-      setFocused(null)
-    }
-  }, [focusedBlockId, collapsedVisible, rovingEditor, remove, setFocused, t])
-
-  const handleIndent = useCallback(() => {
-    if (!focusedBlockId) return
-    // Flush editor content before structural move
-    handleFlush()
-    indent(focusedBlockId)
-    announce('Block indented')
-  }, [focusedBlockId, handleFlush, indent])
-
-  const handleDedent = useCallback(() => {
-    if (!focusedBlockId) return
-    // Flush editor content before structural move
-    handleFlush()
-    dedent(focusedBlockId)
-    announce('Block outdented')
-  }, [focusedBlockId, handleFlush, dedent])
-
-  // ── Move block up/down (Ctrl+Shift+Arrow) ─────────────────────────
-  const handleMoveUp = useCallback(() => {
-    if (!focusedBlockId) return
-    handleFlush()
-    moveUp(focusedBlockId)
-    announce('Block moved up')
-  }, [focusedBlockId, handleFlush, moveUp])
-
-  const handleMoveDown = useCallback(() => {
-    if (!focusedBlockId) return
-    handleFlush()
-    moveDown(focusedBlockId)
-    announce('Block moved down')
-  }, [focusedBlockId, handleFlush, moveDown])
-
-  // ── Move by ID callbacks (for SortableBlock props) ────────────────
-  const handleMoveUpById = useCallback(
-    (id: string) => {
-      handleFlush()
-      moveUp(id)
-    },
-    [handleFlush, moveUp],
-  )
-
-  const handleMoveDownById = useCallback(
-    (id: string) => {
-      handleFlush()
-      moveDown(id)
-    },
-    [handleFlush, moveDown],
-  )
-
-  // ── Merge with previous block (p2-t11) ────────────────────────────
-  const handleMergeWithPrev = useCallback(async () => {
-    if (!focusedBlockId) return
-    const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
-    if (idx <= 0) return // First block — nothing to merge with
-
-    const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
-
-    // Get current block content from the editor
-    const currentContent = rovingEditor.unmount() ?? collapsedVisible[idx]?.content ?? ''
-    const prevContent = prevBlock.content ?? ''
-
-    // Merge: concatenate previous content + current content
-    const mergedContent = prevContent + currentContent
-    const prevDoc = parse(prevContent)
-    const joinPoint = pmEndOfFirstBlock(prevDoc)
-
-    // Update previous block with merged content, then remove current block.
-    // Await edit before remove to prevent data loss if edit fails.
-    try {
-      await edit(prevBlock.id, mergedContent)
-      await remove(focusedBlockId)
-    } catch {
-      // Re-mount the editor on the current block so the user can retry
-      rovingEditor.mount(focusedBlockId, currentContent)
-      toast.error(t('blockTree.mergeBlocksFailed'))
-      return
-    }
-
-    // Focus previous block at the join point
-    setFocused(prevBlock.id)
-    rovingEditor.mount(prevBlock.id, mergedContent)
-
-    // Position cursor at the join point (after the previous content)
-    // Use setTimeout to let the editor mount complete
-    setTimeout(() => {
-      if (rovingEditor.editor) {
-        // pmEndOfFirstBlock returns the PM position at the end of the
-        // first block's inline content (already includes the paragraph
-        // open-tag offset), so no extra +1 is needed.
-        const pmPos = Math.min(joinPoint, rovingEditor.editor.state.doc.content.size - 1)
-        rovingEditor.editor.commands.setTextSelection(pmPos)
-      }
-    }, 0)
-  }, [focusedBlockId, collapsedVisible, rovingEditor, edit, remove, setFocused, t])
-
-  // ── Merge by block ID (context menu) ─────────────────────────────
-  const handleMergeById = useCallback(
-    async (blockId: string) => {
-      const idx = collapsedVisible.findIndex((b) => b.id === blockId)
-      if (idx <= 0) return // First block — nothing to merge with
-
-      const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
-
-      // If the editor is mounted on this block, unmount to capture latest content
-      const editorContent = focusedBlockId === blockId ? rovingEditor.unmount() : null
-      const currentContent = editorContent ?? collapsedVisible[idx]?.content ?? ''
-      const prevContent = prevBlock.content ?? ''
-
-      const mergedContent = prevContent + currentContent
-
-      try {
-        await edit(prevBlock.id, mergedContent)
-        await remove(blockId)
-      } catch {
-        // Re-mount editor if it was unmounted
-        if (editorContent !== null) {
-          rovingEditor.mount(blockId, currentContent)
-        }
-        toast.error(t('blockTree.mergeBlocksFailed'))
-        return
-      }
-
-      setFocused(prevBlock.id)
-    },
-    [collapsedVisible, focusedBlockId, rovingEditor, edit, remove, setFocused, t],
-  )
-
-  // ── Enter: save content + create new sibling below ───────────────────
-  const handleEnterSave = useCallback(async () => {
-    if (!focusedBlockId) return
-    handleFlush()
-    const newBlockId = await createBelow(focusedBlockId)
-    if (newBlockId) {
-      justCreatedBlockIds.current.add(newBlockId)
-      setFocused(newBlockId)
-    }
-  }, [focusedBlockId, handleFlush, createBelow, setFocused])
+  // ── Keyboard handlers hook ─────────────────────────────────────────
+  const {
+    handleFocusPrev,
+    handleFocusNext,
+    handleDeleteBlock,
+    handleIndent: handleIndentKey,
+    handleDedent: handleDedentKey,
+    handleMoveUp,
+    handleMoveDown,
+    handleMoveUpById,
+    handleMoveDownById,
+    handleMergeWithPrev,
+    handleMergeById,
+    handleEnterSave,
+    handleEscapeCancel,
+  } = useBlockKeyboardHandlers({
+    focusedBlockId,
+    collapsedVisible,
+    rovingEditor,
+    setFocused,
+    handleFlush,
+    remove,
+    edit,
+    indent,
+    dedent,
+    moveUp,
+    moveDown,
+    createBelow,
+    justCreatedBlockIds,
+    t,
+  })
 
   // ── Multi-selection handler (Ctrl+Click / Shift+Click) ──────────────
   const handleSelect = useCallback(
@@ -1533,23 +718,12 @@ export function BlockTree({
     [toggleSelected, rawRangeSelect, blocks],
   )
 
-  // ── Escape: discard changes, unfocus ───────────────────────────────
-  const handleEscapeCancel = useCallback(() => {
-    if (!focusedBlockId) return
-    // Unmount but discard the result — don't save changes
-    const changed = rovingEditor.unmount()
-    if (changed !== null) {
-      toast('Changes discarded', { duration: 2000 })
-    }
-    setFocused(null)
-  }, [focusedBlockId, rovingEditor, setFocused])
-
   useBlockKeyboard(rovingEditor.editor, {
     onFocusPrev: handleFocusPrev,
     onFocusNext: handleFocusNext,
     onDeleteBlock: handleDeleteBlock,
-    onIndent: handleIndent,
-    onDedent: handleDedent,
+    onIndent: handleIndentKey,
+    onDedent: handleDedentKey,
     onMoveUp: handleMoveUp,
     onMoveDown: handleMoveDown,
     onFlush: handleFlush,
@@ -1706,7 +880,13 @@ export function BlockTree({
       setDatePickerOpen(true)
     }
     return onBlockEvent(document, 'OPEN_DATE_PICKER', handleDateEvent)
-  }, [focusedBlockId, rovingEditor.editor])
+  }, [
+    focusedBlockId,
+    rovingEditor.editor,
+    datePickerCursorPos,
+    setDatePickerMode,
+    setDatePickerOpen,
+  ])
 
   // ── Listen for toolbar due-date picker event ─────────────────────────
   useEffect(() => {
@@ -1717,7 +897,7 @@ export function BlockTree({
       setDatePickerOpen(true)
     }
     return onBlockEvent(document, 'OPEN_DUE_DATE_PICKER', handler)
-  }, [focusedBlockId, rovingEditor])
+  }, [focusedBlockId, rovingEditor, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
 
   // ── Listen for toolbar scheduled-date picker event ──────────────────
   useEffect(() => {
@@ -1728,7 +908,7 @@ export function BlockTree({
       setDatePickerOpen(true)
     }
     return onBlockEvent(document, 'OPEN_SCHEDULED_DATE_PICKER', handler)
-  }, [focusedBlockId, rovingEditor])
+  }, [focusedBlockId, rovingEditor, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
 
   // ── Listen for toolbar toggle-todo-state event ──────────────────────
   useEffect(() => {
@@ -1759,7 +939,13 @@ export function BlockTree({
     }
     document.addEventListener('keydown', handleDateShortcut)
     return () => document.removeEventListener('keydown', handleDateShortcut)
-  }, [focusedBlockId, rovingEditor.editor])
+  }, [
+    focusedBlockId,
+    rovingEditor.editor,
+    datePickerCursorPos,
+    setDatePickerMode,
+    setDatePickerOpen,
+  ])
 
   // ── Keyboard shortcut: Ctrl+1‑6 → toggle heading level ─────────────
   useEffect(() => {

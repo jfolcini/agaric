@@ -1,0 +1,129 @@
+import { MoreVertical, Redo2, Undo2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+
+export interface PageHeaderMenuProps {
+  canRedo: boolean
+  kebabOpen: boolean
+  isTemplate: boolean
+  isJournalTemplate: boolean
+  onUndo: () => void
+  onRedo: () => void
+  onKebabOpenChange: (open: boolean) => void
+  onAddAlias: () => void
+  onAddTag: () => void
+  onAddProperty: () => void
+  onToggleTemplate: () => void
+  onToggleJournalTemplate: () => void
+  onExport: () => void
+  onDeleteRequest: () => void
+}
+
+export function PageHeaderMenu({
+  canRedo,
+  kebabOpen,
+  isTemplate,
+  isJournalTemplate,
+  onUndo,
+  onRedo,
+  onKebabOpenChange,
+  onAddAlias,
+  onAddTag,
+  onAddProperty,
+  onToggleTemplate,
+  onToggleJournalTemplate,
+  onExport,
+  onDeleteRequest,
+}: PageHeaderMenuProps) {
+  const { t } = useTranslation()
+
+  return (
+    <div className="flex items-center gap-1">
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label={t('pageHeader.undoAction')}
+        onClick={onUndo}
+      >
+        <Undo2 size={14} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        aria-label={t('pageHeader.redoAction')}
+        disabled={!canRedo}
+        onClick={onRedo}
+      >
+        <Redo2 size={14} />
+      </Button>
+      <Popover open={kebabOpen} onOpenChange={onKebabOpenChange}>
+        <PopoverTrigger asChild>
+          <Button variant="ghost" size="icon-xs" aria-label={t('pageHeader.pageActions')}>
+            <MoreVertical size={14} />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          className="w-56 p-1 max-w-[calc(100vw-2rem)]"
+          aria-label={t('pageHeader.pageActions')}
+        >
+          <button
+            type="button"
+            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
+            onClick={onAddAlias}
+          >
+            {t('pageHeader.menuAddAlias')}
+          </button>
+          <button
+            type="button"
+            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
+            onClick={onAddTag}
+          >
+            {t('pageHeader.menuAddTag')}
+          </button>
+          <button
+            type="button"
+            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
+            onClick={onAddProperty}
+          >
+            {t('pageHeader.menuAddProperty')}
+          </button>
+          <hr className="my-1 h-px bg-border border-none" />
+          <button
+            type="button"
+            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
+            onClick={onToggleTemplate}
+          >
+            {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
+          </button>
+          <button
+            type="button"
+            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
+            onClick={onToggleJournalTemplate}
+          >
+            {isJournalTemplate
+              ? t('pageHeader.removeJournalTemplate')
+              : t('pageHeader.setJournalTemplate')}
+          </button>
+          <hr className="my-1 h-px bg-border border-none" />
+          <button
+            type="button"
+            className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
+            onClick={onExport}
+          >
+            {t('pageHeader.exportMarkdown')}
+          </button>
+          <hr className="my-1 h-px bg-border border-none" />
+          <button
+            type="button"
+            className="w-full rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent touch-target"
+            onClick={onDeleteRequest}
+          >
+            {t('pageHeader.deletePage')}
+          </button>
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
+}

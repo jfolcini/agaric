@@ -5,7 +5,7 @@
  * and a tag badge row with an inline tag picker popover.
  */
 
-import { ArrowLeft, MoreVertical, Plus, Redo2, Undo2, X } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -20,11 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { useBlockTags } from '../hooks/useBlockTags'
 import {
   deleteBlock,
@@ -41,7 +37,11 @@ import { useNavigationStore } from '../stores/navigation'
 import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
 import { useUndoStore } from '../stores/undo'
+import { PageAliasSection } from './PageAliasSection'
+import { PageHeaderMenu } from './PageHeaderMenu'
 import { PagePropertyTable } from './PagePropertyTable'
+import { PageTagSection } from './PageTagSection'
+import { PageTitleEditor } from './PageTitleEditor'
 
 export interface PageHeaderProps {
   pageId: string
@@ -299,6 +299,24 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     setShowTagPicker(false)
   }, [tagQuery, handleCreateTag])
 
+  const handleAddAlias = useCallback(() => {
+    if (aliasInput.trim()) {
+      const next = [...aliases, aliasInput.trim()]
+      setAliases(next)
+      setPageAliases(pageId, next).catch(() => toast.error(t('pageHeader.aliasUpdateFailed')))
+      setAliasInput('')
+    }
+  }, [aliasInput, aliases, pageId, t])
+
+  const handleRemoveAlias = useCallback(
+    (alias: string) => {
+      const next = aliases.filter((a) => a !== alias)
+      setAliases(next)
+      setPageAliases(pageId, next).catch(() => toast.error(t('pageHeader.aliasUpdateFailed')))
+    },
+    [aliases, pageId, t],
+  )
+
   return (
     <div className="page-header space-y-2">
       {/* Title row */}
@@ -313,116 +331,33 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
             <ArrowLeft className="h-4 w-4" />
           </Button>
         )}
-        {/* biome-ignore lint/a11y/useSemanticElements: contentEditable div is intentional for inline title editing */}
-        <div
-          ref={titleRef}
-          role="textbox"
-          tabIndex={0}
-          aria-label={t('pageHeader.pageTitle')}
-          contentEditable
-          suppressContentEditableWarning
-          className={[
-            'flex-1 text-xl font-semibold outline-none rounded-md px-1',
-            'focus:ring-2 focus:ring-ring/50',
-            'hover:bg-accent/5 focus-within:bg-accent/5 transition-colors',
-          ].join(' ')}
+        <PageTitleEditor
+          title={title}
+          editableTitle={editableTitle}
+          titleRef={titleRef}
           onInput={handleTitleInput}
           onBlur={handleTitleBlur}
           onKeyDown={handleTitleKeyDown}
-        >
-          {title}
-        </div>
-        {/* Page-level undo / redo */}
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('pageHeader.undoAction')}
-            onClick={handlePageUndo}
-          >
-            <Undo2 size={14} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('pageHeader.redoAction')}
-            disabled={!canRedo}
-            onClick={handlePageRedo}
-          >
-            <Redo2 size={14} />
-          </Button>
-          {/* Kebab overflow menu */}
-          <Popover open={kebabOpen} onOpenChange={setKebabOpen}>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon-xs" aria-label={t('pageHeader.pageActions')}>
-                <MoreVertical size={14} />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="end"
-              className="w-56 p-1 max-w-[calc(100vw-2rem)]"
-              aria-label={t('pageHeader.pageActions')}
-            >
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
-                onClick={handleKebabAddAlias}
-              >
-                {t('pageHeader.menuAddAlias')}
-              </button>
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
-                onClick={handleKebabAddTag}
-              >
-                {t('pageHeader.menuAddTag')}
-              </button>
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
-                onClick={handleKebabAddProperty}
-              >
-                {t('pageHeader.menuAddProperty')}
-              </button>
-              <hr className="my-1 h-px bg-border border-none" />
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
-                onClick={handleToggleTemplate}
-              >
-                {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
-              </button>
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
-                onClick={handleToggleJournalTemplate}
-              >
-                {isJournalTemplate
-                  ? t('pageHeader.removeJournalTemplate')
-                  : t('pageHeader.setJournalTemplate')}
-              </button>
-              <hr className="my-1 h-px bg-border border-none" />
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target"
-                onClick={handleExport}
-              >
-                {t('pageHeader.exportMarkdown')}
-              </button>
-              <hr className="my-1 h-px bg-border border-none" />
-              <button
-                type="button"
-                className="w-full rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-accent touch-target"
-                onClick={() => {
-                  setKebabOpen(false)
-                  setDeleteDialogOpen(true)
-                }}
-              >
-                {t('pageHeader.deletePage')}
-              </button>
-            </PopoverContent>
-          </Popover>
-        </div>
+        />
+        <PageHeaderMenu
+          canRedo={canRedo}
+          kebabOpen={kebabOpen}
+          isTemplate={isTemplate}
+          isJournalTemplate={isJournalTemplate}
+          onUndo={handlePageUndo}
+          onRedo={handlePageRedo}
+          onKebabOpenChange={setKebabOpen}
+          onAddAlias={handleKebabAddAlias}
+          onAddTag={handleKebabAddTag}
+          onAddProperty={handleKebabAddProperty}
+          onToggleTemplate={handleToggleTemplate}
+          onToggleJournalTemplate={handleToggleJournalTemplate}
+          onExport={handleExport}
+          onDeleteRequest={() => {
+            setKebabOpen(false)
+            setDeleteDialogOpen(true)
+          }}
+        />
       </div>
 
       {/* Breadcrumb for namespaced page titles */}
@@ -456,151 +391,31 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         })()}
 
       {/* Aliases */}
-      {(aliases.length > 0 || editingAliases) && (
-        <div className="flex flex-wrap items-center gap-1.5 px-1">
-          {aliases.length > 0 && <span className="font-medium">{t('pageHeader.aliases')}</span>}
-          {aliases.map((alias) => (
-            <Badge key={alias} variant="secondary" className="gap-1">
-              {alias}
-              {editingAliases && (
-                <button
-                  type="button"
-                  className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
-                  onClick={() => {
-                    const next = aliases.filter((a) => a !== alias)
-                    setAliases(next)
-                    setPageAliases(pageId, next).catch(() =>
-                      toast.error(t('pageHeader.aliasUpdateFailed')),
-                    )
-                  }}
-                  aria-label={t('pageHeader.removeAlias', { alias })}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </Badge>
-          ))}
-          {editingAliases ? (
-            <form
-              className="flex items-center gap-1"
-              onSubmit={(e) => {
-                e.preventDefault()
-                if (aliasInput.trim()) {
-                  const next = [...aliases, aliasInput.trim()]
-                  setAliases(next)
-                  setPageAliases(pageId, next).catch(() =>
-                    toast.error(t('pageHeader.aliasUpdateFailed')),
-                  )
-                  setAliasInput('')
-                }
-              }}
-            >
-              <Input
-                type="text"
-                className="w-24 [@media(pointer:coarse)]:w-full h-7 text-xs"
-                placeholder={t('pageHeader.newAliasPlaceholder')}
-                value={aliasInput}
-                onChange={(e) => setAliasInput(e.target.value)}
-                aria-label={t('pageHeader.newAliasInput')}
-              />
-              <Button type="submit" variant="ghost" size="xs">
-                {t('pageHeader.add')}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                onClick={() => setEditingAliases(false)}
-              >
-                {t('pageHeader.done')}
-              </Button>
-            </form>
-          ) : (
-            <Button
-              variant="ghost"
-              size="xs"
-              className="gap-1 text-muted-foreground"
-              onClick={() => setEditingAliases(true)}
-            >
-              {t('pageHeader.edit')}
-            </Button>
-          )}
-        </div>
-      )}
+      <PageAliasSection
+        aliases={aliases}
+        editingAliases={editingAliases}
+        aliasInput={aliasInput}
+        onAliasInputChange={setAliasInput}
+        onAddAlias={handleAddAlias}
+        onRemoveAlias={handleRemoveAlias}
+        onStartEditing={() => setEditingAliases(true)}
+        onStopEditing={() => setEditingAliases(false)}
+      />
 
       {/* Tag badges row */}
       {(appliedTags.length > 0 || showTagPicker || forceTagSection) && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {appliedTags.map((tag) => (
-            <Badge key={tag.id} variant="secondary" className="gap-1">
-              {tag.name}
-              <button
-                type="button"
-                className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20"
-                onClick={() => handleRemoveTag(tag.id)}
-                aria-label={t('pageHeader.removeTag', { name: tag.name })}
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </Badge>
-          ))}
-
-          <Popover open={showTagPicker} onOpenChange={handleTagPickerChange}>
-            <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="xs"
-                className="gap-1 text-muted-foreground"
-                aria-label={t('pageHeader.addTag')}
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent
-              className="w-64 space-y-2 p-3 max-w-[calc(100vw-2rem)]"
-              aria-label={t('pageHeader.tagPicker')}
-            >
-              <Input
-                placeholder={t('pageHeader.searchTags')}
-                value={tagQuery}
-                onChange={(e) => setTagQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && availableTags.length === 0 && tagQuery.trim()) {
-                    e.preventDefault()
-                    handleTagCreate()
-                  }
-                }}
-                aria-label={t('pageHeader.searchTagsLabel')}
-              />
-              <ScrollArea className="max-h-40">
-                {availableTags.map((tag) => (
-                  <button
-                    key={tag.id}
-                    type="button"
-                    className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
-                    onClick={() => handleTagAdd(tag.id)}
-                  >
-                    {tag.name}
-                  </button>
-                ))}
-                {tagQuery.trim() && !allTags.some((t_) => t_.name === tagQuery.trim()) && (
-                  <button
-                    type="button"
-                    className="w-full rounded px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent"
-                    onClick={handleTagCreate}
-                  >
-                    {t('pageHeader.createTag', { name: tagQuery.trim() })}
-                  </button>
-                )}
-                {availableTags.length === 0 && !tagQuery.trim() && (
-                  <p className="px-2 py-1 text-sm text-muted-foreground">
-                    {t('pageHeader.noMoreTags')}
-                  </p>
-                )}
-              </ScrollArea>
-            </PopoverContent>
-          </Popover>
-        </div>
+        <PageTagSection
+          appliedTags={appliedTags}
+          availableTags={availableTags}
+          allTags={allTags}
+          tagQuery={tagQuery}
+          showTagPicker={showTagPicker}
+          onTagQueryChange={setTagQuery}
+          onTagPickerChange={handleTagPickerChange}
+          onAddTag={handleTagAdd}
+          onRemoveTag={handleRemoveTag}
+          onCreateTag={handleTagCreate}
+        />
       )}
 
       <PagePropertyTable pageId={pageId} forceExpanded={forcePropertyExpanded} />

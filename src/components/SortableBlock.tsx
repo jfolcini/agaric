@@ -14,31 +14,19 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import type { LucideIcon } from 'lucide-react'
-import {
-  Calendar,
-  CalendarDays,
-  Check,
-  ChevronRight,
-  Clock,
-  GripVertical,
-  Paperclip,
-  Repeat,
-  Trash2,
-} from 'lucide-react'
+import { Clock, GripVertical, Trash2 } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
-import { priorityColor } from '../lib/priority-color'
-import { formatRepeatLabel } from '../lib/repeat-utils'
+import { useBlockTouchLongPress } from '../hooks/useBlockTouchLongPress'
 import type { BlockRow } from '../lib/tauri'
-import { listAttachments, listBlocks, listPropertyDefs, setProperty } from '../lib/tauri'
+import { listAttachments, listBlocks, listPropertyDefs } from '../lib/tauri'
 import { cn } from '../lib/utils'
 import { AttachmentList } from './AttachmentList'
 import { BlockContextMenu } from './BlockContextMenu'
+import { BlockInlineControls } from './BlockInlineControls'
+import { BlockPropertyEditor } from './BlockPropertyEditor'
 import { EditableBlock } from './EditableBlock'
-import { PropertyChip } from './PropertyChip'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 
 /** Pixels of left padding per depth level. */
@@ -46,84 +34,6 @@ export const INDENT_WIDTH = 24
 
 /** Fixed width for the gutter so positions never shift. */
 const GUTTER_WIDTH = 'w-[44px]'
-
-/** Display labels for stored priority values. */
-const PRIORITY_DISPLAY: Record<string, string> = { '1': 'P1', '2': 'P2', '3': 'P3' }
-
-/** Minimum touch hold duration (ms) to trigger the context menu. */
-const LONG_PRESS_DELAY = 400
-
-/** Max touch movement (px) before the long-press gesture is cancelled. */
-const LONG_PRESS_MOVE_THRESHOLD = 10
-
-/** Short month names for compact date display. */
-const MONTH_SHORT = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-]
-
-/** Format a YYYY-MM-DD date string compactly. Same year → "Apr 15", different year → "Apr 15, 2025". */
-function formatCompactDate(dateStr: string): string {
-  const parts = dateStr.split('-')
-  if (parts.length !== 3) return dateStr
-  const [y, m, d] = parts.map(Number)
-  if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return dateStr
-  const month = MONTH_SHORT[(m ?? 1) - 1] ?? 'Jan'
-  const day = d ?? 1
-  const now = new Date()
-  if (y === now.getFullYear()) return `${month} ${day}`
-  return `${month} ${day}, ${y}`
-}
-
-/** Determine the color class for a due date chip based on whether it's overdue, today, or future. */
-function dueDateColor(dateStr: string): string {
-  const now = new Date()
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-  if (dateStr < todayStr) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-  if (dateStr === todayStr)
-    return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-  return 'bg-muted text-muted-foreground'
-}
-
-interface DateChipProps {
-  date: string
-  icon: LucideIcon
-  colorClass: string
-  eventName: string
-  i18nKey: string
-  chipClass: string
-}
-
-function DateChip({ date, icon: Icon, colorClass, eventName, i18nKey, chipClass }: DateChipProps) {
-  const { t } = useTranslation()
-  return (
-    <button
-      type="button"
-      className={cn(
-        `${chipClass} flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer`,
-        colorClass,
-      )}
-      title={t(i18nKey, { date: formatCompactDate(date) })}
-      aria-label={t(i18nKey, { date: formatCompactDate(date) })}
-      onClick={() => {
-        document.dispatchEvent(new CustomEvent(eventName))
-      }}
-    >
-      <Icon size={14} className="flex-shrink-0" />
-      {formatCompactDate(date)}
-    </button>
-  )
-}
 
 interface SortableBlockProps {
   blockId: string
@@ -180,55 +90,6 @@ interface SortableBlockProps {
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
 }
 
-interface CheckboxStyle {
-  className: string
-  testId?: string
-  icon?: React.ReactNode
-}
-
-const EMPTY_STYLE: CheckboxStyle = {
-  className: 'task-checkbox-empty border-muted-foreground/40 transition-colors',
-  testId: 'task-checkbox-empty',
-}
-
-/** Style config for the task checkbox per state. */
-const TASK_CHECKBOX_STYLES: Record<string, CheckboxStyle> = {
-  DONE: {
-    className: 'task-checkbox-done border-green-600 bg-green-600 flex items-center justify-center',
-    testId: 'task-checkbox-done',
-    icon: <Check size={12} className="text-white" />,
-  },
-  DOING: {
-    className:
-      'task-checkbox-doing border-blue-500 bg-blue-500/20 flex items-center justify-center',
-    testId: 'task-checkbox-doing',
-    icon: <div className="h-1.5 w-1.5 rounded-sm bg-blue-500" />,
-  },
-  TODO: {
-    className: 'task-checkbox-todo border-muted-foreground',
-    testId: 'task-checkbox-todo',
-  },
-  _custom: {
-    className:
-      'task-checkbox-custom border-orange-500 bg-orange-500/20 flex items-center justify-center',
-    icon: <div className="h-1.5 w-1.5 rounded-full bg-orange-500" />,
-  },
-  _empty: EMPTY_STYLE,
-}
-
-function TaskCheckbox({ state }: { state: string | null | undefined }) {
-  const key = !state ? '_empty' : TASK_CHECKBOX_STYLES[state] ? state : '_custom'
-  const style = TASK_CHECKBOX_STYLES[key] ?? EMPTY_STYLE
-  return (
-    <div
-      className={`task-checkbox h-4 w-4 rounded border-2 ${style.className}`}
-      data-testid={style.testId}
-    >
-      {style.icon}
-    </div>
-  )
-}
-
 function SortableBlockInner({
   blockId,
   content,
@@ -275,8 +136,6 @@ function SortableBlockInner({
   const [isRefProp, setIsRefProp] = useState(false)
   const [refPages, setRefPages] = useState<BlockRow[]>([])
   const [refSearch, setRefSearch] = useState('')
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const touchStartPos = useRef<{ x: number; y: number } | null>(null)
   const blockRef = useRef<HTMLDivElement>(null)
 
   // ── Attachment state ─────────────────────────────────────────────
@@ -306,17 +165,21 @@ function SortableBlockInner({
     [properties],
   )
 
-  const clearLongPress = useCallback(() => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current)
-      longPressTimer.current = null
-    }
-    touchStartPos.current = null
-  }, [])
-
   // Keep a ref in sync with isDragging so the long-press setTimeout closure
   // can read the current value without capturing a stale boolean.
   const isDraggingRef = useRef(false)
+
+  const openContextMenu = useCallback((x: number, y: number) => {
+    setContextMenu({ x, y })
+  }, [])
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null)
+  }, [])
+
+  const { handleTouchStart, handleTouchEnd, handleTouchMove, handleContextMenu, clearLongPress } =
+    useBlockTouchLongPress({ openContextMenu, isDraggingRef })
+
   useEffect(() => {
     isDraggingRef.current = isDragging
     if (isDragging) {
@@ -369,57 +232,6 @@ function SortableBlockInner({
       stale = true
     }
   }, [editingProp])
-
-  const openContextMenu = useCallback((x: number, y: number) => {
-    setContextMenu({ x, y })
-  }, [])
-
-  const closeContextMenu = useCallback(() => {
-    setContextMenu(null)
-  }, [])
-
-  // ── Touch handlers for long-press detection ──────────────────────
-  const handleTouchStart = useCallback(
-    (e: React.TouchEvent) => {
-      const touch = e.touches[0]
-      if (!touch) return
-      touchStartPos.current = { x: touch.clientX, y: touch.clientY }
-      longPressTimer.current = setTimeout(() => {
-        if (!isDraggingRef.current) {
-          openContextMenu(touch.clientX, touch.clientY)
-        }
-        longPressTimer.current = null
-      }, LONG_PRESS_DELAY)
-    },
-    [openContextMenu],
-  )
-
-  const handleTouchEnd = useCallback(() => {
-    clearLongPress()
-  }, [clearLongPress])
-
-  const handleTouchMove = useCallback(
-    (e: React.TouchEvent) => {
-      if (!touchStartPos.current) return
-      const touch = e.touches[0]
-      if (!touch) return
-      const dx = touch.clientX - touchStartPos.current.x
-      const dy = touch.clientY - touchStartPos.current.y
-      if (Math.sqrt(dx * dx + dy * dy) > LONG_PRESS_MOVE_THRESHOLD) {
-        clearLongPress()
-      }
-    },
-    [clearLongPress],
-  )
-
-  // ── Right-click handler (desktop bonus) ──────────────────────────
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      openContextMenu(e.clientX, e.clientY)
-    },
-    [openContextMenu],
-  )
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -519,328 +331,40 @@ function SortableBlockInner({
         </div>
 
         {/* ── Inline controls — chevron, checkbox, priority ─────── */}
-        <div className={cn('inline-controls flex items-center flex-shrink-0 gap-1')}>
-          {/* Chevron — only when hasChildren, always visible */}
-          {hasChildren ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="collapse-toggle flex-shrink-0 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
-                  data-testid="collapse-toggle"
-                  onClick={() => onToggleCollapse?.(blockId)}
-                  aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
-                  aria-expanded={!isCollapsed}
-                >
-                  <ChevronRight
-                    size={16}
-                    className={cn('transition-transform', !isCollapsed && 'rotate-90')}
-                  />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}>
-                {isCollapsed ? t('block.expandTip') : t('block.collapseTip')}
-              </TooltipContent>
-            </Tooltip>
-          ) : (
-            /* Spacer matching chevron width so leaf blocks align with parents */
-            <div className="flex-shrink-0 w-5 [@media(pointer:coarse)]:w-[44px]" />
-          )}
+        <BlockInlineControls
+          blockId={blockId}
+          hasChildren={hasChildren}
+          isCollapsed={isCollapsed}
+          onToggleCollapse={onToggleCollapse}
+          todoState={todoState}
+          onToggleTodo={onToggleTodo}
+          priority={priority}
+          onTogglePriority={onTogglePriority}
+          dueDate={dueDate}
+          scheduledDate={scheduledDate}
+          properties={properties}
+          filteredProperties={filteredProperties}
+          resolveBlockTitle={resolveBlockTitle}
+          attachmentCount={attachmentCount}
+          showAttachments={showAttachments}
+          onToggleAttachments={() => setShowAttachments((prev) => !prev)}
+          onEditProp={setEditingProp}
+          onEditKey={(keyInfo) => setEditingKey(keyInfo)}
+        />
 
-          {/* Checkbox — always rendered */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="task-marker flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
-                data-testid="task-marker"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onToggleTodo?.(blockId)
-                }}
-                aria-label={
-                  todoState ? t('block.taskCycle', { state: todoState }) : t('block.setTodo')
-                }
-              >
-                <TaskCheckbox state={todoState} />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={4}>
-              {todoState ? t('block.todoCycleTip', { state: todoState }) : t('block.setTodoTip')}
-            </TooltipContent>
-          </Tooltip>
-
-          {/* Priority badge — only when set */}
-          {priority && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 active:scale-95 touch-target [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:flex [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
-                  data-testid="priority-badge"
-                  aria-label={t('block.priorityCycle', { level: PRIORITY_DISPLAY[priority] })}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onTogglePriority?.(blockId)
-                  }}
-                >
-                  <span
-                    className={cn(
-                      'inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-bold [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1',
-                      priorityColor(priority),
-                    )}
-                  >
-                    {PRIORITY_DISPLAY[priority]}
-                  </span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}>
-                {t('block.priorityTip', { level: PRIORITY_DISPLAY[priority] })}
-              </TooltipContent>
-            </Tooltip>
-          )}
-
-          {/* Due date chip — clickable to open date picker */}
-          {dueDate && (
-            <DateChip
-              date={dueDate}
-              icon={CalendarDays}
-              colorClass={dueDateColor(dueDate)}
-              eventName="open-due-date-picker"
-              i18nKey="block.dueDate"
-              chipClass="due-date-chip"
-            />
-          )}
-
-          {/* Scheduled date chip — clickable to open date picker */}
-          {scheduledDate && (
-            <DateChip
-              date={scheduledDate}
-              icon={Calendar}
-              colorClass="bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
-              eventName="open-scheduled-date-picker"
-              i18nKey="block.scheduledDate"
-              chipClass="scheduled-chip"
-            />
-          )}
-
-          {/* Repeat indicator — special-case for repeat property */}
-          {properties?.some((p) => p.key === 'repeat') && (
-            <button
-              type="button"
-              className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400 [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1"
-              aria-label={t('block.repeats', {
-                value: properties.find((p) => p.key === 'repeat')?.value ?? '',
-              })}
-            >
-              <Repeat size={12} className="flex-shrink-0" />
-              {formatRepeatLabel(properties.find((p) => p.key === 'repeat')?.value ?? '')}
-            </button>
-          )}
-
-          {/* Custom property chips — up to 3 shown (excluding repeat) */}
-          {filteredProperties.length > 0 && (
-            <>
-              {filteredProperties.slice(0, 3).map((p) => {
-                const displayValue = resolveBlockTitle
-                  ? resolveBlockTitle(p.value) || p.value
-                  : p.value
-                return (
-                  <PropertyChip
-                    key={p.key}
-                    propKey={p.key}
-                    value={displayValue}
-                    onClick={() => setEditingProp({ key: p.key, value: p.value })}
-                    onKeyClick={() => setEditingKey({ oldKey: p.key, value: p.value })}
-                  />
-                )
-              })}
-              {filteredProperties.length > 3 && (
-                <span className="text-xs text-muted-foreground select-none">
-                  +{filteredProperties.length - 3}
-                </span>
-              )}
-            </>
-          )}
-
-          {/* Attachment count badge */}
-          {attachmentCount > 0 && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1 touch-target"
-                  aria-label={t('block.attachments', { count: attachmentCount })}
-                  aria-expanded={showAttachments}
-                  onClick={() => setShowAttachments((prev) => !prev)}
-                >
-                  <Paperclip size={12} className="flex-shrink-0" />
-                  {attachmentCount}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}>
-                {t('block.attachmentsTip', { count: attachmentCount })}
-              </TooltipContent>
-            </Tooltip>
-          )}
-        </div>
-
-        {/* ── Property edit popover ─────────────────────────────────── */}
-        {editingProp && (
-          <div
-            className="absolute z-50 mt-1 rounded-md border bg-popover p-1 shadow-lg"
-            role="dialog"
-            aria-label={t('block.editProperty')}
-          >
-            {selectOptions ? (
-              <div className="flex flex-col gap-0.5" data-testid="select-options-dropdown">
-                {selectOptions.map((opt) => (
-                  <button
-                    key={opt}
-                    type="button"
-                    className={cn(
-                      'text-left rounded px-2 py-1 text-sm hover:bg-accent transition-colors',
-                      opt === editingProp.value && 'bg-accent font-medium',
-                    )}
-                    onClick={async () => {
-                      try {
-                        await setProperty({ blockId, key: editingProp.key, valueText: opt })
-                      } catch {
-                        toast.error(t('property.saveFailed'))
-                      }
-                      setEditingProp(null)
-                    }}
-                  >
-                    {opt}
-                  </button>
-                ))}
-              </div>
-            ) : isRefProp ? (
-              <fieldset
-                className="flex flex-col gap-0.5 w-56 border-none p-0 m-0"
-                data-testid="ref-picker"
-                aria-label={t('block.refPickerLabel')}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') setEditingProp(null)
-                }}
-              >
-                <input
-                  ref={(el) => el?.focus()}
-                  type="text"
-                  className="rounded border px-2 py-1 text-sm w-full"
-                  placeholder={t('block.searchPages')}
-                  data-testid="ref-search-input"
-                  value={refSearch}
-                  onChange={(e) => setRefSearch(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') setEditingProp(null)
-                  }}
-                />
-                <div className="max-h-48 overflow-y-auto flex flex-col gap-0.5">
-                  {(() => {
-                    const filtered = refPages.filter((page) => {
-                      if (!refSearch) return true
-                      const title = page.content || ''
-                      return title.toLowerCase().includes(refSearch.toLowerCase())
-                    })
-                    if (filtered.length === 0) {
-                      return (
-                        <div
-                          className="px-2 py-1 text-sm text-muted-foreground"
-                          data-testid="ref-no-results"
-                        >
-                          {t('block.noPagesFound')}
-                        </div>
-                      )
-                    }
-                    return filtered.map((page) => (
-                      <button
-                        key={page.id}
-                        type="button"
-                        className={cn(
-                          'text-left rounded px-2 py-1 text-sm hover:bg-accent transition-colors truncate',
-                          page.id === editingProp.value && 'bg-accent font-medium',
-                        )}
-                        onClick={async () => {
-                          try {
-                            await setProperty({ blockId, key: editingProp.key, valueRef: page.id })
-                          } catch {
-                            toast.error(t('property.saveFailed'))
-                          }
-                          setEditingProp(null)
-                        }}
-                      >
-                        {page.content || t('block.untitled')}
-                      </button>
-                    ))
-                  })()}
-                </div>
-              </fieldset>
-            ) : (
-              <input
-                ref={(el) => el?.focus()}
-                type="text"
-                className="rounded border px-2 py-1 text-sm w-32"
-                defaultValue={editingProp.value}
-                onBlur={async (e) => {
-                  const newValue = e.target.value.trim()
-                  if (newValue !== editingProp.value) {
-                    try {
-                      await setProperty({
-                        blockId,
-                        key: editingProp.key,
-                        valueText: newValue || null,
-                      })
-                    } catch {
-                      toast.error(t('property.saveFailed'))
-                    }
-                  }
-                  setEditingProp(null)
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                  if (e.key === 'Escape') setEditingProp(null)
-                }}
-              />
-            )}
-          </div>
-        )}
-
-        {/* ── Property key rename popover ───────────────────────────── */}
-        {editingKey && (
-          <div className="property-key-editor absolute z-50 mt-1 rounded-md border bg-popover p-1 shadow-lg">
-            <input
-              ref={(el) => el?.focus()}
-              type="text"
-              className="rounded border px-2 py-1 text-sm w-32"
-              defaultValue={editingKey.oldKey}
-              onBlur={async (e) => {
-                const newKey = e.target.value.trim()
-                if (newKey && newKey !== editingKey.oldKey) {
-                  try {
-                    await setProperty({
-                      blockId,
-                      key: newKey,
-                      valueText: editingKey.value,
-                    })
-                    await setProperty({
-                      blockId,
-                      key: editingKey.oldKey,
-                      valueText: null,
-                    })
-                  } catch {
-                    toast.error(t('property.renameFailed'))
-                  }
-                }
-                setEditingKey(null)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                if (e.key === 'Escape') setEditingKey(null)
-              }}
-            />
-          </div>
-        )}
+        {/* ── Property edit popover / key rename ────────────────── */}
+        <BlockPropertyEditor
+          blockId={blockId}
+          editingProp={editingProp}
+          setEditingProp={setEditingProp}
+          editingKey={editingKey}
+          setEditingKey={setEditingKey}
+          selectOptions={selectOptions}
+          isRefProp={isRefProp}
+          refPages={refPages}
+          refSearch={refSearch}
+          setRefSearch={setRefSearch}
+        />
 
         {/* ── Block content ─────────────────────────────────────────── */}
         <div
