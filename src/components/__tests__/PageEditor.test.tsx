@@ -19,11 +19,18 @@ import { axe } from 'vitest-axe'
 // BlockTree is heavy (DnD, TipTap, viewport observer). Mock it to a
 // simple div that exposes the parentId prop for verification.
 let capturedParentId: string | undefined
+let capturedAutoCreateFirstBlock: boolean | undefined
 vi.mock('../BlockTree', () => ({
-  BlockTree: (props: { parentId?: string }) => {
+  BlockTree: (props: { parentId?: string; autoCreateFirstBlock?: boolean }) => {
     capturedParentId = props.parentId
+    capturedAutoCreateFirstBlock = props.autoCreateFirstBlock
     return (
-      <div data-testid="block-tree" data-parent-id={props.parentId ?? ''} className="block-tree" />
+      <div
+        data-testid="block-tree"
+        data-parent-id={props.parentId ?? ''}
+        data-auto-create={props.autoCreateFirstBlock ?? true}
+        className="block-tree"
+      />
     )
   },
 }))
@@ -104,6 +111,7 @@ function makeBlock(id: string, content: string, parentId: string | null = null, 
 beforeEach(() => {
   vi.clearAllMocks()
   capturedParentId = undefined
+  capturedAutoCreateFirstBlock = undefined
   capturedLinkedRefsPageId = undefined
   capturedUnlinkedRefsProps = undefined
   capturedPageHeaderProps = null
@@ -434,5 +442,59 @@ describe('PageEditor background mousedown (UX-M9)', () => {
 
     // Should NOT close the editor since target !== currentTarget
     expect(useBlockStore.getState().focusedBlockId).toBe('B1')
+  })
+})
+
+describe('PageEditor BlockTree auto-creation prop', () => {
+  it('renders BlockTree with default autoCreateFirstBlock (not explicitly set)', () => {
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    const blockTree = screen.getByTestId('block-tree')
+    expect(blockTree).toBeInTheDocument()
+    // PageEditor does not pass autoCreateFirstBlock, so BlockTree uses the default (true)
+    expect(capturedAutoCreateFirstBlock).toBeUndefined()
+  })
+
+  it('manual add block works when page is empty and creates block directly', async () => {
+    const user = userEvent.setup()
+
+    useBlockStore.setState({
+      blocks: [],
+      focusedBlockId: null,
+      loading: false,
+    })
+
+    // Mock createBlock and subsequent load
+    mockedInvoke.mockResolvedValueOnce({
+      id: 'FIRST_BLOCK',
+      block_type: 'content',
+      content: '',
+      parent_id: 'PAGE_1',
+      position: 0,
+    })
+    mockedInvoke.mockResolvedValueOnce({
+      items: [makeBlock('FIRST_BLOCK', '', 'PAGE_1', 0)],
+      next_cursor: null,
+      has_more: false,
+    })
+
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    const addBtn = screen.getByRole('button', { name: /add block/i })
+    await user.click(addBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+        blockType: 'content',
+        content: '',
+        parentId: 'PAGE_1',
+        position: 0,
+      })
+    })
+
+    // Should focus the new block
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('FIRST_BLOCK')
+    })
   })
 })

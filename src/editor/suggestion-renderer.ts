@@ -67,10 +67,19 @@ function updatePosition(
 export function createSuggestionRenderer(label?: string) {
   let renderer: ReactRenderer<SuggestionListRef> | null = null
   let popup: HTMLDivElement | null = null
+  let outsideClickHandler: ((e: PointerEvent) => void) | null = null
+
+  function cleanupListener() {
+    if (outsideClickHandler) {
+      document.removeEventListener('pointerdown', outsideClickHandler, true)
+      outsideClickHandler = null
+    }
+  }
 
   return {
     onStart(props: SuggestionProps) {
       // Clean up any previous popup to prevent DOM accumulation
+      cleanupListener()
       if (renderer) renderer.destroy()
       if (popup) {
         popup.remove()
@@ -88,6 +97,18 @@ export function createSuggestionRenderer(label?: string) {
       document.body.appendChild(popup)
       popup.appendChild(renderer.element)
       updatePosition(popup, props)
+
+      // Dismiss popup on outside click (capture phase, like BlockContextMenu)
+      outsideClickHandler = (e: PointerEvent) => {
+        if (popup && !popup.contains(e.target as Node)) {
+          cleanupListener()
+          renderer?.destroy()
+          renderer = null
+          popup?.remove()
+          popup = null
+        }
+      }
+      document.addEventListener('pointerdown', outsideClickHandler, true)
     },
 
     onUpdate(props: SuggestionProps) {
@@ -97,6 +118,9 @@ export function createSuggestionRenderer(label?: string) {
 
     onKeyDown({ event }: SuggestionKeyDownProps) {
       if (event.key === 'Escape') {
+        cleanupListener()
+        renderer?.destroy()
+        renderer = null
         popup?.remove()
         popup = null
         return true
@@ -105,6 +129,7 @@ export function createSuggestionRenderer(label?: string) {
     },
 
     onExit() {
+      cleanupListener()
       renderer?.destroy()
       renderer = null
       popup?.remove()

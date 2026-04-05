@@ -194,18 +194,17 @@ export function JournalPage({
     [createdPages, pageMap, load, t],
   )
 
-  // Auto-create today's page on mount in daily mode
-  const autoCreatedRef = useRef(false)
+  // Auto-create the displayed day's page on mount / date change in daily mode
+  const autoCreatedRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (loading) return
-    if (autoCreatedRef.current) return
     if (mode !== 'daily') return
-    const todayStr = formatDate(new Date())
-    if (todayStr !== formatDate(currentDate)) return
-    if (createdPages.has(todayStr) || pageMap.has(todayStr)) return
-    autoCreatedRef.current = true
-    handleAddBlock(todayStr, true)
+    const dateStr = formatDate(currentDate)
+    if (autoCreatedRef.current === dateStr) return
+    if (createdPages.has(dateStr) || pageMap.has(dateStr)) return
+    autoCreatedRef.current = dateStr
+    handleAddBlock(dateStr, true)
   }, [loading, mode, currentDate, pageMap, createdPages, handleAddBlock])
 
   // Keyboard shortcut for new block in daily mode

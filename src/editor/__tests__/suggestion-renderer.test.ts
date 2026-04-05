@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSuggestionRenderer } from '../suggestion-renderer'
 
 const { mockReactRenderer } = vi.hoisted(() => {
@@ -426,5 +426,184 @@ describe('positioning', () => {
     expect(popup.style.position).toBe('')
 
     renderer.onExit()
+  })
+})
+
+describe('outside-click dismissal', () => {
+  // biome-ignore lint/suspicious/noExplicitAny: minimal mock props for tests
+  function makeProps(): any {
+    return {
+      items: [],
+      command: vi.fn(),
+      clientRect: () =>
+        ({ left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
+      editor: {} as any,
+      query: '',
+      range: { from: 0, to: 1 },
+      text: '/',
+      decorationNode: null,
+    }
+  }
+
+  let addSpy: ReturnType<typeof vi.spyOn>
+  let removeSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    addSpy = vi.spyOn(document, 'addEventListener')
+    removeSpy = vi.spyOn(document, 'removeEventListener')
+  })
+
+  afterEach(() => {
+    addSpy.mockRestore()
+    removeSpy.mockRestore()
+    for (const el of document.querySelectorAll('.suggestion-popup')) {
+      el.remove()
+    }
+  })
+
+  it('registers a pointerdown listener on document in capture phase', () => {
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    expect(addSpy).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+
+    renderer.onExit()
+  })
+
+  it('removes popup when pointerdown fires outside', () => {
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+
+    // Dispatch pointerdown on body (outside the popup)
+    const event = new PointerEvent('pointerdown', { bubbles: true })
+    document.body.dispatchEvent(event)
+
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+  })
+
+  it('keeps popup open when pointerdown fires inside it', () => {
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    expect(popup).toBeTruthy()
+
+    // Dispatch pointerdown on the popup itself (inside click)
+    const event = new PointerEvent('pointerdown', { bubbles: true })
+    popup.dispatchEvent(event)
+
+    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+  })
+
+  it('keeps popup open when pointerdown fires on a child of the popup', () => {
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    const popup = document.querySelector('.suggestion-popup') as HTMLElement
+    const child = popup.querySelector('div') // ReactRenderer element
+    expect(child).toBeTruthy()
+
+    const event = new PointerEvent('pointerdown', { bubbles: true })
+    child?.dispatchEvent(event)
+
+    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+  })
+
+  it('removes the pointerdown listener on onExit', () => {
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    renderer.onExit()
+
+    expect(removeSpy).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+  })
+
+  it('removes the pointerdown listener when dismissed via outside click', () => {
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    removeSpy.mockClear()
+
+    const event = new PointerEvent('pointerdown', { bubbles: true })
+    document.body.dispatchEvent(event)
+
+    expect(removeSpy).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+  })
+
+  it('does not leak listeners across multiple open/close cycles', () => {
+    const renderer = createSuggestionRenderer()
+
+    // Cycle 1: open then outside-click dismiss
+    renderer.onStart(makeProps())
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+
+    // Cycle 2: open again, should work normally
+    renderer.onStart(makeProps())
+    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+
+    // Close via onExit
+    renderer.onExit()
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+
+    // Cycle 3: open and outside-click again
+    renderer.onStart(makeProps())
+    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+  })
+
+  it('calls destroy on ReactRenderer when dismissed via outside click', () => {
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    // Get the last ReactRenderer instance
+    // biome-ignore lint/suspicious/noExplicitAny: mock instance typing
+    const lastInstance: any =
+      mockReactRenderer.mock.instances[mockReactRenderer.mock.instances.length - 1]
+    expect(lastInstance.destroy).not.toHaveBeenCalled()
+
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+
+    expect(lastInstance.destroy).toHaveBeenCalled()
+  })
+
+  it('removes popup and listener when Escape key is pressed', () => {
+    const renderer = createSuggestionRenderer()
+    renderer.onStart(makeProps())
+
+    removeSpy.mockClear()
+    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+
+    const result = renderer.onKeyDown({
+      event: new KeyboardEvent('keydown', { key: 'Escape' }),
+      view: {} as never,
+      range: { from: 0, to: 0 },
+    })
+
+    expect(result).toBe(true)
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+    expect(removeSpy).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+  })
+
+  it('does not leak listeners when closed via Escape then reopened', () => {
+    const renderer = createSuggestionRenderer()
+
+    // Cycle 1: open then Escape
+    renderer.onStart(makeProps())
+    renderer.onKeyDown({
+      event: new KeyboardEvent('keydown', { key: 'Escape' }),
+      view: {} as never,
+      range: { from: 0, to: 0 },
+    })
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+
+    // Cycle 2: open again, outside-click should still work
+    renderer.onStart(makeProps())
+    expect(document.querySelector('.suggestion-popup')).toBeTruthy()
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
   })
 })

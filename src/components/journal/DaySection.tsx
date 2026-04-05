@@ -139,7 +139,13 @@ export function DaySection({
         </div>
       )}
 
-      {entry.pageId && <BlockTree parentId={entry.pageId} onNavigateToPage={onNavigateToPage} />}
+      {entry.pageId && (
+        <BlockTree
+          parentId={entry.pageId}
+          onNavigateToPage={onNavigateToPage}
+          autoCreateFirstBlock={mode === 'daily'}
+        />
+      )}
 
       {/* DuePanel + LinkedReferences + DonePanel — only in daily mode */}
       {mode === 'daily' && entry.pageId && (

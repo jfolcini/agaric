@@ -183,9 +183,16 @@ interface BlockTreeProps {
   /** Navigate to a page in the page editor (cross-page navigation).
    *  Optional blockId scrolls to a specific block within the target page. */
   onNavigateToPage?: ((pageId: string, title: string, blockId?: string) => void) | undefined
+  /** When true (default), auto-creates an empty first block on empty pages.
+   *  Set to false to suppress auto-creation (e.g. weekly/monthly journal views). */
+  autoCreateFirstBlock?: boolean | undefined
 }
 
-export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): React.ReactElement {
+export function BlockTree({
+  parentId,
+  onNavigateToPage,
+  autoCreateFirstBlock = true,
+}: BlockTreeProps = {}): React.ReactElement {
   const { t } = useTranslation()
   // Reactive state — single shallow-compared subscription
   const { blocks, rootParentId, focusedBlockId, loading, selectedBlockIds } = useBlockStore(
@@ -656,6 +663,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
   const autoCreatedForRef = useRef<string | null>(null)
 
   useEffect(() => {
+    if (!autoCreateFirstBlock) return
     if (loading || blocks.length > 0 || !rootParentId) return
     if (autoCreatedForRef.current === rootParentId) return
     autoCreatedForRef.current = rootParentId
@@ -677,7 +685,7 @@ export function BlockTree({ parentId, onNavigateToPage }: BlockTreeProps = {}): 
       .catch(() => {
         toast.error(t('blockTree.createFirstBlockFailed'))
       })
-  }, [loading, blocks.length, rootParentId, t])
+  }, [autoCreateFirstBlock, loading, blocks.length, rootParentId, t])
 
   // Scan loaded blocks for [[ULID]] tokens not yet in the resolve cache
   // and batch-fetch them.  Pages + tags are already preloaded by App.tsx

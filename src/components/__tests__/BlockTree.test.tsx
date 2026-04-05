@@ -5608,4 +5608,75 @@ describe('H-9: auto-create first block on empty page', () => {
       expect(mockedToastError).toHaveBeenCalled()
     })
   })
+
+  it('does not auto-create when autoCreateFirstBlock is false', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<BlockTree parentId="PAGE_1" autoCreateFirstBlock={false} />)
+
+    // Wait for load to complete (blocks empty, page loaded)
+    await waitFor(() => {
+      expect(useBlockStore.getState().loading).toBe(false)
+    })
+
+    // Wait a tick to give effects a chance to fire
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'create_block',
+      expect.objectContaining({ content: '' }),
+    )
+  })
+
+  it('auto-creates when autoCreateFirstBlock is true (default)', async () => {
+    const newBlock = makeBlock({
+      id: 'AUTO_BLOCK_1',
+      content: '',
+      parent_id: 'PAGE_1',
+    })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_block') return newBlock
+      return emptyPage
+    })
+
+    render(<BlockTree parentId="PAGE_1" autoCreateFirstBlock={true} />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+        blockType: 'content',
+        content: '',
+        parentId: 'PAGE_1',
+        position: 0,
+      })
+    })
+  })
+
+  it('does not double-fire auto-creation for the same page', async () => {
+    const newBlock = makeBlock({
+      id: 'AUTO_BLOCK_2',
+      content: '',
+      parent_id: 'PAGE_1',
+    })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_block') return newBlock
+      return emptyPage
+    })
+
+    render(<BlockTree parentId="PAGE_1" />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+        blockType: 'content',
+        content: '',
+        parentId: 'PAGE_1',
+        position: 0,
+      })
+    })
+
+    // Count how many create_block calls were made
+    const createCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')
+    expect(createCalls).toHaveLength(1)
+  })
 })

@@ -2296,6 +2296,7 @@ describe('JournalPage', () => {
 
     it('does NOT fire when inside input/contentEditable', async () => {
       const yesterday = subDays(new Date(), 1)
+      const yesterdayStr = formatDate(yesterday)
 
       useJournalStore.setState({ currentDate: yesterday, mode: 'daily' })
 
@@ -2307,17 +2308,34 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
+      // Auto-creation now fires for any date in daily mode, wait for it
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: yesterdayStr,
+          parentId: null,
+          position: null,
+        })
+      })
+
+      // Clear mocks to track only keyboard-triggered calls
+      const callsBefore = mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+      ).length
+
       const input = document.createElement('input')
       document.body.appendChild(input)
       input.focus()
 
       fireEvent.keyDown(input, { key: 'Enter' })
 
-      const createPageCalls = mockedInvoke.mock.calls.filter(
+      const createPageCallsAfter = mockedInvoke.mock.calls.filter(
         ([cmd, args]) =>
           cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
-      )
-      expect(createPageCalls).toHaveLength(0)
+      ).length
+      // No additional page creation from keyboard shortcut
+      expect(createPageCallsAfter).toBe(callsBefore)
 
       document.body.removeChild(input)
     })
@@ -2352,6 +2370,217 @@ describe('JournalPage', () => {
       const dateDisplay = screen.getByTestId('date-display')
       expect(dateDisplay.className).toContain('min-w-[100px]')
       expect(dateDisplay.className).toContain('sm:min-w-[140px]')
+    })
+  })
+
+  // ── H-1: Auto-creation for any date in daily mode ───────────────────
+
+  describe('auto-creation of first block', () => {
+    it('auto-creates page+block for today in daily mode', async () => {
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: todayStr,
+          parentId: null,
+          position: null,
+        })
+      })
+    })
+
+    it('auto-creates page+block for a past date in daily mode', async () => {
+      const pastDate = subDays(new Date(), 3)
+      const pastStr = formatDate(pastDate)
+
+      // Set journal to display a past date
+      useJournalStore.setState({ mode: 'daily', currentDate: pastDate })
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: pastStr,
+          parentId: null,
+          position: null,
+        })
+      })
+    })
+
+    it('auto-creates page+block for a future date in daily mode', async () => {
+      const futureDate = addDays(new Date(), 5)
+      const futureStr = formatDate(futureDate)
+
+      useJournalStore.setState({ mode: 'daily', currentDate: futureDate })
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: futureStr,
+          parentId: null,
+          position: null,
+        })
+      })
+    })
+
+    it('does NOT auto-create in weekly mode', async () => {
+      useJournalStore.setState({ mode: 'weekly', currentDate: new Date() })
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Wait a tick to give effects a chance to fire
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      // No page creation should have occurred from auto-create
+      const createPageCalls = mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+      )
+      expect(createPageCalls).toHaveLength(0)
+    })
+
+    it('does NOT auto-create in monthly mode', async () => {
+      useJournalStore.setState({ mode: 'monthly', currentDate: new Date() })
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Wait a tick to give effects a chance to fire
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      // No page creation should have occurred from auto-create
+      const createPageCalls = mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+      )
+      expect(createPageCalls).toHaveLength(0)
+    })
+
+    it('does not auto-create when page already exists for the day', async () => {
+      const todayStr = formatDate(new Date())
+
+      mockedInvoke.mockResolvedValue({
+        items: [makeDailyPage({ id: 'DP_EXISTING', content: todayStr })],
+        next_cursor: null,
+        has_more: false,
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('block-tree')).toHaveLength(1)
+      })
+
+      // Wait a tick
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      // Should not create a page since one already exists
+      const createPageCalls = mockedInvoke.mock.calls.filter(
+        ([cmd, args]) =>
+          cmd === 'create_block' && (args as { blockType: string }).blockType === 'page',
+      )
+      expect(createPageCalls).toHaveLength(0)
+    })
+
+    it('re-triggers auto-creation when navigating to a new date', async () => {
+      const user = userEvent.setup()
+      const todayStr = formatDate(new Date())
+      const yesterdayStr = formatDate(subDays(new Date(), 1))
+
+      // Start with empty pages — today will be auto-created
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'create_block') {
+          return {
+            id: 'DP_AUTO',
+            block_type: 'page',
+            content: todayStr,
+            parent_id: null,
+            position: null,
+          }
+        }
+        return emptyPage
+      })
+
+      renderJournal()
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+      })
+
+      // Wait for today's auto-creation
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: todayStr,
+          parentId: null,
+          position: null,
+        })
+      })
+
+      // Clear mocks to track new calls
+      mockedInvoke.mockClear()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'create_block') {
+          return {
+            id: 'DP_YESTERDAY',
+            block_type: 'page',
+            content: yesterdayStr,
+            parent_id: null,
+            position: null,
+          }
+        }
+        return emptyPage
+      })
+
+      // Navigate to previous day
+      const prevBtn = screen.getByRole('button', { name: /previous day/i })
+      await user.click(prevBtn)
+
+      // Should auto-create for yesterday too
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
+          blockType: 'page',
+          content: yesterdayStr,
+          parentId: null,
+          position: null,
+        })
+      })
     })
   })
 })
