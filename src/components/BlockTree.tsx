@@ -31,8 +31,8 @@ import { useBlockProperties } from '../hooks/useBlockProperties'
 import { useBlockResolve } from '../hooks/useBlockResolve'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import { announce } from '../lib/announcer'
-import { BLOCK_EVENTS, onBlockEvent } from '../lib/block-events'
 import type { NavigateToPageFn } from '../lib/block-events'
+import { BLOCK_EVENTS, onBlockEvent } from '../lib/block-events'
 import { formatRepeatLabel } from '../lib/repeat-utils'
 import {
   addAttachment,
@@ -1669,7 +1669,12 @@ export function BlockTree({
   useEffect(() => {
     const handleSetPriority = async (e: Event) => {
       if (!focusedBlockId) return
-      const priority = e.type === BLOCK_EVENTS.SET_PRIORITY_1 ? '1' : e.type === BLOCK_EVENTS.SET_PRIORITY_2 ? '2' : '3'
+      const priority =
+        e.type === BLOCK_EVENTS.SET_PRIORITY_1
+          ? '1'
+          : e.type === BLOCK_EVENTS.SET_PRIORITY_2
+            ? '2'
+            : '3'
       try {
         await setPriorityCmd(focusedBlockId, priority)
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
