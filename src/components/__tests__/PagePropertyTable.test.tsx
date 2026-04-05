@@ -88,13 +88,26 @@ function setupMock(props: PropertyRow[] = [], defs: PropertyDefinition[] = []) {
 }
 
 describe('PagePropertyTable rendering', () => {
-  it('renders collapsed by default with toggle button', () => {
+  it('does not render when no properties and not forced', async () => {
     setupMock()
+    const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
+
+    // Wait for loading to finish before asserting absence
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /toggle properties/i })).not.toBeInTheDocument()
+      expect(container.querySelector('.page-property-table')).not.toBeInTheDocument()
+    })
+  })
+
+  it('renders collapsed by default with toggle button when properties exist', async () => {
+    setupMock([makeProp('status', { value_text: 'active' })], [makeDef('status', 'text')])
     render(<PagePropertyTable pageId="PAGE_1" />)
 
-    const toggle = screen.getByRole('button', { name: /toggle properties/i })
-    expect(toggle).toBeInTheDocument()
-    expect(toggle).toHaveTextContent('Properties')
+    await waitFor(() => {
+      const toggle = screen.getByRole('button', { name: /toggle properties/i })
+      expect(toggle).toBeInTheDocument()
+      expect(toggle).toHaveTextContent('Properties')
+    })
     // Should not show any property rows when collapsed
     expect(screen.queryByLabelText(/value$/i)).not.toBeInTheDocument()
   })
@@ -114,16 +127,14 @@ describe('PagePropertyTable rendering', () => {
   })
 
   it('shows loading skeletons while data loads', async () => {
-    const user = userEvent.setup()
     // Never-resolving promise to simulate loading
     mockedInvoke.mockImplementation(() => new Promise(() => {}))
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
-    const toggle = screen.getByRole('button', { name: /toggle properties/i })
-    await user.click(toggle)
-
-    expect(screen.getByTestId('property-loading')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('property-loading')).toBeInTheDocument()
+    })
   })
 
   it('renders property count in toggle label', async () => {
@@ -326,17 +337,9 @@ describe('PagePropertyTable property editing', () => {
 
 describe('PagePropertyTable add property flow', () => {
   it('"Add property" opens popover with definition list', async () => {
-    const user = userEvent.setup()
     setupMock([], [makeDef('status', 'text'), makeDef('priority', 'number')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /add property/i })).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: /add property/i }))
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
       expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
@@ -349,14 +352,7 @@ describe('PagePropertyTable add property flow', () => {
     const user = userEvent.setup()
     setupMock([], [makeDef('status', 'text'), makeDef('priority', 'number')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /add property/i })).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: /add property/i }))
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
       expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
@@ -374,14 +370,7 @@ describe('PagePropertyTable add property flow', () => {
     const user = userEvent.setup()
     setupMock([], [makeDef('status', 'text')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /add property/i })).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: /add property/i }))
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
       expect(screen.getByText('Status')).toBeInTheDocument()
@@ -421,14 +410,7 @@ describe('PagePropertyTable add property flow', () => {
       return null
     })
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /add property/i })).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: /add property/i }))
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
       expect(screen.getByLabelText('Search definitions')).toBeInTheDocument()
@@ -470,17 +452,9 @@ describe('PagePropertyTable add property flow', () => {
     })
   })
   it('displays formatted property names in the add-property popover', async () => {
-    const user = userEvent.setup()
     setupMock([], [makeDef('created_at', 'date'), makeDef('my_custom_prop', 'text')])
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /add property/i })).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: /add property/i }))
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
       expect(screen.getByText('Created At')).toBeInTheDocument()
@@ -538,14 +512,16 @@ describe('PagePropertyTable error handling', () => {
 
 describe('PagePropertyTable accessibility', () => {
   it('collapsed state has no a11y violations', async () => {
-    setupMock()
+    setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
 
     const { container } = render(<PagePropertyTable pageId="PAGE_1" />)
 
-    await waitFor(async () => {
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /toggle properties/i })).toBeInTheDocument()
     })
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 
   it('expanded state has no a11y violations', async () => {
@@ -806,7 +782,6 @@ describe('PagePropertyTable edit select options', () => {
 
 describe('PagePropertyTable task-only property filtering', () => {
   it('filters out task-only properties from add-property options', async () => {
-    const user = userEvent.setup()
     setupMock(
       [],
       [
@@ -818,14 +793,7 @@ describe('PagePropertyTable task-only property filtering', () => {
       ],
     )
 
-    render(<PagePropertyTable pageId="PAGE_1" />)
-    await user.click(screen.getByRole('button', { name: /toggle properties/i }))
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /add property/i })).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: /add property/i }))
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
       expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
@@ -836,5 +804,42 @@ describe('PagePropertyTable task-only property filtering', () => {
     expect(screen.queryByText('Location')).not.toBeInTheDocument()
     expect(screen.getByText('Due Date')).toBeInTheDocument()
     expect(screen.getByText('Custom Prop')).toBeInTheDocument()
+  })
+})
+
+describe('PagePropertyTable forceExpanded', () => {
+  it('renders and auto-expands when forceExpanded is true', async () => {
+    setupMock([], [makeDef('status', 'text')])
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    // Should render even with no properties
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /toggle properties/i })).toBeInTheDocument()
+    })
+
+    // Should auto-expand and open add-property popover
+    await waitFor(() => {
+      expect(screen.getByLabelText('Property picker')).toBeInTheDocument()
+    })
+  })
+
+  it('does not render when no properties and forceExpanded is false', async () => {
+    setupMock()
+    render(<PagePropertyTable pageId="PAGE_1" />)
+
+    // Wait for loading to finish before asserting absence
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /toggle properties/i })).not.toBeInTheDocument()
+    })
+  })
+
+  it('renders when properties exist without forceExpanded', async () => {
+    setupMock([makeProp('author', { value_text: 'Alice' })], [makeDef('author', 'text')])
+    render(<PagePropertyTable pageId="PAGE_1" />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /toggle properties/i })).toBeInTheDocument()
+    })
   })
 })

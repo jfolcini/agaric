@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { useNavigationStore } from '../../stores/navigation'
 import { buildFilters, detectColumns, parseQueryExpression, QueryResult } from '../QueryResult'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
@@ -10,6 +11,11 @@ const mockedInvoke = vi.mocked(invoke)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useNavigationStore.setState({
+    currentView: 'journal',
+    pageStack: [],
+    selectedBlockId: null,
+  })
 })
 
 describe('parseQueryExpression', () => {
@@ -351,6 +357,51 @@ describe('QueryResult', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+
+  // PageLink breadcrumb navigation
+  it('clicking page title in breadcrumb navigates to the page via PageLink', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'query_by_tags') {
+        return {
+          items: [
+            {
+              id: 'B1',
+              block_type: 'content',
+              content: 'Result with breadcrumb',
+              parent_id: 'P1',
+              position: 1,
+              deleted_at: null,
+              is_conflict: false,
+              conflict_type: null,
+              todo_state: null,
+              priority: null,
+              due_date: null,
+              scheduled_date: null,
+            },
+          ],
+          next_cursor: null,
+          has_more: false,
+        }
+      }
+      if (cmd === 'batch_resolve') {
+        return [{ id: 'P1', title: 'Resolved Page', block_type: 'page', deleted: false }]
+      }
+      return null
+    })
+
+    const user = userEvent.setup()
+    render(<QueryResult expression="type:tag expr:test" />)
+
+    // Wait for the page title to appear as a link (PageLink)
+    const pageLink = await screen.findByRole('link', { name: 'Resolved Page' })
+    await user.click(pageLink)
+
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('page-editor')
+    expect(navState.pageStack).toHaveLength(1)
+    expect(navState.pageStack[0]?.pageId).toBe('P1')
+    expect(navState.pageStack[0]?.title).toBe('Resolved Page')
   })
 })
 

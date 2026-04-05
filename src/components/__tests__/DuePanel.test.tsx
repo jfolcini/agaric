@@ -47,6 +47,7 @@ vi.mock('@/components/ui/button', () => ({
 
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
+import { useNavigationStore } from '../../stores/navigation'
 import { DuePanel } from '../DuePanel'
 
 const mockedListBlocks = vi.mocked(listBlocks)
@@ -84,6 +85,11 @@ beforeEach(() => {
   mockedBatchResolve.mockResolvedValue([])
   mockedListProjectedAgenda.mockResolvedValue([])
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
+  useNavigationStore.setState({
+    currentView: 'journal',
+    pageStack: [],
+    selectedBlockId: null,
+  })
 })
 
 describe('DuePanel', () => {
@@ -205,7 +211,7 @@ describe('DuePanel', () => {
 
     render(<DuePanel date="2025-06-15" />)
 
-    expect(await screen.findByText('→ My Page Title')).toBeInTheDocument()
+    expect(await screen.findByText('My Page Title')).toBeInTheDocument()
   })
 
   // 7. Click navigates to source page
@@ -855,5 +861,29 @@ describe('DuePanel', () => {
         expect(screen.queryByText('Upcoming')).not.toBeInTheDocument()
       })
     })
+  })
+
+  // --- PageLink breadcrumb navigation ---
+  it('clicking page title in breadcrumb navigates to the page', async () => {
+    const user = userEvent.setup()
+    mockedListBlocks.mockResolvedValue({
+      items: [makeBlock({ id: 'BK1', parent_id: 'PAGE1', content: 'breadcrumb nav test' })],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'PAGE1', title: 'Linked Page', block_type: 'page', deleted: false },
+    ])
+
+    render(<DuePanel date="2025-06-15" />)
+
+    const pageLink = await screen.findByRole('link', { name: 'Linked Page' })
+    await user.click(pageLink)
+
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('page-editor')
+    expect(navState.pageStack).toHaveLength(1)
+    expect(navState.pageStack[0]?.pageId).toBe('PAGE1')
+    expect(navState.pageStack[0]?.title).toBe('Linked Page')
   })
 })

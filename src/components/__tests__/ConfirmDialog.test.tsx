@@ -110,13 +110,7 @@ describe('ConfirmDialog', () => {
   })
 
   it('uses custom labels when provided', () => {
-    render(
-      <ConfirmDialog
-        {...defaultProps}
-        cancelLabel="No thanks"
-        actionLabel="Yes, delete"
-      />,
-    )
+    render(<ConfirmDialog {...defaultProps} cancelLabel="No thanks" actionLabel="Yes, delete" />)
 
     expect(screen.getByRole('button', { name: /No thanks/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Yes, delete/ })).toBeInTheDocument()
@@ -129,9 +123,7 @@ describe('ConfirmDialog', () => {
   })
 
   it('applies className to the dialog content', () => {
-    const { container } = render(
-      <ConfirmDialog {...defaultProps} className="custom-test-class" />,
-    )
+    const { container } = render(<ConfirmDialog {...defaultProps} className="custom-test-class" />)
 
     // The className is applied to AlertDialogContent which has data-slot
     const content = container.ownerDocument.querySelector('.custom-test-class')

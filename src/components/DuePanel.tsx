@@ -20,6 +20,7 @@ import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '
 import { truncateContent } from '../lib/text-utils'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { LoadMoreButton } from './LoadMoreButton'
+import { PageLink } from './PageLink'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -591,7 +592,10 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                     {block.parent_id && (
                       <span className="due-panel-breadcrumb text-xs text-muted-foreground truncate max-w-[40%]">
                         {t('duePanel.breadcrumbArrow')}{' '}
-                        {pageTitles.get(block.parent_id) ?? t('duePanel.untitled')}
+                        <PageLink
+                          pageId={block.parent_id}
+                          title={pageTitles.get(block.parent_id) ?? t('duePanel.untitled')}
+                        />
                       </span>
                     )}
                   </li>

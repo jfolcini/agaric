@@ -17,6 +17,7 @@ import { batchResolve, queryByProperty } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
 import { CollapsiblePanelHeader } from './CollapsiblePanelHeader'
 import { LoadMoreButton } from './LoadMoreButton'
+import { PageLink } from './PageLink'
 
 export interface DonePanelProps {
   date: string // YYYY-MM-DD
@@ -199,7 +200,8 @@ export function DonePanel({ date, onNavigateToPage }: DonePanelProps): React.Rea
             <div key={group.pageId} className="done-panel-group">
               {/* Group sub-header: page title + block count (not individually collapsible) */}
               <div className="done-panel-group-header px-3 py-1 text-xs [@media(pointer:coarse)]:text-sm font-semibold text-muted-foreground tracking-wide uppercase bg-muted rounded">
-                {group.title} ({group.items.length})
+                <PageLink pageId={group.pageId} title={group.title} className="hover:underline" /> (
+                {group.items.length})
               </div>
 
               <ul

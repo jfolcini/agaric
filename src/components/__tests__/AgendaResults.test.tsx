@@ -14,7 +14,7 @@
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 vi.mock('lucide-react', () => ({
@@ -36,6 +36,7 @@ vi.mock('@/components/ui/button', () => ({
 }))
 
 import type { BlockRow } from '../../lib/tauri'
+import { useNavigationStore } from '../../stores/navigation'
 import { AgendaResults, type AgendaResultsProps } from '../AgendaResults'
 
 function makeBlock(overrides: Partial<BlockRow> = {}): BlockRow {
@@ -72,6 +73,14 @@ function defaultProps(overrides: Partial<AgendaResultsProps> = {}): AgendaResult
 }
 
 describe('AgendaResults', () => {
+  beforeEach(() => {
+    useNavigationStore.setState({
+      currentView: 'journal',
+      pageStack: [],
+      selectedBlockId: null,
+    })
+  })
+
   // 1. Renders block items with status icons, priority badges, content
   it('renders block items with status icons, priority badges, and content', () => {
     const blocks = [
@@ -392,5 +401,23 @@ describe('AgendaResults', () => {
     expect(items[0]).toHaveTextContent('Active task')
     expect(items[1]).toHaveTextContent('Pending task')
     expect(items[2]).toHaveTextContent('Finished task')
+  })
+
+  // 14. Clicking page title in breadcrumb navigates to the page via PageLink
+  it('clicking page title in breadcrumb navigates to the page', async () => {
+    const user = userEvent.setup()
+    const blocks = [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'Task with breadcrumb' })]
+    const pageTitles = new Map([['PAGE1', 'My Project Page']])
+
+    render(<AgendaResults {...defaultProps({ blocks, pageTitles })} />)
+
+    const pageLink = screen.getByRole('link', { name: 'My Project Page' })
+    await user.click(pageLink)
+
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('page-editor')
+    expect(navState.pageStack).toHaveLength(1)
+    expect(navState.pageStack[0]?.pageId).toBe('PAGE1')
+    expect(navState.pageStack[0]?.title).toBe('My Project Page')
   })
 })

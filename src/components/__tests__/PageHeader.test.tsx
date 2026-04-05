@@ -288,9 +288,9 @@ describe('PageHeader tag management', () => {
 
     render(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    // Open tag picker
-    const addBtn = screen.getByRole('button', { name: /add tag/i })
-    await user.click(addBtn)
+    // Open kebab menu and click "Add tag"
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText('Add tag'))
 
     // Wait for picker to open
     await waitFor(() => {
@@ -323,9 +323,9 @@ describe('PageHeader tag management', () => {
 
     render(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    // Open picker
-    const addBtn = screen.getByRole('button', { name: /add tag/i })
-    await user.click(addBtn)
+    // Open kebab menu and click "Add tag"
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText('Add tag'))
 
     // Wait for tags to show
     await waitFor(() => {
@@ -350,9 +350,9 @@ describe('PageHeader tag management', () => {
 
     render(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    // Open picker
-    const addBtn = screen.getByRole('button', { name: /add tag/i })
-    await user.click(addBtn)
+    // Open kebab menu and click "Add tag"
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText('Add tag'))
 
     await waitFor(() => {
       expect(screen.getByLabelText('Search tags')).toBeInTheDocument()
@@ -425,12 +425,11 @@ describe('PageHeader integration', () => {
 })
 
 describe('PageHeader edge cases', () => {
-  it('no tags renders empty state with Add tag button', () => {
+  it('no tags hides tag section in header', () => {
     render(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    const addBtn = screen.getByRole('button', { name: /add tag/i })
-    expect(addBtn).toBeInTheDocument()
-    expect(addBtn).toHaveTextContent('Add tag')
+    // Tag section should not be visible when no tags applied
+    expect(screen.queryByRole('button', { name: /add tag/i })).not.toBeInTheDocument()
   })
 
   it('handles title edit error gracefully', async () => {
@@ -479,12 +478,9 @@ describe('PageHeader accessibility', () => {
 
     const { container } = render(<PageHeader pageId="PAGE_1" title="A11y Page" />)
 
-    // Wait for tags to load then open picker
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /add tag/i })).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: /add tag/i }))
+    // Open kebab menu and click "Add tag" to show tag picker
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText('Add tag'))
 
     await waitFor(() => {
       expect(screen.getByLabelText('Tag picker')).toBeInTheDocument()
@@ -515,14 +511,15 @@ describe('PageHeader alias display', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('get_page_aliases', { pageId: 'PAGE_1' })
   })
 
-  it('shows "Add alias" button when no aliases', async () => {
+  it('hides alias section when no aliases', async () => {
     setupTagMock([])
 
     render(<PageHeader pageId="PAGE_1" title="My Page" />)
 
+    // Alias section should not be visible when no aliases exist
     await waitFor(() => {
-      const addAliasBtn = screen.getByRole('button', { name: /\+ add alias/i })
-      expect(addAliasBtn).toBeInTheDocument()
+      expect(screen.queryByText('Also known as:')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /\+ add alias/i })).not.toBeInTheDocument()
     })
   })
 
@@ -609,15 +606,17 @@ describe('PageHeader alias display', () => {
     })
   })
 
-  it('renders only one "Add Alias" button when no aliases exist', async () => {
+  it('"Add alias" available in kebab menu when no aliases exist', async () => {
+    const user = userEvent.setup()
     setupTagMock([])
 
     render(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    await waitFor(() => {
-      const addAliasButtons = screen.getAllByRole('button', { name: /add alias/i })
-      expect(addAliasButtons).toHaveLength(1)
-    })
+    // Open kebab menu
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+
+    // "Add alias" should be in the kebab menu
+    expect(await screen.findByText('Add alias')).toBeInTheDocument()
   })
 
   it('shows "Edit" button (not "Add Alias") when aliases exist', async () => {
@@ -633,15 +632,15 @@ describe('PageHeader alias display', () => {
     expect(screen.queryByRole('button', { name: /add alias/i })).not.toBeInTheDocument()
   })
 
-  it('shows Plus icon only when there are no aliases', async () => {
+  it('alias section not rendered when no aliases and not editing', async () => {
     setupTagMock([], [])
 
     render(<PageHeader pageId="PAGE_1" title="My Page" />)
 
-    // With no aliases, the "Add Alias" button should contain a Plus icon
+    // No alias editing UI should be visible
     await waitFor(() => {
-      const addAliasBtn = screen.getByRole('button', { name: /add alias/i })
-      expect(addAliasBtn.querySelector('[data-testid="plus-icon"]')).not.toBeNull()
+      expect(screen.queryByLabelText('New alias input')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /\+ add alias/i })).not.toBeInTheDocument()
     })
   })
 
@@ -935,5 +934,107 @@ describe('PageHeader kebab menu (#639)', () => {
     await user.click(screen.getByRole('button', { name: /page actions/i }))
 
     expect(await screen.findByText(/Delete page/i)).toBeInTheDocument()
+  })
+})
+
+// ── Kebab menu reorganization (UX-H10 / UX-H12) ─────────────────────────
+
+describe('PageHeader kebab menu reorganization (UX-H10/H12)', () => {
+  it('alias section hidden when no aliases exist', async () => {
+    setupTagMock([])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await waitFor(() => {
+      expect(screen.queryByText('Also known as:')).not.toBeInTheDocument()
+    })
+  })
+
+  it('tag section hidden when no tags exist', () => {
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    expect(screen.queryByRole('button', { name: /add tag/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /remove tag/i })).not.toBeInTheDocument()
+  })
+
+  it('kebab menu shows "Add alias", "Add tag", "Add property" items', async () => {
+    const user = userEvent.setup()
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+
+    expect(await screen.findByText('Add alias')).toBeInTheDocument()
+    expect(screen.getByText('Add tag')).toBeInTheDocument()
+    expect(screen.getByText('Add property')).toBeInTheDocument()
+  })
+
+  it('clicking kebab "Add alias" shows alias editor', async () => {
+    const user = userEvent.setup()
+    setupTagMock([])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    // Open kebab and click "Add alias"
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText('Add alias'))
+
+    // Alias editing form should appear
+    await waitFor(() => {
+      expect(screen.getByLabelText('New alias input')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /done/i })).toBeInTheDocument()
+    })
+  })
+
+  it('clicking kebab "Add tag" shows tag picker', async () => {
+    const user = userEvent.setup()
+    setupTagMock([])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    // Open kebab and click "Add tag"
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText('Add tag'))
+
+    // Tag picker should appear
+    await waitFor(() => {
+      expect(screen.getByLabelText('Tag picker')).toBeInTheDocument()
+    })
+  })
+
+  it('clicking kebab "Add property" shows property table', async () => {
+    const user = userEvent.setup()
+    setupTagMock([])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    // Open kebab and click "Add property"
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText('Add property'))
+
+    // Property table should appear
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /toggle properties/i })).toBeInTheDocument()
+    })
+  })
+
+  it('aliases shown when aliases exist', async () => {
+    setupTagMock([], ['my-alias'])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Also known as:')).toBeInTheDocument()
+      expect(screen.getByText('my-alias')).toBeInTheDocument()
+    })
+  })
+
+  it('tags shown when tags exist', async () => {
+    setupTagMock(['TAG_1'])
+
+    render(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('urgent')).toBeInTheDocument()
+    })
   })
 })

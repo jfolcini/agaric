@@ -23,6 +23,7 @@ import type { BlockRow } from '../lib/tauri'
 import { batchResolve, getBlock, searchBlocks } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { EmptyState } from './EmptyState'
+import { PageLink } from './PageLink'
 import { ResultCard } from './ResultCard'
 
 /** Returns true if the text contains CJK codepoints. */
@@ -247,7 +248,11 @@ export function SearchPanel(): React.ReactElement {
                 >
                   {block.parent_id && pageTitles.get(block.parent_id) && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      in: {pageTitles.get(block.parent_id)}
+                      in:{' '}
+                      <PageLink
+                        pageId={block.parent_id}
+                        title={pageTitles.get(block.parent_id) ?? ''}
+                      />
                     </p>
                   )}
                 </ResultCard>

@@ -40,6 +40,32 @@ vi.mock('sonner', () => ({
   },
 }))
 
+const mockNavigateToPage = vi.fn()
+
+vi.mock('../PageLink', () => ({
+  PageLink: ({
+    pageId,
+    title,
+    className,
+  }: {
+    pageId: string
+    title: string
+    className?: string
+  }) => (
+    <button
+      type="button"
+      data-testid={`page-link-${pageId}`}
+      className={className}
+      onClick={(e) => {
+        e.stopPropagation()
+        mockNavigateToPage(pageId, title)
+      }}
+    >
+      {title}
+    </button>
+  ),
+}))
+
 import { editBlock, listUnlinkedReferences } from '../../lib/tauri'
 import { UnlinkedReferences } from '../UnlinkedReferences'
 
@@ -81,6 +107,7 @@ const emptyResponse = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockNavigateToPage.mockClear()
   mockedListUnlinked.mockResolvedValue(emptyResponse)
   mockedEditBlock.mockResolvedValue({
     id: 'BLOCK',
@@ -617,5 +644,36 @@ describe('UnlinkedReferences', () => {
 
     // Only first occurrence replaced
     expect(mockedEditBlock).toHaveBeenCalledWith('B1', '[[PAGE1]] mentions My Page twice')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Group header page title navigation (#UX-H11)
+  // ---------------------------------------------------------------------------
+
+  // clicking group header page title triggers navigation
+  it('clicking group header page title navigates to that page', async () => {
+    const user = userEvent.setup()
+    const onNavigate = vi.fn()
+    const resp = {
+      groups: [makeGroup('P1', 'Source Page', [{ id: 'B1', content: 'mention text' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    render(<UnlinkedReferences pageId="PAGE1" pageTitle="My Page" onNavigateToPage={onNavigate} />)
+
+    // Expand
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+
+    // Wait for group to load — with onNavigateToPage, the split layout is active
+    const pageLink = await screen.findByTestId('page-link-P1')
+    expect(pageLink).toHaveTextContent('Source Page')
+
+    await user.click(pageLink)
+
+    expect(mockNavigateToPage).toHaveBeenCalledWith('P1', 'Source Page')
   })
 })

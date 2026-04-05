@@ -350,6 +350,9 @@ const resources = {
       'pageHeader.removeTemplate': 'Remove template status',
       'pageHeader.setJournalTemplate': 'Set as journal template',
       'pageHeader.removeJournalTemplate': 'Remove journal template',
+      'pageHeader.menuAddAlias': 'Add alias',
+      'pageHeader.menuAddTag': 'Add tag',
+      'pageHeader.menuAddProperty': 'Add property',
 
       // Templates view (F-25)
       'templates.empty': 'No templates yet. Mark a page as a template to see it here.',

@@ -912,4 +912,42 @@ describe('SearchPanel', () => {
     expect(stored).toHaveLength(10)
     expect(stored[0].id).toBe('NEW1')
   })
+
+  // --- PageLink breadcrumb navigation ---
+  it('clicking page title in breadcrumb navigates to the page', async () => {
+    const user = userEvent.setup()
+
+    // search_blocks returns a block with parent_id
+    mockedInvoke.mockResolvedValueOnce({
+      items: [
+        makeSearchResult({
+          id: 'CHILD1',
+          parent_id: 'PARENT1',
+          content: 'child with breadcrumb',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+    })
+    // batch_resolve returns the parent page title
+    mockedInvoke.mockResolvedValueOnce([
+      { id: 'PARENT1', title: 'Breadcrumb Page', block_type: 'page', deleted: false },
+    ])
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText('Search blocks...')
+    typeAndSubmit(input, 'child')
+
+    // Wait for the breadcrumb to appear
+    const pageLink = await screen.findByRole('link', { name: 'Breadcrumb Page' })
+    await user.click(pageLink)
+
+    const navState = useNavigationStore.getState()
+    expect(navState.currentView).toBe('page-editor')
+    expect(navState.pageStack).toHaveLength(1)
+    expect(navState.pageStack[0]?.pageId).toBe('PARENT1')
+    expect(navState.pageStack[0]?.title).toBe('Breadcrumb Page')
+  })
 })

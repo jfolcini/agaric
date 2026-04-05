@@ -27,6 +27,30 @@ vi.mock('lucide-react', () => ({
   ChevronDown: (props: Record<string, unknown>) => <svg data-testid="chevron-down" {...props} />,
 }))
 
+vi.mock('../PageLink', () => ({
+  PageLink: ({
+    pageId,
+    title,
+    className,
+  }: {
+    pageId: string
+    title: string
+    className?: string
+  }) => (
+    <button
+      type="button"
+      data-testid={`page-link-${pageId}`}
+      className={className}
+      onClick={(e) => {
+        e.stopPropagation()
+        // The real PageLink calls navigateToPage; in tests we verify via onPageTitleClick
+      }}
+    >
+      {title}
+    </button>
+  ),
+}))
+
 function makeGroup(
   pageId: string,
   pageTitle: string | null,
@@ -417,5 +441,146 @@ describe('CollapsibleGroupList', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // ---------------------------------------------------------------------------
+  // onPageTitleClick tests
+  // ---------------------------------------------------------------------------
+
+  // 19. When onPageTitleClick provided, clicking title renders PageLink with correct props
+  it('when onPageTitleClick is provided, renders PageLink for the title', () => {
+    const groups = [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block' }])]
+
+    render(
+      <CollapsibleGroupList
+        groups={groups}
+        expandedGroups={{ P1: true }}
+        onToggleGroup={vi.fn()}
+        untitledLabel="Untitled"
+        onPageTitleClick={vi.fn()}
+        renderBlock={defaultRenderBlock}
+      />,
+    )
+
+    // PageLink renders a button with data-testid="page-link-P1"
+    const pageLink = screen.getByTestId('page-link-P1')
+    expect(pageLink).toBeInTheDocument()
+    expect(pageLink).toHaveTextContent('Page One')
+  })
+
+  // 20. When onPageTitleClick provided, chevron still toggles group
+  it('when onPageTitleClick is provided, chevron still toggles group', async () => {
+    const user = userEvent.setup()
+    const onToggle = vi.fn()
+    const groups = [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block' }])]
+
+    render(
+      <CollapsibleGroupList
+        groups={groups}
+        expandedGroups={{ P1: true }}
+        onToggleGroup={onToggle}
+        untitledLabel="Untitled"
+        onPageTitleClick={vi.fn()}
+        renderBlock={defaultRenderBlock}
+      />,
+    )
+
+    // Click the chevron button (the one with aria-expanded)
+    const chevronBtn = screen.getByRole('button', { expanded: true })
+    await user.click(chevronBtn)
+
+    expect(onToggle).toHaveBeenCalledTimes(1)
+    expect(onToggle).toHaveBeenCalledWith('P1')
+  })
+
+  // 21. When onPageTitleClick is NOT provided, clicking title toggles group (backward compat)
+  it('when onPageTitleClick is not provided, clicking title toggles group', async () => {
+    const user = userEvent.setup()
+    const onToggle = vi.fn()
+    const groups = [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block' }])]
+
+    render(
+      <CollapsibleGroupList
+        groups={groups}
+        expandedGroups={{}}
+        onToggleGroup={onToggle}
+        untitledLabel="Untitled"
+        renderBlock={defaultRenderBlock}
+      />,
+    )
+
+    await user.click(screen.getByText('Page One (1)'))
+
+    expect(onToggle).toHaveBeenCalledTimes(1)
+    expect(onToggle).toHaveBeenCalledWith('P1')
+  })
+
+  // 22. When onPageTitleClick is NOT provided, title is not a PageLink
+  it('when onPageTitleClick is not provided, no PageLink is rendered', () => {
+    const groups = [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block' }])]
+
+    render(
+      <CollapsibleGroupList
+        groups={groups}
+        expandedGroups={{ P1: true }}
+        onToggleGroup={vi.fn()}
+        untitledLabel="Untitled"
+        renderBlock={defaultRenderBlock}
+      />,
+    )
+
+    expect(screen.queryByTestId('page-link-P1')).not.toBeInTheDocument()
+  })
+
+  // 23. When onPageTitleClick provided, count is rendered as passive span
+  it('when onPageTitleClick is provided, count is rendered as passive span', () => {
+    const groups = [
+      makeGroup('P1', 'Page One', [
+        { id: 'B1', content: 'block 1' },
+        { id: 'B2', content: 'block 2' },
+      ]),
+    ]
+
+    render(
+      <CollapsibleGroupList
+        groups={groups}
+        expandedGroups={{ P1: true }}
+        onToggleGroup={vi.fn()}
+        untitledLabel="Untitled"
+        onPageTitleClick={vi.fn()}
+        renderBlock={defaultRenderBlock}
+      />,
+    )
+
+    expect(screen.getByText('(2)')).toBeInTheDocument()
+  })
+
+  // 24. When onPageTitleClick provided, aria-expanded stays on the chevron button
+  it('when onPageTitleClick is provided, aria-expanded stays on chevron button', () => {
+    const groups = [
+      makeGroup('P1', 'Expanded', [{ id: 'B1', content: 'b1' }]),
+      makeGroup('P2', 'Collapsed', [{ id: 'B2', content: 'b2' }]),
+    ]
+
+    render(
+      <CollapsibleGroupList
+        groups={groups}
+        expandedGroups={{ P1: true, P2: false }}
+        onToggleGroup={vi.fn()}
+        untitledLabel="Untitled"
+        onPageTitleClick={vi.fn()}
+        renderBlock={defaultRenderBlock}
+      />,
+    )
+
+    const expandedBtn = screen.getByRole('button', { expanded: true })
+    const collapsedBtn = screen.getByRole('button', { expanded: false })
+
+    expect(expandedBtn).toHaveAttribute('aria-expanded', 'true')
+    expect(collapsedBtn).toHaveAttribute('aria-expanded', 'false')
+
+    // These should be chevron buttons, not the entire header
+    expect(within(expandedBtn).getByTestId('chevron-down')).toBeInTheDocument()
+    expect(within(collapsedBtn).getByTestId('chevron-right')).toBeInTheDocument()
   })
 })

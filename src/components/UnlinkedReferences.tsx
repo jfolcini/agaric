@@ -192,6 +192,9 @@ export function UnlinkedReferences({
             headerClassName="unlinked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1 text-sm font-medium hover:bg-accent/50 transition-colors"
             listClassName="unlinked-references-blocks ml-4 mt-1 space-y-1"
             listAriaLabel={(title) => t('unlinkedRefs.mentionsFrom', { title })}
+            {...(onNavigateToPage && {
+              onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
+            })}
             renderBlock={(block, group) => (
               <li
                 key={block.id}

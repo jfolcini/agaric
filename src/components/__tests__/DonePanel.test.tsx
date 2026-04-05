@@ -44,6 +44,32 @@ vi.mock('@/components/ui/button', () => ({
   ),
 }))
 
+const mockNavigateToPage = vi.fn()
+
+vi.mock('../PageLink', () => ({
+  PageLink: ({
+    pageId,
+    title,
+    className,
+  }: {
+    pageId: string
+    title: string
+    className?: string
+  }) => (
+    <button
+      type="button"
+      data-testid={`page-link-${pageId}`}
+      className={className}
+      onClick={(e) => {
+        e.stopPropagation()
+        mockNavigateToPage(pageId, title)
+      }}
+    >
+      {title}
+    </button>
+  ),
+}))
+
 import type { BlockRow } from '../../lib/tauri'
 import { batchResolve, queryByProperty } from '../../lib/tauri'
 import { DonePanel } from '../DonePanel'
@@ -77,6 +103,7 @@ const emptyResponse = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockNavigateToPage.mockClear()
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
 })
@@ -379,5 +406,32 @@ describe('DonePanel', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Group header page title navigation (#UX-H11)
+  // ---------------------------------------------------------------------------
+
+  // 13. clicking page title in group header navigates to that page
+  it('clicking page title in group header navigates to that page', async () => {
+    const user = userEvent.setup()
+    mockedQueryByProperty.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', parent_id: 'PAGE1', content: 'done task' })],
+      next_cursor: null,
+      has_more: false,
+    })
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'PAGE1', title: 'My Project', block_type: 'page', deleted: false },
+    ])
+
+    render(<DonePanel date="2025-06-15" />)
+
+    // Wait for group to render — PageLink renders title as a button
+    const pageLink = await screen.findByTestId('page-link-PAGE1')
+    expect(pageLink).toHaveTextContent('My Project')
+
+    await user.click(pageLink)
+
+    expect(mockNavigateToPage).toHaveBeenCalledWith('PAGE1', 'My Project')
   })
 })

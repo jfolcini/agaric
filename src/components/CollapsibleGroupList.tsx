@@ -8,6 +8,7 @@
 
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import type React from 'react'
+import { PageLink } from './PageLink'
 
 export interface GroupItem {
   page_id: string
@@ -36,6 +37,8 @@ export interface CollapsibleGroupListProps<G extends GroupItem> {
   listClassName?: string
   /** Accessible label for the block list (receives the resolved group title) */
   listAriaLabel?: (title: string) => string
+  /** When provided, clicking the page title navigates instead of toggling */
+  onPageTitleClick?: (pageId: string, title: string) => void
 }
 
 export function CollapsibleGroupList<G extends GroupItem>({
@@ -49,6 +52,7 @@ export function CollapsibleGroupList<G extends GroupItem>({
   headerClassName,
   listClassName,
   listAriaLabel,
+  onPageTitleClick,
 }: CollapsibleGroupListProps<G>): React.ReactElement {
   return (
     <>
@@ -57,22 +61,50 @@ export function CollapsibleGroupList<G extends GroupItem>({
         const title = group.page_title ?? untitledLabel
         return (
           <div key={group.page_id} className={groupClassName}>
-            <button
-              type="button"
-              onClick={() => onToggleGroup(group.page_id)}
-              className={
-                headerClassName ??
-                'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 transition-colors'
-              }
-              aria-expanded={isExpanded}
-            >
-              {isExpanded ? (
-                <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-              )}
-              {title} ({group.blocks.length})
-            </button>
+            {onPageTitleClick ? (
+              <div
+                className={
+                  headerClassName ??
+                  'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 transition-colors'
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => onToggleGroup(group.page_id)}
+                  aria-expanded={isExpanded}
+                  aria-label={isExpanded ? 'Collapse group' : 'Expand group'}
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                  )}
+                </button>
+                <PageLink
+                  pageId={group.page_id}
+                  title={title}
+                  className="flex-1 truncate text-left"
+                />
+                <span>({group.blocks.length})</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onToggleGroup(group.page_id)}
+                className={
+                  headerClassName ??
+                  'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 transition-colors'
+                }
+                aria-expanded={isExpanded}
+              >
+                {isExpanded ? (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                )}
+                {title} ({group.blocks.length})
+              </button>
+            )}
             {isExpanded && (
               <ul
                 className={listClassName ?? 'ml-4 mt-1 space-y-1'}

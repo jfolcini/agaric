@@ -26,6 +26,7 @@ import { priorityColor } from '../lib/priority-color'
 import type { BlockRow } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
 import { LoadMoreButton } from './LoadMoreButton'
+import { PageLink } from './PageLink'
 
 export interface AgendaResultsProps {
   /** Pre-filtered blocks to display. If empty, shows empty state. */
@@ -229,7 +230,11 @@ export function AgendaResults({
         {/* Source page breadcrumb */}
         {block.parent_id && (
           <span className="agenda-results-breadcrumb text-xs text-muted-foreground truncate max-w-[40%]">
-            {t('agenda.breadcrumbArrow')} {pageTitles.get(block.parent_id) ?? t('agenda.untitled')}
+            {t('agenda.breadcrumbArrow')}{' '}
+            <PageLink
+              pageId={block.parent_id}
+              title={pageTitles.get(block.parent_id) ?? t('agenda.untitled')}
+            />
           </span>
         )}
       </li>

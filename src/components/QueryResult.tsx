@@ -5,6 +5,7 @@ import type { BacklinkFilter, BlockRow } from '../lib/tauri'
 import { batchResolve, listBlocks, queryByProperty, queryByTags } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'
 import { cn } from '../lib/utils'
+import { PageLink } from './PageLink'
 
 /** Column definition for table mode. */
 interface TableColumn {
@@ -370,9 +371,9 @@ export function QueryResult({
                           ? resolveBlockTitle(block.id) || truncateContent(block.content, 80)
                           : truncateContent(block.content, 80)}
                       </span>
-                      {pageTitle && (
+                      {pageTitle && block.parent_id && (
                         <span className="shrink-0 text-[10px] text-muted-foreground/60 truncate max-w-[120px]">
-                          {pageTitle}
+                          <PageLink pageId={block.parent_id} title={pageTitle} />
                         </span>
                       )}
                     </button>
@@ -445,7 +446,11 @@ export function QueryResult({
                           </td>
                         ))}
                         <td className="px-3 py-1.5 text-muted-foreground/60 truncate max-w-[120px]">
-                          {pageTitle ?? ''}
+                          {pageTitle && block.parent_id ? (
+                            <PageLink pageId={block.parent_id} title={pageTitle} />
+                          ) : (
+                            ''
+                          )}
                         </td>
                       </tr>
                     )

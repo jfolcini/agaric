@@ -53,9 +53,7 @@ describe('useBlockNavigation', () => {
     const onNavigateToPage = vi.fn()
     const pageTitles = new Map([['PAGE_1', 'My Page']])
 
-    const { result } = renderHook(() =>
-      useBlockNavigation({ onNavigateToPage, pageTitles }),
-    )
+    const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     result.current.handleBlockClick(makeBlock())
 
@@ -70,9 +68,7 @@ describe('useBlockNavigation', () => {
       ['PAGE_2', 'Beta Page'],
     ])
 
-    const { result } = renderHook(() =>
-      useBlockNavigation({ onNavigateToPage, pageTitles }),
-    )
+    const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     result.current.handleBlockClick(makeBlock({ parent_id: 'PAGE_2', id: 'B2' }))
 
@@ -84,9 +80,7 @@ describe('useBlockNavigation', () => {
     const onNavigateToPage = vi.fn()
     const pageTitles = new Map<string, string>()
 
-    const { result } = renderHook(() =>
-      useBlockNavigation({ onNavigateToPage, pageTitles }),
-    )
+    const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     result.current.handleBlockClick(makeBlock({ parent_id: 'UNKNOWN_PAGE' }))
 
@@ -116,9 +110,7 @@ describe('useBlockNavigation', () => {
     const onNavigateToPage = vi.fn()
     const pageTitles = new Map<string, string>()
 
-    const { result } = renderHook(() =>
-      useBlockNavigation({ onNavigateToPage, pageTitles }),
-    )
+    const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     result.current.handleBlockClick(makeBlock({ parent_id: null }))
 
@@ -141,15 +133,10 @@ describe('useBlockNavigation', () => {
     const onNavigateToPage = vi.fn()
     const pageTitles = new Map([['PAGE_1', 'My Page']])
 
-    const { result } = renderHook(() =>
-      useBlockNavigation({ onNavigateToPage, pageTitles }),
-    )
+    const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     const event = makeKeyboardEvent('Enter')
-    result.current.handleBlockKeyDown(
-      event as unknown as React.KeyboardEvent,
-      makeBlock(),
-    )
+    result.current.handleBlockKeyDown(event as unknown as React.KeyboardEvent, makeBlock())
 
     expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_1', 'My Page', 'BLOCK_1')
     expect(event.preventDefault).toHaveBeenCalledTimes(1)
@@ -160,15 +147,10 @@ describe('useBlockNavigation', () => {
     const onNavigateToPage = vi.fn()
     const pageTitles = new Map([['PAGE_1', 'My Page']])
 
-    const { result } = renderHook(() =>
-      useBlockNavigation({ onNavigateToPage, pageTitles }),
-    )
+    const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     const event = makeKeyboardEvent(' ')
-    result.current.handleBlockKeyDown(
-      event as unknown as React.KeyboardEvent,
-      makeBlock(),
-    )
+    result.current.handleBlockKeyDown(event as unknown as React.KeyboardEvent, makeBlock())
 
     expect(onNavigateToPage).toHaveBeenCalledWith('PAGE_1', 'My Page', 'BLOCK_1')
     expect(event.preventDefault).toHaveBeenCalledTimes(1)
@@ -179,15 +161,10 @@ describe('useBlockNavigation', () => {
     const onNavigateToPage = vi.fn()
     const pageTitles = new Map([['PAGE_1', 'My Page']])
 
-    const { result } = renderHook(() =>
-      useBlockNavigation({ onNavigateToPage, pageTitles }),
-    )
+    const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     const event = makeKeyboardEvent('Tab')
-    result.current.handleBlockKeyDown(
-      event as unknown as React.KeyboardEvent,
-      makeBlock(),
-    )
+    result.current.handleBlockKeyDown(event as unknown as React.KeyboardEvent, makeBlock())
 
     expect(onNavigateToPage).not.toHaveBeenCalled()
     expect(event.preventDefault).not.toHaveBeenCalled()
@@ -197,15 +174,10 @@ describe('useBlockNavigation', () => {
     const onNavigateToPage = vi.fn()
     const pageTitles = new Map([['PAGE_1', 'My Page']])
 
-    const { result } = renderHook(() =>
-      useBlockNavigation({ onNavigateToPage, pageTitles }),
-    )
+    const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     const event = makeKeyboardEvent('Escape')
-    result.current.handleBlockKeyDown(
-      event as unknown as React.KeyboardEvent,
-      makeBlock(),
-    )
+    result.current.handleBlockKeyDown(event as unknown as React.KeyboardEvent, makeBlock())
 
     expect(onNavigateToPage).not.toHaveBeenCalled()
     expect(event.preventDefault).not.toHaveBeenCalled()
@@ -215,15 +187,10 @@ describe('useBlockNavigation', () => {
     const onNavigateToPage = vi.fn()
     const pageTitles = new Map([['PAGE_1', 'My Page']])
 
-    const { result } = renderHook(() =>
-      useBlockNavigation({ onNavigateToPage, pageTitles }),
-    )
+    const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
 
     const event = makeKeyboardEvent('a')
-    result.current.handleBlockKeyDown(
-      event as unknown as React.KeyboardEvent,
-      makeBlock(),
-    )
+    result.current.handleBlockKeyDown(event as unknown as React.KeyboardEvent, makeBlock())
 
     expect(onNavigateToPage).not.toHaveBeenCalled()
     expect(event.preventDefault).not.toHaveBeenCalled()

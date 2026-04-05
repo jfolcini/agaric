@@ -41,15 +41,12 @@ export async function saveBlock(page: Page) {
  *      dnd-kit interpreting horizontal offset as indent/dedent).
  *   4. Pause for the "over" state, then release.
  */
-export async function dragBlock(
-  page: Page,
-  source: Locator,
-  target: Locator,
-): Promise<void> {
+export async function dragBlock(page: Page, source: Locator, target: Locator): Promise<void> {
   const sourceBox = await source.boundingBox()
   const targetBox = await target.boundingBox()
 
-  if (!sourceBox || !targetBox) throw new Error('Could not get bounding boxes for drag source/target')
+  if (!sourceBox || !targetBox)
+    throw new Error('Could not get bounding boxes for drag source/target')
 
   const sx = sourceBox.x + sourceBox.width / 2
   const sy = sourceBox.y + sourceBox.height / 2

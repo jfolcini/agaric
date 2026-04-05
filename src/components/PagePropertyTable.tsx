@@ -8,7 +8,7 @@
  */
 
 import { ChevronDown, ChevronRight, Pencil, Plus, X } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
@@ -43,9 +43,10 @@ const TASK_ONLY_PROPERTIES = new Set(['effort', 'assignee', 'location'])
 
 interface PagePropertyTableProps {
   pageId: string
+  forceExpanded?: boolean
 }
 
-export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
+export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTableProps) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -70,6 +71,16 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
       })
       .finally(() => setLoading(false))
   }, [pageId, t])
+
+  // Auto-expand and open add-popover when forceExpanded transitions to true
+  const prevForceRef = useRef(false)
+  useEffect(() => {
+    if (forceExpanded && !prevForceRef.current) {
+      setExpanded(true)
+      setShowAddPopover(true)
+    }
+    prevForceRef.current = !!forceExpanded
+  }, [forceExpanded])
 
   const findDef = useCallback(
     (key: string): PropertyDefinition | undefined => {
@@ -170,6 +181,10 @@ export function PagePropertyTable({ pageId }: PagePropertyTableProps) {
   )
 
   const propertyCount = properties.length
+
+  if (!loading && properties.length === 0 && !forceExpanded) {
+    return null
+  }
 
   return (
     <div className="page-property-table">

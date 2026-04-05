@@ -401,6 +401,9 @@ export function LinkedReferences({
             headerClassName="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 transition-colors"
             listClassName="linked-references-blocks ml-4 mt-1 space-y-1"
             listAriaLabel={(title) => t('references.backlinksFrom', { title })}
+            {...(onNavigateToPage && {
+              onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
+            })}
             renderBlock={(block, group) => (
               <li
                 key={block.id}

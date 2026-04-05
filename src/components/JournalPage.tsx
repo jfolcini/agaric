@@ -30,7 +30,6 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
-import { LoadingSkeleton } from './LoadingSkeleton'
 import type { DayEntry } from '../lib/date-utils'
 import {
   formatDate,
@@ -48,6 +47,7 @@ import { AgendaView } from './journal/AgendaView'
 import { DailyView } from './journal/DailyView'
 import { MonthlyView } from './journal/MonthlyView'
 import { WeeklyView } from './journal/WeeklyView'
+import { LoadingSkeleton } from './LoadingSkeleton'
 
 export type { DayEntry } from '../lib/date-utils'
 // Re-export for backward compatibility
@@ -231,9 +231,7 @@ export function JournalPage({
   return (
     <div className="space-y-4">
       {/* Loading indicator on initial fetch */}
-      {loading && (
-        <LoadingSkeleton count={3} height="h-10" data-testid="loading-skeleton" />
-      )}
+      {loading && <LoadingSkeleton count={3} height="h-10" data-testid="loading-skeleton" />}
 
       {/* View content */}
       {!loading && mode === 'daily' && (

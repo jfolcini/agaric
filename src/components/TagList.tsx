@@ -15,11 +15,11 @@ import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { LoadingSkeleton } from './LoadingSkeleton'
 import type { BlockRow } from '../lib/tauri'
 import { createBlock, deleteBlock, listBlocks } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { EmptyState } from './EmptyState'
+import { LoadingSkeleton } from './LoadingSkeleton'
 
 interface TagListProps {
   /** Called when a tag name is clicked. */
@@ -121,9 +121,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         </Button>
       </form>
 
-      {loading && (
-        <LoadingSkeleton count={3} height="h-10" />
-      )}
+      {loading && <LoadingSkeleton count={3} height="h-10" />}
 
       {!loading && tags.length === 0 && <EmptyState icon={Tag} message={t('tagList.empty')} />}
 
