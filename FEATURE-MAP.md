@@ -351,8 +351,9 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **ConfirmDialog** (`src/components/ConfirmDialog.tsx`): Wraps AlertDialog primitives with title/description/cancel/action props, optional `children` slot, `actionVariant` (default/destructive), `loading` spinner. Used by 8 components.
 - **LoadMoreButton** (`src/components/LoadMoreButton.tsx`): Cursor-paginated load-more button with `loading`/`hasMore`/`onLoadMore` props and Loader2 spinner. Used by 6 components.
 - **LoadingSkeleton** (`src/components/LoadingSkeleton.tsx`): Skeleton loading placeholder with `count`/`height` props. Used by 7 components.
-- **CollapsibleGroupList** (`src/components/CollapsibleGroupList.tsx`): Generic collapsible grouped list with expand/collapse state management. Accepts `expandedGroups` record, `defaultExpanded` prop, `onToggle` callback, and custom `renderBlock` slot. Used by LinkedReferences, UnlinkedReferences.
+- **CollapsibleGroupList** (`src/components/CollapsibleGroupList.tsx`): Generic collapsible grouped list with expand/collapse state management. Accepts `expandedGroups` record, `defaultExpanded` prop, `onToggle` callback, and custom `renderBlock` slot. Supports split-header mode via `onPageTitleClick` prop (separate chevron toggle + PageLink title + passive count). Used by LinkedReferences, UnlinkedReferences.
 - **ResultCard** (`src/components/ResultCard.tsx`): Block result card button with content display, Badge for page/tag types, optional spinner, optional children slot. Used by SearchPanel, TagFilterPanel.
+- **PageLink** (`src/components/PageLink.tsx`): Inline clickable page name (`<span role="link">`) that navigates via `navigateToPage`. Handles click/Enter/Space with stopPropagation. Uses `<span>` to allow nesting inside `<button>` containers. Used by CollapsibleGroupList, DonePanel, AgendaResults, DuePanel, SearchPanel, QueryResult.
 - **PropertyRow** (`src/components/BlockPropertyDrawer.tsx`): Extracted sub-component for property rows with badge+input+remove layout. Supports optional icon, date/text input types.
 
 ### Shared Hooks

@@ -1,5 +1,28 @@
 # Session Log
 
+## Session 205 — 2026-04-05 — Batch 59: UX polish (UX-H10, UX-H11, UX-H12)
+
+### Summary
+Resolved 3 UX-HIGH items: reorganized page header (kebab menu for add actions, hide empty sections), made all page names clickable for navigation, and hid empty properties. Created PageLink shared component. 28 files changed, +1160/-325 lines. REVIEW-LATER.md reduced from 21 to 18 items.
+
+### Batch 59
+
+**Commit:** 2718bfa
+
+| Area | Change |
+|------|--------|
+| PageLink.tsx (new) | UX-H11: Shared `<span role="link">` component for clickable page names. Handles click/Enter/Space with stopPropagation. Uses `<span>` instead of `<a>` to allow nesting inside `<button>` containers. 8 tests. |
+| PageHeader.tsx + i18n.ts | UX-H10: Added "Add alias", "Add tag", "Add property" items to kebab menu with separator. Alias section hidden when empty (renders on `editingAliases`). Tag section hidden when empty (renders on `showTagPicker` or `forceTagSection`). Two-phase tag picker mount with ref-based Radix Popover close suppression. |
+| PagePropertyTable.tsx | UX-H12: Returns `null` when no properties and not force-expanded. New `forceExpanded` prop with `prevForceRef` transition detection — auto-expands and opens add-popover on first activation. |
+| CollapsibleGroupList.tsx | UX-H11: Split-header mode when `onPageTitleClick` prop provided — separate chevron `<button>` (with `aria-label`), `<PageLink>` for title, passive `<span>` for count. Backward-compatible single-button mode preserved. |
+| LinkedReferences.tsx + UnlinkedReferences.tsx | UX-H11: Wired `onPageTitleClick` to CollapsibleGroupList using spread pattern for `exactOptionalPropertyTypes` compliance. |
+| DonePanel.tsx | UX-H11: Group headers now render PageLink for clickable page titles. |
+| AgendaResults.tsx + DuePanel.tsx + SearchPanel.tsx + QueryResult.tsx | UX-H11: Breadcrumb page titles wrapped in PageLink for navigation. |
+
+**Review:** 3 review subagents (A: kebab/properties, B: group headers, C: breadcrumbs). All approved. Post-review fixes: (1) Added `aria-label` to chevron button in CollapsibleGroupList split-header; (2) Fixed line lengths in AgendaResults/DuePanel; (3) Fixed `exactOptionalPropertyTypes` TS errors in LinkedReferences/UnlinkedReferences; (4) Fixed `noNonNullAssertion` in SearchPanel; (5) Added biome-ignore for `useSemanticElements` in PageLink; (6) Biome formatting across 12 files.
+
+**Stats:** 28 files changed (2 new: PageLink + test). 3303/3303 frontend tests pass. TypeScript clean. Biome clean (pre-existing `noExplicitAny` warnings only).
+
 ## Session 204 — 2026-04-05 — Batch 58: Final refactoring extractions (R-18, R-19, R-20)
 
 ### Summary
