@@ -112,4 +112,31 @@ export const TagRef = Node.create<TagRefOptions>({
           commands.insertContent({ type: this.name, attrs: { id } }),
     }
   },
+
+  addKeyboardShortcuts() {
+    return {
+      // H-14: Backspace on a tag_ref chip re-expands it to @name text,
+      // letting the suggestion plugin reopen for editing the reference.
+      Backspace: () => {
+        const { $from } = this.editor.state.selection
+        const nodeBefore = $from.nodeBefore
+        if (!nodeBefore || nodeBefore.type.name !== 'tag_ref') return false
+
+        const id = nodeBefore.attrs.id as string
+        const name = this.options.resolveName(id)
+        const nodeSize = nodeBefore.nodeSize
+        const from = $from.pos - nodeSize
+        const to = $from.pos
+
+        this.editor
+          .chain()
+          .focus()
+          .deleteRange({ from, to })
+          .insertContentAt(from, `@${name}`)
+          .run()
+
+        return true
+      },
+    }
+  },
 })

@@ -34,3 +34,19 @@ describe('TagRef', () => {
     expect(ext.options.resolveStatus).toBe(resolveStatus)
   })
 })
+
+describe('TagRef Backspace re-expand (H-14)', () => {
+  it('registers Backspace keyboard shortcut', () => {
+    const ext = TagRef.configure({
+      resolveName: (id) => `Name:${id}`,
+    })
+    expect(ext.config.addKeyboardShortcuts).toBeDefined()
+  })
+
+  it('uses resolveName to get the display name for re-expansion', () => {
+    const resolveName = (_id: string) => `My Tag Name`
+    const ext = TagRef.configure({ resolveName })
+    // Verify the option is available (keyboard shortcut uses it internally)
+    expect(ext.options.resolveName('any-id')).toBe('My Tag Name')
+  })
+})

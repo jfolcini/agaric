@@ -1,14 +1,15 @@
 /**
  * TipTap extension: [[ block-link picker (page autocomplete).
  *
- * Intercepts the [[ keystroke and opens a suggestion popup.
- * On selection, inserts a block_link node with the chosen ULID.
- * Never writes [[title]] to storage — only [[ULID]].
+ * Two ways to insert a block link:
+ * 1. **Picker** — Type [[ to open the suggestion popup, select from list.
+ * 2. **Input rule** — Type [[text]] (with closing brackets) to auto-resolve.
+ *    If an exact-match page exists, links to it. Otherwise creates it.
  *
- * Picker resolves to ULID, not text.
+ * Both resolve to ULID, never writing [[title]] to storage.
  */
 
-import { Extension } from '@tiptap/core'
+import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import { Suggestion } from '@tiptap/suggestion'
 import type { PickerItem } from '../SuggestionList'
@@ -31,6 +32,48 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
       items: () => [],
       onCreate: undefined,
     }
+  },
+
+  addInputRules() {
+    const extensionOptions = this.options
+    const editor = this.editor
+    return [
+      // Match [[text]] — auto-resolve to a block link on typing the closing ]]
+      new InputRule({
+        find: /\[\[([^\]]+)\]\]$/,
+        handler: ({ state, range, match }) => {
+          const innerText = (match[1] ?? '').trim()
+          if (!innerText) return
+
+          // Delete the [[text]] range immediately so the raw text doesn't linger
+          state.tr.delete(range.from, range.to)
+
+          // Async resolve: look up page, then insert block_link node
+          const resolveAndInsert = async () => {
+            try {
+              const items = await extensionOptions.items(innerText)
+              // Look for an exact match (case-insensitive)
+              const exactMatch = items.find(
+                (item) => !item.isCreate && item.label.toLowerCase() === innerText.toLowerCase(),
+              )
+              if (exactMatch) {
+                editor.commands.insertBlockLink(exactMatch.id)
+              } else if (extensionOptions.onCreate) {
+                const newId = await extensionOptions.onCreate(innerText)
+                editor.commands.insertBlockLink(newId)
+              } else {
+                // No match and no onCreate — re-insert as plain text
+                editor.commands.insertContent(innerText)
+              }
+            } catch {
+              // On error, re-insert as plain text so the user doesn't lose content
+              editor.commands.insertContent(innerText)
+            }
+          }
+          void resolveAndInsert()
+        },
+      }),
+    ]
   },
 
   addProseMirrorPlugins() {

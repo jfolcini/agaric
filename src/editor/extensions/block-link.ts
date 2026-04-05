@@ -130,4 +130,31 @@ export const BlockLink = Node.create<BlockLinkOptions>({
           commands.insertContent({ type: this.name, attrs: { id } }),
     }
   },
+
+  addKeyboardShortcuts() {
+    return {
+      // H-14: Backspace on a block_link chip re-expands it to [[title text,
+      // letting the suggestion plugin reopen for editing the reference.
+      Backspace: () => {
+        const { $from } = this.editor.state.selection
+        const nodeBefore = $from.nodeBefore
+        if (!nodeBefore || nodeBefore.type.name !== 'block_link') return false
+
+        const id = nodeBefore.attrs.id as string
+        const title = this.options.resolveTitle(id)
+        const nodeSize = nodeBefore.nodeSize
+        const from = $from.pos - nodeSize
+        const to = $from.pos
+
+        this.editor
+          .chain()
+          .focus()
+          .deleteRange({ from, to })
+          .insertContentAt(from, `[[${title}`)
+          .run()
+
+        return true
+      },
+    }
+  },
 })

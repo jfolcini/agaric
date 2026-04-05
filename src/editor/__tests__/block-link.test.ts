@@ -39,3 +39,19 @@ describe('BlockLink', () => {
     expect(ext.options.onNavigate).toBe(onNavigate)
   })
 })
+
+describe('BlockLink Backspace re-expand (H-14)', () => {
+  it('registers Backspace keyboard shortcut', () => {
+    const ext = BlockLink.configure({
+      resolveTitle: (id) => `Title:${id}`,
+    })
+    expect(ext.config.addKeyboardShortcuts).toBeDefined()
+  })
+
+  it('uses resolveTitle to get the display name for re-expansion', () => {
+    const resolveTitle = (_id: string) => `My Page Title`
+    const ext = BlockLink.configure({ resolveTitle })
+    // Verify the option is available (keyboard shortcut uses it internally)
+    expect(ext.options.resolveTitle('any-id')).toBe('My Page Title')
+  })
+})

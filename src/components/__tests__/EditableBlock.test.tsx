@@ -627,6 +627,119 @@ describe('EditableBlock', () => {
     })
   })
 
+  // ── H-11: Auto-mount flushes previous editor ──────────────────────
+
+  describe('auto-mount flush (H-11)', () => {
+    it('unmounts and saves previous block on external focus change', () => {
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => 'unsaved changes')
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      // Start unfocused, then re-render with isFocused=true
+      const { rerender } = render(
+        <EditableBlock
+          blockId="B1"
+          content="New block"
+          isFocused={false}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      rerender(
+        <EditableBlock
+          blockId="B1"
+          content="New block"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      // Auto-mount effect should unmount old block and save changes
+      expect(mockUnmount).toHaveBeenCalledOnce()
+      expect(mockEdit).toHaveBeenCalledWith('OLD_BLOCK', 'unsaved changes')
+      expect(mockMount).toHaveBeenCalledWith('B1', 'New block')
+    })
+
+    it('calls splitBlock when previous block content has newlines', () => {
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => 'line1\nline2')
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      const { rerender } = render(
+        <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
+      )
+
+      rerender(
+        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
+      )
+
+      expect(mockSplitBlock).toHaveBeenCalledWith('OLD_BLOCK', 'line1\nline2')
+      expect(mockEdit).not.toHaveBeenCalled()
+    })
+
+    it('does not unmount when no previous active block', () => {
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn()
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: null,
+      })
+
+      const { rerender } = render(
+        <EditableBlock
+          blockId="B1"
+          content="text"
+          isFocused={false}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      rerender(
+        <EditableBlock
+          blockId="B1"
+          content="text"
+          isFocused={true}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      expect(mockUnmount).not.toHaveBeenCalled()
+      expect(mockMount).toHaveBeenCalledWith('B1', 'text')
+    })
+
+    it('does not unmount when previous content is unchanged (unmount returns null)', () => {
+      const mockMount = vi.fn()
+      const mockUnmount = vi.fn(() => null)
+      const roving = makeRovingEditor({
+        mount: mockMount,
+        unmount: mockUnmount,
+        activeBlockId: 'OLD_BLOCK',
+      })
+
+      const { rerender } = render(
+        <EditableBlock blockId="B1" content="" isFocused={false} rovingEditor={roving as never} />,
+      )
+
+      rerender(
+        <EditableBlock blockId="B1" content="" isFocused={true} rovingEditor={roving as never} />,
+      )
+
+      expect(mockUnmount).toHaveBeenCalledOnce()
+      expect(mockEdit).not.toHaveBeenCalled()
+      expect(mockSplitBlock).not.toHaveBeenCalled()
+      expect(mockMount).toHaveBeenCalledWith('B1', '')
+    })
+  })
+
   // ── #581: Save content on blur for newly created blocks ───────────
 
   describe('new block blur save', () => {

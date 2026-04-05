@@ -79,6 +79,10 @@ function EditableBlockInner({
   rovingEditorRef.current = rovingEditor
   const contentRef = useRef(content)
   contentRef.current = content
+  const editRef = useRef(edit)
+  editRef.current = edit
+  const splitBlockRef = useRef(splitBlock)
+  splitBlockRef.current = splitBlock
 
   // Scroll the editor wrapper into view when the block becomes focused.
   // Uses requestAnimationFrame to avoid layout thrashing after mount.
@@ -91,11 +95,24 @@ function EditableBlockInner({
   }, [isFocused])
 
   // Auto-mount the roving editor when focus is set externally (e.g. via
-  // PageEditor's "Add block" button) without going through handleFocus.
-  // Without this, activeBlockId remains null and blur/Enter cannot save.
+  // PageEditor's "Add block" button or Enter-to-create) without going
+  // through handleFocus.  Flushes the previous block's changes first to
+  // prevent data loss — same unmount-save logic as handleFocus (H-11).
   useEffect(() => {
     const re = rovingEditorRef.current
     if (isFocused && re.activeBlockId !== blockId) {
+      // Unmount from previous block if any (mirrors handleFocus logic)
+      if (re.activeBlockId) {
+        const prevId = re.activeBlockId
+        const changed = re.unmount()
+        if (changed !== null) {
+          if (changed.includes('\n')) {
+            splitBlockRef.current(prevId, changed)
+          } else {
+            editRef.current(prevId, changed)
+          }
+        }
+      }
       re.mount(blockId, contentRef.current)
     }
   }, [isFocused, blockId])
