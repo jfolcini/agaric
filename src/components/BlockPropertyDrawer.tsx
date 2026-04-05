@@ -19,7 +19,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { announce } from '../lib/announcer'
@@ -404,30 +410,34 @@ function AddPropertySection({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-64 p-3">
         <div className="space-y-2">
-          {availableDefs.length > 0 ? (
-            <ScrollArea className="max-h-32">
-              <div className="space-y-1">
-                {availableDefs.map((def) => (
-                  <button
-                    key={def.key}
-                    type="button"
-                    className={`w-full text-left rounded px-2 py-1 text-sm hover:bg-accent transition-colors ${selectedKey === def.key ? 'bg-accent' : ''}`}
-                    onClick={() => setSelectedKey(def.key)}
-                  >
-                    {def.key}{' '}
-                    <span className="text-xs text-muted-foreground">({def.value_type})</span>
-                  </button>
-                ))}
-              </div>
-            </ScrollArea>
-          ) : (
-            <p className="text-xs text-muted-foreground">{t('property.noProperties')}</p>
-          )}
+          <Select
+            value={selectedKey || ''}
+            onValueChange={setSelectedKey}
+            disabled={availableDefs.length === 0}
+          >
+            <SelectTrigger size="sm" aria-label={t('block.editProperty')}>
+              <SelectValue
+                placeholder={
+                  availableDefs.length === 0
+                    ? t('property.noProperties')
+                    : t('property.selectProperty')
+                }
+              />
+            </SelectTrigger>
+            <SelectContent>
+              {availableDefs.map((def) => (
+                <SelectItem key={def.key} value={def.key}>
+                  {formatPropertyName(def.key)}{' '}
+                  <span className="text-xs text-muted-foreground">({def.value_type})</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {selectedKey && (
             <div className="flex items-center gap-1">
               <Input
                 className="flex-1 h-7 text-xs"
-                placeholder={selectedKey}
+                placeholder={formatPropertyName(selectedKey)}
                 aria-label={t('property.valueLabel', { key: selectedKey })}
                 value={newValue}
                 onChange={(e) => setNewValue(e.target.value)}

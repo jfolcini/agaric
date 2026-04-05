@@ -215,7 +215,7 @@ export function StatusPanel(): React.ReactElement {
 
                   <div className="status-metric rounded-lg border bg-muted/30 p-4 text-center">
                     <dd className="status-metric-value text-2xl font-bold">
-                      {status.total_ops_dispatched}
+                      {status.total_ops_dispatched + status.total_background_dispatched}
                     </dd>
                     <MetricLabel
                       label={t('status.opsDispatchedLabel')}

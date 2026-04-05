@@ -394,6 +394,28 @@ describe('PageBrowser', () => {
         })
       })
     })
+
+    it('navigates to the new page after creation via onPageSelect', async () => {
+      const user = userEvent.setup()
+      const onPageSelect = vi.fn()
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<PageBrowser onPageSelect={onPageSelect} />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
+      })
+
+      mockedInvoke.mockResolvedValueOnce(makePage({ id: 'P_NAV', content: 'Navigate Here' }))
+
+      const input = screen.getByPlaceholderText('New page name...')
+      await user.type(input, 'Navigate Here')
+      await user.click(screen.getByRole('button', { name: /New Page/i }))
+
+      await waitFor(() => {
+        expect(onPageSelect).toHaveBeenCalledWith('P_NAV', 'Navigate Here')
+      })
+    })
   })
 
   // UX #8: Error feedback on failed operations

@@ -583,6 +583,63 @@ describe('SortableBlock history button', () => {
   })
 })
 
+describe('SortableBlock gutter button pointer-events', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+  })
+
+  it('delete button has pointer-events-none when invisible (opacity-0)', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_PE"
+        content="pointer-events test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onDelete={vi.fn()}
+      />,
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: /delete block/i })
+    expect(deleteBtn.className).toContain('opacity-0')
+    expect(deleteBtn.className).toContain('pointer-events-none')
+    expect(deleteBtn.className).toContain('group-hover:pointer-events-auto')
+  })
+
+  it('drag handle has pointer-events-none when invisible (opacity-0)', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_PE"
+        content="pointer-events test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+      />,
+    )
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    expect(dragHandle.className).toContain('opacity-0')
+    expect(dragHandle.className).toContain('pointer-events-none')
+    expect(dragHandle.className).toContain('group-hover:pointer-events-auto')
+  })
+
+  it('history button has pointer-events-none when invisible (opacity-0)', () => {
+    render(
+      <SortableBlock
+        blockId="BLOCK_PE"
+        content="pointer-events test"
+        isFocused={false}
+        rovingEditor={makeRovingEditor()}
+        onShowHistory={vi.fn()}
+      />,
+    )
+
+    const historyBtn = screen.getByRole('button', { name: /block history/i })
+    expect(historyBtn.className).toContain('opacity-0')
+    expect(historyBtn.className).toContain('pointer-events-none')
+    expect(historyBtn.className).toContain('group-hover:pointer-events-auto')
+  })
+})
+
 describe('SortableBlock collapse/expand chevron', () => {
   beforeEach(() => {
     vi.clearAllMocks()

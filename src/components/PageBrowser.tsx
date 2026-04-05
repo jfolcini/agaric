@@ -294,13 +294,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       }
       setPages((prev) => [newPage, ...prev])
       setNewPageName('')
+      onPageSelect?.(resp.id, resp.content ?? name)
     } catch (error) {
       toast.error(t('pageBrowser.createFailed', { error: String(error) }), {
         action: { label: t('pageBrowser.retry'), onClick: () => handleCreatePage() },
       })
     }
     setIsCreating(false)
-  }, [newPageName, setPages, t])
+  }, [newPageName, setPages, t, onPageSelect])
 
   const handleDeletePage = useCallback(
     async (pageId: string) => {

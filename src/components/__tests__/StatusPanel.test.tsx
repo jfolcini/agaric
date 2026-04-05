@@ -80,13 +80,13 @@ describe('StatusPanel', () => {
 
     expect(await screen.findByText('3')).toBeInTheDocument()
     expect(screen.getByText('7')).toBeInTheDocument()
-    expect(screen.getByText('42')).toBeInTheDocument()
+    expect(screen.getByText('57')).toBeInTheDocument() // total_ops_dispatched (42) + total_background_dispatched (15)
     expect(screen.getByText('15')).toBeInTheDocument()
 
     // Labels
     expect(screen.getByText('Foreground Queue')).toBeInTheDocument()
     expect(screen.getByText('Background Queue')).toBeInTheDocument()
-    expect(screen.getByText('Ops Dispatched')).toBeInTheDocument()
+    expect(screen.getByText('Ops Processed')).toBeInTheDocument()
     expect(screen.getByText('Background Dispatched')).toBeInTheDocument()
   })
 
@@ -177,7 +177,7 @@ describe('StatusPanel', () => {
       // Updated values
       expect(screen.getByText('10')).toBeInTheDocument()
       expect(screen.getByText('20')).toBeInTheDocument()
-      expect(screen.getByText('100')).toBeInTheDocument()
+      expect(screen.getByText('150')).toBeInTheDocument() // 100 + 50
       expect(screen.getByText('50')).toBeInTheDocument()
     })
   })
@@ -444,7 +444,7 @@ describe('StatusPanel', () => {
       expect(tooltipTriggers).toHaveLength(4)
       expect(tooltipTriggers[0]?.textContent).toBe('Foreground Queue')
       expect(tooltipTriggers[1]?.textContent).toBe('Background Queue')
-      expect(tooltipTriggers[2]?.textContent).toBe('Ops Dispatched')
+      expect(tooltipTriggers[2]?.textContent).toBe('Ops Processed')
       expect(tooltipTriggers[3]?.textContent).toBe('Background Dispatched')
     })
   })

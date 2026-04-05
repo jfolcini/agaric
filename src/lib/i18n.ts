@@ -466,6 +466,7 @@ const resources = {
       'property.clearDueDate': 'Clear due date',
       'property.clearScheduledDate': 'Clear scheduled date',
       'property.valueLabel': '{{key}} value',
+      'property.selectProperty': 'Select property...',
 
       // Properties view
       'sidebar.properties': 'Properties',
@@ -809,7 +810,7 @@ const resources = {
       'status.foregroundQueueLabel': 'Foreground Queue',
       'status.peakLabel': 'Peak:',
       'status.backgroundQueueLabel': 'Background Queue',
-      'status.opsDispatchedLabel': 'Ops Dispatched',
+      'status.opsDispatchedLabel': 'Ops Processed',
       'status.backgroundDispatchedLabel': 'Background Dispatched',
       'status.foregroundErrorsMessage_one': '{{count}} foreground error',
       'status.foregroundErrorsMessage_other': '{{count}} foreground errors',
