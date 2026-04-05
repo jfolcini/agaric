@@ -1,5 +1,55 @@
 # Session Log
 
+## Session 225 — 2026-04-05 — Batch 77: UX-6, UX-8, R-11, UX-9 partial
+
+### Summary
+Resolved 4 items: UX-6 (focus utility classes), UX-8 (semantic color token migration), R-11 (property table consolidation), UX-9 partial (BatchActionToolbar). UX-6: Added `@utility focus-ring` and `focus-outline` to index.css, replaced 4 inline focus patterns. UX-8: Migrated hardcoded Tailwind colors (red/amber/green/blue) to semantic tokens across 9 files, removing dark: variant overrides. R-11: Extracted property-save-utils, AddPropertyPopover, BuiltinDateFields — PagePropertyTable 543→456 lines, BlockPropertyDrawer 460→326 lines. UX-9: Created BatchActionToolbar shared component used by HistorySelectionToolbar and ConflictBatchToolbar. 28 files changed, 45 new tests (4287 total). REVIEW-LATER.md reduced from 6 to 3 items.
+
+### Batch 77
+
+**Commit:** f22e632
+
+| Area | Change |
+|------|--------|
+| index.css | UX-6: Added `@utility focus-ring` and `@utility focus-outline`. |
+| SortableBlock.tsx | UX-6: 3 instances `focus-visible:ring-2 ring-ring ring-offset-1` → `focus-ring`. |
+| SuggestionList.tsx | UX-6: 1 instance `focus-visible:outline-2 outline-ring` → `focus-outline`. |
+| BlockInlineControls.tsx | UX-8: `bg-red-100 text-red-700` → `bg-destructive/10 text-destructive`. |
+| UpcomingSection.tsx | UX-8: `text-amber-600` → `text-status-pending-foreground`, etc. |
+| AgendaResults.tsx | UX-8: Same dueDateColor pattern as BlockInlineControls. |
+| DonePanel.tsx | UX-8: `text-green-600` → `text-status-done-foreground`. |
+| StatusPanel.tsx | UX-8: Queue health, sync dots, error panel → semantic tokens. |
+| FormattingToolbar.tsx | UX-8: P1/P2/P3 dots → `bg-priority-urgent/high/normal`. |
+| DiffDisplay.tsx | UX-8: Delete/insert spans → `bg-destructive`, `bg-status-done`. |
+| agenda-sort.ts | UX-8: Group colors → semantic tokens for all 7 group types. |
+| property-save-utils.ts | R-11: **New** — shared save/delete logic (81 lines). |
+| AddPropertyPopover.tsx | R-11: **New** — unified property-adding popover (178 lines). |
+| BuiltinDateFields.tsx | R-11: **New** — built-in date field display (75 lines). |
+| PagePropertyTable.tsx | R-11: Reduced 543→456 lines. Uses shared modules. |
+| BlockPropertyDrawer.tsx | R-11: Reduced 460→326 lines. Uses shared modules. |
+| BatchActionToolbar.tsx | UX-9: **New** — shared toolbar component (48 lines). |
+| HistorySelectionToolbar.tsx | UX-9: Uses BatchActionToolbar. |
+| ConflictBatchToolbar.tsx | UX-9: Uses BatchActionToolbar. |
+| + test files | 45 new tests (property-save-utils, AddPropertyPopover, BuiltinDateFields, BatchActionToolbar). |
+
+## Session 224 — 2026-04-05 — Batch 76: R-1, R-2, R-5, R-7, R-10
+
+### Summary
+Resolved 5 REFACTOR items — all component decompositions of large frontend files. R-1: BlockTree (1998→1184 lines) extracted 4 hooks. R-2: SortableBlock (906→429 lines) extracted 3 modules. R-5: JournalPage (738→533 lines) extracted 2 modules. R-7: PageHeader (625→440 lines) extracted 4 components. R-10: AgendaFilterBuilder (687→332 lines) extracted 5 modules. 41 files changed, 336 new tests (4242 total). REVIEW-LATER.md reduced from 11 to 6 items.
+
+### Batch 76
+
+**Commit:** 9e5fdd2
+
+| Area | Change |
+|------|--------|
+| BlockTree.tsx | R-1: Reduced 1998→1184 lines. 4 hooks extracted. |
+| SortableBlock.tsx | R-2: Reduced 906→429 lines. 3 modules extracted. |
+| JournalPage.tsx | R-5: Reduced 738→533 lines. 2 modules extracted. |
+| PageHeader.tsx | R-7: Reduced 625→440 lines. 4 components extracted. |
+| AgendaFilterBuilder.tsx | R-10: Reduced 687→332 lines. 5 modules extracted. |
+| + 36 new files | Hooks, components, test files (336 new tests). |
+
 ## Session 223 — 2026-04-05 — Batch 75: R-18 (per-page block store)
 
 ### Summary
