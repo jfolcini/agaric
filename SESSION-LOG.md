@@ -1,5 +1,49 @@
 # Session Log
 
+## Session 221 — 2026-04-05 — Batch 73: R-3, R-8, R-9, R-12, R-13, R-14
+
+### Summary
+Resolved 6 REFACTOR items — component decompositions. R-3: ConflictList (823→~580 lines) — extracted ConflictBatchToolbar, ConflictListItem, ConflictTypeRenderer with `useTranslation()` instead of prop-drilled `t`. R-8: HistoryView (573→~350 lines) — extracted HistoryFilterBar (with native select mock for testability), HistoryListItem, HistorySelectionToolbar, useHistoryFilters hook. R-9: PairingDialog (559→~315 lines) — extracted PairingQrDisplay, PairingEntryForm, PairingPeersList. R-12: PageBrowser (523→~280 lines) — extracted PageTreeItem, HighlightMatch (memoized, regex-safe), usePageDelete hook, page-tree.ts utility. R-13: AgendaView (543→smaller) — extracted agenda-filters.ts (pure filter engine), useAgendaPreferences hook. R-14: QueryResult (466→282 lines) — extracted QueryResultList, QueryResultTable, query-utils.ts. 47 files changed, 286 new tests across 15 new test files (3814 total). REVIEW-LATER.md reduced from 24 to 18 items (REFACTOR: 15→9).
+
+### Batch 73
+
+**Commit:** be4b448
+
+| Area | Change |
+|------|--------|
+| ConflictBatchToolbar.tsx | R-3: New — batch toolbar with select/deselect all, keep/discard all. |
+| ConflictListItem.tsx | R-3: New — single conflict item card with expand/collapse, keep/discard, selection. |
+| ConflictTypeRenderer.tsx | R-3: New — type-specific conflict renderer (text/property/move). |
+| ConflictList.tsx | R-3: Simplified, delegates to extracted sub-components. Removed `t` prop drilling. |
+| HistoryFilterBar.tsx | R-8: New — operation type filter dropdown. |
+| HistoryListItem.tsx | R-8: New — individual history entry with op badge, diff, selection. |
+| HistorySelectionToolbar.tsx | R-8: New — batch selection toolbar for history. |
+| HistoryView.tsx | R-8: Simplified, delegates to extracted sub-components. |
+| PairingQrDisplay.tsx | R-9: New — QR code + passphrase + countdown display. |
+| PairingEntryForm.tsx | R-9: New — passphrase entry form for manual pairing. |
+| PairingPeersList.tsx | R-9: New — paired peers list with unpair and reset count. |
+| PairingDialog.tsx | R-9: Simplified, delegates to extracted sub-components. |
+| PageTreeItem.tsx | R-12: New — recursive tree node for page browser. |
+| HighlightMatch.tsx | R-12: New — memoized text highlighting with regex-safe escaping. |
+| hooks/usePageDelete.ts | R-12: New — page deletion hook with confirmation state. |
+| lib/page-tree.ts | R-12: New — pure `buildPageTree()` utility. |
+| PageBrowser.tsx | R-12: Simplified, delegates to extracted modules. |
+| lib/agenda-filters.ts | R-13: New — pure `executeAgendaFilters()` function. |
+| hooks/useAgendaPreferences.ts | R-13: New — localStorage-persisted sort/group preferences. |
+| journal/AgendaView.tsx | R-13: Simplified, delegates to extracted modules. |
+| QueryResultList.tsx | R-14: New — list-mode query result renderer. |
+| QueryResultTable.tsx | R-14: New — table-mode query result renderer. |
+| lib/query-utils.ts | R-14: New — query parsing and filter utilities. |
+| QueryResult.tsx | R-14: Simplified, delegates to extracted modules. |
+| 15 new test files | 286 tests: ConflictBatchToolbar(13), ConflictListItem(21), ConflictTypeRenderer(17), HistoryFilterBar(9), HistoryListItem(15), HistorySelectionToolbar(11), PairingQrDisplay(10), PairingEntryForm(11), PairingPeersList(10), PageTreeItem(15), HighlightMatch(7), usePageDelete(8), page-tree(7), useAgendaPreferences(7), agenda-filters(24), QueryResultList(11), QueryResultTable(13), query-utils(24), useListKeyboardNavigation(17). |
+
+### REVIEW-LATER changes
+- **Removed:** R-3 (ConflictList decomposition), R-8 (HistoryView decomposition), R-9 (PairingDialog decomposition), R-12 (PageBrowser decomposition), R-13 (AgendaView decomposition), R-14 (QueryResult decomposition)
+- **Updated:** R-18 ordering note (removed references to resolved R-3/R-8/R-9/R-12/R-13/R-14)
+- **Net:** 24 → 18 items (REFACTOR: 15 → 9)
+
+---
+
 ## Session 220 — 2026-04-05 — Batch 72: UX-2, UX-14, R-15, R-16, R-17
 
 ### Summary

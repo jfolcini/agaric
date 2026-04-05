@@ -375,6 +375,19 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **ResultCard** (`src/components/ResultCard.tsx`): Block result card button with content display, Badge for page/tag types, optional spinner, optional children slot. Used by SearchPanel, TagFilterPanel.
 - **PageLink** (`src/components/PageLink.tsx`): Inline clickable page name (`<span role="link">`) that navigates via `navigateToPage`. Handles click/Enter/Space with stopPropagation. Uses `<span>` to allow nesting inside `<button>` containers. Used by CollapsibleGroupList, DonePanel, AgendaResults, DuePanel, SearchPanel, QueryResult.
 - **PropertyRow** (`src/components/BlockPropertyDrawer.tsx`): Extracted sub-component for property rows with badge+input+remove layout. Supports optional icon, date/text input types.
+- **ConflictBatchToolbar** (`src/components/ConflictBatchToolbar.tsx`): Batch action toolbar for conflict resolution. Shows selection count, select/deselect all, keep all, discard all buttons. Extracted from ConflictList (R-3). Used by ConflictList.
+- **ConflictListItem** (`src/components/ConflictListItem.tsx`): Individual conflict item card. Renders type-specific content (via ConflictTypeRenderer), keep/discard actions, expand/collapse toggle, metadata, selection checkbox. Extracted from ConflictList (R-3). Used by ConflictList.
+- **ConflictTypeRenderer** (`src/components/ConflictTypeRenderer.tsx`): Type-specific conflict content renderer. Text conflicts show Current/Incoming, property conflicts show field diffs, move conflicts show parent/position changes. Extracted from ConflictList (R-3). Used by ConflictListItem.
+- **HistoryFilterBar** (`src/components/HistoryFilterBar.tsx`): Operation type filter dropdown for history view. Extracted from HistoryView (R-8). Used by HistoryView.
+- **HistoryListItem** (`src/components/HistoryListItem.tsx`): Individual history entry with op type badge, word-level diff, timestamp, selection checkbox. Extracted from HistoryView (R-8). Used by HistoryView.
+- **HistorySelectionToolbar** (`src/components/HistorySelectionToolbar.tsx`): Batch selection toolbar for history view with selection count, select/deselect all, revert button. Extracted from HistoryView (R-8). Used by HistoryView.
+- **PairingQrDisplay** (`src/components/PairingQrDisplay.tsx`): QR code and passphrase display for pairing dialog with countdown timer and expired-session retry. Extracted from PairingDialog (R-9). Used by PairingDialog.
+- **PairingEntryForm** (`src/components/PairingEntryForm.tsx`): Passphrase entry form for manual pairing. Extracted from PairingDialog (R-9). Used by PairingDialog.
+- **PairingPeersList** (`src/components/PairingPeersList.tsx`): Paired peers list with unpair action and reset count display. Extracted from PairingDialog (R-9). Used by PairingDialog.
+- **PageTreeItem** (`src/components/PageTreeItem.tsx`): Recursive tree node for page browser with namespace expand/collapse, highlight matching, create-under-namespace button. Extracted from PageBrowser (R-12). Used by PageBrowser.
+- **HighlightMatch** (`src/components/HighlightMatch.tsx`): Text highlighting component that wraps matching substrings in `<mark>`. Memoized with regex-safe escaping. Extracted from PageBrowser (R-12). Reusable.
+- **QueryResultList** (`src/components/QueryResultList.tsx`): List-mode renderer for inline query results with status badges, page links, content truncation. Extracted from QueryResult (R-14). Used by QueryResult.
+- **QueryResultTable** (`src/components/QueryResultTable.tsx`): Table-mode renderer for inline query results with dynamic columns. Extracted from QueryResult (R-14). Used by QueryResult.
 - **Select** (`src/components/ui/select.tsx`): Radix UI Select wrapper with 10 exported parts and `size` prop on SelectTrigger (`'default'` | `'sm'`). Replaces all native `<select>` elements across 5 component files. Uses `__none__`/`__all__` sentinels for empty values (Radix doesn't support `value=""`).
 
 ### Shared Hooks
@@ -384,11 +397,16 @@ Local WiFi peer-to-peer sync — no cloud, no accounts.
 - **useBatchCounts** (`src/hooks/useBatchCounts.ts`): Fetches agenda + backlink counts for date ranges. Returns both total counts and per-source breakdown (due/scheduled/properties). Used by WeeklyView, MonthlyView.
 - **useBacklinkResolution** (`src/hooks/useBacklinkResolution.ts`): TTL-cached ULID/tag resolution hook. Batch resolves page IDs and tag IDs to display names with configurable TTL (default 30s). Deduplicates concurrent requests. Extracted from LinkedReferences (R-15). Used by LinkedReferences.
 - **useSyncWithTimeout** (`src/hooks/useSyncWithTimeout.ts`): Sync operation executor with Promise.race timeout pattern (default 60s). Supports cancellation via cancelSync. Returns `{ executeSyncWithTimeout, cancelSync }`. Extracted from DeviceManagement (R-16). Used by DeviceManagement.
+- **usePageDelete** (`src/hooks/usePageDelete.ts`): Page deletion hook with confirmation state management. Returns `{ pendingDeleteId, requestDelete, confirmDelete, cancelDelete }`. Extracted from PageBrowser (R-12). Used by PageBrowser.
+- **useAgendaPreferences** (`src/hooks/useAgendaPreferences.ts`): LocalStorage-persisted agenda sort/group preferences hook. Returns `{ groupBy, sortBy, setGroupBy, setSortBy }`. Extracted from AgendaView (R-13). Used by AgendaView.
 
 ### Shared Utilities
 - **block-events** (`src/lib/block-events.ts`): `BLOCK_EVENTS` constant object (10 event names), `dispatchBlockEvent()`/`onBlockEvent()` helpers for custom DOM event communication between FormattingToolbar and BlockTree. Exports `NavigateToPageFn` type alias for standardized navigation callbacks.
 - **date-property-colors** (`src/lib/date-property-colors.ts`): `getSourceColor(source)` returns light/dark mode Tailwind classes for agenda sources (due=orange, scheduled=blue, properties=purple). `getSourceLabel(source)` returns display labels. Used by DaySection colored pills.
 - **date-utils** (`src/lib/date-utils.ts`): Consolidated date formatting utilities. `formatDate(d)` (yyyy-MM-dd), `formatDateDisplay(d)` (human-readable), `formatGroupDate(s)` (group headers), `formatCompactDate(s)` (compact display), `getTodayString()`, `getDateRangeForFilter(preset, today)` (7 presets: today/this-week/this-month/overdue/next-7/14/30-days). Single source of truth — eliminates duplicates from parse-date.ts, DuePanel, AgendaResults, AgendaView. Used by DuePanel, DonePanel, AgendaResults, AgendaView, parse-date.
+- **page-tree** (`src/lib/page-tree.ts`): Pure utility for building hierarchical page tree from flat page list. `buildPageTree()` creates namespace-aware tree nodes with hybrid page/folder support. Extracted from PageBrowser (R-12). Used by PageBrowser.
+- **agenda-filters** (`src/lib/agenda-filters.ts`): Pure function `executeAgendaFilters()` for agenda view filter logic. Handles 7+ filter dimensions, date range calculations, page title resolution. Extracted from AgendaView (R-13). Used by AgendaView.
+- **query-utils** (`src/lib/query-utils.ts`): Query expression parsing and filter building utilities. `parseQueryExpression()`, `buildFilters()`, column detection. Extracted from QueryResult (R-14). Used by QueryResult.
 
 ### CSS Utilities
 - **`.touch-target-44`** (`src/index.css`): Utility class for `@media(pointer:coarse)` min-height 44px touch targets. Used across 19+ components.
